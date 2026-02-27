@@ -6,6 +6,22 @@ SECTIONS
         *(.text .text.*) 
     }
 
+    .rodata : {
+        *(.rodata .rodata.*)
+    }
+
+    .data : {
+        *(.data .data.*)
+    }
+
+    .bss (NOLOAD) : {
+        . = ALIGN(16);
+        __bss_start = .;
+        *(.bss .bss.*)
+        *(COMMON)
+        __bss_end = .;
+    }
+
     /* The stack must be aligned to 16 bits for aarch64 */
     . = ALIGN(16);
     _stack_bottom = .;

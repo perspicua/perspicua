@@ -1,7 +1,10 @@
 .PHONY: clean run-qemu debug-qemu
 
 ASM_SOURCES := $(shell find src -name '*.S')
+C_SOURCES := $(shell find src -name '*.c')
+
 OBJECTS := $(patsubst src/%.S,build/%.o,$(ASM_SOURCES))
+OBJECTS += $(patsubst src/%.c,build/%.o,$(C_SOURCES))
 
 ifeq ($(shell uname),Darwin)
     CROSS_COMPILE ?= aarch64-elf-
@@ -21,6 +24,10 @@ debug-qemu: build/kernel8.img
 build/kernel8.img: $(OBJECTS) link.ld
 	$(CROSS_COMPILE)ld -nostdlib $(OBJECTS) -T link.ld -o build/kernel8.elf
 	$(OBJCOPY) -O binary build/kernel8.elf build/kernel8.img
+
+build/%.o: src/%.c
+	@mkdir -p $(dir $@)
+	$(CROSS_COMPILE)gcc -Wall -O2 -ffreestanding -nostdinc -nostdlib -mcpu=cortex-a72+nosimd -c $< -o $@
 
 build/%.o: src/%.S
 	@mkdir -p $(dir $@)
