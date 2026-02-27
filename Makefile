@@ -5,7 +5,8 @@ OBJECTS := $(patsubst src/%.S,build/%.o,$(ASM_SOURCES))
 
 ifeq ($(shell uname),Darwin)
     CROSS_COMPILE ?= aarch64-elf-
-    OBJCOPY ?= /opt/homebrew/opt/llvm/bin/llvm-objcopy
+    LLVM_PATH := $(shell brew --prefix llvm)
+    OBJCOPY ?= $(LLVM_PATH)/bin/llvm-objcopy
 else
     CROSS_COMPILE ?= aarch64-linux-gnu-
     OBJCOPY ?= llvm-objcopy
