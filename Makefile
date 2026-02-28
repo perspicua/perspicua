@@ -30,7 +30,7 @@ build/kernel8.img: $(OBJECTS) link.ld
 
 build/%.o: src/%.c
 	@mkdir -p $(dir $@)
-	$(CROSS_COMPILE)gcc -Wall -O2 -ffreestanding -nostdinc -nostdlib -mcpu=cortex-a72+nosimd -c $< -o $@
+	$(CROSS_COMPILE)gcc -Wall -O2 -ffreestanding -nostdlib -mcpu=cortex-a72+nosimd -c $< -o $@
 
 build/%.o: src/%.S
 	@mkdir -p $(dir $@)
