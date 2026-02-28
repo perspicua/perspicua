@@ -1,6 +1,6 @@
 #include "uart.h"
 #include "gpio.h"
-#include "../timer.h"
+#include "../kernel/timer.h"
 
 #define PERIPHERAL_BASE 0xFE000000
 #define UART0_BASE (PERIPHERAL_BASE + 0x201000)

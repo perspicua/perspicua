@@ -1,8 +1,8 @@
 #include "exception.h"
-#include "mmio/uart.h"
-#include "mmio/gic.h"
-#include "stdio.h"
-#include "timer.h"
+#include "../driver/uart.h"
+#include "../driver/gic.h"
+#include "../lib/stdio.h"
+#include "../kernel/timer.h"
 
 void c_exception_handler()
 {

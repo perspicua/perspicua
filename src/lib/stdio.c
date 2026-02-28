@@ -1,5 +1,5 @@
 #include "stdio.h"
-#include "mmio/uart.h"
+#include "../driver/uart.h"
 #include <stdarg.h>
 
 static void print_number(int num, int base)

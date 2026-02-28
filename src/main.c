@@ -1,7 +1,7 @@
-#include "mmio/uart.h"
-#include "stdio.h"
-#include "timer.h"
-#include "mmio/gic.h"
+#include "driver/uart.h"
+#include "lib/stdio.h"
+#include "kernel/timer.h"
+#include "driver/gic.h"
 
 int main()
 {
