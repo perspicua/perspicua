@@ -1,5 +1,6 @@
 #include "stdio.h"
 #include "mmio/uart.h"
+#include "timer.h"
 
 int main()
 {
@@ -16,8 +17,10 @@ int main()
     printf("Testing hex      : %x\n", 255);
     printf("Testing pointers : %x\n", &main);
     printf("Testing percent  : %d%%\n", 100);
-    printf("\nBoot complete. Testing exception handler...\n");
-    asm volatile("brk #0");
+    printf("Testing sleep    :\n");
+    sleep_ms(1000);
+    printf("System should have slept for 1 second.\n");
+    printf("Boot complete!\n\n");
 
     while (1)
     {

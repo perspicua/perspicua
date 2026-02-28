@@ -1,5 +1,6 @@
 #include "uart.h"
 #include "gpio.h"
+#include "../timer.h"
 
 #define PERIPHERAL_BASE 0xFE000000
 #define UART0_BASE (PERIPHERAL_BASE + 0x201000)
@@ -11,12 +12,6 @@ volatile unsigned int* const UART0_FBRD = (unsigned int*)(UART0_BASE + 0x28);
 volatile unsigned int* const UART0_LCRH = (unsigned int*)(UART0_BASE + 0x2C);
 volatile unsigned int* const UART0_CR = (unsigned int*)(UART0_BASE + 0x30);
 volatile unsigned int* const UART0_ICR = (unsigned int*)(UART0_BASE + 0x44);
-
-// simple delay function. loops count times
-static inline void delay(int count)
-{
-    asm volatile("__delay_%=: subs %0, %0, #1; bne __delay_%=\n" : "=r"(count) : "0"(count) : "cc");
-}
 
 void uart_init(void)
 {
@@ -32,7 +27,7 @@ void uart_init(void)
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
     // TODO: i am not sure if this is needed, needs testing
-    delay(150); // aprox. 150 cycles
+    sleep_ms(1);
 
     *UART0_ICR = 0x7FF;
 
