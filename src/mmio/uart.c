@@ -11,6 +11,7 @@ volatile unsigned int* const UART0_IBRD = (unsigned int*)(UART0_BASE + 0x24);
 volatile unsigned int* const UART0_FBRD = (unsigned int*)(UART0_BASE + 0x28);
 volatile unsigned int* const UART0_LCRH = (unsigned int*)(UART0_BASE + 0x2C);
 volatile unsigned int* const UART0_CR = (unsigned int*)(UART0_BASE + 0x30);
+volatile unsigned int* const UART0_IMSC = (unsigned int*)(UART0_BASE + 0x38);
 volatile unsigned int* const UART0_ICR = (unsigned int*)(UART0_BASE + 0x44);
 
 void uart_init(void)
@@ -75,4 +76,19 @@ void uart_puts(const char* str)
             uart_send('\r');
         uart_send(*str++);
     }
+}
+
+int uart_data_ready(void)
+{
+    return !(*UART0_FR & (1 << 4));
+}
+
+void uart_enable_interrupts(void)
+{
+    *UART0_IMSC |= (1 << 4) | (1 << 6);
+}
+
+void uart_clear_interrupt(void)
+{
+    *UART0_ICR = (1 << 4) | (1 << 6);
 }

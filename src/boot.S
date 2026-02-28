@@ -19,6 +19,12 @@ _entry:
     ldr x0, =(1 << 31)
     msr hcr_el2, x0
 
+    // allow EL1 to access physical counter and timer registers
+    mrs x0, cnthctl_el2
+    orr x0, x0, #3
+    msr cnthctl_el2, x0
+    msr cntvoff_el2, xzr
+
     ldr x0, =0x3c5
     msr spsr_el2, x0
 
@@ -35,12 +41,12 @@ _entry:
 
     ldr x1, =__bss_start
     ldr x2, =__bss_end
-    cmp x1, x2
-    b.eq 4f
+4:  cmp x1, x2
+    b.hs 5f
     str xzr, [x1], #8   // Write 8 bytes of zero (xzr) and increment x1
-    b 3b
+    b 4b
 
-4:
+5:
     // jump to C
     bl main
 

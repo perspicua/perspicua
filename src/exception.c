@@ -1,5 +1,8 @@
 #include "exception.h"
+#include "mmio/uart.h"
+#include "mmio/gic.h"
 #include "stdio.h"
+#include "timer.h"
 
 void c_exception_handler()
 {
@@ -18,4 +21,28 @@ void c_exception_handler()
     {
         asm volatile("wfe");
     }
+}
+void c_irq_handler(void)
+{
+    unsigned int iar = GICC_IAR;
+    unsigned int irq_id = iar & 0x3FF;
+
+    if (irq_id == TIMER_IRQ)
+    {
+        printf("\n[Background IRQ]: Tick! 1 second has passed.\n");
+        timer_interrupt_reset();
+    }
+    else if (irq_id == UART_IRQ)
+    {
+        while (uart_data_ready())
+        {
+            char c = uart_getc();
+            uart_send(c);
+            if (c == '\n')
+                uart_send('\r');
+        }
+        uart_clear_interrupt();
+    }
+
+    GICC_EOIR = iar;
 }
