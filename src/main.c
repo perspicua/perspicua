@@ -1,20 +1,9 @@
-volatile unsigned int* const UART0_DR = (unsigned int*)0xFE201000;
-
-void print_char(char c)
-{
-    *UART0_DR = c;
-}
-
-void print_string(const char* str)
-{
-    while (*str)
-        print_char(*str++);
-}
+#include "mmio/uart.h"
 
 int main()
 {
-    print_string("Hello World!\n");
-
+    uart_init();
+    uart_puts("Hello world!\n");
     while (1)
         ;
     return 0;

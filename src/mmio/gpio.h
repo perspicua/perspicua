@@ -12,6 +12,11 @@
 #define GPIO_FUNC_ALT4 0b011
 #define GPIO_FUNC_ALT5 0b010
 
+// pull resistor values
+#define GPIO_PUPDN_NONE 0b00
+#define GPIO_PUPDN_UP 0b01
+#define GPIO_PUPDN_DOWN 0b10
+
 void gpio_set_pin_function(unsigned int pin, unsigned int function);
 void gpio_set_pull(unsigned int pin, unsigned int pull);
 
