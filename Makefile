@@ -18,6 +18,9 @@ endif
 run-qemu: build/kernel8.img
 	qemu-system-aarch64 -M raspi4b -serial stdio -display none -kernel build/kernel8.img
 
+run-qemu-vc: build/kernel8.img
+	qemu-system-aarch64 -M raspi4b -serial vc -kernel build/kernel8.img
+
 debug-qemu: build/kernel8.img
 	qemu-system-aarch64 -M raspi4b -serial stdio -display none -kernel build/kernel8.img -s -S
 

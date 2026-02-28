@@ -32,7 +32,7 @@ void uart_init(void)
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
     // TODO: i am not sure if this is needed, needs testing
-    // delay(150); // aprox. 150 cycles
+    delay(150); // aprox. 150 cycles
 
     *UART0_ICR = 0x7FF;
 
@@ -57,6 +57,19 @@ void uart_send(char c)
     while (*UART0_FR & (1 << 5))
         ;
     *UART0_DR = c;
+}
+
+char uart_getc(void)
+{
+    char r;
+    // wait for RXFE = 0
+    while (*UART0_FR & (1 << 4))
+        ;
+
+    r = (char)(*UART0_DR);
+    if (r == '\r')
+        r = '\n';
+    return r;
 }
 
 void uart_puts(const char* str)
