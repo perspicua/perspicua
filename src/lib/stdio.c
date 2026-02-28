@@ -2,6 +2,33 @@
 #include "../driver/uart.h"
 #include <stdarg.h>
 
+static void print_unsigned_long(unsigned long n, int base)
+{
+    char buf[32];
+    int i = 0;
+
+    if (n == 0)
+    {
+        uart_send('0');
+        return;
+    }
+
+    while (n != 0)
+    {
+        int remainder = n % base;
+
+        if (remainder < 10)
+            buf[i++] = remainder + '0';
+        else
+            buf[i++] = (remainder - 10) + 'a';
+
+        n /= base;
+    }
+
+    while (i > 0)
+        uart_send(buf[--i]);
+}
+
 static void print_number(int num, int base)
 {
     char buf[32];
@@ -59,9 +86,8 @@ void printf(char* fmt, ...)
             }
             case 'x':
             {
-                int i = va_arg(args, int);
-                uart_puts("0x");
-                print_number(i, 16);
+                unsigned long i = va_arg(args, unsigned long);
+                print_unsigned_long(i, 16);
                 break;
             }
             case 's':

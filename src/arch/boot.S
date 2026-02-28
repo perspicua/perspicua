@@ -33,7 +33,12 @@ _entry:
 
     eret
 
-3:  ldr x0, =vector_table
+3:
+    mov x0, #(3 << 20)
+    msr cpacr_el1, x0
+    isb
+
+    ldr x0, =vector_table
     msr vbar_el1, x0
 
     ldr x1, =_stack_top
