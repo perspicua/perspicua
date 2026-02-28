@@ -1,4 +1,4 @@
-.PHONY: clean run-qemu debug-qemu
+.PHONY: clean run-qemu debug-qemu format
 
 ASM_SOURCES := $(shell find src -name '*.S')
 C_SOURCES := $(shell find src -name '*.c')
@@ -33,6 +33,10 @@ build/%.o: src/%.S
 	@mkdir -p $(dir $@)
 	@echo "*" > ./build/.gitignore
 	$(CROSS_COMPILE)as $< -o $@
+
+format:
+	@find src -name '*.c' -exec clang-format -i {} +
+	@find src -name '*.h' -exec clang-format -i {} +
 
 clean:
 	rm -rf build
