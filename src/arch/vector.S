@@ -41,8 +41,12 @@ default_exception_handler:
 
 .global irq_handler
 irq_handler:
-    // allocate space on stack for all 31 GPRs (x0-x30)
-    // use 32 * 8 bytes = 256 for alignment and simplicity
+    // save ELR_EL1 and SPSR_EL1 so context switches preserve them
+    mrs x0, elr_el1
+    mrs x1, spsr_el1
+    stp x0, x1, [sp, #-16]!
+
+    // save GPRs (x0-x30)
     sub sp, sp, #256
     stp x0, x1, [sp, #16 * 0]
     stp x2, x3, [sp, #16 * 1]
@@ -80,5 +84,10 @@ irq_handler:
     ldp x2, x3, [sp, #16 * 1]
     ldp x0, x1, [sp, #16 * 0]
     add sp, sp, #256
+
+    // restore ELR_EL1 and SPSR_EL1
+    ldp x21, x22, [sp], #16
+    msr elr_el1, x21
+    msr spsr_el1, x22
 
     eret

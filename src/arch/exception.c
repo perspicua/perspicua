@@ -3,6 +3,7 @@
 #include "../driver/gic.h"
 #include "../lib/stdio.h"
 #include "../kernel/timer.h"
+#include "../kernel/sched.h"
 
 void c_exception_handler()
 {
@@ -29,8 +30,10 @@ void c_irq_handler(void)
 
     if (irq_id == TIMER_IRQ)
     {
-        printf("\n[Background IRQ]: Tick! 1 second has passed.\n");
         timer_interrupt_reset();
+        GICC_EOIR = iar;
+        schedule();
+        return;
     }
     else if (irq_id == UART_IRQ)
     {
