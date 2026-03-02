@@ -1,15 +1,17 @@
 #include "driver/uart.h"
-#include "lib/stdio.h"
-#include "kernel/timer.h"
 #include "driver/gic.h"
+
 #include "kernel/pmm.h"
 #include "kernel/mmu.h"
 #include "kernel/heap.h"
 #include "kernel/sched.h"
+#include "kernel/timer.h"
 
+#include "lib/stdio.h"
+#include "lib/string.h"
 void task_a(void)
 {
-    for (int i = 0; i < 50; i++)
+    for (int i = 0; i < 5; i++)
     {
         printf("[Task A] count = %d\n", i);
         sleep_ms(500);
@@ -18,7 +20,7 @@ void task_a(void)
 
 void task_b(void)
 {
-    for (int i = 0; i < 50; i++)
+    for (int i = 0; i < 5; i++)
     {
         printf("[Task B] count = %d\n", i);
         sleep_ms(500);
@@ -45,6 +47,7 @@ int main()
 
     enable_interrupts();
 
+    printf("%d\n", strlen("Pizda"));
     // idle loop — scheduler preempts this via timer IRQ
     while (1)
         asm volatile("wfe");
