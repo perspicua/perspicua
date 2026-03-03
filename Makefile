@@ -46,7 +46,6 @@ clean:
 run: $(IMAGE)
 	qemu-system-aarch64 -M raspi4b -serial stdio -display none -kernel $(IMAGE)
 
-# NEW: Include the generated dependency files so Make knows about the .h files
 -include $(DEPS)
 
 .PHONY: all clean run

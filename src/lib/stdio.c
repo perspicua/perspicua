@@ -70,6 +70,7 @@ void print_unsigned_int(uint32_t n, int base)
 {
     print_unsigned_long(n, base);
 }
+
 void printf(const char* fmt, ...)
 {
     va_list args;
