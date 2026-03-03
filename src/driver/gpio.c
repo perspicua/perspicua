@@ -1,6 +1,6 @@
 #include "gpio.h"
 
-#define PERIPHERAL_BASE 0xFE000000
+#define PERIPHERAL_BASE 0xFFFFFF80FE000000ULL
 #define GPIO_BASE (PERIPHERAL_BASE + 0x200000)
 
 volatile unsigned int* const GPIO_GPFSEL0 = (unsigned int*)(GPIO_BASE + 0x00);

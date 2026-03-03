@@ -62,6 +62,7 @@ void spawn_storm(void)
 }
 int main()
 {
+    printf("Hello from the Higher Half! main() is at: 0x%lx\n", (unsigned long)main);
     uart_init();
     uart_enable_interrupts();
     printf("\nBoot complete.\n");

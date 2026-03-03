@@ -2,7 +2,7 @@
 #include "gpio.h"
 #include "../kernel/timer.h"
 
-#define PERIPHERAL_BASE 0xFE000000
+#define PERIPHERAL_BASE 0xFFFFFF80FE000000ULL
 #define UART0_BASE (PERIPHERAL_BASE + 0x201000)
 
 volatile unsigned int* const UART0_DR = (unsigned int*)(UART0_BASE + 0x00);

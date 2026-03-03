@@ -6,169 +6,181 @@
 
 extern char __kernel_end[];
 
+#define KERNEL_VMA 0xFFFFFF8000000000ULL
+#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
+#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
+
 #define PHYSICAL_MEMORY_SIZE (1024 * 1024 * 1024) // 1 GB
 #define NUM_PAGES (PHYSICAL_MEMORY_SIZE / PAGE_SIZE)
-#define BITMAP_SIZE (NUM_PAGES / 8)
+#define MAX_ORDER 10 // up to 1024 pages (4MB blocks)
 
-static unsigned char* bitmap;
+struct page
+{
+    struct page* next;
+    unsigned int order;
+    unsigned int is_free;
+};
 
-static unsigned long memory_start;
-static unsigned long reserved_page_count;
-static unsigned long last_alloc_hint;
-
+static struct page* page_array;
+static struct page* free_lists[MAX_ORDER + 1];
 static spinlock_t pmm_lock = SPINLOCK_INIT;
+
+static inline unsigned int get_order(unsigned long count)
+{
+    unsigned int order = 0;
+    unsigned long size = 1;
+    while (size < count)
+    {
+        size <<= 1;
+        order++;
+    }
+    return order;
+}
+
+static inline struct page* pfn_to_page(unsigned long pfn)
+{
+    return &page_array[pfn];
+}
+static inline unsigned long page_to_pfn(struct page* p)
+{
+    return p - page_array;
+}
+
+// merge neighbours (buddies :D) together recursevly
+static void __free_buddy(unsigned long pfn, unsigned int order)
+{
+    while (order < MAX_ORDER)
+    {
+        // find sibling
+        unsigned long buddy_pfn = pfn ^ (1UL << order);
+        if (buddy_pfn >= NUM_PAGES)
+            break;
+
+        struct page* buddy = pfn_to_page(buddy_pfn);
+        if (!buddy->is_free || buddy->order != order)
+            break;
+
+        // buddy is free.
+        struct page** curr = &free_lists[order];
+        while (*curr && *curr != buddy)
+        {
+            curr = &(*curr)->next;
+        }
+        if (*curr)
+            *curr = buddy->next;
+
+        buddy->is_free = 0;
+
+        // merge the 2 blocks by taking the lowest page frame number
+        pfn = (pfn < buddy_pfn) ? pfn : buddy_pfn;
+        order++;
+    }
+
+    struct page* p = pfn_to_page(pfn);
+    p->is_free = 1;
+    p->order = order;
+    p->next = free_lists[order];
+    free_lists[order] = p;
+}
 
 void pmm_init(void)
 {
-    ASSERT(NUM_PAGES > 0);
+    // align kernel end
+    unsigned long kernel_end_aligned = ((unsigned long)__kernel_end + 7) & ~7UL;
+    page_array = (struct page*)kernel_end_aligned;
 
-    bitmap = (unsigned char*)__kernel_end;
+    unsigned long array_size = NUM_PAGES * sizeof(struct page);
+    unsigned long usable_start = (kernel_end_aligned + array_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    unsigned long reserved_pages = V2P(usable_start) / PAGE_SIZE;
 
-    for (unsigned long i = 0; i < BITMAP_SIZE; i++)
-        bitmap[i] = 0;
+    for (int i = 0; i <= MAX_ORDER; i++)
+        free_lists[i] = 0;
 
-    unsigned long bitmap_end = (unsigned long)bitmap + BITMAP_SIZE;
-    memory_start = (bitmap_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-
-    // mark kernel code and bitmap as used
-    reserved_page_count = memory_start / PAGE_SIZE;
-    for (unsigned long i = 0; i < reserved_page_count; i++)
+    // mark everything as used
+    for (unsigned long i = 0; i < NUM_PAGES; i++)
     {
-        unsigned long byte_index = i / 8;
-        unsigned long bit_index = i % 8;
-        bitmap[byte_index] |= (1 << bit_index);
+        page_array[i].next = 0;
+        page_array[i].order = 0;
+        page_array[i].is_free = 0;
     }
 
-    last_alloc_hint = reserved_page_count / 8;
+    printf("PMM: Buddy Allocator starting. Metadata overhead: %lu KB\n", array_size / 1024);
 
-    printf("PMM: Initialized. Managing 1GB of RAM.\n");
-    printf("PMM: Kernel ends at   : 0x%x\n", (unsigned long)__kernel_end);
-    printf("PMM: Bitmap size      : %d bytes\n", (int)BITMAP_SIZE);
-    printf("PMM: Usable RAM starts: 0x%x\n", memory_start);
-}
-
-void* pmm_alloc_page(void)
-{
-    unsigned long flags = spin_lock_irqsave(&pmm_lock);
-
-    // scan by byte from hint, skip fully-used bytes (0xFF)
-    unsigned long start_byte = last_alloc_hint;
-    for (unsigned long n = 0; n < BITMAP_SIZE; n++)
+    for (unsigned long pfn = reserved_pages; pfn < NUM_PAGES; pfn++)
     {
-        unsigned long byte_index = (start_byte + n) % BITMAP_SIZE;
-
-        if (bitmap[byte_index] == 0xFF)
-            continue;
-
-        for (unsigned long bit = 0; bit < 8; bit++)
-        {
-            if ((bitmap[byte_index] & (1 << bit)) == 0)
-            {
-                bitmap[byte_index] |= (1 << bit);
-                last_alloc_hint = byte_index;
-                spin_unlock_irqrestore(&pmm_lock, flags);
-                return (void*)((byte_index * 8 + bit) * PAGE_SIZE);
-            }
-        }
+        __free_buddy(pfn, 0);
     }
 
-    spin_unlock_irqrestore(&pmm_lock, flags);
-    PANIC("PMM: FATAL ERROR - Out of Memory!\n");
-    return 0;
+    printf("PMM: Buddy Allocator initialized successfully.\n");
 }
 
 void* pmm_alloc_pages(unsigned long count)
 {
     if (count == 0)
         return 0;
-    if (count == 1)
-        return pmm_alloc_page();
+
+    unsigned int target_order = get_order(count);
+    if (target_order > MAX_ORDER)
+        PANIC("PMM: Request too large!");
 
     unsigned long flags = spin_lock_irqsave(&pmm_lock);
 
-    // scan bitmap for 'count' consecutive free pages
-    for (unsigned long start = reserved_page_count; start + count <= NUM_PAGES; start++)
+    // find smallest block >= target_order
+    int current_order = target_order;
+    while (current_order <= MAX_ORDER && !free_lists[current_order])
     {
-        int found = 1;
-        for (unsigned long j = 0; j < count; j++)
-        {
-            unsigned long idx = start + j;
-            if (bitmap[idx / 8] & (1 << (idx % 8)))
-            {
-                // skip ahead past the occupied page
-                start = idx;
-                found = 0;
-                break;
-            }
-        }
-
-        if (found)
-        {
-            // mark all pages as used
-            for (unsigned long j = 0; j < count; j++)
-            {
-                unsigned long idx = start + j;
-                bitmap[idx / 8] |= (1 << (idx % 8));
-            }
-            spin_unlock_irqrestore(&pmm_lock, flags);
-            return (void*)(start * PAGE_SIZE);
-        }
+        current_order++;
     }
 
+    if (current_order > MAX_ORDER)
+    {
+        spin_unlock_irqrestore(&pmm_lock, flags);
+        PANIC("PMM: Out of Memory!");
+    }
+
+    // pop block off the list
+    struct page* p = free_lists[current_order];
+    free_lists[current_order] = p->next;
+    p->is_free = 0;
+    unsigned long pfn = page_to_pfn(p);
+
+    // split the block in half until it matches the order
+    while (current_order > target_order)
+    {
+        current_order--;
+        unsigned long buddy_pfn = pfn + (1UL << current_order);
+        struct page* buddy = pfn_to_page(buddy_pfn);
+
+        buddy->is_free = 1;
+        buddy->order = current_order;
+        buddy->next = free_lists[current_order];
+        free_lists[current_order] = buddy;
+    }
+
+    p->order = target_order;
     spin_unlock_irqrestore(&pmm_lock, flags);
-    return 0;
+
+    return (void*)(P2V(pfn * PAGE_SIZE));
 }
 
 void pmm_free_pages(void* ptr, unsigned long count)
 {
+    if (!ptr)
+        return;
+
+    unsigned long pfn = V2P(ptr) / PAGE_SIZE;
+    unsigned int order = get_order(count);
+
     unsigned long flags = spin_lock_irqsave(&pmm_lock);
-    for (unsigned long i = 0; i < count; i++)
-    {
-        pmm_free_page((void*)((unsigned long)ptr + i * PAGE_SIZE));
-    }
+    __free_buddy(pfn, order);
     spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
+void* pmm_alloc_page(void)
+{
+    return pmm_alloc_pages(1);
+}
 void pmm_free_page(void* ptr)
 {
-    unsigned long addr = (unsigned long)ptr;
-
-    ASSERT(addr != 0);
-    ASSERT((addr & (PAGE_SIZE - 1)) == 0);
-
-    if (addr % PAGE_SIZE != 0)
-    {
-        printf("PMM: WARNING - Tried to free unaligned address 0x%x\n", addr);
-        return;
-    }
-
-    unsigned long page_index = addr / PAGE_SIZE;
-
-    if (page_index >= NUM_PAGES)
-    {
-        printf("PMM: WARNING - Tried to free out-of-bounds page 0x%x\n", addr);
-        return;
-    }
-
-    if (page_index < reserved_page_count)
-    {
-        printf("PMM: WARNING - Tried to free reserved page 0x%x\n", addr);
-        return;
-    }
-
-    unsigned long flags = spin_lock_irqsave(&pmm_lock);
-
-    unsigned long byte_index = page_index / 8;
-    unsigned long bit_index = page_index % 8;
-
-    if ((bitmap[byte_index] & (1 << bit_index)) == 0)
-    {
-        spin_unlock_irqrestore(&pmm_lock, flags);
-        printf("PMM: WARNING - Double free detected at 0x%x\n", addr);
-        return;
-    }
-
-    bitmap[byte_index] &= ~(1 << bit_index);
-
-    spin_unlock_irqrestore(&pmm_lock, flags);
+    pmm_free_pages(ptr, 1);
 }

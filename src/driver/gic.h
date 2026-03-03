@@ -1,8 +1,8 @@
 #ifndef _GIC_H_
 #define _GIC_H_
 
-#define GICD_BASE 0xFF841000
-#define GICC_BASE 0xFF842000
+#define GICD_BASE 0xFFFFFF80FF841000ULL
+#define GICC_BASE 0xFFFFFF80FF842000ULL
 
 #define GICD_CTLR (*(volatile unsigned int*)(GICD_BASE + 0x000))
 #define GICD_ISENABLERn(n) (*(volatile unsigned int*)(GICD_BASE + 0x100 + 4 * (n)))

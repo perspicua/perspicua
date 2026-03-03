@@ -13,7 +13,11 @@ void c_exception_handler()
     unsigned long elr;
     asm volatile("mrs %0, elr_el1" : "=r"(elr));
 
+    unsigned long far;
+    asm volatile("mrs %0, far_el1" : "=r"(far));
+
     printf("An unhandled exception occurred!\n");
+    printf("FAR_EL1 (Faulting Address): 0x%lx\n", far);
     printf("ESR_EL1 (Reason)  : 0x%x\n", esr);
     printf("ELR_EL1 (Address) : 0x%x\n", elr);
     printf("System halted.\n");
