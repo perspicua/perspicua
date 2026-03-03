@@ -13,7 +13,8 @@ void task_a(void)
 {
     for (int i = 0; i < 5; i++)
     {
-        printf("[Task A] count = %d\n", i);
+        void* a = kmalloc(1024);
+        printf("%x alloc'd\n", a);
         sleep_ms(500);
     }
 }

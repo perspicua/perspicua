@@ -1,4 +1,4 @@
-.PHONY: clean run-qemu debug-qemu format
+.PHONY: clean run-qemu debug-qemu format test
 
 ASM_SOURCES := $(shell find src -name '*.S')
 C_SOURCES := $(shell find src -name '*.c')

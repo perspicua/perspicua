@@ -1,4 +1,5 @@
 #include "pmm.h"
+#include "timer.h"
 #include "../lib/stdio.h"
 
 extern char __kernel_end[];
@@ -12,19 +13,6 @@ static unsigned char* bitmap;
 static unsigned long memory_start;
 static unsigned long reserved_page_count;
 static unsigned long last_alloc_hint;
-
-static inline unsigned long irq_save(void)
-{
-    unsigned long flags;
-    asm volatile("mrs %0, daif" : "=r"(flags));
-    asm volatile("msr daifset, #2");
-    return flags;
-}
-
-static inline void irq_restore(unsigned long flags)
-{
-    asm volatile("msr daif, %0" : : "r"(flags));
-}
 
 void pmm_init(void)
 {

@@ -1,6 +1,7 @@
 #include "heap.h"
 #include "pmm.h"
 #include "../lib/stdio.h"
+#include "timer.h"
 
 // each allocation is preceded by a block header
 struct block_header
@@ -44,8 +45,12 @@ void heap_init(void)
 
 void* kmalloc(unsigned long size)
 {
+    unsigned long int flags = irq_save();
     if (size == 0)
+    {
+        irq_restore(flags);
         return 0;
+    }
 
     size = ALIGN(size);
 
@@ -71,6 +76,7 @@ void* kmalloc(unsigned long size)
             }
 
             curr->free = 0;
+            irq_restore(flags);
             return (void*)((unsigned char*)curr + HEADER_SIZE);
         }
 
@@ -83,6 +89,7 @@ void* kmalloc(unsigned long size)
     if (!new_page)
     {
         printf("HEAP: Out of memory.\n");
+        irq_restore(flags);
         return 0;
     }
 
@@ -92,20 +99,25 @@ void* kmalloc(unsigned long size)
     else
         free_list = new_page;
 
+    irq_restore(flags);
     // recurse to allocate from the new page
     return kmalloc(size);
 }
 
 void kfree(void* ptr)
 {
+    unsigned long flags = irq_save();
     if (!ptr)
+    {
+        irq_restore(flags);
         return;
-
+    }
     struct block_header* block = (struct block_header*)((unsigned char*)ptr - HEADER_SIZE);
 
     if (block->free)
     {
         printf("HEAP: WARNING - Double free detected.\n");
+        irq_restore(flags);
         return;
     }
 
@@ -123,4 +135,5 @@ void kfree(void* ptr)
         }
         curr = curr->next;
     }
+    irq_restore(flags);
 }

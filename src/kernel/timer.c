@@ -65,3 +65,16 @@ void timer_interrupt_reset(void)
     unsigned int freq = read_cntfrq();
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 10));
 }
+
+unsigned long irq_save(void)
+{
+    unsigned long flags;
+    asm volatile("mrs %0, daif" : "=r"(flags));
+    asm volatile("msr daifset, #2");
+    return flags;
+}
+
+void irq_restore(unsigned long flags)
+{
+    asm volatile("msr daif, %0" : : "r"(flags));
+}
