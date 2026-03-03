@@ -4,152 +4,198 @@
 #include "timer.h"
 #include "../lib/stdio.h"
 
-static struct task* tasks[MAX_TASKS];
-static int num_tasks;
-static int current_task;
+static struct task* current_task_ptr = NULL;
+static struct task* ready_queue_head = NULL;
+static struct task* ready_queue_tail = NULL;
+static struct task* sleep_queue_head = NULL;
 
-// wrapper that kills the task when its entry function returns
+static struct task* idle_task_ptr = NULL;
+static struct task* task_to_free = NULL;
+static int next_task_id = 0;
+
+static void enqueue_ready(struct task* t)
+{
+    t->next = NULL;
+    if (!ready_queue_head)
+    {
+        ready_queue_head = t;
+        ready_queue_tail = t;
+    }
+    else
+    {
+        ready_queue_tail->next = t;
+        ready_queue_tail = t;
+    }
+}
+
+static struct task* dequeue_ready(void)
+{
+    if (!ready_queue_head)
+        return NULL;
+    struct task* t = ready_queue_head;
+    ready_queue_head = ready_queue_head->next;
+    if (!ready_queue_head)
+        ready_queue_tail = NULL;
+    t->next = NULL;
+    return t;
+}
+
+static void insert_sleep(struct task* t)
+{
+    // sorted by wake_time (earliest wake time at the head)
+    if (!sleep_queue_head || t->wake_time < sleep_queue_head->wake_time)
+    {
+        t->next = sleep_queue_head;
+        sleep_queue_head = t;
+        return;
+    }
+    struct task* curr = sleep_queue_head;
+    while (curr->next && curr->next->wake_time <= t->wake_time)
+    {
+        curr = curr->next;
+    }
+    t->next = curr->next;
+    curr->next = t;
+}
+
 static void task_wrapper(void (*entry)(void))
 {
-    // we arrived here via switch_context from an IRQ handler,
-    // so IRQs are still masked. re-enable them.
     enable_interrupts();
-
     entry();
 
-    // task returned, mark it dead
-    tasks[current_task]->state = TASK_DEAD;
-    printf("SCHED: Task %d exited.\n", (int)tasks[current_task]->id);
-
-    // yield to next task, never returns
+    disable_interrupts();
+    current_task_ptr->state = TASK_DEAD;
+    printf("SCHED: Task %d exited.\n", (int)current_task_ptr->id);
     schedule();
 
-    // should never reach here
+    while (1)
+        asm volatile("wfe");
+}
+
+static void idle_task_entry(void)
+{
     while (1)
         asm volatile("wfe");
 }
 
 void sched_init(void)
 {
-    // task 0 is the current (main) kernel thread
     struct task* main_task = (struct task*)kmalloc(sizeof(struct task));
     main_task->state = TASK_RUNNING;
-    main_task->id = 0;
-    main_task->stack = 0; // uses the boot stack
+    main_task->id = next_task_id++;
+    main_task->stack = 0;
+    main_task->next = 0;
 
-    tasks[0] = main_task;
-    num_tasks = 1;
-    current_task = 0;
+    current_task_ptr = main_task;
 
-    printf("SCHED: Initialized.\n");
+    idle_task_ptr = (struct task*)kmalloc(sizeof(struct task));
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
+    unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
+
+    idle_task_ptr->state = TASK_READY;
+    idle_task_ptr->id = 999;
+    idle_task_ptr->stack = stack;
+    idle_task_ptr->context.sp = sp;
+    idle_task_ptr->context.lr = (unsigned long)task_wrapper;
+    idle_task_ptr->context.x19 = (unsigned long)idle_task_entry;
+
+    printf("SCHED: Initialized with O(1) Queues.\n");
 }
 
 void sched_create_task(void (*entry)(void))
 {
-    if (num_tasks >= MAX_TASKS)
-    {
-        printf("SCHED: Max tasks reached.\n");
-        return;
-    }
-
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
-    // allocate stack directly from PMM (full page, page-aligned)
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
-
-    // stack grows downward, start at the top, 16-byte aligned
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
     t->state = TASK_READY;
-    t->id = num_tasks;
+    t->id = next_task_id++;
     t->stack = stack;
-
-    // set up context so switch_context lands in task_wrapper
     t->context.sp = sp;
     t->context.lr = (unsigned long)task_wrapper;
-    t->context.x19 = (unsigned long)entry; // first arg to task_wrapper
-    t->context.fp = 0;
+    t->context.x19 = (unsigned long)entry;
 
-    // zero remaining callee-saved regs
-    t->context.x20 = 0;
-    t->context.x21 = 0;
-    t->context.x22 = 0;
-    t->context.x23 = 0;
-    t->context.x24 = 0;
-    t->context.x25 = 0;
-    t->context.x26 = 0;
-    t->context.x27 = 0;
-    t->context.x28 = 0;
-
-    tasks[num_tasks] = t;
-    num_tasks++;
+    unsigned long flags = irq_save();
+    enqueue_ready(t);
+    irq_restore(flags);
 
     printf("SCHED: Created task %d.\n", (int)t->id);
 }
 
 void sched_sleep_ms(unsigned long ms)
 {
-    if (current_task == 0)
+    if (!current_task_ptr || current_task_ptr == idle_task_ptr)
         return;
+
     unsigned long flags = irq_save();
-    tasks[current_task]->state = TASK_BLOCKED;
-    tasks[current_task]->wake_time = get_system_time() + ms;
+    current_task_ptr->state = TASK_BLOCKED;
+    current_task_ptr->wake_time = get_system_time() + ms;
+    insert_sleep(current_task_ptr);
     irq_restore(flags);
+
     schedule();
 }
 
 void schedule(void)
 {
+    unsigned long flags = irq_save();
     unsigned long now = get_system_time();
-    for (int i = 0; i < num_tasks; i++)
+
+    // free dead task from prev. context swithc
+    if (task_to_free)
     {
-        if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_time <= now)
-            tasks[i]->state = TASK_READY;
+        if (task_to_free->stack)
+            pmm_free_page(task_to_free->stack);
+        kfree(task_to_free);
+        task_to_free = NULL;
     }
 
-    for (int i = num_tasks - 1; i >= 0; i--)
+    // wake up sleeping tasks
+    while (sleep_queue_head && sleep_queue_head->wake_time <= now)
     {
-        if (tasks[i]->state == TASK_DEAD && i != current_task)
+        struct task* w = sleep_queue_head;
+        sleep_queue_head = w->next;
+        w->state = TASK_READY;
+        enqueue_ready(w);
+    }
+
+    struct task* prev = current_task_ptr;
+
+    // handle currently running tasks
+    if (prev->state == TASK_RUNNING)
+    {
+        if (prev == idle_task_ptr)
         {
-            if (tasks[i]->stack)
-                pmm_free_page(tasks[i]->stack);
-            kfree(tasks[i]);
-
-            // compact the array
-            for (int j = i; j < num_tasks - 1; j++)
-                tasks[j] = tasks[j + 1];
-            tasks[num_tasks - 1] = 0;
-            num_tasks--;
-
-            if (current_task > i)
-                current_task--;
+            prev->state = TASK_READY;
+        }
+        else
+        {
+            prev->state = TASK_READY;
+            enqueue_ready(prev);
         }
     }
-
-    if (num_tasks <= 1)
-        return;
-
-    int prev = current_task;
-    int next = current_task;
-
-    // round-robin: find the next ready/running task
-    for (int i = 1; i <= num_tasks; i++)
+    else if (prev->state == TASK_DEAD)
     {
-        int idx = (current_task + i) % num_tasks;
-        if (tasks[idx]->state == TASK_READY || tasks[idx]->state == TASK_RUNNING)
-        {
-            next = idx;
-            break;
-        }
+        // cannot free stack while executing
+        task_to_free = prev;
     }
 
-    if (next == prev)
-        return;
+    // get the next task
+    struct task* next = dequeue_ready();
 
-    // update states
-    if (tasks[prev]->state == TASK_RUNNING)
-        tasks[prev]->state = TASK_READY;
-    tasks[next]->state = TASK_RUNNING;
-    current_task = next;
+    // fallback to the idle task if nothing else is ready to run
+    if (!next)
+    {
+        next = idle_task_ptr;
+    }
 
-    switch_context(&tasks[prev]->context, &tasks[next]->context);
+    next->state = TASK_RUNNING;
+    current_task_ptr = next;
+
+    if (prev != next)
+    {
+        switch_context(&prev->context, &next->context);
+    }
+
+    irq_restore(flags);
 }

@@ -37,6 +37,8 @@ struct task
     unsigned long wake_time;
     unsigned long id;
     unsigned char* stack;
+
+    struct task* next;
 };
 
 void sched_init(void);

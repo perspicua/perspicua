@@ -27,7 +27,7 @@ char* strncpy(char* dest, const char* src, size_t count)
 }
 
 char* strcat(char* dest, const char* src)
-{   
+{
     char* start = dest;
     for (; *dest != '\0'; dest++)
         ;
@@ -76,12 +76,12 @@ char* strchr(const char* str, int c)
     for (; *str != '\0'; str++)
         if (*str == (char)c)
             return (char*)str;
-    return '\0';
+    return NULL;
 }
 
 char* strrchr(const char* str, int c)
 {
-    char* last = '\0';
+    char* last = NULL;
     for (; *str != '\0'; str++)
         if (*str == (char)c)
             last = (char*)str;
@@ -122,21 +122,40 @@ int memcmp(const void* ptr1, const void* ptr2, size_t num)
 
 void* memset(void* dest, int val, size_t num)
 {
-    char* src = (char*)dest;
-    while (num--)
+    uint64_t* d64 = (uint64_t*)dest;
+
+    uint64_t v8 = (unsigned char)val;
+    uint64_t v64 = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24) | (v8 << 32) | (v8 << 40) | (v8 << 48) | (v8 << 56);
+
+    while (num >= 8)
     {
-        *src++ = (char)val;
+        *d64++ = v64;
+        num -= 8;
     }
+
+    char* d8 = (char*)d64;
+    while (num--)
+        *d8++ = (char)val;
+
     return dest;
 }
 
 void* memcpy(void* dest, const void* src, size_t count)
 {
-    char* destination = (char*)dest;
-    while (count--)
+    uint64_t* d64 = (uint64_t*)dest;
+    const uint64_t* s64 = (const uint64_t*)src;
+
+    while (count >= 8)
     {
-        *destination++ = *(char*)src++;
+        *d64++ = *s64++;
+        count -= 8;
     }
+
+    char* d8 = (char*)d64;
+    const char* s8 = (const char*)s64;
+    while (count--)
+        *d8++ = *s8++;
+
     return dest;
 }
 

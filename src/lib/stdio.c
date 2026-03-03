@@ -114,28 +114,30 @@ void printf(const char* fmt, ...)
                 break;
             }
             case 'l':
-            { 
+            {
                 p++;
-                switch(*p){
-                    case 'd':
-                    {
-                        long i = va_arg(args, long);
-                        print_number(i, 10);
-                        break;
-                    }
-                    case 'u':
-                    {
-                        unsigned long i = va_arg(args, unsigned long);
-                        print_unsigned_long(i, 10);
-                        break;
-                    }
-                    case 'x':
-                    {
-                        unsigned long i = va_arg(args, unsigned long);
-                        print_unsigned_long(i, 16);
-                        break;
-                    }
+                switch (*p)
+                {
+                case 'd':
+                {
+                    long i = va_arg(args, long);
+                    print_number(i, 10);
+                    break;
                 }
+                case 'u':
+                {
+                    unsigned long i = va_arg(args, unsigned long);
+                    print_unsigned_long(i, 10);
+                    break;
+                }
+                case 'x':
+                {
+                    unsigned long i = va_arg(args, unsigned long);
+                    print_unsigned_long(i, 16);
+                    break;
+                }
+                }
+                break;
             }
             case '%':
             {

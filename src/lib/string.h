@@ -23,4 +23,3 @@ void* memcpy(void* dest, const void* src, size_t count);
 void* memmove(void* dest, const void* src, size_t count);
 
 #endif // _STRING_H_
-
