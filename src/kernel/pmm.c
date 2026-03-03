@@ -118,10 +118,12 @@ void* pmm_alloc_pages(unsigned long count)
 
 void pmm_free_pages(void* ptr, unsigned long count)
 {
+    unsigned long flags = irq_save();
     for (unsigned long i = 0; i < count; i++)
     {
         pmm_free_page((void*)((unsigned long)ptr + i * PAGE_SIZE));
     }
+    irq_restore(flags);
 }
 
 void pmm_free_page(void* ptr)
