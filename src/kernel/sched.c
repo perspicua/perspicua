@@ -13,7 +13,7 @@ static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
 static struct task* ready_queue_head = 0;
 static struct task* ready_queue_tail = 0;
 static struct task* sleep_queue_head = 0;
-static struct task* task_to_free = 0;
+static struct task* task_to_free[4] = {0, 0, 0, 0};
 static int next_task_id = 0;
 
 static spinlock_t sched_lock = SPINLOCK_INIT;
@@ -181,12 +181,12 @@ void schedule(void)
     unsigned long flags = spin_lock_irqsave(&sched_lock); // LOCK THE QUEUE!
     unsigned long now = get_system_time();
 
-    if (task_to_free)
+    if (task_to_free[core_id])
     {
-        if (task_to_free->stack)
-            pmm_free_page(task_to_free->stack);
-        kfree(task_to_free);
-        task_to_free = 0;
+        if (task_to_free[core_id]->stack)
+            pmm_free_page(task_to_free[core_id]->stack);
+        kfree(task_to_free[core_id]);
+        task_to_free[core_id] = 0;
     }
 
     while (sleep_queue_head && sleep_queue_head->wake_time <= now)
@@ -209,7 +209,7 @@ void schedule(void)
     }
     else if (prev->state == TASK_DEAD)
     {
-        task_to_free = prev;
+        task_to_free[core_id] = prev;
     }
 
     struct task* next = dequeue_ready();
