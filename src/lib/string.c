@@ -1,8 +1,9 @@
 #include "string.h"
+#include "types.h"
 
-unsigned int strlen(const char* str)
+size_t strlen(const char* str)
 {
-    unsigned int size = 0;
+    size_t size = 0;
     for (; *str != '\0'; str++, size++)
         ;
     return size;
@@ -15,9 +16,9 @@ char* strcpy(char* dest, const char* src)
     return dest;
 }
 
-char* strncpy(char* dest, const char* src, unsigned int count)
+char* strncpy(char* dest, const char* src, size_t count)
 {
-    unsigned int len = 0;
+    size_t len = 0;
     for (; len < count && (*dest = *src) != '\0'; dest++, src++, len++)
         ;
     return dest;
@@ -34,9 +35,9 @@ char* strcat(char* dest, const char* src)
     return dest;
 }
 
-char* strncat(char* dest, const char* src, unsigned int count)
+char* strncat(char* dest, const char* src, size_t count)
 {
-    unsigned int len = 0;
+    size_t len = 0;
     for (; *dest != '\0'; dest++)
         ;
     for (; len < count && (*dest = *src) != '\0'; dest++, src++, len++)
@@ -54,9 +55,12 @@ int strcmp(const char* lhs, const char* rhs)
     return *lhs - *rhs;
 }
 
-int strncmp(const char* lhs, const char* rhs, unsigned int count)
+int strncmp(const char* lhs, const char* rhs, size_t count)
 {
-    unsigned int len = 0;
+    if (count == 0)
+        return 0;
+
+    size_t len = 0;
     for (; len < count - 1 && *lhs == *rhs; lhs++, rhs++, len++)
         if (*lhs == '\0')
             return 0;
@@ -82,14 +86,14 @@ char* strrchr(const char* str, int c)
 
 char* strstr(const char* haystack, const char* needle)
 {
-    unsigned int needle_len = strlen(needle);
+    size_t needle_len = strlen(needle);
     if (needle_len == 0)
         return (char*)haystack;
     for (; *haystack != '\0'; haystack++)
     {
         if (*haystack == *needle)
         {
-            unsigned int i;
+            size_t i;
             for (i = 1; i < needle_len; i++)
             {
                 if (haystack[i] != needle[i])
@@ -102,17 +106,17 @@ char* strstr(const char* haystack, const char* needle)
     return 0;
 }
 
-int memcmp(const void* ptr1, const void* ptr2, unsigned int num)
+int memcmp(const void* ptr1, const void* ptr2, size_t num)
 {
     const unsigned char* p1 = (const unsigned char*)ptr1;
     const unsigned char* p2 = (const unsigned char*)ptr2;
-    for (unsigned int i = 0; i < num; i++, p1++, p2++)
+    for (size_t i = 0; i < num; i++, p1++, p2++)
         if (*p1 != *p2)
             return *p1 - *p2;
     return 0;
 }
 
-void* memset(void* dest, int val, unsigned int num)
+void* memset(void* dest, int val, size_t num)
 {
     char* src = (char*)dest;
     while (num--)
@@ -122,7 +126,7 @@ void* memset(void* dest, int val, unsigned int num)
     return dest;
 }
 
-void* memcpy(void* dest, const void* src, unsigned int count)
+void* memcpy(void* dest, const void* src, size_t count)
 {
     char* destination = (char*)dest;
     while (count--)
@@ -132,7 +136,7 @@ void* memcpy(void* dest, const void* src, unsigned int count)
     return dest;
 }
 
-void* memmove(void* dest, const void* src, unsigned int count)
+void* memmove(void* dest, const void* src, size_t count)
 {
     char* destination = (char*)dest;
     char* source = (char*)src;
