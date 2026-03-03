@@ -26,6 +26,7 @@ enum task_state
 {
     TASK_RUNNING,
     TASK_READY,
+    TASK_BLOCKED,
     TASK_DEAD
 };
 
@@ -33,12 +34,14 @@ struct task
 {
     struct cpu_context context;
     enum task_state state;
+    unsigned long wake_time;
     unsigned long id;
     unsigned char* stack;
 };
 
 void sched_init(void);
 void sched_create_task(void (*entry)(void));
+void sched_sleep_ms(unsigned long ms);
 void schedule(void);
 
 // defined in switch.S

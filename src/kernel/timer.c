@@ -56,14 +56,14 @@ void timer_interrupt_init(void)
     unsigned int freq = read_cntfrq();
 
     // tick 10 times per second for scheduling
-    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 10));
+    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 }
 
 void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();
-    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 10));
+    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
 }
 
 unsigned long irq_save(void)

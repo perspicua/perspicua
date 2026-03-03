@@ -86,8 +86,47 @@ void sched_create_task(void (*entry)(void))
     printf("SCHED: Created task %d.\n", (int)t->id);
 }
 
+void sched_sleep_ms(unsigned long ms)
+{
+    if (current_task == 0)
+        return;
+    unsigned long flags = irq_save();
+    tasks[current_task]->state = TASK_BLOCKED;
+    tasks[current_task]->wake_time = get_system_time() + ms;
+    irq_restore(flags);
+    schedule();
+}
+
 void schedule(void)
 {
+    unsigned long now = get_system_time();
+    for (int i = 0; i <= num_tasks; i++)
+    {
+        if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_time >= now)
+            tasks[i]->state = TASK_READY;
+    
+    }
+
+    for (int i = num_tasks - 1; i >= 0; i--)
+    {
+        if (tasks[i]->state == TASK_DEAD && i != current_task)
+        {
+            if (tasks[i]->stack)
+                pmm_free_page(tasks[i]->stack);
+            kfree(tasks[i]);
+
+            // compact the array
+            for (int j = i; j < num_tasks - 1; j++)
+                tasks[j] = tasks[j + 1];
+            tasks[num_tasks - 1] = 0;
+            num_tasks--;
+
+            if (current_task > i)
+                current_task--;
+        }
+    }
+
+    
     if (num_tasks <= 1)
         return;
 

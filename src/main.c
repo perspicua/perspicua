@@ -16,6 +16,7 @@ void task_a(void)
         void* a = kmalloc(1024 * 1024);
         kfree(a);
         printf("%x alloc'd\n", a);
+        sched_sleep_ms(50);
     }
 }
 
@@ -24,6 +25,8 @@ void task_b(void)
     for (int i = 0; i < 5; i++)
     {
         printf("[Task B] count = %d\n", i);
+
+        sched_sleep_ms(50);
     }
 }
 
