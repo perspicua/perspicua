@@ -11,7 +11,7 @@ struct block_header
     unsigned long size;        // usable size (excluding header)
     struct block_header* next; // next block in free list (only valid when free)
     unsigned char free;        // 1 = free, 0 = allocated
-};
+} __attribute__((aligned(16)));
 
 #define HEADER_SIZE sizeof(struct block_header)
 #define ALIGN(x) (((x) + 15) & ~15UL) // 16-byte alignment
