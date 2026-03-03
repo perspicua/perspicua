@@ -20,6 +20,7 @@ void spin_lock(spinlock_t* lock)
 void spin_unlock(spinlock_t* lock)
 {
     asm volatile("   stlr    %w0, [%1]\n" // store-release (0 -> unlocked)
+                 "   sev\n"               // wake up threads waiting in wfe
                  :
                  : "r"(0), "r"(&lock->locked)
                  : "memory");
