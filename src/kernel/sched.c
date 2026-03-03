@@ -5,11 +5,10 @@
 #include "lock.h"
 #include "../lib/stdio.h"
 
-// per-core task tracking (4 cores on pi 4)
 static struct task* current_task_ptr[4] = {0, 0, 0, 0};
 static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
 
-// shared queues protected by a spinlock!
+// shared queues protected by a spinlock
 static struct task* ready_queue_head = 0;
 static struct task* ready_queue_tail = 0;
 static struct task* sleep_queue_head = 0;
@@ -130,7 +129,7 @@ void sched_secondary_init(void)
     current_task_ptr[core_id]->state = TASK_RUNNING;
 
     enable_interrupts();
-    schedule(); // dive into the queue!
+    schedule();
     while (1)
         asm volatile("wfe"); // fallback
 }
@@ -184,7 +183,7 @@ void schedule(void)
     if (task_to_free[core_id])
     {
         if (task_to_free[core_id]->stack)
-            pmm_free_page(task_to_free[core_id]->stack);
+            pmm_free_pages(task_to_free[core_id]->stack, 2);
         kfree(task_to_free[core_id]);
         task_to_free[core_id] = 0;
     }
