@@ -45,6 +45,7 @@ void sched_init(void);
 void sched_create_task(void (*entry)(void));
 void sched_sleep_ms(unsigned long ms);
 void schedule(void);
+void sched_secondary_init(void);
 
 // defined in switch.S
 extern void switch_context(struct cpu_context* prev, struct cpu_context* next);

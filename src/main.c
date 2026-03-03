@@ -6,66 +6,129 @@
 #include "kernel/heap.h"
 #include "kernel/sched.h"
 #include "kernel/timer.h"
+#include "kernel/lock.h"
 
 #include "lib/stdio.h"
 #include "lib/string.h"
 
-void task_cpu_hog(void)
+#define KERNEL_VMA 0xFFFFFF8000000000ULL
+#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
+#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
+
+extern void _entry(void);
+
+static spinlock_t console_lock = SPINLOCK_INIT;
+
+static inline unsigned long get_core_id(void)
 {
-    printf("[HOG] Starting heavy calculation...\n");
-    volatile unsigned long counter = 0;
-    while (counter < 500000000)
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    return core_id & 3;
+}
+
+void smp_init(void)
+{
+    printf("\nSMP: Waking up secondary cores...\n");
+
+    unsigned long entry_phys = V2P((unsigned long)_entry);
+
+    volatile unsigned long* spin_cpu1 = (unsigned long*)P2V(0xE0);
+    volatile unsigned long* spin_cpu2 = (unsigned long*)P2V(0xE8);
+    volatile unsigned long* spin_cpu3 = (unsigned long*)P2V(0xF0);
+
+    *spin_cpu1 = entry_phys;
+    *spin_cpu2 = entry_phys;
+    *spin_cpu3 = entry_phys;
+
+    // wake up parked cores
+    asm volatile("sev");
+}
+
+void secondary_main(void)
+{
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    unsigned long flags = spin_lock_irqsave(&console_lock);
+    printf("SMP: Core %lu is awake, MMU enabled!\n", core_id);
+    spin_unlock_irqrestore(&console_lock, flags);
+
+    gic_secondary_init();
+    timer_interrupt_init();
+
+    sched_secondary_init();
+}
+
+static volatile int shared_counter = 0;
+static spinlock_t counter_lock = SPINLOCK_INIT;
+
+void task_counter_increment(void)
+{
+    unsigned long core = get_core_id();
+
+    for (int i = 0; i < 1000000; i++)
     {
-        counter++;
+        unsigned long flags = spin_lock_irqsave(&counter_lock);
+
+        shared_counter++;
+
+        spin_unlock_irqrestore(&counter_lock, flags);
     }
-    printf("[HOG] Finished!\n");
+
+    unsigned long flags = spin_lock_irqsave(&console_lock);
+    printf("[TEST 1] Core %lu finished counting! Current total: %d\n", core, shared_counter);
+    spin_unlock_irqrestore(&console_lock, flags);
 }
 
-void task_ticker(void)
+void run_spinlock_test(void)
 {
-    for (int i = 0; i < 5; i++)
+    unsigned long flags = spin_lock_irqsave(&console_lock);
+    printf("\n--- Starting Spinlock Stress Test ---\n");
+    spin_unlock_irqrestore(&console_lock, flags);
+    shared_counter = 0;
+
+    // Spawn 4 tasks. If the scheduler is fair, one should land on each core.
+    sched_create_task(task_counter_increment);
+    sched_create_task(task_counter_increment);
+    sched_create_task(task_counter_increment);
+    sched_create_task(task_counter_increment);
+    // final task should print 4000000
+}
+
+void task_heavy_cpu(void)
+{
+    unsigned long core = get_core_id();
+    int iteration = 0;
+
+    while (1)
     {
-        printf("[TICKER] Tick %d! The hog hasn't frozen the system.\n", i);
-        sched_sleep_ms(100);
+        volatile int dummy = 0;
+        for (int i = 0; i < 50000000; i++)
+        {
+            dummy += i;
+        }
+
+        unsigned long flags = spin_lock_irqsave(&console_lock);
+        printf("[TEST 2] Core %lu is still crunching numbers... (Iteration %d)\n", core, iteration++);
+        spin_unlock_irqrestore(&console_lock, flags);
     }
 }
-void task_sleep_short(void)
-{
-    sched_sleep_ms(100);
-    printf("[SLEEP] Task Short woke up! (Expected 1st)\n");
-}
 
-void task_sleep_long(void)
+void run_cpu_load_test(void)
 {
-    sched_sleep_ms(500);
-    printf("[SLEEP] Task Long woke up! (Expected 3rd)\n");
-}
-
-void task_sleep_med(void)
-{
-    sched_sleep_ms(300);
-    printf("[SLEEP] Task Medium woke up! (Expected 2nd)\n");
-}
-void task_short_lived(void)
-{
-    sched_sleep_ms(50);
-}
-
-void spawn_storm(void)
-{
-    printf("[STORM] Spawning 30 short-lived tasks...\n");
-    for (int i = 0; i < 30; i++)
+    printf("\n--- Starting Heavy CPU Load Test ---\n");
+    for (int i = 0; i < 8; i++)
     {
-        sched_create_task(task_short_lived);
+        // constant context switch
+        sched_create_task(task_heavy_cpu);
     }
-    printf("[STORM] All 30 tasks created successfully!\n");
 }
 int main()
 {
     uart_init();
     printf("Hello from the Higher Half! main() is at: 0x%lx\n", (unsigned long)main);
     uart_enable_interrupts();
-    printf("\nBoot complete.\n");
 
     pmm_init();
     mmu_init();
@@ -74,15 +137,11 @@ int main()
     timer_interrupt_init();
     sched_init();
 
-    sched_create_task(task_sleep_long);
-    sched_create_task(task_sleep_short);
-    sched_create_task(task_sleep_med);
+    smp_init();
+    printf("Boot complete\n");
 
-    sched_create_task(task_cpu_hog);
-    sched_create_task(task_ticker);
-
-    sched_create_task(spawn_storm);
-
+    // run_spinlock_test();
+    run_cpu_load_test();
     enable_interrupts();
 
     while (1)

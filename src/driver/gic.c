@@ -13,3 +13,10 @@ void gic_init(void)
     GICC_CTLR = 1;
     GICC_PMR = 0xFF;
 }
+
+void gic_secondary_init(void)
+{
+    GICC_CTLR = 1;
+    GICC_PMR = 0xFF;
+    GICD_ISENABLERn(TIMER_IRQ / 32) = (1 << (TIMER_IRQ % 32));
+}
