@@ -6,46 +6,53 @@
 #include "kernel/heap.h"
 #include "kernel/sched.h"
 #include "kernel/timer.h"
+#include "kernel/lock.h"
 
 #include "lib/stdio.h"
 #include "lib/string.h"
 
-void task_cpu_hog(void)
+#define KERNEL_VMA 0xFFFFFF8000000000ULL
+#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
+#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
+
+extern void _entry(void);
+
+static spinlock_t console_lock = SPINLOCK_INIT;
+
+void smp_init(void)
 {
-    printf("[HOG] Starting heavy calculation...\n");
-    volatile unsigned long counter = 0;
-    while (counter < 500000000)
-    {
-        counter++;
-    }
-    printf("[HOG] Finished!\n");
+    printf("\nSMP: Waking up secondary cores...\n");
+
+    unsigned long entry_phys = V2P((unsigned long)_entry);
+
+    volatile unsigned long* spin_cpu1 = (unsigned long*)P2V(0xE0);
+    volatile unsigned long* spin_cpu2 = (unsigned long*)P2V(0xE8);
+    volatile unsigned long* spin_cpu3 = (unsigned long*)P2V(0xF0);
+
+    *spin_cpu1 = entry_phys;
+    *spin_cpu2 = entry_phys;
+    *spin_cpu3 = entry_phys;
+
+    // wake up parked cores
+    asm volatile("sev");
 }
 
-void task_ticker(void)
+void secondary_main(void)
 {
-    for (int i = 0; i < 5; i++)
-    {
-        printf("[TICKER] Tick %d! The hog hasn't frozen the system.\n", i);
-        sched_sleep_ms(100);
-    }
-}
-void task_sleep_short(void)
-{
-    sched_sleep_ms(100);
-    printf("[SLEEP] Task Short woke up! (Expected 1st)\n");
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    unsigned long flags = spin_lock_irqsave(&console_lock);
+    printf("SMP: Core %lu is awake, MMU enabled!\n", core_id);
+    spin_unlock_irqrestore(&console_lock, flags);
+
+    gic_secondary_init();
+    timer_interrupt_init();
+
+    sched_secondary_init();
 }
 
-void task_sleep_long(void)
-{
-    sched_sleep_ms(500);
-    printf("[SLEEP] Task Long woke up! (Expected 3rd)\n");
-}
-
-void task_sleep_med(void)
-{
-    sched_sleep_ms(300);
-    printf("[SLEEP] Task Medium woke up! (Expected 2nd)\n");
-}
 void task_short_lived(void)
 {
     sched_sleep_ms(50);
@@ -60,12 +67,12 @@ void spawn_storm(void)
     }
     printf("[STORM] All 30 tasks created successfully!\n");
 }
+
 int main()
 {
     uart_init();
     printf("Hello from the Higher Half! main() is at: 0x%lx\n", (unsigned long)main);
     uart_enable_interrupts();
-    printf("\nBoot complete.\n");
 
     pmm_init();
     mmu_init();
@@ -74,15 +81,10 @@ int main()
     timer_interrupt_init();
     sched_init();
 
-    sched_create_task(task_sleep_long);
-    sched_create_task(task_sleep_short);
-    sched_create_task(task_sleep_med);
-
-    sched_create_task(task_cpu_hog);
-    sched_create_task(task_ticker);
+    smp_init();
+    printf("Boot complete\n");
 
     sched_create_task(spawn_storm);
-
     enable_interrupts();
 
     while (1)

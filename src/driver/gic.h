@@ -18,5 +18,5 @@
 #define UART_IRQ 153
 
 void gic_init(void);
-
+void gic_secondary_init(void);
 #endif // _GIC_H_

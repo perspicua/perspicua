@@ -31,13 +31,20 @@ el1_entry:
     msr cpacr_el1, x0
     isb
 
-    // build temporary boot page tables
+    // are we Core 0 or a Secondary Core?
+    mrs x0, mpidr_el1
+    and x0, x0, #3
+    cmp x0, #0
+    b.ne enable_mmu // cores 1, 2, 3 skip page table creation
+
+build_page_tables:
+    // core 0 only: build temp. boot page table
     adrp x0, boot_pgd   // pc-relative load gets the physical address
     adrp x1, boot_pmd
 
     // pgd[0] maps 0 to 1gb
     orr x2, x1, #3      // pte_valid | pte_table
-    str x2, [x0]
+    str x2, [x0]        
 
     // pgd[3] maps 3gb to 4gb (peripherals like uart and gpio)
     adrp x7, boot_pmd_periph
@@ -58,7 +65,6 @@ map_ram_loop:
     b.ne map_ram_loop
 
     // populate pmd_periph to map 0xc0000000 to 0xffffffff
-    // this allows uart_init() to access 0xfe201000 successfully
     mov x2, #0xC0000000 // address start (3gb)
     mov x3, #512
     mov x4, x7
@@ -70,7 +76,7 @@ map_periph_loop:
     subs x3, x3, #1
     b.ne map_periph_loop
 
-    // enable mmu
+enable_mmu:
     ldr x0, =0xFF
     msr mair_el1, x0
     
@@ -80,7 +86,7 @@ map_periph_loop:
     
     adrp x0, boot_pgd
     msr ttbr0_el1, x0
-    msr ttbr1_el1, x0   // both lower and higher half point to our boot table
+    msr ttbr1_el1, x0   
     isb
 
     mrs x0, sctlr_el1
@@ -90,25 +96,40 @@ map_periph_loop:
     msr sctlr_el1, x0
     isb
 
-    // jump to the higher half
+setup_stack:
     ldr x0, =vector_table
     msr vbar_el1, x0
 
     ldr x1, =_stack_top
-    mov sp, x1          // sp is now 0xffffff800008xxxx
+    mrs x2, mpidr_el1
+    and x2, x2, #3      // x2 = core id (0, 1, 2, or 3)
+    
+    mov x3, #0x10000    // x3 = 64KB
+    mul x2, x2, x3      // core_offset = core_id * 64KB
+    sub sp, x1, x2      // sp = _stack_top - core_offset
 
-    ldr x0, =__bss_start
-    ldr x1, =__bss_end
+route_core:
+    mrs x0, mpidr_el1
+    and x0, x0, #3
+    cmp x0, #0
+    b.ne jump_secondary_main
 
 clear_bss_loop:
-    cmp x0, x1
+    // core 0 only: clear bss
+    ldr x0, =__bss_start
+    ldr x1, =__bss_end
+1:  cmp x0, x1
     b.hs jump_main
     str xzr, [x0], #8
-    b clear_bss_loop
+    b 1b
 
 jump_main:
     ldr x0, =main
-    br x0               // absolute branch to 0xffffff800008xxxx
+    br x0               // Core 0 goes to main()
+
+jump_secondary_main:
+    ldr x0, =secondary_main
+    br x0               // Cores 1, 2, 3 go to secondary_main()
 
 _entry_loop:
     wfe

@@ -2,20 +2,26 @@
 #include "heap.h"
 #include "pmm.h"
 #include "timer.h"
+#include "lock.h"
 #include "../lib/stdio.h"
 
-static struct task* current_task_ptr = NULL;
-static struct task* ready_queue_head = NULL;
-static struct task* ready_queue_tail = NULL;
-static struct task* sleep_queue_head = NULL;
+// per-core task tracking (4 cores on pi 4)
+static struct task* current_task_ptr[4] = {0, 0, 0, 0};
+static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
 
-static struct task* idle_task_ptr = NULL;
-static struct task* task_to_free = NULL;
+// shared queues protected by a spinlock!
+static struct task* ready_queue_head = 0;
+static struct task* ready_queue_tail = 0;
+static struct task* sleep_queue_head = 0;
+static struct task* task_to_free = 0;
 static int next_task_id = 0;
 
+static spinlock_t sched_lock = SPINLOCK_INIT;
+
+// --- queue helpers (must be called while holding sched_lock) ---
 static void enqueue_ready(struct task* t)
 {
-    t->next = NULL;
+    t->next = 0;
     if (!ready_queue_head)
     {
         ready_queue_head = t;
@@ -31,18 +37,17 @@ static void enqueue_ready(struct task* t)
 static struct task* dequeue_ready(void)
 {
     if (!ready_queue_head)
-        return NULL;
+        return 0;
     struct task* t = ready_queue_head;
     ready_queue_head = ready_queue_head->next;
     if (!ready_queue_head)
-        ready_queue_tail = NULL;
-    t->next = NULL;
+        ready_queue_tail = 0;
+    t->next = 0;
     return t;
 }
 
 static void insert_sleep(struct task* t)
 {
-    // sorted by wake_time (earliest wake time at the head)
     if (!sleep_queue_head || t->wake_time < sleep_queue_head->wake_time)
     {
         t->next = sleep_queue_head;
@@ -58,14 +63,18 @@ static void insert_sleep(struct task* t)
     curr->next = t;
 }
 
+// --- task execution ---
 static void task_wrapper(void (*entry)(void))
 {
     enable_interrupts();
     entry();
 
     disable_interrupts();
-    current_task_ptr->state = TASK_DEAD;
-    printf("SCHED: Task %d exited.\n", (int)current_task_ptr->id);
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    current_task_ptr[core_id]->state = TASK_DEAD;
     schedule();
 
     while (1)
@@ -78,28 +87,52 @@ static void idle_task_entry(void)
         asm volatile("wfe");
 }
 
-void sched_init(void)
+static struct task* create_idle_task(int id)
 {
+    struct task* idle = (struct task*)kmalloc(sizeof(struct task));
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
+    unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
+
+    idle->state = TASK_READY;
+    idle->id = 900 + id; // idle tasks get ids 900, 901, 902, 903
+    idle->stack = stack;
+    idle->context.sp = sp;
+    idle->context.lr = (unsigned long)task_wrapper;
+    idle->context.x19 = (unsigned long)idle_task_entry;
+    return idle;
+}
+
+// --- core scheduler api ---
+void sched_init(void)
+{ // called by core 0
     struct task* main_task = (struct task*)kmalloc(sizeof(struct task));
     main_task->state = TASK_RUNNING;
     main_task->id = next_task_id++;
     main_task->stack = 0;
     main_task->next = 0;
 
-    current_task_ptr = main_task;
+    current_task_ptr[0] = main_task;
+    idle_task_ptr[0] = create_idle_task(0);
 
-    idle_task_ptr = (struct task*)kmalloc(sizeof(struct task));
-    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
-    unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
+    printf("SCHED: SMP O(1) Queues Initialized.\n");
+}
 
-    idle_task_ptr->state = TASK_READY;
-    idle_task_ptr->id = 999;
-    idle_task_ptr->stack = stack;
-    idle_task_ptr->context.sp = sp;
-    idle_task_ptr->context.lr = (unsigned long)task_wrapper;
-    idle_task_ptr->context.x19 = (unsigned long)idle_task_entry;
+void sched_secondary_init(void)
+{ // called by cores 1, 2, 3
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
 
-    printf("SCHED: Initialized with O(1) Queues.\n");
+    idle_task_ptr[core_id] = create_idle_task(core_id);
+
+    // forcefully load the idle task context to start the scheduling loop
+    current_task_ptr[core_id] = idle_task_ptr[core_id];
+    current_task_ptr[core_id]->state = TASK_RUNNING;
+
+    enable_interrupts();
+    schedule(); // dive into the queue!
+    while (1)
+        asm volatile("wfe"); // fallback
 }
 
 void sched_create_task(void (*entry)(void))
@@ -109,48 +142,53 @@ void sched_create_task(void (*entry)(void))
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
     t->state = TASK_READY;
-    t->id = next_task_id++;
-    t->stack = stack;
     t->context.sp = sp;
     t->context.lr = (unsigned long)task_wrapper;
     t->context.x19 = (unsigned long)entry;
 
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&sched_lock);
+    t->id = next_task_id++;
+    t->stack = stack;
     enqueue_ready(t);
-    irq_restore(flags);
-
-    printf("SCHED: Created task %d.\n", (int)t->id);
+    spin_unlock_irqrestore(&sched_lock, flags);
 }
 
 void sched_sleep_ms(unsigned long ms)
 {
-    if (!current_task_ptr || current_task_ptr == idle_task_ptr)
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    struct task* curr = current_task_ptr[core_id];
+    if (!curr || curr == idle_task_ptr[core_id])
         return;
 
-    unsigned long flags = irq_save();
-    current_task_ptr->state = TASK_BLOCKED;
-    current_task_ptr->wake_time = get_system_time() + ms;
-    insert_sleep(current_task_ptr);
-    irq_restore(flags);
+    unsigned long flags = spin_lock_irqsave(&sched_lock);
+    curr->state = TASK_BLOCKED;
+    curr->wake_time = get_system_time() + ms;
+    insert_sleep(curr);
+    spin_unlock_irqrestore(&sched_lock, flags);
 
     schedule();
 }
 
 void schedule(void)
 {
-    unsigned long flags = irq_save();
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    unsigned long flags = spin_lock_irqsave(&sched_lock); // LOCK THE QUEUE!
     unsigned long now = get_system_time();
 
-    // free dead task from prev. context swithc
     if (task_to_free)
     {
         if (task_to_free->stack)
             pmm_free_page(task_to_free->stack);
         kfree(task_to_free);
-        task_to_free = NULL;
+        task_to_free = 0;
     }
 
-    // wake up sleeping tasks
     while (sleep_queue_head && sleep_queue_head->wake_time <= now)
     {
         struct task* w = sleep_queue_head;
@@ -159,16 +197,11 @@ void schedule(void)
         enqueue_ready(w);
     }
 
-    struct task* prev = current_task_ptr;
+    struct task* prev = current_task_ptr[core_id];
 
-    // handle currently running tasks
     if (prev->state == TASK_RUNNING)
     {
-        if (prev == idle_task_ptr)
-        {
-            prev->state = TASK_READY;
-        }
-        else
+        if (prev != idle_task_ptr[core_id])
         {
             prev->state = TASK_READY;
             enqueue_ready(prev);
@@ -176,26 +209,23 @@ void schedule(void)
     }
     else if (prev->state == TASK_DEAD)
     {
-        // cannot free stack while executing
         task_to_free = prev;
     }
 
-    // get the next task
     struct task* next = dequeue_ready();
 
-    // fallback to the idle task if nothing else is ready to run
     if (!next)
     {
-        next = idle_task_ptr;
+        next = idle_task_ptr[core_id];
     }
 
     next->state = TASK_RUNNING;
-    current_task_ptr = next;
+    current_task_ptr[core_id] = next;
+
+    spin_unlock_irqrestore(&sched_lock, flags); // UNLOCK BEFORE SWITCHING!
 
     if (prev != next)
     {
         switch_context(&prev->context, &next->context);
     }
-
-    irq_restore(flags);
 }

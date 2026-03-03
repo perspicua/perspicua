@@ -55,16 +55,20 @@ void disable_interrupts(void)
 
 void timer_interrupt_init(void)
 {
-    volatile unsigned int* core0_timer_irq_ctrl = (unsigned int*)0xFFFFFF80FF800040;
-    *core0_timer_irq_ctrl = (1 << 1);
+    unsigned long core_id;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
+    core_id &= 3;
+
+    unsigned long base_addr = 0xFFFFFF80FF800040 + (core_id * 4);
+
+    volatile unsigned int* core_timer_irq_ctrl = (unsigned int*)base_addr;
+
+    *core_timer_irq_ctrl = (1 << 1);
 
     unsigned int freq = read_cntfrq();
-
-    // tick 100 times per second for scheduling
-    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
-    asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
+    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100)); // 100 ticks per second
+    asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));           // Enable timer
 }
-
 void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();

@@ -13,3 +13,9 @@ void gic_init(void)
     GICC_CTLR = 1;
     GICC_PMR = 0xFF;
 }
+
+void gic_secondary_init(void)
+{
+    GICC_CTLR = 1;
+    GICC_PMR = 0xFF;
+}
