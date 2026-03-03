@@ -11,32 +11,36 @@ size_t strlen(const char* str)
 
 char* strcpy(char* dest, const char* src)
 {
+    char* start = dest;
     for (; (*dest = *src) != '\0'; dest++, src++)
         ;
-    return dest;
+    return start;
 }
 
 char* strncpy(char* dest, const char* src, size_t count)
 {
+    char* start = dest;
     size_t len = 0;
     for (; len < count && (*dest = *src) != '\0'; dest++, src++, len++)
         ;
-    return dest;
+    return start;
 }
 
 char* strcat(char* dest, const char* src)
-{
+{   
+    char* start = dest;
     for (; *dest != '\0'; dest++)
         ;
     for (; (*dest = *src) != '\0'; dest++, src++)
         ;
     *dest = '\0';
 
-    return dest;
+    return start;
 }
 
 char* strncat(char* dest, const char* src, size_t count)
 {
+    char* start = dest;
     size_t len = 0;
     for (; *dest != '\0'; dest++)
         ;
@@ -44,7 +48,7 @@ char* strncat(char* dest, const char* src, size_t count)
         ;
     *dest = '\0';
 
-    return dest;
+    return start;
 }
 
 int strcmp(const char* lhs, const char* rhs)

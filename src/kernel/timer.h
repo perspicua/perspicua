@@ -1,7 +1,7 @@
 #ifndef _TIMER_H_
 #define _TIMER_H_
 
-void sleep_ms(unsigned int ms);
+void sleep_ms(unsigned long ms);
 unsigned long get_system_time(void);
 
 void timer_interrupt_init(void);
