@@ -54,7 +54,7 @@ void sched_create_task(void (*entry)(void))
 
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
     // allocate stack directly from PMM (full page, page-aligned)
-    unsigned char* stack = (unsigned char*)pmm_alloc_page();
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
 
     // stack grows downward, start at the top, 16-byte aligned
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
@@ -100,11 +100,10 @@ void sched_sleep_ms(unsigned long ms)
 void schedule(void)
 {
     unsigned long now = get_system_time();
-    for (int i = 0; i <= num_tasks; i++)
+    for (int i = 0; i < num_tasks; i++)
     {
-        if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_time >= now)
+        if (tasks[i]->state == TASK_BLOCKED && tasks[i]->wake_time <= now)
             tasks[i]->state = TASK_READY;
-    
     }
 
     for (int i = num_tasks - 1; i >= 0; i--)
@@ -126,7 +125,6 @@ void schedule(void)
         }
     }
 
-    
     if (num_tasks <= 1)
         return;
 

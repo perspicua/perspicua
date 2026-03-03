@@ -48,6 +48,11 @@ void enable_interrupts(void)
     asm volatile("msr daifclr, #2");
 }
 
+void disable_interrupts(void)
+{
+    asm volatile("msr daifset, #2");
+}
+
 void timer_interrupt_init(void)
 {
     volatile unsigned int* core0_timer_irq_ctrl = (unsigned int*)0xFF800040;

@@ -1,5 +1,6 @@
 #include "pmm.h"
 #include "timer.h"
+#include "lock.h"
 #include "../lib/stdio.h"
 #include "../lib/panic.h"
 
@@ -14,6 +15,8 @@ static unsigned char* bitmap;
 static unsigned long memory_start;
 static unsigned long reserved_page_count;
 static unsigned long last_alloc_hint;
+
+static spinlock_t pmm_lock = SPINLOCK_INIT;
 
 void pmm_init(void)
 {
@@ -46,7 +49,7 @@ void pmm_init(void)
 
 void* pmm_alloc_page(void)
 {
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
 
     // scan by byte from hint, skip fully-used bytes (0xFF)
     unsigned long start_byte = last_alloc_hint;
@@ -63,13 +66,13 @@ void* pmm_alloc_page(void)
             {
                 bitmap[byte_index] |= (1 << bit);
                 last_alloc_hint = byte_index;
-                irq_restore(flags);
+                spin_unlock_irqrestore(&pmm_lock, flags);
                 return (void*)((byte_index * 8 + bit) * PAGE_SIZE);
             }
         }
     }
 
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
     PANIC("PMM: FATAL ERROR - Out of Memory!\n");
     return 0;
 }
@@ -81,7 +84,7 @@ void* pmm_alloc_pages(unsigned long count)
     if (count == 1)
         return pmm_alloc_page();
 
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
 
     // scan bitmap for 'count' consecutive free pages
     for (unsigned long start = reserved_page_count; start + count <= NUM_PAGES; start++)
@@ -107,23 +110,23 @@ void* pmm_alloc_pages(unsigned long count)
                 unsigned long idx = start + j;
                 bitmap[idx / 8] |= (1 << (idx % 8));
             }
-            irq_restore(flags);
+            spin_unlock_irqrestore(&pmm_lock, flags);
             return (void*)(start * PAGE_SIZE);
         }
     }
 
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
     return 0;
 }
 
 void pmm_free_pages(void* ptr, unsigned long count)
 {
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
     for (unsigned long i = 0; i < count; i++)
     {
         pmm_free_page((void*)((unsigned long)ptr + i * PAGE_SIZE));
     }
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
 }
 
 void pmm_free_page(void* ptr)
@@ -153,19 +156,19 @@ void pmm_free_page(void* ptr)
         return;
     }
 
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&pmm_lock);
 
     unsigned long byte_index = page_index / 8;
     unsigned long bit_index = page_index % 8;
 
     if ((bitmap[byte_index] & (1 << bit_index)) == 0)
     {
-        irq_restore(flags);
+        spin_unlock_irqrestore(&pmm_lock, flags);
         printf("PMM: WARNING - Double free detected at 0x%x\n", addr);
         return;
     }
 
     bitmap[byte_index] &= ~(1 << bit_index);
 
-    irq_restore(flags);
+    spin_unlock_irqrestore(&pmm_lock, flags);
 }

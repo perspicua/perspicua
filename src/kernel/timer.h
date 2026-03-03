@@ -7,6 +7,7 @@ unsigned long get_system_time(void);
 void timer_interrupt_init(void);
 void timer_interrupt_reset(void);
 void enable_interrupts(void);
+void disable_interrupts(void);
 
 unsigned long irq_save(void);
 void irq_restore(unsigned long flags);

@@ -1,8 +1,10 @@
 #include "heap.h"
+#include "lock.h"
 #include "pmm.h"
 #include "../lib/stdio.h"
 #include "../lib/panic.h"
 #include "timer.h"
+
 // each allocation is preceded by a block header
 struct block_header
 {
@@ -15,6 +17,7 @@ struct block_header
 #define ALIGN(x) (((x) + 15) & ~15UL) // 16-byte alignment
 
 static struct block_header* free_list;
+static spinlock_t heap_lock = SPINLOCK_INIT;
 
 // request enough contiguous pages from PMM to satisfy at least 'min_size' bytes
 static struct block_header* expand_heap(unsigned long min_size)
@@ -48,10 +51,10 @@ void heap_init(void)
 
 void* kmalloc(unsigned long size)
 {
-    unsigned long int flags = irq_save();
+    unsigned long int flags = spin_lock_irqsave(&heap_lock);
     if (size == 0)
     {
-        irq_restore(flags);
+        spin_unlock_irqrestore(&heap_lock, flags);
         return 0;
     }
 
@@ -79,7 +82,7 @@ void* kmalloc(unsigned long size)
             }
 
             curr->free = 0;
-            irq_restore(flags);
+            spin_unlock_irqrestore(&heap_lock, flags);
             return (void*)((unsigned char*)curr + HEADER_SIZE);
         }
 
@@ -92,7 +95,7 @@ void* kmalloc(unsigned long size)
     if (!new_page)
     {
         PANIC("HEAP: Out of memory.\n");
-        irq_restore(flags);
+        spin_unlock_irqrestore(&heap_lock, flags);
         return 0;
     }
 
@@ -102,17 +105,17 @@ void* kmalloc(unsigned long size)
     else
         free_list = new_page;
 
-    irq_restore(flags);
+    spin_unlock_irqrestore(&heap_lock, flags);
     // recurse to allocate from the new page
     return kmalloc(size);
 }
 
 void kfree(void* ptr)
 {
-    unsigned long flags = irq_save();
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
     if (!ptr)
     {
-        irq_restore(flags);
+        spin_unlock_irqrestore(&heap_lock, flags);
         return;
     }
     struct block_header* block = (struct block_header*)((unsigned char*)ptr - HEADER_SIZE);
@@ -120,7 +123,7 @@ void kfree(void* ptr)
     if (block->free)
     {
         PANIC("HEAP: WARNING - Double free detected.\n");
-        irq_restore(flags);
+        spin_unlock_irqrestore(&heap_lock, flags);
         return;
     }
 
@@ -138,5 +141,5 @@ void kfree(void* ptr)
         }
         curr = curr->next;
     }
-    irq_restore(flags);
+    spin_unlock_irqrestore(&heap_lock, flags);
 }

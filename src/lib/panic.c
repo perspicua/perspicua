@@ -1,10 +1,10 @@
 #include "panic.h"
 #include "stdio.h"
+#include "../kernel/timer.h"
 
 void panic(const char* msg, const char* file, int line)
 {
-    asm volatile("msr daifset, #2");
-
+    disable_interrupts();
     printf("\n\n*** KERNEL PANIC ***\n");
     printf("  %s\n", msg);
     printf("  at %s:%d\n", file, line);
