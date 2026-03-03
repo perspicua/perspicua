@@ -41,10 +41,6 @@ default_exception_handler:
 
 .global irq_handler
 irq_handler:
-    // save ELR_EL1 and SPSR_EL1 so context switches preserve them
-    mrs x0, elr_el1
-    mrs x1, spsr_el1
-    stp x0, x1, [sp, #-16]!
 
     // save GPRs (x0-x30)
     sub sp, sp, #256
@@ -65,8 +61,19 @@ irq_handler:
     stp x28, x29, [sp, #16 * 14]
     str x30, [sp, #16 * 15]
 
+        // save ELR_EL1 and SPSR_EL1 so context switches preserve them
+    mrs x0, elr_el1
+    mrs x1, spsr_el1
+    stp x0, x1, [sp, #-16]!
+
     bl c_irq_handler
 
+    // restore ELR_EL1 and SPSR_EL1 (pushed last, so pop first)
+    ldp x21, x22, [sp], #16
+    msr elr_el1, x21
+    msr spsr_el1, x22
+
+    // restore GPRs
     ldr x30, [sp, #16 * 15]
     ldp x28, x29, [sp, #16 * 14]
     ldp x26, x27, [sp, #16 * 13]
@@ -84,10 +91,5 @@ irq_handler:
     ldp x2, x3, [sp, #16 * 1]
     ldp x0, x1, [sp, #16 * 0]
     add sp, sp, #256
-
-    // restore ELR_EL1 and SPSR_EL1
-    ldp x21, x22, [sp], #16
-    msr elr_el1, x21
-    msr spsr_el1, x22
 
     eret
