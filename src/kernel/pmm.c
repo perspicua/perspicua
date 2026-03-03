@@ -1,6 +1,7 @@
 #include "pmm.h"
 #include "timer.h"
 #include "../lib/stdio.h"
+#include "../lib/panic.h"
 
 extern char __kernel_end[];
 
@@ -16,6 +17,8 @@ static unsigned long last_alloc_hint;
 
 void pmm_init(void)
 {
+    ASSERT(NUM_PAGES > 0);
+
     bitmap = (unsigned char*)__kernel_end;
 
     for (unsigned long i = 0; i < BITMAP_SIZE; i++)
@@ -67,13 +70,66 @@ void* pmm_alloc_page(void)
     }
 
     irq_restore(flags);
-    printf("PMM: FATAL ERROR - Out of Memory!\n");
+    PANIC("PMM: FATAL ERROR - Out of Memory!\n");
     return 0;
+}
+
+void* pmm_alloc_pages(unsigned long count)
+{
+    if (count == 0)
+        return 0;
+    if (count == 1)
+        return pmm_alloc_page();
+
+    unsigned long flags = irq_save();
+
+    // scan bitmap for 'count' consecutive free pages
+    for (unsigned long start = reserved_page_count; start + count <= NUM_PAGES; start++)
+    {
+        int found = 1;
+        for (unsigned long j = 0; j < count; j++)
+        {
+            unsigned long idx = start + j;
+            if (bitmap[idx / 8] & (1 << (idx % 8)))
+            {
+                // skip ahead past the occupied page
+                start = idx;
+                found = 0;
+                break;
+            }
+        }
+
+        if (found)
+        {
+            // mark all pages as used
+            for (unsigned long j = 0; j < count; j++)
+            {
+                unsigned long idx = start + j;
+                bitmap[idx / 8] |= (1 << (idx % 8));
+            }
+            irq_restore(flags);
+            return (void*)(start * PAGE_SIZE);
+        }
+    }
+
+    irq_restore(flags);
+    return 0;
+}
+
+void pmm_free_pages(void* ptr, unsigned long count)
+{
+    for (unsigned long i = 0; i < count; i++)
+    {
+        pmm_free_page((void*)((unsigned long)ptr + i * PAGE_SIZE));
+    }
 }
 
 void pmm_free_page(void* ptr)
 {
     unsigned long addr = (unsigned long)ptr;
+
+    ASSERT(addr != 0);
+    ASSERT((addr & (PAGE_SIZE - 1)) == 0);
 
     if (addr % PAGE_SIZE != 0)
     {

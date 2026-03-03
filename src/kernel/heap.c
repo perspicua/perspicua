@@ -1,8 +1,8 @@
 #include "heap.h"
 #include "pmm.h"
 #include "../lib/stdio.h"
+#include "../lib/panic.h"
 #include "timer.h"
-
 // each allocation is preceded by a block header
 struct block_header
 {
@@ -16,15 +16,18 @@ struct block_header
 
 static struct block_header* free_list;
 
-// request a new page from PMM and turn it into a free block
-static struct block_header* expand_heap(void)
+// request enough contiguous pages from PMM to satisfy at least 'min_size' bytes
+static struct block_header* expand_heap(unsigned long min_size)
 {
-    void* page = pmm_alloc_page();
-    if (!page)
+    unsigned long total = min_size + HEADER_SIZE;
+    unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    void* region = pmm_alloc_pages(pages);
+    if (!region)
         return 0;
 
-    struct block_header* block = (struct block_header*)page;
-    block->size = PAGE_SIZE - HEADER_SIZE;
+    struct block_header* block = (struct block_header*)region;
+    block->size = pages * PAGE_SIZE - HEADER_SIZE;
     block->next = 0;
     block->free = 1;
 
@@ -33,10 +36,10 @@ static struct block_header* expand_heap(void)
 
 void heap_init(void)
 {
-    free_list = expand_heap();
+    free_list = expand_heap(PAGE_SIZE);
     if (!free_list)
     {
-        printf("HEAP: Failed to initialize.\n");
+        PANIC("HEAP: Failed to initialize.\n");
         return;
     }
 
@@ -84,11 +87,11 @@ void* kmalloc(unsigned long size)
         curr = curr->next;
     }
 
-    // no block found, get a new page
-    struct block_header* new_page = expand_heap();
+    // no block found, expand heap with enough space for this allocation
+    struct block_header* new_page = expand_heap(size);
     if (!new_page)
     {
-        printf("HEAP: Out of memory.\n");
+        PANIC("HEAP: Out of memory.\n");
         irq_restore(flags);
         return 0;
     }
@@ -116,7 +119,7 @@ void kfree(void* ptr)
 
     if (block->free)
     {
-        printf("HEAP: WARNING - Double free detected.\n");
+        PANIC("HEAP: WARNING - Double free detected.\n");
         irq_restore(flags);
         return;
     }

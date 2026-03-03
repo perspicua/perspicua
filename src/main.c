@@ -11,11 +11,11 @@
 #include "lib/string.h"
 void task_a(void)
 {
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 10; i++)
     {
-        void* a = kmalloc(1024);
+        void* a = kmalloc(1024 * 1024);
+        kfree(a);
         printf("%x alloc'd\n", a);
-        sleep_ms(500);
     }
 }
 
@@ -24,7 +24,6 @@ void task_b(void)
     for (int i = 0; i < 5; i++)
     {
         printf("[Task B] count = %d\n", i);
-        sleep_ms(500);
     }
 }
 

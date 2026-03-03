@@ -7,4 +7,8 @@ void pmm_init(void);
 void* pmm_alloc_page(void);
 void pmm_free_page(void* ptr);
 
+// contiguous multi-page allocation
+void* pmm_alloc_pages(unsigned long count);
+void pmm_free_pages(void* ptr, unsigned long count);
+
 #endif

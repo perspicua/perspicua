@@ -61,7 +61,7 @@ irq_handler:
     stp x28, x29, [sp, #16 * 14]
     str x30, [sp, #16 * 15]
 
-        // save ELR_EL1 and SPSR_EL1 so context switches preserve them
+    // save ELR_EL1 and SPSR_EL1 so context switches preserve them
     mrs x0, elr_el1
     mrs x1, spsr_el1
     stp x0, x1, [sp, #-16]!
