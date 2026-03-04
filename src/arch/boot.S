@@ -68,6 +68,7 @@ map_ram_loop:
     mov x2, #0xC0000000 // address start (3gb)
     mov x3, #512
     mov x4, x7
+    ldr x5, =0x405      // pte_valid | pte_block | pte_af | AttrIndx=1 (Device memory)
 
 map_periph_loop:
     orr x6, x2, x5

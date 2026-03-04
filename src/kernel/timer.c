@@ -22,7 +22,7 @@ unsigned long get_system_time(void)
     unsigned long freq = read_cntfrq();
     unsigned long count = read_cntpct();
 
-    if (freq == 0)
+    if (freq < 1000)
         return 0;
 
     return count / (freq / 1000);

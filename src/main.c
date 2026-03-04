@@ -51,6 +51,8 @@ void secondary_main(void)
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 
+    mmu_secondary_init();
+
     unsigned long flags = spin_lock_irqsave(&console_lock);
     printf("SMP: Core %lu is awake, MMU enabled!\n", core_id);
     spin_unlock_irqrestore(&console_lock, flags);
@@ -141,7 +143,7 @@ int main()
     smp_init();
     printf("Boot complete\n");
 
-    // run_spinlock_test();
+    run_spinlock_test();
     run_cpu_load_test();
     sleep_ms(1000);
     panic("Test panic", __FILE__, __LINE__);

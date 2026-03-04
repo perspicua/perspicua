@@ -177,9 +177,7 @@ void schedule(void)
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 
-    unsigned long flags = spin_lock_irqsave(&sched_lock); // LOCK THE QUEUE!
-    unsigned long now = get_system_time();
-
+    // free dead task from prior schedule() outside the lock
     if (task_to_free[core_id])
     {
         if (task_to_free[core_id]->stack)
@@ -187,6 +185,9 @@ void schedule(void)
         kfree(task_to_free[core_id]);
         task_to_free[core_id] = 0;
     }
+
+    unsigned long flags = spin_lock_irqsave(&sched_lock); // LOCK THE QUEUE!
+    unsigned long now = get_system_time();
 
     while (sleep_queue_head && sleep_queue_head->wake_time <= now)
     {

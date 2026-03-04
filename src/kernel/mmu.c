@@ -29,6 +29,8 @@ extern char __rodata_start[], __rodata_end[];
 extern char __data_start[], __data_end[];
 extern char __bss_start[], __bss_end[];
 
+static unsigned long kernel_pgd_phys;
+
 void mmu_init(void)
 {
     unsigned long* pgd = (unsigned long*)pmm_alloc_page();
@@ -99,7 +101,9 @@ void mmu_init(void)
         pte_kernel[i] = addr | attr;
     }
 
-    asm volatile("msr ttbr1_el1, %0" : : "r"(V2P(pgd)));
+    kernel_pgd_phys = V2P(pgd);
+
+    asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
     asm volatile("msr ttbr0_el1, %0" : : "r"(0)); // Trap lower-half access
 
     asm volatile("tlbi vmalle1is");
@@ -107,4 +111,14 @@ void mmu_init(void)
     asm volatile("isb");
 
     printf("MMU: Higher-Half W^X page tables installed successfully.\n");
+}
+
+void mmu_secondary_init(void)
+{
+    asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
+    asm volatile("msr ttbr0_el1, %0" : : "r"(0));
+
+    asm volatile("tlbi vmalle1is");
+    asm volatile("dsb ish");
+    asm volatile("isb");
 }
