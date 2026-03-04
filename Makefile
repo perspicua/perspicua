@@ -1,9 +1,15 @@
-CROSS_COMPILE ?= aarch64-linux-gnu-
+ifeq ($(shell uname),Darwin)
+    CROSS_COMPILE ?= aarch64-elf-
+	LLVM_PATH := $(shell brew --prefix llvm)
+    OBJCOPY ?= $(LLVM_PATH)/bin/llvm-objcopy
+else
+    CROSS_COMPILE ?= aarch64-linux-gnu-
+    OBJCOPY ?= llvm-objcopy
+endif
 
 CC = $(CROSS_COMPILE)gcc
 AS = $(CROSS_COMPILE)as
 LD = $(CROSS_COMPILE)ld
-OBJCOPY = llvm-objcopy
 
 CFLAGS = -Wall -O2 -ffreestanding -nostdlib -mcpu=cortex-a72+nosimd -mgeneral-regs-only -MMD -MP
 ASFLAGS =
