@@ -1,4 +1,11 @@
 #include "gic.h"
+
+void gic_send_panic_ipi(void)
+{
+    // SGI ID 0, target filter 0b10 = all cores except self
+    GICD_SGIR = (0b10 << 24) | 0;
+}
+
 void gic_init(void)
 {
     GICD_CTLR = 1;

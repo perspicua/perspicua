@@ -2,6 +2,7 @@
 #include "../driver/uart.h"
 #include "../driver/gic.h"
 #include "../lib/stdio.h"
+#include "../lib/panic.h"
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
 
@@ -29,10 +30,25 @@ void c_exception_handler()
 }
 void c_irq_handler(void)
 {
+    // check before even reading IAR — a panic IPI may have woken us
+    if (kernel_panicked)
+    {
+        disable_interrupts();
+        for (;;)
+            asm volatile("wfe");
+    }
+
     unsigned int iar = GICC_IAR;
     unsigned int irq_id = iar & 0x3FF;
 
-    if (irq_id == TIMER_IRQ)
+    if (irq_id == 0) // SGI 0: panic IPI from another core
+    {
+        GICC_EOIR = iar;
+        disable_interrupts();
+        for (;;)
+            asm volatile("wfe");
+    }
+    else if (irq_id == TIMER_IRQ)
     {
         timer_interrupt_reset();
         GICC_EOIR = iar;
