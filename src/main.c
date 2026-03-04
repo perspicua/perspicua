@@ -58,16 +58,10 @@ void secondary_main(void)
     core_id &= 3;
 
     mmu_secondary_init();
-
-    unsigned long flags = spin_lock_irqsave(&console_lock);
-    printf("SMP: Core %lu is awake, MMU enabled!\n", core_id);
-    spin_unlock_irqrestore(&console_lock, flags);
-
-    mmu_secondary_init();
-
     gic_secondary_init();
     timer_interrupt_init();
 
+    unsigned long flags = spin_lock_irqsave(&console_lock);
     printf("[  SMP ] CPU%lu online — MMU active, GIC configured, timer armed\n", core_id);
     spin_unlock_irqrestore(&console_lock, flags);
 
