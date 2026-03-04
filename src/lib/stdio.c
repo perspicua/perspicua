@@ -29,6 +29,19 @@ static void print_unsigned_long(uint64_t n, int base)
         uart_send(buf[--i]);
 }
 
+static void print_long(int64_t num, int base)
+{
+    if (num < 0 && base == 10)
+    {
+        uart_send('-');
+        print_unsigned_long(-num, base);
+    }
+    else
+    {
+        print_unsigned_long(num, base);
+    }
+}
+
 static void print_number(int32_t num, int base)
 {
     char buf[32];
@@ -122,7 +135,7 @@ void printf(const char* fmt, ...)
                 case 'd':
                 {
                     long i = va_arg(args, long);
-                    print_number(i, 10);
+                    print_long(i, 10);
                     break;
                 }
                 case 'u':
@@ -145,7 +158,6 @@ void printf(const char* fmt, ...)
                 uart_send('%');
                 break;
             }
-            // TODO: add more types
             default:
             {
                 uart_send('%');
