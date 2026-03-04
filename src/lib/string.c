@@ -23,6 +23,9 @@ char* strncpy(char* dest, const char* src, size_t count)
     size_t len = 0;
     for (; len < count && (*dest = *src) != '\0'; dest++, src++, len++)
         ;
+    // null-pad remainder per C standard
+    for (; len < count; len++)
+        *dest++ = '\0';
     return start;
 }
 
@@ -73,19 +76,25 @@ int strncmp(const char* lhs, const char* rhs, size_t count)
 
 char* strchr(const char* str, int c)
 {
-    for (; *str != '\0'; str++)
+    for (;; str++)
+    {
         if (*str == (char)c)
             return (char*)str;
-    return NULL;
+        if (*str == '\0')
+            return NULL;
+    }
 }
 
 char* strrchr(const char* str, int c)
 {
     char* last = NULL;
-    for (; *str != '\0'; str++)
+    for (;; str++)
+    {
         if (*str == (char)c)
             last = (char*)str;
-    return last;
+        if (*str == '\0')
+            return last;
+    }
 }
 
 char* strstr(const char* haystack, const char* needle)
@@ -122,37 +131,61 @@ int memcmp(const void* ptr1, const void* ptr2, size_t num)
 
 void* memset(void* dest, int val, size_t num)
 {
-    uint64_t* d64 = (uint64_t*)dest;
+    unsigned char* d8 = (unsigned char*)dest;
+    unsigned char v8 = (unsigned char)val;
 
-    uint64_t v8 = (unsigned char)val;
-    uint64_t v64 = v8 | (v8 << 8) | (v8 << 16) | (v8 << 24) | (v8 << 32) | (v8 << 40) | (v8 << 48) | (v8 << 56);
+    // handle unaligned head
+    while (num && ((uintptr_t)d8 & 7))
+    {
+        *d8++ = v8;
+        num--;
+    }
 
+    // 8-byte aligned fast path
+    uint64_t v64 = (uint64_t)v8 | ((uint64_t)v8 << 8) | ((uint64_t)v8 << 16) | ((uint64_t)v8 << 24) |
+                   ((uint64_t)v8 << 32) | ((uint64_t)v8 << 40) | ((uint64_t)v8 << 48) | ((uint64_t)v8 << 56);
+    uint64_t* d64 = (uint64_t*)d8;
     while (num >= 8)
     {
         *d64++ = v64;
         num -= 8;
     }
 
-    char* d8 = (char*)d64;
+    // handle tail
+    d8 = (unsigned char*)d64;
     while (num--)
-        *d8++ = (char)val;
+        *d8++ = v8;
 
     return dest;
 }
 
 void* memcpy(void* dest, const void* src, size_t count)
 {
-    uint64_t* d64 = (uint64_t*)dest;
-    const uint64_t* s64 = (const uint64_t*)src;
+    unsigned char* d8 = (unsigned char*)dest;
+    const unsigned char* s8 = (const unsigned char*)src;
 
-    while (count >= 8)
+    // handle unaligned head (align dest; if src also becomes aligned, fast path kicks in)
+    while (count && ((uintptr_t)d8 & 7))
     {
-        *d64++ = *s64++;
-        count -= 8;
+        *d8++ = *s8++;
+        count--;
     }
 
-    char* d8 = (char*)d64;
-    const char* s8 = (const char*)s64;
+    // 8-byte aligned fast path (only if both pointers are aligned)
+    if (((uintptr_t)s8 & 7) == 0)
+    {
+        uint64_t* d64 = (uint64_t*)d8;
+        const uint64_t* s64 = (const uint64_t*)s8;
+        while (count >= 8)
+        {
+            *d64++ = *s64++;
+            count -= 8;
+        }
+        d8 = (unsigned char*)d64;
+        s8 = (const unsigned char*)s64;
+    }
+
+    // handle tail
     while (count--)
         *d8++ = *s8++;
 

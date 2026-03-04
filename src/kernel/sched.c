@@ -4,6 +4,7 @@
 #include "timer.h"
 #include "lock.h"
 #include "../lib/stdio.h"
+#include "../lib/string.h"
 
 static struct task* current_task_ptr[4] = {0, 0, 0, 0};
 static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
@@ -89,6 +90,7 @@ static void idle_task_entry(void)
 static struct task* create_idle_task(int id)
 {
     struct task* idle = (struct task*)kmalloc(sizeof(struct task));
+    memset(idle, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
@@ -105,6 +107,7 @@ static struct task* create_idle_task(int id)
 void sched_init(void)
 { // called by core 0
     struct task* main_task = (struct task*)kmalloc(sizeof(struct task));
+    memset(main_task, 0, sizeof(struct task));
     main_task->state = TASK_RUNNING;
     main_task->id = next_task_id++;
     main_task->stack = 0;
@@ -113,7 +116,8 @@ void sched_init(void)
     current_task_ptr[0] = main_task;
     idle_task_ptr[0] = create_idle_task(0);
 
-    printf("SCHED: SMP O(1) Queues Initialized.\n");
+    printf("[SCHED ] Task 0 (main) bound to CPU0, idle task spawned\n");
+    printf("[SCHED ] Stack: %d bytes/task, round-robin preemptive\n", TASK_STACK_SIZE);
 }
 
 void sched_secondary_init(void)
@@ -137,6 +141,7 @@ void sched_secondary_init(void)
 void sched_create_task(void (*entry)(void))
 {
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
+    memset(t, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
@@ -177,16 +182,20 @@ void schedule(void)
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 
+    // free dead task from prior schedule()
+    // Clear the pointer FIRST to prevent double-free if a timer IRQ
+    // re-enters schedule() between the free calls.
+    struct task* dead = task_to_free[core_id];
+    if (dead)
+    {
+        task_to_free[core_id] = 0;
+        if (dead->stack)
+            pmm_free_pages(dead->stack, 2);
+        kfree(dead);
+    }
+
     unsigned long flags = spin_lock_irqsave(&sched_lock); // LOCK THE QUEUE!
     unsigned long now = get_system_time();
-
-    if (task_to_free[core_id])
-    {
-        if (task_to_free[core_id]->stack)
-            pmm_free_pages(task_to_free[core_id]->stack, 2);
-        kfree(task_to_free[core_id]);
-        task_to_free[core_id] = 0;
-    }
 
     while (sleep_queue_head && sleep_queue_head->wake_time <= now)
     {

@@ -46,7 +46,8 @@ void heap_init(void)
         return;
     }
 
-    printf("HEAP: Initialized with %d bytes.\n", (int)free_list->size);
+    printf("[ HEAP ] First-fit allocator: %lu bytes initial pool\n", free_list->size);
+    printf("[ HEAP ] Header: %lu bytes, payload alignment: 16 bytes\n", (unsigned long)HEADER_SIZE);
 }
 
 void* kmalloc(unsigned long size)
@@ -105,9 +106,22 @@ void* kmalloc(unsigned long size)
     else
         free_list = new_page;
 
+    // allocate directly from the new block while still holding the lock
+    // (avoids race where another CPU steals the block between unlock and re-lock)
+    if (new_page->size >= size + HEADER_SIZE + 16)
+    {
+        struct block_header* split = (struct block_header*)((unsigned char*)new_page + HEADER_SIZE + size);
+        split->size = new_page->size - size - HEADER_SIZE;
+        split->next = new_page->next;
+        split->free = 1;
+
+        new_page->size = size;
+        new_page->next = split;
+    }
+
+    new_page->free = 0;
     spin_unlock_irqrestore(&heap_lock, flags);
-    // recurse to allocate from the new page
-    return kmalloc(size);
+    return (void*)((unsigned char*)new_page + HEADER_SIZE);
 }
 
 void kfree(void* ptr)
@@ -129,15 +143,20 @@ void kfree(void* ptr)
 
     block->free = 1;
 
-    // coalesce adjacent free blocks
+    // coalesce physically adjacent free blocks
     struct block_header* curr = free_list;
     while (curr)
     {
         if (curr->free && curr->next && curr->next->free)
         {
-            curr->size += HEADER_SIZE + curr->next->size;
-            curr->next = curr->next->next;
-            continue; // check again
+            // only merge if blocks are physically contiguous in memory
+            unsigned char* curr_end = (unsigned char*)curr + HEADER_SIZE + curr->size;
+            if (curr_end == (unsigned char*)curr->next)
+            {
+                curr->size += HEADER_SIZE + curr->next->size;
+                curr->next = curr->next->next;
+                continue; // check again
+            }
         }
         curr = curr->next;
     }

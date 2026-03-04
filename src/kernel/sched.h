@@ -1,7 +1,7 @@
 #ifndef _SCHED_H_
 #define _SCHED_H_
 
-#define TASK_STACK_SIZE 4096
+#define TASK_STACK_SIZE 8192
 #define MAX_TASKS 16
 
 // callee-saved registers + sp + pc

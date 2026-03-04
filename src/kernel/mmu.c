@@ -29,6 +29,8 @@ extern char __rodata_start[], __rodata_end[];
 extern char __data_start[], __data_end[];
 extern char __bss_start[], __bss_end[];
 
+static unsigned long kernel_pgd_phys;
+
 void mmu_init(void)
 {
     unsigned long* pgd = (unsigned long*)pmm_alloc_page();
@@ -99,12 +101,30 @@ void mmu_init(void)
         pte_kernel[i] = addr | attr;
     }
 
-    asm volatile("msr ttbr1_el1, %0" : : "r"(V2P(pgd)));
+    kernel_pgd_phys = V2P(pgd);
+
+    asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
     asm volatile("msr ttbr0_el1, %0" : : "r"(0)); // Trap lower-half access
 
     asm volatile("tlbi vmalle1is");
     asm volatile("dsb ish");
     asm volatile("isb");
 
-    printf("MMU: Higher-Half W^X page tables installed successfully.\n");
+    printf("[  MMU ] TTBR1 → 0x%lx, TTBR0 nullified (trap user access)\n", kernel_pgd_phys);
+    printf("[  MMU ] Mapped: 1 GB RAM (2MB blocks) + 3 GB MMIO (device)\n");
+    printf("[  MMU ] Kernel [0, 2MB] — 4KB granule, W^X enforced\n");
+    printf("[  MMU ]   .text   [0x%lx — 0x%lx] RO+X\n", (unsigned long)__text_start, (unsigned long)__text_end);
+    printf("[  MMU ]   .rodata [0x%lx — 0x%lx] RO+NX\n", (unsigned long)__rodata_start, (unsigned long)__rodata_end);
+    printf("[  MMU ]   .data   [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__data_start, (unsigned long)__data_end);
+    printf("[  MMU ]   .bss    [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__bss_start, (unsigned long)__bss_end);
+}
+
+void mmu_secondary_init(void)
+{
+    asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
+    asm volatile("msr ttbr0_el1, %0" : : "r"(0));
+
+    asm volatile("tlbi vmalle1is");
+    asm volatile("dsb ish");
+    asm volatile("isb");
 }

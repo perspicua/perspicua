@@ -8,6 +8,7 @@
 #include "kernel/timer.h"
 #include "kernel/lock.h"
 
+#include "lib/panic.h"
 #include "lib/stdio.h"
 #include "lib/string.h"
 
@@ -56,14 +57,14 @@ void secondary_main(void)
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 
-<<<<<<< Updated upstream
+    mmu_secondary_init();
+
     unsigned long flags = spin_lock_irqsave(&console_lock);
     printf("SMP: Core %lu is awake, MMU enabled!\n", core_id);
     spin_unlock_irqrestore(&console_lock, flags);
 
-=======
     mmu_secondary_init();
->>>>>>> Stashed changes
+
     gic_secondary_init();
     timer_interrupt_init();
 
@@ -109,16 +110,11 @@ int main()
 
     smp_init();
 
-<<<<<<< Updated upstream
-    // run_spinlock_test();
-    run_cpu_load_test();
-=======
     printf("\n");
     printf(" BOOT COMPLETE — all subsystems operational\n");
 
     run_all_tests();
 
->>>>>>> Stashed changes
     enable_interrupts();
     run_scheduler_tests();
 
