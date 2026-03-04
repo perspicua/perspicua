@@ -76,19 +76,25 @@ int strncmp(const char* lhs, const char* rhs, size_t count)
 
 char* strchr(const char* str, int c)
 {
-    for (; *str != '\0'; str++)
+    for (;; str++)
+    {
         if (*str == (char)c)
             return (char*)str;
-    return NULL;
+        if (*str == '\0')
+            return NULL;
+    }
 }
 
 char* strrchr(const char* str, int c)
 {
     char* last = NULL;
-    for (; *str != '\0'; str++)
+    for (;; str++)
+    {
         if (*str == (char)c)
             last = (char*)str;
-    return last;
+        if (*str == '\0')
+            return last;
+    }
 }
 
 char* strstr(const char* haystack, const char* needle)

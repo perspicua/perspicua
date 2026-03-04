@@ -6,7 +6,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
 
-void c_exception_handler()
+void c_exception_handler(void)
 {
     unsigned int esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));

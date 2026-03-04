@@ -145,8 +145,7 @@ int main()
 
     run_spinlock_test();
     run_cpu_load_test();
-    sleep_ms(1000);
-    panic("Test panic", __FILE__, __LINE__);
+
     enable_interrupts();
 
     while (1)

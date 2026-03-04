@@ -4,6 +4,7 @@
 #include "timer.h"
 #include "lock.h"
 #include "../lib/stdio.h"
+#include "../lib/string.h"
 
 static struct task* current_task_ptr[4] = {0, 0, 0, 0};
 static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
@@ -89,6 +90,7 @@ static void idle_task_entry(void)
 static struct task* create_idle_task(int id)
 {
     struct task* idle = (struct task*)kmalloc(sizeof(struct task));
+    memset(idle, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
@@ -137,6 +139,7 @@ void sched_secondary_init(void)
 void sched_create_task(void (*entry)(void))
 {
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
+    memset(t, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
     unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
 
