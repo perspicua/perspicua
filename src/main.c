@@ -62,7 +62,7 @@ void secondary_main(void)
     timer_interrupt_init();
 
     unsigned long flags = spin_lock_irqsave(&console_lock);
-    printf("[  SMP ] CPU%lu online — MMU active, GIC configured, timer armed\n", core_id);
+    printf("[  SMP ] CPU%lu online - MMU active, GIC configured, timer armed\n", core_id);
     spin_unlock_irqrestore(&console_lock, flags);
 
     sched_secondary_init();
@@ -104,7 +104,7 @@ int main()
     smp_init();
 
     printf("\n");
-    printf(" BOOT COMPLETE — all subsystems operational\n");
+    printf(" BOOT COMPLETE - all subsystems operational\n");
 
     run_all_tests();
 

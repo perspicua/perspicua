@@ -89,10 +89,14 @@ $(IMAGE): $(TARGET)
 
 # run and debug
 QEMU       = qemu-system-aarch64
-QEMU_FLAGS = -M raspi4b -serial stdio -display none -kernel $(IMAGE)
+QEMU_FLAGS     = -M raspi4b -serial stdio -display none -kernel $(IMAGE)
+QEMU_FLAGS_GUI = -M raspi4b -serial vc -kernel $(IMAGE)
 
 run: $(IMAGE)
 	$(QEMU) $(QEMU_FLAGS)
+
+run-gui: $(IMAGE)
+	$(QEMU) $(QEMU_FLAGS_GUI)
 
 # start QEMU paused, waiting for GDB on :1234
 debug: $(IMAGE)
@@ -128,4 +132,4 @@ clean:
 
 -include $(DEPS)
 
-.PHONY: all clean run debug gdb disasm size symbols compile_commands.json
+.PHONY: all clean run run-gui debug gdb disasm size symbols compile_commands.json
