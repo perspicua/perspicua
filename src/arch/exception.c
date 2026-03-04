@@ -6,7 +6,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
 
-void c_exception_handler()
+void c_exception_handler(void)
 {
     unsigned int esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
@@ -19,8 +19,8 @@ void c_exception_handler()
 
     printf("An unhandled exception occurred!\n");
     printf("FAR_EL1 (Faulting Address): 0x%lx\n", far);
-    printf("ESR_EL1 (Reason)  : 0x%x\n", esr);
-    printf("ELR_EL1 (Address) : 0x%x\n", elr);
+    printf("ESR_EL1 (Reason)  : 0x%lx\n", (unsigned long)esr);
+    printf("ELR_EL1 (Address) : 0x%lx\n", elr);
     printf("System halted.\n");
 
     while (1)
@@ -41,6 +41,9 @@ void c_irq_handler(void)
     unsigned int iar = GICC_IAR;
     unsigned int irq_id = iar & 0x3FF;
 
+    if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
+        return;
+
     if (irq_id == 0) // SGI 0: panic IPI from another core
     {
         GICC_EOIR = iar;
@@ -60,9 +63,9 @@ void c_irq_handler(void)
         while (uart_data_ready())
         {
             char c = uart_getc();
-            uart_send(c);
             if (c == '\n')
                 uart_send('\r');
+            uart_send(c);
         }
         uart_clear_interrupt();
     }

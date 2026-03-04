@@ -34,11 +34,11 @@ static void print_long(int64_t num, int base)
     if (num < 0 && base == 10)
     {
         uart_send('-');
-        print_unsigned_long(-num, base);
+        print_unsigned_long((uint64_t)(-(num + 1)) + 1, base);
     }
     else
     {
-        print_unsigned_long(num, base);
+        print_unsigned_long((uint64_t)num, base);
     }
 }
 
@@ -50,11 +50,11 @@ static void print_number(int32_t num, int base)
     if (num < 0 && base == 10)
     {
         uart_send('-');
-        n = -num;
+        n = (uint32_t)(-(num + 1)) + 1;
     }
     else
     {
-        n = num;
+        n = (uint32_t)num;
     }
 
     if (n == 0)
@@ -105,7 +105,15 @@ void printf(const char* fmt, ...)
             }
             case 'x':
             {
+                unsigned int i = va_arg(args, unsigned int);
+                print_unsigned_long(i, 16);
+                break;
+            }
+            case 'p':
+            {
                 unsigned long i = va_arg(args, unsigned long);
+                uart_send('0');
+                uart_send('x');
                 print_unsigned_long(i, 16);
                 break;
             }
