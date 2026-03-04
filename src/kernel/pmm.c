@@ -104,14 +104,20 @@ void pmm_init(void)
         page_array[i].is_free = 0;
     }
 
-    printf("PMM: Buddy Allocator starting. Metadata overhead: %lu KB\n", array_size / 1024);
+    printf("[  PMM ] Buddy allocator: %lu pages total, %lu reserved (kernel+metadata)\n", (unsigned long)NUM_PAGES,
+           reserved_pages);
+    printf("[  PMM ] Page array: %lu KB metadata at 0x%lx\n", array_size / 1024, (unsigned long)page_array);
+    printf("[  PMM ] Usable range: PFN %lu..%lu, max order %d (%lu KB blocks)\n", reserved_pages,
+           (unsigned long)NUM_PAGES - 1, MAX_ORDER, (unsigned long)((1UL << MAX_ORDER) * PAGE_SIZE) / 1024);
 
     for (unsigned long pfn = reserved_pages; pfn < NUM_PAGES; pfn++)
     {
         __free_buddy(pfn, 0);
     }
 
-    printf("PMM: Buddy Allocator initialized successfully.\n");
+    unsigned long free_pages = NUM_PAGES - reserved_pages;
+    printf("[  PMM ] %lu MB free (%lu pages) — buddy system ready\n", (free_pages * PAGE_SIZE) / (1024 * 1024),
+           free_pages);
 }
 
 void* pmm_alloc_pages(unsigned long count)

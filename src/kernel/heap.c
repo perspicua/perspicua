@@ -46,7 +46,8 @@ void heap_init(void)
         return;
     }
 
-    printf("HEAP: Initialized with %d bytes.\n", (int)free_list->size);
+    printf("[ HEAP ] First-fit allocator: %lu bytes initial pool\n", free_list->size);
+    printf("[ HEAP ] Header: %lu bytes, payload alignment: 16 bytes\n", (unsigned long)HEADER_SIZE);
 }
 
 void* kmalloc(unsigned long size)

@@ -82,7 +82,10 @@ enable_mmu:
     msr mair_el1, x0
     
     // tcr: 39-bit va for ttbr0 and ttbr1
-    ldr x0, =(25 << 0) | (25 << 16) | (1 << 8) | (1 << 10) | (3 << 12) | (3 << 28)
+    // TG0=4KB(0<<14) | TG1=4KB(2<<30) | T0SZ=25 | T1SZ=25
+    // IRGN0/ORGN0 = WB-WA (1<<8, 1<<10) | IRGN1/ORGN1 = WB-WA (1<<24, 1<<26)
+    // SH0 = Inner Shareable (3<<12) | SH1 = Inner Shareable (3<<28)
+    ldr x0, =(25 << 0) | (25 << 16) | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 24) | (1 << 26) | (3 << 28) | (2UL << 30)
     msr tcr_el1, x0
     
     adrp x0, boot_pgd

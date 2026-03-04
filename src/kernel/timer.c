@@ -68,6 +68,11 @@ void timer_interrupt_init(void)
     unsigned int freq = read_cntfrq();
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100)); // 100 ticks per second
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));           // Enable timer
+
+    if (core_id == 0)
+    {
+        printf("[TIMER ] Generic timer: CNTFRQ = %u Hz, tick = %u Hz (10ms)\n", freq, 100);
+    }
 }
 void timer_interrupt_reset(void)
 {

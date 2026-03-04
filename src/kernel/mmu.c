@@ -110,7 +110,13 @@ void mmu_init(void)
     asm volatile("dsb ish");
     asm volatile("isb");
 
-    printf("MMU: Higher-Half W^X page tables installed successfully.\n");
+    printf("[  MMU ] TTBR1 → 0x%lx, TTBR0 nullified (trap user access)\n", kernel_pgd_phys);
+    printf("[  MMU ] Mapped: 1 GB RAM (2MB blocks) + 3 GB MMIO (device)\n");
+    printf("[  MMU ] Kernel [0, 2MB] — 4KB granule, W^X enforced\n");
+    printf("[  MMU ]   .text   [0x%lx — 0x%lx] RO+X\n", (unsigned long)__text_start, (unsigned long)__text_end);
+    printf("[  MMU ]   .rodata [0x%lx — 0x%lx] RO+NX\n", (unsigned long)__rodata_start, (unsigned long)__rodata_end);
+    printf("[  MMU ]   .data   [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__data_start, (unsigned long)__data_end);
+    printf("[  MMU ]   .bss    [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__bss_start, (unsigned long)__bss_end);
 }
 
 void mmu_secondary_init(void)
