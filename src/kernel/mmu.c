@@ -116,7 +116,7 @@ void mmu_init(void)
     kernel_pgd_phys = V2P(pgd);
 
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
-    asm volatile("msr ttbr0_el1, %0" : : "r"(0)); // Trap lower-half access
+    asm volatile("msr ttbr0_el1, %0" : : "r"(kernel_pgd_phys)); // this was 0, chandged to kernel_pgd_phys for user
 
     asm volatile("tlbi vmalle1is");
     asm volatile("dsb ish");

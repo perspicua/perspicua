@@ -79,6 +79,32 @@ static void print_banner(void)
     printf("\n");
 }
 
+uint8_t user_stack[4096] __attribute__((aligned(16)));
+
+static void user_process(void)
+{
+    asm volatile("mov x8, #1\n"
+                 "mov x0, %0\n"
+                 "svc #0\n"
+                 :
+                 : "r"('M')
+                 : "x0", "x8");
+    while (1)
+        ;
+}
+
+void drop_to_user(void (*user_func)(void), void* stack_top)
+{
+    uint64_t spsr = 0x3c0; // EL0t with DAIF masked
+    asm volatile("msr spsr_el1, %0\n"
+                 "msr elr_el1, %1\n"
+                 "msr sp_el0, %2\n"
+                 "eret\n"
+                 :
+                 : "r"(spsr), "r"(user_func), "r"(stack_top)
+                 : "memory");
+}
+
 __attribute__((used)) int main(void);
 int main()
 {
@@ -107,10 +133,19 @@ int main()
     printf("\n");
     printf(" BOOT COMPLETE - all subsystems operational\n");
 
-    run_all_tests();
+    // run_all_tests();
 
     enable_interrupts();
-    run_scheduler_tests();
+    // run_scheduler_tests();
+    void* code_page = pmm_alloc_page();
+    void* stack_page = pmm_alloc_page();
+
+    mmu_map_page(0x100000000ULL, V2P(code_page), PAGE_USER_CODE);
+    mmu_map_page(0x100200000ULL, V2P(stack_page), PAGE_USER_DATA);
+
+    memcpy(code_page, (void*)user_process, 128);
+
+    drop_to_user((void*)0x100000000ULL, (void*)(0x100200000ULL + 4096));
 
     while (1)
         asm volatile("wfe");

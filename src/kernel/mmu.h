@@ -14,6 +14,11 @@
 #define MMU_AP_RW (0ULL << 6)
 #define MMU_AP_RO (2ULL << 6)
 
+#define MMU_AP_USER (1ULL << 6)
+#define PAGE_USER_CODE \
+    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_PXN)
+#define PAGE_USER_DATA \
+    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_PXN | MMU_UXN)
 // execute-never bits
 #define MMU_PXN (1ULL << 53) // privileged execute-never
 #define MMU_UXN (1ULL << 54) // unprivileged execute-never

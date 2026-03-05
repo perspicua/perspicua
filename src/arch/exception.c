@@ -6,7 +6,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
 
-void c_exception_handler(void)
+void c_unhandled_vector(void)
 {
     unsigned int esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
@@ -71,4 +71,48 @@ void c_irq_handler(void)
     }
 
     *GICC_EOIR = iar;
+}
+
+void c_sync_handler(struct trap_frame* tf)
+{
+    uintptr_t esr;
+    asm volatile("mrs %0, esr_el1" : "=r"(esr));
+
+    uint32_t ec = (esr >> 26) & 0b111111;
+    printf("ec: %d\n", ec);
+    // syscall
+    if (ec == 0x15)
+    {
+        uint64_t syscall_nr = tf->x[8];
+        switch (syscall_nr)
+        {
+        case 1:
+        {
+            char c = (char)(tf->x[0]);
+            uart_send(c);
+            break;
+        }
+        default:
+        {
+            printf("Unknown syscall: %lu\n", syscall_nr);
+            break;
+        }
+        }
+    }
+    else
+    {
+        unsigned long far;
+        asm volatile("mrs %0, far_el1" : "=r"(far));
+
+        printf("\n[KERNEL PANIC] An unhandled exception occurred!\n");
+        printf("Faulting Address (FAR_EL1): 0x%lx\n", far);
+        printf("Excelption Class (EC)  : 0x%lx\n", ec);
+        printf("Instruction Address (ELR_EL1) : 0x%lx\n", tf->elr_el1);
+        printf("System halted.\n");
+
+        while (1)
+        {
+            asm volatile("wfe");
+        }
+    }
 }
