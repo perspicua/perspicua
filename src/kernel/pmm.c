@@ -131,7 +131,7 @@ void* pmm_alloc_pages(unsigned long count)
     unsigned long flags = spin_lock_irqsave(&pmm_lock);
 
     // find smallest block >= target_order
-    int current_order = target_order;
+    unsigned int current_order = target_order;
     while (current_order <= MAX_ORDER && !free_lists[current_order])
     {
         current_order++;
