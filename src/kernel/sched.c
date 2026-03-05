@@ -132,7 +132,7 @@ void sched_init(void)
 
 void sched_secondary_init(void)
 { // called by cores 1, 2, 3
-    unsigned long core_id;
+    int core_id;
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 

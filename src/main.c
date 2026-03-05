@@ -29,7 +29,7 @@ static inline unsigned long get_core_id(void)
     return core_id & 3;
 }
 
-void smp_init(void)
+static void smp_init(void)
 {
     printf("\n");
     printf("[  SMP ] Bringing up secondary cores...\n");
@@ -50,7 +50,7 @@ void smp_init(void)
     // wait for secondary cores to finish init before main continues
     sleep_ms(200);
 }
-
+__attribute__((used)) void secondary_main(void);
 void secondary_main(void)
 {
     unsigned long core_id;
@@ -79,6 +79,7 @@ static void print_banner(void)
     printf("\n");
 }
 
+__attribute__((used)) int main(void);
 int main()
 {
     uart_init();

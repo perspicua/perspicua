@@ -15,12 +15,12 @@ static void print_unsigned_long(uint64_t n, int base)
 
     while (n != 0)
     {
-        int remainder = n % base;
+        uint64_t remainder = n % base;
 
         if (remainder < 10)
-            buf[i++] = remainder + '0';
+            buf[i++] = (char)remainder + '0';
         else
-            buf[i++] = (remainder - 10) + 'a';
+            buf[i++] = (char)(remainder - 10) + 'a';
 
         n /= base;
     }
@@ -68,20 +68,15 @@ static void print_number(int32_t num, int base)
         int remainder = n % base;
 
         if (remainder < 10)
-            buf[i++] = remainder + '0';
+            buf[i++] = (char)remainder + '0';
         else
-            buf[i++] = (remainder - 10) + 'a';
+            buf[i++] = (char)(remainder - 10) + 'a';
 
         n /= base;
     }
 
     while (i > 0)
         uart_send(buf[--i]);
-}
-
-void print_unsigned_int(uint32_t n, int base)
-{
-    print_unsigned_long(n, base);
 }
 
 void printf(const char* fmt, ...)
@@ -126,7 +121,7 @@ void printf(const char* fmt, ...)
             case 'c':
             {
                 int c = va_arg(args, int);
-                uart_send(c);
+                uart_send((char)c);
                 break;
             }
             case 'u':
