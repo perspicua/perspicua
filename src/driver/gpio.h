@@ -17,6 +17,7 @@
 #define GPIO_PUPDN_UP 0b01
 #define GPIO_PUPDN_DOWN 0b10
 
+void gpio_init(void);
 void gpio_set_pin_function(unsigned int pin, unsigned int function);
 void gpio_set_pull(unsigned int pin, unsigned int pull);
 

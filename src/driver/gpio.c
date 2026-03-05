@@ -1,10 +1,24 @@
 #include "gpio.h"
+#include "../devicetree/pht.h"
+#include "../lib/panic.h"
+#include "../kernel/addr.h"
 
-#define PERIPHERAL_BASE 0xFFFFFF80FE000000ULL
-#define GPIO_BASE (PERIPHERAL_BASE + 0x200000)
+volatile unsigned int* GPIO_GPFSEL0;
+volatile unsigned int* GPIO_GPPUPDN0;
 
-volatile unsigned int* const GPIO_GPFSEL0 = (unsigned int*)(GPIO_BASE + 0x00);
-volatile unsigned int* const GPIO_GPPUPDN0 = (unsigned int*)(GPIO_BASE + 0xE4);
+void gpio_init(void)
+{
+    struct pht_node* gpio_node = pht_find_device("gpio");
+    if (gpio_node == NULL)
+    {
+        PANIC("[ GPIO ] Device node not found in hardware tree!\n");
+    }
+
+    uintptr_t vbase = P2V(gpio_node->address[0]);
+
+    GPIO_GPFSEL0 = (unsigned int*)(vbase + 0x00);
+    GPIO_GPPUPDN0 = (unsigned int*)(vbase + 0xE4);
+}
 
 void gpio_set_pin_function(unsigned int pin, unsigned int function)
 {

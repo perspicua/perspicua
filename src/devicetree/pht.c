@@ -3,7 +3,7 @@
 
 struct pht_header system_pht = {
     .magic = PHT_MAGIC,
-    .nr_devices = 2,
+    .nr_devices = 3,
     .nodes = {// uart
               {.name = "uart", .address[0] = 0xFE201000, .size[0] = 0x1000, .reg_count = 1, .irq = 153},
               // general interrupt controller (gic)
@@ -13,7 +13,9 @@ struct pht_header system_pht = {
                .address[1] = 0xFF842000,
                .size[1] = 0x2000,
                .reg_count = 2,
-               .irq = 0}}};
+               .irq = 0},
+              // gpio
+              {.name = "gpio", .address[0] = 0xFE200000, .size[0] = 0x1000, .reg_count = 1, .irq = 0}}};
 
 struct pht_node* pht_find_device(const char* name)
 {
