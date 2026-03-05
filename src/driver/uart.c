@@ -19,7 +19,7 @@ void uart_init(void)
     struct pht_node* uart_node = pht_find_device("uart");
     if (uart_node == NULL)
     {
-        PANIC("[UART] Device node not found in hardware tree!\n");
+        PANIC("[ UART ] Device node not found in hardware tree!\n");
     }
 
     uintptr_t vbase = P2V(uart_node->address[0]);
@@ -108,4 +108,14 @@ void uart_enable_interrupts(void)
 void uart_clear_interrupt(void)
 {
     *UART0_ICR = (1 << 4) | (1 << 6);
+}
+
+unsigned int uart_get_irq(void)
+{
+    struct pht_node* uart_node = pht_find_device("uart");
+    if (uart_node == NULL)
+    {
+        PANIC("[ UART ] Device node not found in hardware tree!\n");
+    }
+    return uart_node->irq;
 }

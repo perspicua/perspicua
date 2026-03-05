@@ -8,5 +8,5 @@ void uart_puts(const char* str);
 int uart_data_ready(void);
 void uart_enable_interrupts(void);
 void uart_clear_interrupt(void);
-
+unsigned int uart_get_irq(void);
 #endif // _UART_H_

@@ -38,7 +38,7 @@ void c_irq_handler(void)
             asm volatile("wfe");
     }
 
-    unsigned int iar = GICC_IAR;
+    unsigned int iar = *GICC_IAR;
     unsigned int irq_id = iar & 0x3FF;
 
     if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
@@ -46,7 +46,7 @@ void c_irq_handler(void)
 
     if (irq_id == 0) // SGI 0: panic IPI from another core
     {
-        GICC_EOIR = iar;
+        *GICC_EOIR = iar;
         disable_interrupts();
         for (;;)
             asm volatile("wfe");
@@ -54,11 +54,11 @@ void c_irq_handler(void)
     else if (irq_id == TIMER_IRQ)
     {
         timer_interrupt_reset();
-        GICC_EOIR = iar;
+        *GICC_EOIR = iar;
         schedule();
         return;
     }
-    else if (irq_id == UART_IRQ)
+    else if (irq_id == uart_get_irq())
     {
         while (uart_data_ready())
         {
@@ -70,5 +70,5 @@ void c_irq_handler(void)
         uart_clear_interrupt();
     }
 
-    GICC_EOIR = iar;
+    *GICC_EOIR = iar;
 }
