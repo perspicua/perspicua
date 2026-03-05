@@ -1,21 +1,38 @@
 #include "uart.h"
 #include "gpio.h"
 #include "../kernel/timer.h"
+#include "../kernel/addr.h"
+#include "../lib/panic.h"
+#include "../devicetree/pht.h"
 
-#define PERIPHERAL_BASE 0xFFFFFF80FE000000ULL
-#define UART0_BASE (PERIPHERAL_BASE + 0x201000)
-
-volatile unsigned int* const UART0_DR = (unsigned int*)(UART0_BASE + 0x00);
-volatile unsigned int* const UART0_FR = (unsigned int*)(UART0_BASE + 0x18);
-volatile unsigned int* const UART0_IBRD = (unsigned int*)(UART0_BASE + 0x24);
-volatile unsigned int* const UART0_FBRD = (unsigned int*)(UART0_BASE + 0x28);
-volatile unsigned int* const UART0_LCRH = (unsigned int*)(UART0_BASE + 0x2C);
-volatile unsigned int* const UART0_CR = (unsigned int*)(UART0_BASE + 0x30);
-volatile unsigned int* const UART0_IMSC = (unsigned int*)(UART0_BASE + 0x38);
-volatile unsigned int* const UART0_ICR = (unsigned int*)(UART0_BASE + 0x44);
+volatile unsigned int* UART0_DR;
+volatile unsigned int* UART0_FR;
+volatile unsigned int* UART0_IBRD;
+volatile unsigned int* UART0_FBRD;
+volatile unsigned int* UART0_LCRH;
+volatile unsigned int* UART0_CR;
+volatile unsigned int* UART0_IMSC;
+volatile unsigned int* UART0_ICR;
 
 void uart_init(void)
 {
+    struct pht_node* uart_node = pht_find_device("uart");
+    if (uart_node == NULL)
+    {
+        PANIC("[UART] Device node not found in hardware tree!\n");
+    }
+
+    uintptr_t vbase = P2V(uart_node->address[0]);
+
+    UART0_FR = (unsigned int*)(vbase + 0x18);
+    UART0_IBRD = (unsigned int*)(vbase + 0x24);
+    UART0_FBRD = (unsigned int*)(vbase + 0x28);
+    UART0_LCRH = (unsigned int*)(vbase + 0x2C);
+    UART0_CR = (unsigned int*)(vbase + 0x30);
+    UART0_IMSC = (unsigned int*)(vbase + 0x38);
+    UART0_ICR = (unsigned int*)(vbase + 0x44);
+    UART0_DR = (unsigned int*)(vbase + 0x00);
+
     // clear control register, disables uart0
     *UART0_CR = 0;
 
