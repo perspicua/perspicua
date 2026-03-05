@@ -3,6 +3,13 @@ ENTRY(_entry)
 KERNEL_VMA = 0xFFFFFF8000000000;
 PHYS_MEM   = 0x0000000000080000;
 
+PHDRS
+{
+    text    PT_LOAD FLAGS(5);   /* R + X */
+    rodata  PT_LOAD FLAGS(4);   /* R */
+    data    PT_LOAD FLAGS(6);   /* R + W */
+}
+
 SECTIONS
 {
     /* The virtual address where the kernel runs */
@@ -15,26 +22,26 @@ SECTIONS
         KEEP(*(.text.boot))
         *(.text .text.*) 
         __text_end = .;
-    }
+    } :text
 
     .rodata : AT(ADDR(.rodata) - KERNEL_VMA) ALIGN(4096) {
         __rodata_start = .;
         *(.rodata .rodata.*)
         __rodata_end = .;
-    }
+    } :rodata
 
     .data : AT(ADDR(.data) - KERNEL_VMA) ALIGN(4096) {
         __data_start = .;
         *(.data .data.*)
         __data_end = .;
-    }
+    } :data
 
     .bss (NOLOAD) : AT(ADDR(.bss) - KERNEL_VMA) ALIGN(4096) {
         __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
         __bss_end = .;
-    }
+    } :data
 
     . = ALIGN(4096);
     _stack_bottom = .;
