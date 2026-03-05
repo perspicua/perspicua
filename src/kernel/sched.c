@@ -1,10 +1,16 @@
 #include "sched.h"
 #include "heap.h"
 #include "pmm.h"
+#include "mmu.h"
+#include "addr.h"
 #include "timer.h"
 #include "lock.h"
 #include "../lib/stdio.h"
 #include "../lib/string.h"
+#include "../lib/panic.h"
+
+#define STACK_CANARY 0xDEADC0DEDEADC0DEULL
+#define STACK_PAGES 3 // 1 guard page + 2 usable pages (8 KB usable)
 
 static struct task* current_task_ptr[4] = {0, 0, 0, 0};
 static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
@@ -91,12 +97,16 @@ static struct task* create_idle_task(int id)
 {
     struct task* idle = (struct task*)kmalloc(sizeof(struct task));
     memset(idle, 0, sizeof(struct task));
-    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
-    unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(STACK_PAGES);
+    // guard page: unmap the bottom page so overflow faults immediately
+    mmu_unmap_page((unsigned long)stack);
+    unsigned char* usable = stack + PAGE_SIZE; // skip guard page
+    unsigned long sp = ((unsigned long)usable + TASK_STACK_SIZE) & ~15UL;
+    *(unsigned long*)usable = STACK_CANARY;
 
     idle->state = TASK_READY;
     idle->id = 900 + id; // idle tasks get ids 900, 901, 902, 903
-    idle->stack = stack;
+    idle->stack = stack; // points to base of allocation (including guard)
     idle->context.sp = sp;
     idle->context.lr = (unsigned long)task_wrapper;
     idle->context.x19 = (unsigned long)idle_task_entry;
@@ -142,8 +152,11 @@ void sched_create_task(void (*entry)(void))
 {
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
-    unsigned char* stack = (unsigned char*)pmm_alloc_pages(2);
-    unsigned long sp = ((unsigned long)stack + TASK_STACK_SIZE) & ~15UL;
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(STACK_PAGES);
+    mmu_unmap_page((unsigned long)stack); // guard page
+    unsigned char* usable = stack + PAGE_SIZE;
+    unsigned long sp = ((unsigned long)usable + TASK_STACK_SIZE) & ~15UL;
+    *(unsigned long*)usable = STACK_CANARY;
 
     t->state = TASK_READY;
     t->context.sp = sp;
@@ -190,7 +203,13 @@ void schedule(void)
     {
         task_to_free[core_id] = 0;
         if (dead->stack)
-            pmm_free_pages(dead->stack, 2);
+        {
+            // remap guard page before returning memory to PMM
+            unsigned long guard_va = (unsigned long)dead->stack;
+            unsigned long guard_pa = V2P(guard_va);
+            mmu_map_page(guard_va, guard_pa, MMU_FLAGS_KERNEL_RW);
+            pmm_free_pages(dead->stack, STACK_PAGES);
+        }
         kfree(dead);
     }
 
@@ -206,6 +225,14 @@ void schedule(void)
     }
 
     struct task* prev = current_task_ptr[core_id];
+
+    // stack overflow detection via canary
+    if (prev->stack)
+    {
+        unsigned char* usable = prev->stack + PAGE_SIZE; // skip guard
+        if (*(unsigned long*)usable != STACK_CANARY)
+            PANIC("Stack overflow: canary corrupted!");
+    }
 
     if (prev->state == TASK_RUNNING)
     {

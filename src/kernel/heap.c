@@ -63,7 +63,6 @@ void* kmalloc(unsigned long size)
 
     // first-fit search
     struct block_header* curr = free_list;
-    struct block_header* prev = 0;
 
     while (curr)
     {
@@ -87,24 +86,28 @@ void* kmalloc(unsigned long size)
             return (void*)((unsigned char*)curr + HEADER_SIZE);
         }
 
-        prev = curr;
         curr = curr->next;
     }
 
     // no block found, expand heap with enough space for this allocation
     struct block_header* new_page = expand_heap(size);
     if (!new_page)
-    {
         PANIC("HEAP: Out of memory.\n");
-        spin_unlock_irqrestore(&heap_lock, flags);
-        return 0;
-    }
 
-    // append to end of free list
-    if (prev)
-        prev->next = new_page;
-    else
+    // insert in address order so coalescing works across regions
+    if (!free_list || (unsigned long)new_page < (unsigned long)free_list)
+    {
+        new_page->next = free_list;
         free_list = new_page;
+    }
+    else
+    {
+        struct block_header* scan = free_list;
+        while (scan->next && (unsigned long)scan->next < (unsigned long)new_page)
+            scan = scan->next;
+        new_page->next = scan->next;
+        scan->next = new_page;
+    }
 
     // allocate directly from the new block while still holding the lock
     // (avoids race where another CPU steals the block between unlock and re-lock)
@@ -135,11 +138,7 @@ void kfree(void* ptr)
     struct block_header* block = (struct block_header*)((unsigned char*)ptr - HEADER_SIZE);
 
     if (block->free)
-    {
-        PANIC("HEAP: WARNING - Double free detected.\n");
-        spin_unlock_irqrestore(&heap_lock, flags);
-        return;
-    }
+        PANIC("HEAP: Double free detected.\n");
 
     block->free = 1;
 

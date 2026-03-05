@@ -3,12 +3,9 @@
 #include "lock.h"
 #include "../lib/stdio.h"
 #include "../lib/panic.h"
+#include "addr.h"
 
 extern char __kernel_end[];
-
-#define KERNEL_VMA 0xFFFFFF8000000000ULL
-#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
-#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
 
 #define PHYSICAL_MEMORY_SIZE (1024 * 1024 * 1024) // 1 GB
 #define NUM_PAGES (PHYSICAL_MEMORY_SIZE / PAGE_SIZE)
@@ -23,6 +20,7 @@ struct page
 
 static struct page* page_array;
 static struct page* free_lists[MAX_ORDER + 1];
+static unsigned long pmm_reserved_pages;
 static spinlock_t pmm_lock = SPINLOCK_INIT;
 
 static inline unsigned int get_order(unsigned long count)
@@ -92,6 +90,7 @@ void pmm_init(void)
     unsigned long array_size = NUM_PAGES * sizeof(struct page);
     unsigned long usable_start = (kernel_end_aligned + array_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     unsigned long reserved_pages = V2P(usable_start) / PAGE_SIZE;
+    pmm_reserved_pages = reserved_pages;
 
     for (int i = 0; i <= MAX_ORDER; i++)
         free_lists[i] = 0;
@@ -177,7 +176,11 @@ void pmm_free_pages(void* ptr, unsigned long count)
     unsigned long pfn = V2P(ptr) / PAGE_SIZE;
     unsigned int order = get_order(count);
 
+    ASSERT(pfn >= pmm_reserved_pages);
+    ASSERT(pfn + (1UL << order) <= NUM_PAGES);
+
     unsigned long flags = spin_lock_irqsave(&pmm_lock);
+    ASSERT(!page_array[pfn].is_free);
     __free_buddy(pfn, order);
     spin_unlock_irqrestore(&pmm_lock, flags);
 }

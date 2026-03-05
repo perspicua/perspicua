@@ -13,14 +13,13 @@
 #include "lib/string.h"
 
 #include "test/test.h"
-
-#define KERNEL_VMA 0xFFFFFF8000000000ULL
-#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
-#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
+#include "kernel/addr.h"
 
 extern void _entry(void);
 
 static spinlock_t console_lock = SPINLOCK_INIT;
+
+#define KERNEL_VERSION "0.1"
 
 static inline unsigned long get_core_id(void)
 {
@@ -74,7 +73,7 @@ static void print_banner(void)
     printf("  _ __   ___ _ __ ___ _ __ (_) ___ _   _  __ _\n");
     printf(" | '_ \\ / _ \\ '__/ __| '_ \\| |/ __| | | |/ _` |\n");
     printf(" | |_) |  __/ |  \\__ \\ |_) | | (__| |_| | (_| |\n");
-    printf(" | .__/ \\___|_|  |___/ .__/|_|\\___|\\__,_|\\__,_|\n");
+    printf(" | .__/ \\___|_|  |___/ .__/|_|\\___|\\__,_|\\__,_| v%s\n", KERNEL_VERSION);
     printf(" |_|                 |_|\n");
     printf("\n");
 }
@@ -84,7 +83,7 @@ int main()
     uart_init();
 
     print_banner();
-    printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ "\n");
+    printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
     printf("[  0.000] BOOT: EL1 entry at 0x%lx (higher-half VMA 0x%lx)\n", V2P((unsigned long)main),
            (unsigned long)main);
     printf("[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)\n");

@@ -21,6 +21,7 @@ void run_all_tests(void)
     test_pmm();
     test_heap();
     test_timer();
+    test_mmu();
 
     printf("\n");
 
