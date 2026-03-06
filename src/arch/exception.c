@@ -5,6 +5,7 @@
 #include "../lib/panic.h"
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
+#include "../kernel/process.h"
 
 void c_unhandled_vector(void)
 {
@@ -79,7 +80,6 @@ void c_sync_handler(struct trap_frame* tf)
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
 
     uint32_t ec = (esr >> 26) & 0b111111;
-    printf("ec: %d\n", ec);
     // syscall
     if (ec == 0x15)
     {
@@ -90,6 +90,13 @@ void c_sync_handler(struct trap_frame* tf)
         {
             char c = (char)(tf->x[0]);
             uart_send(c);
+            break;
+        }
+        case 2:
+        {
+            process_exit();
+            while (1)
+                asm volatile("wfe");
             break;
         }
         default:

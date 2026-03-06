@@ -5,9 +5,10 @@
 
 struct trap_frame
 {
-    uintptr_t elr_el1; // addr to return after syscall
-    uint64_t spsr_el1; // cpu state
-
+    uint64_t sp_el0;
+    uint64_t _pad;        // alignment padding (xzr)
+    uintptr_t elr_el1;    // addr to return after syscall
+    uint64_t spsr_el1;    // cpu state
     // registers
     uint64_t x[30]; // x0 - x29
     uint64_t x30;   // link

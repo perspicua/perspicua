@@ -8,6 +8,7 @@
 #include "kernel/sched.h"
 #include "kernel/timer.h"
 #include "kernel/lock.h"
+#include "kernel/process.h"
 
 #include "lib/panic.h"
 #include "lib/stdio.h"
@@ -81,30 +82,36 @@ static void print_banner(void)
 
 uint8_t user_stack[4096] __attribute__((aligned(16)));
 
-static void user_process(void)
+void sys_print(char c)
 {
-    asm volatile("mov x8, #1\n"
-                 "mov x0, %0\n"
-                 "svc #0\n"
-                 :
-                 : "r"('M')
-                 : "x0", "x8");
+    asm volatile("mov x8, #1 \n mov x0, %0 \n svc #0" : : "r"(c) : "x0", "x8");
+}
+
+void sys_exit(void)
+{
+    asm volatile("mov x8, #2 \n svc #0" : : : "x8");
+}
+
+void user_program_A(void)
+{
     while (1)
-        ;
+    {
+        sys_print('A');
+        for (volatile int i = 0; i < 5000000; i++)
+            ;
+    }
 }
 
-void drop_to_user(void (*user_func)(void), void* stack_top)
+void user_program_B(void)
 {
-    uint64_t spsr = 0x3c0; // EL0t with DAIF masked
-    asm volatile("msr spsr_el1, %0\n"
-                 "msr elr_el1, %1\n"
-                 "msr sp_el0, %2\n"
-                 "eret\n"
-                 :
-                 : "r"(spsr), "r"(user_func), "r"(stack_top)
-                 : "memory");
+    while (1)
+    {
+        sys_print('B');
+        for (volatile int i = 0; i < 5000000; i++)
+            ;
+        sys_exit();
+    }
 }
-
 __attribute__((used)) int main(void);
 int main()
 {
@@ -137,15 +144,12 @@ int main()
 
     enable_interrupts();
     // run_scheduler_tests();
-    void* code_page = pmm_alloc_page();
-    void* stack_page = pmm_alloc_page();
 
-    mmu_map_page(0x100000000ULL, V2P(code_page), PAGE_USER_CODE);
-    mmu_map_page(0x100200000ULL, V2P(stack_page), PAGE_USER_DATA);
-
-    memcpy(code_page, (void*)user_process, 128);
-
-    drop_to_user((void*)0x100000000ULL, (void*)(0x100200000ULL + 4096));
+    process_init();
+    process_create((void*)user_program_A, 128, 1);
+    process_create((void*)user_program_B, 128, 2);
+    // struct cpu_context dummy;
+    // switch_context(&dummy, &current_process.context);
 
     while (1)
         asm volatile("wfe");

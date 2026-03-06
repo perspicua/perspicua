@@ -24,7 +24,7 @@ vector_table:
 
     // lower EL running AArch64 (User Space)
     ventry sync_handler // Synchronous
-    ventry default_exception_handler // IRQ
+    ventry irq_handler               // IRQ
     ventry default_exception_handler // FIQ
     ventry default_exception_handler // SError
 
@@ -41,7 +41,6 @@ default_exception_handler:
 
 .global sync_handler
 sync_handler:
-
 
     // save GPRs (x0-x30)
     sub sp, sp, #256
@@ -62,38 +61,19 @@ sync_handler:
     stp x28, x29, [sp, #16 * 14]
     str x30, [sp, #16 * 15]
 
-    // save ELR_EL1 and SPSR_EL1 so context switches preserve them
+    // save ELR_EL1 and SPSR_EL1
     mrs x0, elr_el1
     mrs x1, spsr_el1
     stp x0, x1, [sp, #-16]!
+
+    // save sp_el0
+    mrs x0, sp_el0
+    stp x0, xzr, [sp, #-16]!
+
     mov x0, sp
     bl c_sync_handler
 
-
-    ldp x21, x22, [sp], #16
-    msr elr_el1, x21
-    msr spsr_el1, x22
-
-    // restore GPRs
-    ldr x30, [sp, #16 * 15]
-    ldp x28, x29, [sp, #16 * 14]
-    ldp x26, x27, [sp, #16 * 13]
-    ldp x24, x25, [sp, #16 * 12]
-    ldp x22, x23, [sp, #16 * 11]
-    ldp x20, x21, [sp, #16 * 10]
-    ldp x18, x19, [sp, #16 * 9]
-    ldp x16, x17, [sp, #16 * 8]
-    ldp x14, x15, [sp, #16 * 7]
-    ldp x12, x13, [sp, #16 * 6]
-    ldp x10, x11, [sp, #16 * 5]
-    ldp x8, x9, [sp, #16 * 4]
-    ldp x6, x7, [sp, #16 * 3]
-    ldp x4, x5, [sp, #16 * 2]
-    ldp x2, x3, [sp, #16 * 1]
-    ldp x0, x1, [sp, #16 * 0]
-    add sp, sp, #256
-
-    eret
+    b ret_to_user
 
 .global irq_handler
 irq_handler:
@@ -117,19 +97,29 @@ irq_handler:
     stp x28, x29, [sp, #16 * 14]
     str x30, [sp, #16 * 15]
 
-    // save ELR_EL1 and SPSR_EL1 so context switches preserve them
+    // save ELR_EL1 and SPSR_EL1
     mrs x0, elr_el1
     mrs x1, spsr_el1
     stp x0, x1, [sp, #-16]!
 
+    // save sp_el0
+    mrs x0, sp_el0
+    stp x0, xzr, [sp, #-16]!
+
     bl c_irq_handler
 
-    // restore ELR_EL1 and SPSR_EL1 (pushed last, so pop first)
+.global ret_to_user
+ret_to_user:
+    // 1. Restore sp_el0 (pushed last, so pop first!)
+    ldp x0, x1, [sp], #16
+    msr sp_el0, x0
+
+    // 2. Restore ELR_EL1 and SPSR_EL1
     ldp x21, x22, [sp], #16
     msr elr_el1, x21
     msr spsr_el1, x22
 
-    // restore GPRs
+    // 3. Restore GPRs (x0 - x30)
     ldr x30, [sp, #16 * 15]
     ldp x28, x29, [sp, #16 * 14]
     ldp x26, x27, [sp, #16 * 13]

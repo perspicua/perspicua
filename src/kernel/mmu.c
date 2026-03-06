@@ -134,7 +134,7 @@ void mmu_init(void)
 void mmu_secondary_init(void)
 {
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
-    asm volatile("msr ttbr0_el1, %0" : : "r"(0));
+    asm volatile("msr ttbr0_el1, %0" : : "r"(kernel_pgd_phys));
 
     asm volatile("tlbi vmalle1is");
     asm volatile("dsb ish");

@@ -189,6 +189,22 @@ void sched_sleep_ms(unsigned long ms)
     schedule();
 }
 
+void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr)
+{
+    struct task* t = (struct task*)kmalloc(sizeof(struct task));
+    memset(t, 0, sizeof(struct task));
+
+    t->state = TASK_READY;
+    t->context.sp = forged_sp;
+    t->context.lr = forged_lr;
+    t->stack = 0;
+
+    unsigned long flags = spin_lock_irqsave(&sched_lock);
+    t->id = next_task_id++;
+    enqueue_ready(t);
+    spin_unlock_irqrestore(&sched_lock, flags);
+}
+
 void schedule(void)
 {
     unsigned long core_id;
