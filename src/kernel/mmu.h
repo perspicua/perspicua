@@ -37,7 +37,7 @@
 void mmu_init(void);
 void mmu_secondary_init(void);
 
-// --- dynamic page table management ---
+// --- dynamic page table management (kernel TTBR1) ---
 
 // Map a single 4KB page: vaddr -> paddr with given flags.
 // Allocates intermediate page tables (L1/L2) if needed via PMM.
@@ -52,5 +52,30 @@ void mmu_unmap_page(unsigned long vaddr);
 // If mapped and out_paddr is non-NULL, writes the physical address.
 // If mapped and out_flags is non-NULL, writes the PTE flags.
 int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags);
+
+// --- per-process user page tables (TTBR0) ---
+
+// Allocate a fresh zeroed PGD for a user process.
+// Returns the virtual address of the PGD page.
+unsigned long* mmu_create_user_pgd(void);
+
+// Free a user PGD and all L2/L3 tables it references.
+// Does NOT free the physical pages that were mapped (caller handles that).
+void mmu_destroy_user_pgd(unsigned long* pgd);
+
+// Map a 4KB page in a user PGD (TTBR0 address space).
+void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags);
+
+// Unmap a 4KB page in a user PGD.
+void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr);
+
+// Query a user PGD. Returns 1 if vaddr is mapped, 0 if not.
+int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags);
+
+// Load a user PGD into TTBR0 with the given ASID. Flushes TLB.
+void mmu_switch_user(unsigned long* pgd, unsigned long asid);
+
+// Returns the physical TTBR0 value for an empty (kernel-only) address space.
+unsigned long mmu_kernel_ttbr0(void);
 
 #endif // _MMU_H_

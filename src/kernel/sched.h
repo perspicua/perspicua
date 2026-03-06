@@ -1,6 +1,8 @@
 #ifndef _SCHED_H_
 #define _SCHED_H_
 
+#include "../lib/types.h"
+
 #define TASK_STACK_SIZE 8192
 #define MAX_TASKS 16
 
@@ -33,6 +35,7 @@ enum task_state
 struct task
 {
     struct cpu_context context;
+    unsigned long ttbr0; // TTBR0 value (phys PGD | ASID<<48), 0 = kernel-only
     enum task_state state;
     unsigned long wake_time;
     unsigned long id;
@@ -47,7 +50,7 @@ void sched_sleep_ms(unsigned long ms);
 void schedule(void);
 void sched_secondary_init(void);
 
-void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr);
+void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
 // defined in switch.S
 extern void switch_context(struct cpu_context* prev, struct cpu_context* next);
 

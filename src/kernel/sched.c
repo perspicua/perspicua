@@ -5,6 +5,7 @@
 #include "addr.h"
 #include "timer.h"
 #include "lock.h"
+#include "process.h"
 #include "../lib/stdio.h"
 #include "../lib/string.h"
 #include "../lib/panic.h"
@@ -107,6 +108,7 @@ static struct task* create_idle_task(int id)
     idle->state = TASK_READY;
     idle->id = 900 + id; // idle tasks get ids 900, 901, 902, 903
     idle->stack = stack; // points to base of allocation (including guard)
+    idle->ttbr0 = mmu_kernel_ttbr0();
     idle->context.sp = sp;
     idle->context.lr = (unsigned long)task_wrapper;
     idle->context.x19 = (unsigned long)idle_task_entry;
@@ -122,6 +124,7 @@ void sched_init(void)
     main_task->id = next_task_id++;
     main_task->stack = 0;
     main_task->next = 0;
+    main_task->ttbr0 = mmu_kernel_ttbr0();
 
     current_task_ptr[0] = main_task;
     idle_task_ptr[0] = create_idle_task(0);
@@ -162,6 +165,7 @@ void sched_create_task(void (*entry)(void))
     t->context.sp = sp;
     t->context.lr = (unsigned long)task_wrapper;
     t->context.x19 = (unsigned long)entry;
+    t->ttbr0 = mmu_kernel_ttbr0();
 
     unsigned long flags = spin_lock_irqsave(&sched_lock);
     t->id = next_task_id++;
@@ -189,7 +193,7 @@ void sched_sleep_ms(unsigned long ms)
     schedule();
 }
 
-void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr)
+void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
 {
     struct task* t = (struct task*)kmalloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
@@ -198,6 +202,7 @@ void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr)
     t->context.sp = forged_sp;
     t->context.lr = forged_lr;
     t->stack = 0;
+    t->ttbr0 = process_get_ttbr0(pid);
 
     unsigned long flags = spin_lock_irqsave(&sched_lock);
     t->id = next_task_id++;
@@ -277,6 +282,11 @@ void schedule(void)
 
     if (prev != next)
     {
+        // switch TTBR0 to the next task's user address space
+        asm volatile("msr ttbr0_el1, %0\n"
+                     "isb"
+                     :
+                     : "r"(next->ttbr0));
         switch_context(&prev->context, &next->context);
     }
 }

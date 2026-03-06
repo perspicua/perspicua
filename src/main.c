@@ -94,23 +94,37 @@ void sys_exit(void)
 
 void user_program_A(void)
 {
-    while (1)
+    size_t cnt = 0;
+    while (cnt < 100)
     {
-        sys_print('A');
+        sys_print('R');
+        sys_print('i');
+        sys_print('c');
+        sys_print('i');
+        sys_print('u');
         for (volatile int i = 0; i < 5000000; i++)
             ;
+        cnt++;
     }
+    sys_exit();
 }
 
 void user_program_B(void)
 {
-    while (1)
+    size_t cnt = 0;
+    while (cnt < 100)
     {
-        sys_print('B');
+        sys_print(' ');
+        sys_print('S');
+        sys_print('e');
+        sys_print('x');
+        sys_print('y');
         for (volatile int i = 0; i < 5000000; i++)
             ;
-        sys_exit();
+        cnt++;
     }
+
+    sys_exit();
 }
 __attribute__((used)) int main(void);
 int main()
@@ -140,14 +154,14 @@ int main()
     printf("\n");
     printf(" BOOT COMPLETE - all subsystems operational\n");
 
-    // run_all_tests();
+    run_all_tests();
 
     enable_interrupts();
-    // run_scheduler_tests();
+    run_scheduler_tests();
 
     process_init();
-    process_create((void*)user_program_A, 128, 1);
-    process_create((void*)user_program_B, 128, 2);
+    process_create((void*)user_program_A, 1024, 1);
+    process_create((void*)user_program_B, 1024, 2);
     // struct cpu_context dummy;
     // switch_context(&dummy, &current_process.context);
 

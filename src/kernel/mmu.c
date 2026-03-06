@@ -27,6 +27,7 @@ extern char __kernel_end[];
 
 static unsigned long kernel_pgd_phys;
 static unsigned long* kernel_pgd_virt; // virtual address of the PGD for dynamic mapping
+static unsigned long empty_pgd_phys;   // zeroed PGD for kernel-only tasks (TTBR0)
 static spinlock_t mmu_lock = SPINLOCK_INIT;
 
 // --- address field extraction for 39-bit VA, 4KB granule ---
@@ -115,14 +116,19 @@ void mmu_init(void)
     kernel_pgd_virt = pgd;
     kernel_pgd_phys = V2P(pgd);
 
+    // allocate an empty PGD for kernel-only tasks so TTBR0 faults on any user VA
+    unsigned long* empty_pgd = (unsigned long*)pmm_alloc_page();
+    memset(empty_pgd, 0, PAGE_SIZE);
+    empty_pgd_phys = V2P(empty_pgd);
+
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
-    asm volatile("msr ttbr0_el1, %0" : : "r"(kernel_pgd_phys)); // this was 0, chandged to kernel_pgd_phys for user
+    asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys));
 
     asm volatile("tlbi vmalle1is");
     asm volatile("dsb ish");
     asm volatile("isb");
 
-    printf("[  MMU ] TTBR1 → 0x%lx, TTBR0 nullified (trap user access)\n", kernel_pgd_phys);
+    printf("[  MMU ] TTBR1 → 0x%lx, TTBR0 -> empty (trap user access)\n", kernel_pgd_phys);
     printf("[  MMU ] Mapped: 1 GB RAM (2MB blocks) + 3 GB MMIO (device)\n");
     printf("[  MMU ] Kernel [0, 2MB] — 4KB granule, W^X enforced\n");
     printf("[  MMU ]   .text   [0x%lx — 0x%lx] RO+X\n", (unsigned long)__text_start, (unsigned long)__text_end);
@@ -134,7 +140,7 @@ void mmu_init(void)
 void mmu_secondary_init(void)
 {
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
-    asm volatile("msr ttbr0_el1, %0" : : "r"(kernel_pgd_phys));
+    asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys));
 
     asm volatile("tlbi vmalle1is");
     asm volatile("dsb ish");
@@ -339,4 +345,170 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
 
     spin_unlock_irqrestore(&mmu_lock, irqflags);
     return 1;
+}
+
+// --- per-process user page tables (TTBR0) ---
+
+unsigned long* mmu_create_user_pgd(void)
+{
+    unsigned long* pgd = alloc_table_page();
+    return pgd;
+}
+
+void mmu_destroy_user_pgd(unsigned long* pgd)
+{
+    for (int i = 0; i < 512; i++)
+    {
+        if (!(pgd[i] & PTE_VALID))
+            continue;
+        if (!(pgd[i] & PTE_TABLE))
+            continue; // skip block entries (shouldn't exist in user PGD)
+
+        unsigned long* l2 = (unsigned long*)P2V(pgd[i] & PTE_ADDR_MASK);
+        for (int j = 0; j < 512; j++)
+        {
+            if (!(l2[j] & PTE_VALID))
+                continue;
+            if (l2[j] & PTE_TABLE)
+            {
+                // L3 table — free the page table page itself
+                unsigned long* l3 = (unsigned long*)P2V(l2[j] & PTE_ADDR_MASK);
+                pmm_free_page(l3);
+            }
+            // block entries: nothing to free (caller frees mapped pages)
+        }
+        pmm_free_page(l2);
+    }
+    pmm_free_page(pgd);
+}
+
+void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags)
+{
+    ASSERT((vaddr & 0xFFF) == 0);
+    ASSERT((paddr & 0xFFF) == 0);
+
+    unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
+
+    unsigned long l1_idx = L1_INDEX(vaddr);
+    unsigned long l2_idx = L2_INDEX(vaddr);
+    unsigned long l3_idx = L3_INDEX(vaddr);
+
+    // L1 -> L2
+    unsigned long* l2_table;
+    if (pgd[l1_idx] & PTE_VALID)
+    {
+        l2_table = (unsigned long*)P2V(pgd[l1_idx] & PTE_ADDR_MASK);
+    }
+    else
+    {
+        l2_table = alloc_table_page();
+        pgd[l1_idx] = V2P(l2_table) | PTE_VALID | PTE_TABLE;
+    }
+
+    // L2 -> L3
+    unsigned long* l3_table;
+    if (l2_table[l2_idx] & PTE_VALID)
+    {
+        ASSERT(l2_table[l2_idx] & PTE_TABLE); // must be table, not block
+        l3_table = (unsigned long*)P2V(l2_table[l2_idx] & PTE_ADDR_MASK);
+    }
+    else
+    {
+        l3_table = alloc_table_page();
+        l2_table[l2_idx] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
+    }
+
+    ASSERT(!(l3_table[l3_idx] & PTE_VALID));
+    l3_table[l3_idx] = (paddr & PTE_ADDR_MASK) | PTE_VALID | PTE_PAGE | flags;
+
+    tlbi_va(vaddr);
+
+    spin_unlock_irqrestore(&mmu_lock, irqflags);
+}
+
+void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
+{
+    ASSERT((vaddr & 0xFFF) == 0);
+
+    unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
+
+    unsigned long l1_idx = L1_INDEX(vaddr);
+    unsigned long l2_idx = L2_INDEX(vaddr);
+    unsigned long l3_idx = L3_INDEX(vaddr);
+
+    ASSERT(pgd[l1_idx] & PTE_VALID);
+    unsigned long* l2 = (unsigned long*)P2V(pgd[l1_idx] & PTE_ADDR_MASK);
+
+    ASSERT(l2[l2_idx] & PTE_VALID);
+    ASSERT(l2[l2_idx] & PTE_TABLE);
+    unsigned long* l3 = (unsigned long*)P2V(l2[l2_idx] & PTE_ADDR_MASK);
+
+    ASSERT(l3[l3_idx] & PTE_VALID);
+    l3[l3_idx] = 0;
+
+    tlbi_va(vaddr);
+
+    spin_unlock_irqrestore(&mmu_lock, irqflags);
+}
+
+void mmu_switch_user(unsigned long* pgd, unsigned long asid)
+{
+    unsigned long ttbr0 = V2P(pgd) | (asid << 48);
+    asm volatile("msr ttbr0_el1, %0" : : "r"(ttbr0));
+    asm volatile("isb");
+}
+
+int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
+{
+    unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
+
+    unsigned long l1_idx = L1_INDEX(vaddr);
+    unsigned long l2_idx = L2_INDEX(vaddr);
+    unsigned long l3_idx = L3_INDEX(vaddr);
+
+    if (!(pgd[l1_idx] & PTE_VALID))
+    {
+        spin_unlock_irqrestore(&mmu_lock, irqflags);
+        return 0;
+    }
+
+    unsigned long* l2 = (unsigned long*)P2V(pgd[l1_idx] & PTE_ADDR_MASK);
+    if (!(l2[l2_idx] & PTE_VALID))
+    {
+        spin_unlock_irqrestore(&mmu_lock, irqflags);
+        return 0;
+    }
+
+    if (!(l2[l2_idx] & PTE_TABLE))
+    {
+        // 2MB block
+        unsigned long block_phys = l2[l2_idx] & PTE_ADDR_MASK;
+        unsigned long offset = vaddr & 0x1FFFFF;
+        if (out_paddr)
+            *out_paddr = block_phys + offset;
+        if (out_flags)
+            *out_flags = l2[l2_idx] & ~PTE_ADDR_MASK;
+        spin_unlock_irqrestore(&mmu_lock, irqflags);
+        return 1;
+    }
+
+    unsigned long* l3 = (unsigned long*)P2V(l2[l2_idx] & PTE_ADDR_MASK);
+    if (!(l3[l3_idx] & PTE_VALID))
+    {
+        spin_unlock_irqrestore(&mmu_lock, irqflags);
+        return 0;
+    }
+
+    if (out_paddr)
+        *out_paddr = (l3[l3_idx] & PTE_ADDR_MASK) + PAGE_OFFSET(vaddr);
+    if (out_flags)
+        *out_flags = l3[l3_idx] & ~PTE_ADDR_MASK;
+
+    spin_unlock_irqrestore(&mmu_lock, irqflags);
+    return 1;
+}
+
+unsigned long mmu_kernel_ttbr0(void)
+{
+    return empty_pgd_phys;
 }
