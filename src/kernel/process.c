@@ -81,12 +81,17 @@ void process_init(void)
 }
 
 void process_create(void* code_ptr, size_t code_size, uint32_t pid)
-{
+{    if (pid >= PROCESS_TABLE_SIZE)
+    {
+        printf("[PROCESS] Error: PID %d out of range\n", pid);
+        return;
+    }
     if (process_table[pid].state != PROCESS_STATE_EMPTY)
     {
-        PANIC("Only one process supported right now!\n");
+        printf("[PROCESS] Error: PID %d already in use\n", pid);
+        return;
     }
-
+    
     va_init(&process_table[pid].va);
 
     void* code_page = pmm_alloc_page();

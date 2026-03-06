@@ -14,9 +14,13 @@ OBJDUMP = $(CROSS_COMPILE)objdump
 NM      = $(CROSS_COMPILE)nm
 SIZE    = $(CROSS_COMPILE)size
 
+# parallel build by default
+MAKEFLAGS += -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+
 # directories
 SRC_DIR   = src
 BUILD_DIR = build
+LINK_SCRIPT = link.ld
 
 # flags
 ARCH_FLAGS = -mcpu=cortex-a72+nosimd -mgeneral-regs-only
@@ -26,9 +30,10 @@ WARNINGS = -Wall -Wextra -Wshadow -Wdouble-promotion \
            -Wundef -Wstrict-prototypes -Wmissing-prototypes
 
 CFLAGS  = $(WARNINGS) -ffreestanding -nostdlib $(ARCH_FLAGS) \
-          -I$(SRC_DIR) -std=gnu11 -MMD -MP
+          -I$(SRC_DIR) -std=gnu11 -MMD -MP \
+          -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables
 ASFLAGS = $(ARCH_FLAGS) -I$(SRC_DIR) -D__ASSEMBLY__ -MMD -MP
-LDFLAGS = -nostdlib -T link.ld
+LDFLAGS = -nostdlib -T $(LINK_SCRIPT)
 
 # debug vs release
 ifeq ($(DEBUG),1)
@@ -38,9 +43,10 @@ else
     CFLAGS  += -O2 -DNDEBUG
 endif
 
-# sources and objects
-C_SOURCES = $(shell find $(SRC_DIR) -name '*.c')
-S_SOURCES = $(shell find $(SRC_DIR) -name '*.S')
+# sources and objects (recursive wildcard, deterministic order)
+rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
+C_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.c))
+S_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.S))
 
 C_OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
 S_OBJECTS = $(patsubst $(SRC_DIR)/%.S, $(BUILD_DIR)/%.o, $(S_SOURCES))
@@ -62,12 +68,17 @@ else
     msg =
 endif
 
+# cflags change detection — forces rebuild on flag changes
+$(shell mkdir -p $(BUILD_DIR))
+CFLAGS_FILE = $(BUILD_DIR)/.cflags
+$(shell echo "$(CFLAGS)" | cmp -s - $(CFLAGS_FILE) || echo "$(CFLAGS)" > $(CFLAGS_FILE))
+
 # build targets
 .DELETE_ON_ERROR:
 
 all: $(IMAGE)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(CFLAGS_FILE)
 	$(call msg,"CC",$<)
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(CFLAGS) -c $< -o $@
@@ -78,7 +89,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.S
 	@mkdir -p $(dir $@)
 	$(Q)$(CC) $(ASFLAGS) -c $< -o $@
 
-$(TARGET): $(OBJECTS)
+$(TARGET): $(OBJECTS) $(LINK_SCRIPT)
 	$(call msg,"LD",$@)
 	$(Q)$(LD) $(LDFLAGS) $(OBJECTS) -o $@
 
@@ -117,9 +128,9 @@ symbols: $(TARGET)
 	$(NM) -n $< | grep -v '\(compiled\)\|\.o$$'
 
 # generate compile_commands.json for clangd (needs bear or compiledb)
-compile_commands.json: clean
+compile_commands.json:
 	@if command -v bear >/dev/null 2>&1; then \
-		bear -- $(MAKE) all; \
+		bear --append -- $(MAKE) all; \
 	elif command -v compiledb >/dev/null 2>&1; then \
 		compiledb $(MAKE) all; \
 	else \

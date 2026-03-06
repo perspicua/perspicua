@@ -82,17 +82,17 @@ static void print_banner(void)
 
 uint8_t user_stack[4096] __attribute__((aligned(16)));
 
-void sys_print(char c)
+static void sys_print(char c)
 {
     asm volatile("mov x8, #1 \n mov x0, %0 \n svc #0" : : "r"(c) : "x0", "x8");
 }
 
-void sys_exit(void)
+static void sys_exit(void)
 {
     asm volatile("mov x8, #2 \n svc #0" : : : "x8");
 }
 
-void user_program_A(void)
+static void user_program_A(void)
 {
     size_t cnt = 0;
     while (cnt < 100)
@@ -109,7 +109,7 @@ void user_program_A(void)
     sys_exit();
 }
 
-void user_program_B(void)
+static void user_program_B(void)
 {
     size_t cnt = 0;
     while (cnt < 100)
