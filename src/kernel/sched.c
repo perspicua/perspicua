@@ -145,7 +145,6 @@ void sched_secondary_init(void)
     current_task_ptr[core_id] = idle_task_ptr[core_id];
     current_task_ptr[core_id]->state = TASK_RUNNING;
 
-    enable_interrupts();
     schedule();
     while (1)
         asm volatile("wfe"); // fallback
@@ -278,7 +277,7 @@ void schedule(void)
     next->state = TASK_RUNNING;
     current_task_ptr[core_id] = next;
 
-    spin_unlock_irqrestore(&sched_lock, flags); // UNLOCK BEFORE SWITCHING!
+    spin_unlock(&sched_lock); // UNLOCK BUT KEEP INTERRUPTS DISABLED!
 
     if (prev != next)
     {
@@ -289,9 +288,12 @@ void schedule(void)
                      : "r"(next->ttbr0));
         // flush TLB for the new ASID — on real hardware stale entries
         // from a prior address space can cause silent translation faults
-        asm volatile("tlbi vmalle1is\n"
+        asm volatile("dsb ish\n"
+                     "tlbi vmalle1is\n"
                      "dsb ish\n"
                      "isb");
         switch_context(&prev->context, &next->context);
     }
+
+    irq_restore(flags); // finally re-enable interrupts
 }

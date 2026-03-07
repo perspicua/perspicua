@@ -82,12 +82,12 @@ static void print_banner(void)
 
 uint8_t user_stack[4096] __attribute__((aligned(16)));
 
-static void sys_print(char c)
+static inline __attribute__((always_inline)) void sys_print(char c)
 {
     asm volatile("mov x8, #1 \n mov x0, %0 \n svc #0" : : "r"(c) : "x0", "x8");
 }
 
-static void sys_exit(void)
+static inline __attribute__((always_inline)) void sys_exit(void)
 {
     asm volatile("mov x8, #2 \n svc #0" : : : "x8");
 }

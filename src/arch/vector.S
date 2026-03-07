@@ -1,7 +1,7 @@
 .section ".text"
 
 .macro ventry label
-    .align 7
+    .balign 0x80
     b \label
 .endm
 
@@ -19,13 +19,13 @@ vector_table:
     // Current EL using SP_ELx
     ventry sync_handler // Synchronous
     ventry irq_handler               // IRQ
-    ventry default_exception_handler // FIQ
+    ventry fiq_discard               // FIQ
     ventry default_exception_handler // SError
 
     // lower EL running AArch64 (User Space)
     ventry sync_handler // Synchronous
     ventry irq_handler               // IRQ
-    ventry default_exception_handler // FIQ
+    ventry fiq_discard               // FIQ
     ventry default_exception_handler // SError
 
     // Lower EL running AArch32
@@ -38,6 +38,17 @@ default_exception_handler:
     bl c_unhandled_vector
 1:  wfe
     b 1b
+
+// FIQ discard handler — Pi 4 firmware (VideoCore) may generate FIQs
+// that this kernel does not service.  Mask FIQ in the saved PSTATE so
+// it cannot re-fire, then return to the interrupted code.
+fiq_discard:
+    stp x0, x1, [sp, #-16]!
+    mrs x0, spsr_el1
+    orr x0, x0, #(1 << 6)      // set PSTATE.F in SPSR → mask FIQ
+    msr spsr_el1, x0
+    ldp x0, x1, [sp], #16
+    eret
 
 .global sync_handler
 sync_handler:

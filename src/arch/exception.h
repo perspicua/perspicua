@@ -12,6 +12,7 @@ struct trap_frame
     // registers
     uint64_t x[30]; // x0 - x29
     uint64_t x30;   // link
+    uint64_t _pad2; // alignment to 288 bytes (matching vector.S)
 } __attribute__((aligned(16)));
 
 void c_unhandled_vector(void);

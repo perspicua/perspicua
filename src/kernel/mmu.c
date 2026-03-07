@@ -161,6 +161,7 @@ static inline void tlbi_va(unsigned long vaddr)
 {
     // tlbi vale1is operates on VA >> 12
     unsigned long va_shifted = vaddr >> 12;
+    asm volatile("dsb ish");
     asm volatile("tlbi vale1is, %0" : : "r"(va_shifted));
     asm volatile("dsb ish");
     asm volatile("isb");

@@ -99,6 +99,7 @@ enable_mmu:
     // page table walker sees the entries we just wrote to memory.
     // Without this, real hardware may fault immediately on MMU enable
     // because writes can still be sitting in the CPU's write buffer.
+    dsb sy
     tlbi vmalle1
     dsb sy
     isb

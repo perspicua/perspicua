@@ -140,11 +140,23 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     memcpy(code_page, code_ptr, code_size);
     flush_icache_range(code_page, code_size);
 
+    // Full I-cache invalidation across all cores.
+    // flush_icache_range uses IC IVAU which invalidates by kernel VA,
+    // but user code is fetched from a different VA (0x100000).
+    // On Cortex-A72's VIPT I-cache, stale speculative prefetches for
+    // the user VA could persist.  A blanket invalidation is safest.
+    asm volatile("ic ialluis\n dsb ish\n isb");
+
     uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 4096;
     struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
     memset(tf, 0, sizeof(struct trap_frame));
     tf->elr_el1 = process_table[pid].vaddr_code;
-    tf->spsr_el1 = 0;
+    // SPSR = EL0t with D,A,F masked, I unmasked (0x340)
+    // The Pi 4 firmware (VideoCore) generates FIQs for GPU mailbox.
+    // At EL1 FIQs are always masked (boot sets DAIF.F=1, enable_interrupts
+    // only clears I).  Dropping to EL0 with F=0 would unmask firmware FIQs
+    // for the first time, causing an immediate unhandled-FIQ halt.
+    tf->spsr_el1 = 0x340;
     tf->sp_el0 = process_table[pid].vaddr_user_stack + PAGE_SIZE;
 
     process_table[pid].context.sp = (unsigned long)tf;
