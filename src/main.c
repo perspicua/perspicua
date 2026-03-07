@@ -82,9 +82,11 @@ static void print_banner(void)
 
 uint8_t user_stack[4096] __attribute__((aligned(16)));
 
-static inline __attribute__((always_inline)) void sys_print(char c)
+static inline __attribute__((always_inline)) void sys_write(const char* buf, size_t len)
 {
-    asm volatile("mov x8, #1 \n mov x0, %0 \n svc #0" : : "r"(c) : "x0", "x8");
+    register const char* _buf asm("x0") = buf;
+    register size_t _len asm("x1") = len;
+    asm volatile("mov x8, #1\n svc #0" : : "r"(_buf), "r"(_len) : "x8");
 }
 
 static inline __attribute__((always_inline)) void sys_exit(void)
@@ -92,40 +94,40 @@ static inline __attribute__((always_inline)) void sys_exit(void)
     asm volatile("mov x8, #2 \n svc #0" : : : "x8");
 }
 
-static void user_program_A(void)
+static void user_program_1(void)
 {
-    size_t cnt = 0;
-    while (cnt < 100)
+    while (1)
     {
-        sys_print('R');
-        sys_print('i');
-        sys_print('c');
-        sys_print('i');
-        sys_print('u');
+        char msg[25];
+        msg[0] = 'H';
+        msg[1] = 'e';
+        msg[2] = 'l';
+        msg[3] = 'l';
+        msg[4] = 'o';
+        msg[5] = ' ';
+        msg[6] = 'f';
+        msg[7] = 'r';
+        msg[8] = 'o';
+        msg[9] = 'm';
+        msg[10] = ' ';
+        msg[11] = 'u';
+        msg[12] = 's';
+        msg[13] = 'e';
+        msg[14] = 'r';
+        msg[15] = ' ';
+        msg[16] = 's';
+        msg[17] = 'p';
+        msg[18] = 'a';
+        msg[19] = 'c';
+        msg[20] = 'e';
+        msg[21] = '!';
+        msg[22] = '\n';
+        sys_write(msg, 23);
         for (volatile int i = 0; i < 5000000; i++)
             ;
-        cnt++;
     }
-    sys_exit();
 }
 
-static void user_program_B(void)
-{
-    size_t cnt = 0;
-    while (cnt < 100)
-    {
-        sys_print(' ');
-        sys_print('S');
-        sys_print('e');
-        sys_print('x');
-        sys_print('y');
-        for (volatile int i = 0; i < 5000000; i++)
-            ;
-        cnt++;
-    }
-
-    sys_exit();
-}
 __attribute__((used)) int main(void);
 int main()
 {
@@ -157,11 +159,14 @@ int main()
     run_all_tests();
 
     enable_interrupts();
-    run_scheduler_tests();
+    // run_scheduler_tests();
 
     process_init();
-    process_create((void*)user_program_A, 1024, 1);
-    process_create((void*)user_program_B, 1024, 2);
+    process_create((void*)user_program_1, 1024, 1);
+    /* process_create((void*)user_program_2, 1024, 2); */
+    /* process_create((void*)user_program_3, 1024, 3); */
+    /* process_create((void*)user_program_4, 1024, 4); */
+    /* process_create((void*)user_program_5, 1024, 5); */
     // struct cpu_context dummy;
     // switch_context(&dummy, &current_process.context);
 

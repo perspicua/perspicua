@@ -93,10 +93,14 @@ $(TARGET): $(OBJECTS) $(LINK_SCRIPT)
 	$(call msg,"LD",$@)
 	$(Q)$(LD) $(LDFLAGS) $(OBJECTS) -o $@
 
+PI4_BOOT_DIR = pi4-boot
+
 $(IMAGE): $(TARGET)
 	$(call msg,"BIN",$@)
 	$(Q)$(OBJCOPY) -O binary $< $@
 	@printf '  %-7s %s bytes\n' "SIZE" "$$(wc -c < $@ | tr -d ' ')"
+	$(call msg,"COPY","$(PI4_BOOT_DIR)/kernel8.img")
+	$(Q)cp $@ $(PI4_BOOT_DIR)/kernel8.img
 
 # run and debug
 QEMU       = qemu-system-aarch64

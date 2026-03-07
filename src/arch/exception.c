@@ -196,8 +196,10 @@ void c_sync_handler(struct trap_frame* tf)
         {
         case 1:
         {
-            char c = (char)(tf->x[0]);
-            uart_send(c);
+            const char* buf = (const char*)(tf->x[0]);
+            size_t len = (size_t)(tf->x[1]);
+            for (size_t i = 0; i < len; i++)
+                uart_send(buf[i]);
             break;
         }
         case 2:

@@ -1,0 +1,14 @@
+# Raspberry Pi 4 boot configuration for perspicua kernel
+# Place this file on the SD card's boot partition alongside kernel8.img
+
+arm_64bit=1
+
+enable_uart=1
+enable_jtag_gpio=1
+dtoverlay=disable-bt
+
+init_uart_clock=48000000
+
+disable_splash=1
+
+kernel=kernel8.img
