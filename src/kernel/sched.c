@@ -287,6 +287,11 @@ void schedule(void)
                      "isb"
                      :
                      : "r"(next->ttbr0));
+        // flush TLB for the new ASID — on real hardware stale entries
+        // from a prior address space can cause silent translation faults
+        asm volatile("tlbi vmalle1is\n"
+                     "dsb ish\n"
+                     "isb");
         switch_context(&prev->context, &next->context);
     }
 }

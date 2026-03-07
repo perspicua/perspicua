@@ -78,7 +78,9 @@ map_periph_loop:
     b.ne map_periph_loop
 
 enable_mmu:
-    ldr x0, =0xFF
+    // Attr0 = 0xFF (Normal, Write-Back, Read/Write-Allocate)
+    // Attr1 = 0x04 (Device-nGnRE — non-Gathering, non-Reordering, Early-ack)
+    ldr x0, =0x04FF
     msr mair_el1, x0
     
     // tcr: 39-bit va for ttbr0 and ttbr1
@@ -93,10 +95,28 @@ enable_mmu:
     msr ttbr1_el1, x0   
     isb
 
-    mrs x0, sctlr_el1
-    orr x0, x0, #1      // enable mmu
-    orr x0, x0, #4      // d-cache
-    orr x0, x0, #4096   // i-cache
+    // invalidate stale TLB entries and drain the write buffer so the
+    // page table walker sees the entries we just wrote to memory.
+    // Without this, real hardware may fault immediately on MMU enable
+    // because writes can still be sitting in the CPU's write buffer.
+    tlbi vmalle1
+    dsb sy
+    isb
+
+    // invalidate I-cache before enabling it with potentially stale lines
+    ic iallu
+    dsb sy
+    isb
+
+    // Build SCTLR_EL1 from scratch instead of read-modify-write.
+    // The firmware may leave bits set (e.g. WXN) that silently break
+    // EL0 execution on real hardware.
+    //   bit  0  M    = 1  MMU enable
+    //   bit  2  C    = 1  D-cache enable
+    //   bit 12  I    = 1  I-cache enable
+    //   bits 11,20,22,23,28,29 = RES1 on Cortex-A72
+    //   WXN(19)=0, A(1)=0, E0E(24)=0, EE(25)=0
+    ldr x0, =0x30D01805
     msr sctlr_el1, x0
     isb
 

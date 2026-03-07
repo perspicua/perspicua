@@ -9,6 +9,27 @@
 
 extern void ret_to_user(void);
 
+// flush D-cache to Point of Unification and invalidate I-cache for a range.
+// required after copying code into a page that will be executed —
+// without this, real hardware (Cortex-A72) may execute stale I-cache contents.
+static void flush_icache_range(void* start, size_t size)
+{
+    // Cortex-A72 cache line = 64 bytes
+    unsigned long addr = (unsigned long)start & ~63UL;
+    unsigned long end = (unsigned long)start + size;
+
+    // 1. clean D-cache to PoU so writes reach the level where I-cache reads
+    for (unsigned long a = addr; a < end; a += 64)
+        asm volatile("dc cvau, %0" : : "r"(a));
+    asm volatile("dsb ish");
+
+    // 2. invalidate I-cache so stale lines are discarded
+    for (unsigned long a = addr; a < end; a += 64)
+        asm volatile("ic ivau, %0" : : "r"(a));
+    asm volatile("dsb ish");
+    asm volatile("isb");
+}
+
 struct process process_table[PROCESS_TABLE_SIZE];
 
 static void va_init(struct va_allocator* va)
@@ -81,7 +102,8 @@ void process_init(void)
 }
 
 void process_create(void* code_ptr, size_t code_size, uint32_t pid)
-{    if (pid >= PROCESS_TABLE_SIZE)
+{
+    if (pid >= PROCESS_TABLE_SIZE)
     {
         printf("[PROCESS] Error: PID %d out of range\n", pid);
         return;
@@ -91,7 +113,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
         printf("[PROCESS] Error: PID %d already in use\n", pid);
         return;
     }
-    
+
     va_init(&process_table[pid].va);
 
     void* code_page = pmm_alloc_page();
@@ -116,6 +138,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].paddr_kernel_stack = V2P(process_table[pid].vaddr_kernel_stack);
 
     memcpy(code_page, code_ptr, code_size);
+    flush_icache_range(code_page, code_size);
 
     uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 4096;
     struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));

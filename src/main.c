@@ -129,8 +129,8 @@ static void user_program_B(void)
 __attribute__((used)) int main(void);
 int main()
 {
-    uart_init();
     gpio_init();
+    uart_init();
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
     printf("[  0.000] BOOT: EL1 entry at 0x%lx (higher-half VMA 0x%lx)\n", V2P((unsigned long)main),

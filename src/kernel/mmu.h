@@ -25,7 +25,7 @@
 
 // memory attribute indices (must match MAIR_EL1 setup)
 #define MMU_ATTR_NORMAL (0ULL << 2) // MAIR index 0: normal cacheable
-#define MMU_ATTR_DEVICE (1ULL << 2) // MAIR index 1: device nGnRnE
+#define MMU_ATTR_DEVICE (1ULL << 2) // MAIR index 1: device nGnRE
 
 // convenience flag combinations
 #define MMU_FLAGS_KERNEL_RW (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RW | MMU_PXN | MMU_UXN)
