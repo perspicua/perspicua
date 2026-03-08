@@ -5,6 +5,8 @@
 struct vnode;
 struct file;
 
+#define MAX_PATH_LEN 4096
+
 typedef enum
 {
     VNODE_TYPE_REGULAR,
@@ -33,4 +35,14 @@ struct file
     uint32_t offset;
     int flags;
 };
+
+// intialize vfs system
+void vfs_init(void);
+
+// mount a vnode as the global root "/"
+void vfs_set_root(struct vnode* root);
+
+// walks a path and resolves the target vnode, or NULL if not found
+struct vnode* vfs_resolve_path(const char* path);
+
 #endif // _VFS_H_

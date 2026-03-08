@@ -1,5 +1,8 @@
 #include "string.h"
 #include "types.h"
+#include "../kernel/lock.h"
+
+static spinlock_t strtok_lock = SPINLOCK_INIT;
 
 size_t strlen(const char* str)
 {
@@ -117,6 +120,65 @@ char* strstr(const char* haystack, const char* needle)
         }
     }
     return 0;
+}
+
+size_t strspn(const char* s, const char* accept)
+{
+    size_t count = 0;
+    while (*s && strchr(accept, *s++))
+        count++;
+    return count;
+}
+
+size_t strcspn(const char* s, const char* reject)
+{
+    size_t count = 0;
+    while (*s && !strchr(reject, *s++))
+        count++;
+    return count;
+}
+
+char* strtok_r(char* str, const char* delim, char** saveptr)
+{
+    if (str == NULL)
+        str = *saveptr;
+
+    if (str == NULL || *str == '\0')
+    {
+        *saveptr = NULL;
+        return NULL;
+    }
+
+    // Skip leading delimiters
+    str += strspn(str, delim);
+    if (*str == '\0')
+    {
+        *saveptr = NULL;
+        return NULL;
+    }
+
+    // Find end of token
+    char* end = str + strcspn(str, delim);
+    if (*end == '\0')
+    {
+        *saveptr = NULL;
+    }
+    else
+    {
+        *end = '\0';
+        *saveptr = end + 1;
+    }
+
+    return str;
+}
+
+char* strtok(char* str, const char* delim)
+{
+    static char* last;
+    unsigned long flags = spin_lock_irqsave(&strtok_lock);
+    char* result = strtok_r(str, delim, &last);
+    spin_unlock_irqrestore(&strtok_lock, flags);
+    return result;
 }
 
 int memcmp(const void* ptr1, const void* ptr2, size_t num)

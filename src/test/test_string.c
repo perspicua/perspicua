@@ -142,6 +142,71 @@ void test_string(void)
     }
     TEST_PASS("strstr");
 
+    // strspn
+    {
+        TEST_ASSERT_EQ("strspn all", strspn("abcde", "abcde"), 5);
+        TEST_ASSERT_EQ("strspn none", strspn("abcde", "xyz"), 0);
+        TEST_ASSERT_EQ("strspn prefix", strspn("abcde", "abc"), 3);
+        TEST_ASSERT_EQ("strspn order", strspn("abcde", "cba"), 3);
+        TEST_ASSERT_EQ("strspn empty s", strspn("", "abc"), 0);
+        TEST_ASSERT_EQ("strspn empty accept", strspn("abc", ""), 0);
+    }
+    TEST_PASS("strspn");
+
+    // strcspn
+    {
+        TEST_ASSERT_EQ("strcspn all", strcspn("abcde", "xyz"), 5);
+        TEST_ASSERT_EQ("strcspn none", strcspn("abcde", "abc"), 0);
+        TEST_ASSERT_EQ("strcspn mid", strcspn("abcde", "cd"), 2);
+        TEST_ASSERT_EQ("strcspn end", strcspn("abcde", "e"), 4);
+        TEST_ASSERT_EQ("strcspn empty s", strcspn("", "abc"), 0);
+        TEST_ASSERT_EQ("strcspn empty reject", strcspn("abc", ""), 3);
+    }
+    TEST_PASS("strcspn");
+
+    // strtok
+    {
+        char buf[] = "   hello   world   from   strtok   ";
+        char* token = strtok(buf, " ");
+        TEST_ASSERT("strtok first", token != NULL && strcmp(token, "hello") == 0);
+        token = strtok(NULL, " ");
+        TEST_ASSERT("strtok second", token != NULL && strcmp(token, "world") == 0);
+        token = strtok(NULL, " ");
+        TEST_ASSERT("strtok third", token != NULL && strcmp(token, "from") == 0);
+        token = strtok(NULL, " ");
+        TEST_ASSERT("strtok fourth", token != NULL && strcmp(token, "strtok") == 0);
+        token = strtok(NULL, " ");
+        TEST_ASSERT("strtok end", token == NULL);
+
+        char buf2[] = "no_delims";
+        token = strtok(buf2, " ");
+        TEST_ASSERT("strtok single", token != NULL && strcmp(token, "no_delims") == 0);
+        token = strtok(NULL, " ");
+        TEST_ASSERT("strtok single end", token == NULL);
+
+        char buf3[] = ",,,";
+        token = strtok(buf3, ",");
+        TEST_ASSERT("strtok only delims", token == NULL);
+    }
+    TEST_PASS("strtok");
+
+    // strtok_r
+    {
+        char buf[] = "   hello   world   from   strtok_r   ";
+        char* saveptr;
+        char* token = strtok_r(buf, " ", &saveptr);
+        TEST_ASSERT("strtok_r first", token != NULL && strcmp(token, "hello") == 0);
+        token = strtok_r(NULL, " ", &saveptr);
+        TEST_ASSERT("strtok_r second", token != NULL && strcmp(token, "world") == 0);
+        token = strtok_r(NULL, " ", &saveptr);
+        TEST_ASSERT("strtok_r third", token != NULL && strcmp(token, "from") == 0);
+        token = strtok_r(NULL, " ", &saveptr);
+        TEST_ASSERT("strtok_r fourth", token != NULL && strcmp(token, "strtok_r") == 0);
+        token = strtok_r(NULL, " ", &saveptr);
+        TEST_ASSERT("strtok_r end", token == NULL);
+    }
+    TEST_PASS("strtok_r");
+
     // memset
     {
         char buf[128];
