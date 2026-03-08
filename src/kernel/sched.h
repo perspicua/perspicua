@@ -24,19 +24,19 @@ struct cpu_context
     unsigned long sp;
 };
 
-enum task_state
+typedef enum
 {
     TASK_RUNNING,
     TASK_READY,
     TASK_BLOCKED,
     TASK_DEAD
-};
+} task_state_t;
 
 struct task
 {
     struct cpu_context context;
     unsigned long ttbr0; // TTBR0 value (phys PGD | ASID<<48), 0 = kernel-only
-    enum task_state state;
+    task_state_t state;
     unsigned long wake_time;
     unsigned long id;
     unsigned char* stack;
