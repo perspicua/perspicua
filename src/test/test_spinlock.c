@@ -1,7 +1,7 @@
 #include "test.h"
-#include "../kernel/lock.h"
-#include "../kernel/timer.h"
-#include "../lib/string.h"
+#include "kernel/lock.h"
+#include "kernel/timer.h"
+#include "lib/string.h"
 
 void test_spinlock(void)
 {

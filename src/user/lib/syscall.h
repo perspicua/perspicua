@@ -1,7 +1,7 @@
 #ifndef _LIBUSER_SYSCALL_H_
 #define _LIBUSER_SYSCALL_H_
 
-#include "../../lib/types.h"
+#include "lib/types.h"
 
 void sys_write(const char* buf, size_t len);
 void sys_exit(void);

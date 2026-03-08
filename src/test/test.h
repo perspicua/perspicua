@@ -1,7 +1,7 @@
 #ifndef _TEST_H_
 #define _TEST_H_
 
-#include "../lib/stdio.h"
+#include "lib/stdio.h"
 
 extern int tests_passed;
 extern int tests_failed;

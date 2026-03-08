@@ -1,7 +1,7 @@
-#include "panic.h"
-#include "stdio.h"
-#include "../kernel/timer.h"
-#include "../driver/gic.h"
+#include "lib/panic.h"
+#include "lib/stdio.h"
+#include "kernel/timer.h"
+#include "driver/gic.h"
 
 volatile int kernel_panicked = 0;
 

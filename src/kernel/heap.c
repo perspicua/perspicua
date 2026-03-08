@@ -1,9 +1,9 @@
-#include "heap.h"
-#include "lock.h"
-#include "pmm.h"
-#include "../lib/stdio.h"
-#include "../lib/panic.h"
-#include "timer.h"
+#include "kernel/heap.h"
+#include "kernel/lock.h"
+#include "kernel/pmm.h"
+#include "lib/stdio.h"
+#include "lib/panic.h"
+#include "kernel/timer.h"
 
 // each allocation is preceded by a block header
 struct block_header

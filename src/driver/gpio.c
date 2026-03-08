@@ -1,7 +1,7 @@
-#include "gpio.h"
-#include "../devicetree/pht.h"
-#include "../lib/panic.h"
-#include "../kernel/addr.h"
+#include "driver/gpio.h"
+#include "devicetree/pht.h"
+#include "lib/panic.h"
+#include "kernel/addr.h"
 
 volatile unsigned int* GPIO_GPFSEL0;
 volatile unsigned int* GPIO_GPPUPDN0;

@@ -1,5 +1,5 @@
-#include "pht.h"
-#include "../lib/string.h"
+#include "devicetree/pht.h"
+#include "lib/string.h"
 
 struct pht_header system_pht = {
     .magic = PHT_MAGIC,

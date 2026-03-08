@@ -1,9 +1,9 @@
-#include "pmm.h"
-#include "timer.h"
-#include "lock.h"
-#include "../lib/stdio.h"
-#include "../lib/panic.h"
-#include "addr.h"
+#include "kernel/pmm.h"
+#include "kernel/timer.h"
+#include "kernel/lock.h"
+#include "lib/stdio.h"
+#include "lib/panic.h"
+#include "kernel/addr.h"
 
 extern char __kernel_end[];
 

@@ -1,5 +1,5 @@
 #include "test.h"
-#include "../lib/types.h"
+#include "lib/types.h"
 
 void test_types(void)
 {

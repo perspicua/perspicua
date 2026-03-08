@@ -30,9 +30,9 @@ WARNINGS = -Wall -Wextra -Wshadow -Wdouble-promotion \
            -Wundef -Wstrict-prototypes -Wmissing-prototypes
 
 CFLAGS  = $(WARNINGS) -ffreestanding -nostdlib $(ARCH_FLAGS) \
-          -I$(SRC_DIR) -std=gnu11 -MMD -MP \
+          -I$(SRC_DIR)/include -I$(SRC_DIR) -std=gnu11 -MMD -MP \
           -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables
-ASFLAGS = $(ARCH_FLAGS) -I$(SRC_DIR) -D__ASSEMBLY__ -MMD -MP
+ASFLAGS = $(ARCH_FLAGS) -I$(SRC_DIR)/include -I$(SRC_DIR) -D__ASSEMBLY__ -MMD -MP
 LDFLAGS = -nostdlib -T $(LINK_SCRIPT)
 
 # debug vs release
@@ -45,7 +45,7 @@ endif
 
 # User-space configuration
 USER_SRC_DIR = src/user
-USER_LIB_DIR = src/lib/user
+USER_LIB_DIR = src/user/lib
 USER_BUILD_DIR = build/user
 USER_LD = $(USER_SRC_DIR)/user.ld
 
@@ -104,7 +104,7 @@ $(BUILD_DIR)/kernel/user_programs.o: $(USER_BINS)
 $(USER_BUILD_DIR)/lib/%.o: $(USER_LIB_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(call msg,"USER-LIB-CC",$(notdir $<))
-	$(Q)$(CC) $(CFLAGS) -c $< -o $@
+	$(Q)$(CC) $(CFLAGS) -I$(USER_SRC_DIR) -c $< -o $@
 
 $(USER_BUILD_DIR)/crt0.o: $(USER_SRC_DIR)/crt0.S
 	@mkdir -p $(USER_BUILD_DIR)
@@ -114,7 +114,7 @@ $(USER_BUILD_DIR)/crt0.o: $(USER_SRC_DIR)/crt0.S
 $(USER_BUILD_DIR)/%.elf: $(USER_SRC_DIR)/%.c $(USER_BUILD_DIR)/crt0.o $(USER_LD) $(USER_LIB_OBJECTS)
 	@mkdir -p $(USER_BUILD_DIR)
 	$(call msg,"USER-CC",$(notdir $<))
-	$(Q)$(CC) $(CFLAGS) -I$(SRC_DIR) -T $(USER_LD) $(USER_BUILD_DIR)/crt0.o $< $(USER_LIB_OBJECTS) -o $@
+	$(Q)$(CC) $(CFLAGS) -I$(USER_SRC_DIR) -T $(USER_LD) $(USER_BUILD_DIR)/crt0.o $< $(USER_LIB_OBJECTS) -o $@
 
 $(USER_BUILD_DIR)/%.bin: $(USER_BUILD_DIR)/%.elf
 	$(call msg,"USER-BIN",$(notdir $@))

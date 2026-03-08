@@ -1,7 +1,7 @@
 #include "test.h"
-#include "../kernel/heap.h"
-#include "../lib/string.h"
-#include "../lib/types.h"
+#include "kernel/heap.h"
+#include "lib/string.h"
+#include "lib/types.h"
 
 #define TEST_HEADER_SIZE 32 /* sizeof(block_header) */
 

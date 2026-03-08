@@ -1,8 +1,9 @@
 #ifndef _PROCESS_H_
 #define _PROCESS_H_
 
-#include "../lib/types.h"
-#include "sched.h"
+#include "lib/types.h"
+#include "kernel/vfs.h"
+#include "kernel/sched.h"
 
 #define PROCESS_TABLE_SIZE 16
 #define USER_VA_BASE 0x100000ULL // skip first 1MB (null guard)
@@ -47,6 +48,8 @@ struct process
 
     struct cpu_context context;
     struct va_allocator va; // per-process user VA allocator
+
+    struct file* fd_table[MAX_FDS];
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

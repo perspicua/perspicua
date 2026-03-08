@@ -1,5 +1,5 @@
 #include "test.h"
-#include "../kernel/timer.h"
+#include "kernel/timer.h"
 
 void test_timer(void)
 {

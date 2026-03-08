@@ -1,6 +1,6 @@
-#include "stdio.h"
-#include "../driver/uart.h"
-#include "../kernel/lock.h"
+#include "lib/stdio.h"
+#include "driver/uart.h"
+#include "kernel/lock.h"
 #include <stdarg.h>
 
 static spinlock_t printf_lock = SPINLOCK_INIT;
