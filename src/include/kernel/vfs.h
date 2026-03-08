@@ -49,6 +49,9 @@ struct vnode* vfs_resolve_path(const char* path);
 // open a file, returns file descriptor if succesfull, -1 otherwise
 int vfs_open(const char* path, int flags);
 
+// open a file for a specific process by pid
+int vfs_open_pid(const char* path, int flags, uint32_t pid);
+
 // close a file, return 0 on succes
 int vfs_close(int fd);
 

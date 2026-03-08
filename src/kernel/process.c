@@ -1,6 +1,7 @@
 #include "kernel/process.h"
 #include "kernel/pmm.h"
 #include "kernel/mmu.h"
+#include "kernel/vfs.h"
 #include "lib/string.h"
 #include "lib/stdio.h"
 #include "lib/panic.h"
@@ -157,6 +158,9 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 
     for (size_t i = 0; i < MAX_FDS; i++)
         process_table[pid].fd_table[i] = NULL;
+    vfs_open_pid("/dev/uart", 0, pid); // fd 0 : stdin
+    vfs_open_pid("/dev/uart", 1, pid); // fd 1 : stdout
+    vfs_open_pid("/dev/uart", 1, pid); // fd 2 : stderr
 
     printf("[PROCESS] Created PID %d (ASID %lu, TTBR0 0x%lx)\n", process_table[pid].pid, process_table[pid].asid,
            V2P(process_table[pid].user_pgd));

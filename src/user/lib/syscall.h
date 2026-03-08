@@ -3,7 +3,7 @@
 
 #include "lib/types.h"
 
-void sys_write(const char* buf, size_t len);
+void sys_write(int fd, const char* buf, size_t len);
 void sys_exit(void);
 int sys_getpid(void);
 void sys_yield(void);

@@ -5,11 +5,12 @@ void sys_exit(void)
     asm volatile("mov x8, #2\n svc #0" : : : "x8");
 }
 
-void sys_write(const char* buf, size_t len)
+void sys_write(int fd, const char* buf, size_t len)
 {
-    register const char* _buf asm("x0") = buf;
-    register size_t _len asm("x1") = len;
-    asm volatile("mov x8, #1\n svc #0" : : "r"(_buf), "r"(_len) : "x8");
+    register int _fd asm("x0") = fd;
+    register const char* _buf asm("x1") = buf;
+    register size_t _len asm("x2") = len;
+    asm volatile("mov x8, #1\n svc #0" : : "r"(_fd), "r"(_buf), "r"(_len) : "x8");
 }
 
 int sys_getpid(void)
