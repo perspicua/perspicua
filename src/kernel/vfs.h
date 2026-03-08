@@ -6,6 +6,7 @@ struct vnode;
 struct file;
 
 #define MAX_PATH_LEN 4096
+#define MAX_FDS 32
 
 typedef enum
 {
@@ -44,5 +45,11 @@ void vfs_set_root(struct vnode* root);
 
 // walks a path and resolves the target vnode, or NULL if not found
 struct vnode* vfs_resolve_path(const char* path);
+
+// open a file, returns file descriptor if succesfull, -1 otherwise
+int vfs_open(const char* path, int flags);
+
+// close a file, return 0 on succes
+int vfs_close(int fd);
 
 #endif // _VFS_H_

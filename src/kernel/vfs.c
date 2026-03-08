@@ -1,6 +1,7 @@
 #include "vfs.h"
 #include "../lib/string.h"
 #include "heap.h"
+#include "process.h"
 
 struct vnode* vfs_root;
 
@@ -44,4 +45,46 @@ struct vnode* vfs_resolve_path(const char* path)
         token = strtok_r(NULL, delimiter, &saveptr);
     }
     return target_vnode;
+}
+
+int vfs_open(const char* path, int flags)
+{
+    struct vnode* node = vfs_resolve_path(path);
+    if (node == NULL)
+        return -1;
+
+    struct file* new_file = (struct file*)kmalloc(sizeof(struct file));
+
+    new_file->node = node;
+    new_file->offset = 0;
+    new_file->flags = flags;
+
+    int curr_process_pid = process_find_current();
+    int ok = -1;
+    for (size_t i = 0; i < MAX_FDS && ok == -1; i++)
+    {
+        if (process_table[curr_process_pid].fd_table[i] == NULL)
+        {
+            process_table[curr_process_pid].fd_table[i] = new_file;
+            ok = i;
+        }
+    }
+    if (ok == -1)
+        kfree(new_file);
+    return ok;
+}
+
+int vfs_close(int fd)
+{
+    if (fd < 0 || fd >= MAX_FDS)
+        return -1;
+
+    int curr_process_pid = process_find_current();
+    if (process_table[curr_process_pid].fd_table[fd] == NULL)
+        return -1;
+
+    kfree(process_table[curr_process_pid].fd_table[fd]);
+    process_table[curr_process_pid].fd_table[fd] = NULL;
+
+    return 0;
 }

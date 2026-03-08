@@ -2,11 +2,13 @@
 #define _PROCESS_H_
 
 #include "../lib/types.h"
+#include "vfs.h"
 #include "sched.h"
 
 #define PROCESS_TABLE_SIZE 16
 #define USER_VA_BASE 0x100000ULL // skip first 1MB (null guard)
 #define USER_VA_MAX_REGIONS 16
+#define MAX_FDS 32
 
 typedef enum
 {
@@ -47,6 +49,8 @@ struct process
 
     struct cpu_context context;
     struct va_allocator va; // per-process user VA allocator
+
+    struct file* fd_table[MAX_FDS];
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];
