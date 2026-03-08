@@ -52,4 +52,10 @@ int vfs_open(const char* path, int flags);
 // close a file, return 0 on succes
 int vfs_close(int fd);
 
+// reads from a file. returns the bytes read from the file
+int vfs_read(int fd, void* buffer, size_t count);
+
+// wrties to a file. returns the bytes written to the file
+int vfs_write(int fd, const void* buffer, size_t count);
+
 #endif // _VFS_H_

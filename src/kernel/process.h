@@ -8,7 +8,6 @@
 #define PROCESS_TABLE_SIZE 16
 #define USER_VA_BASE 0x100000ULL // skip first 1MB (null guard)
 #define USER_VA_MAX_REGIONS 16
-#define MAX_FDS 32
 
 typedef enum
 {

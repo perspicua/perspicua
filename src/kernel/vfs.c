@@ -66,7 +66,7 @@ int vfs_open(const char* path, int flags)
         if (process_table[curr_process_pid].fd_table[i] == NULL)
         {
             process_table[curr_process_pid].fd_table[i] = new_file;
-            ok = i;
+            ok = (int)i;
         }
     }
     if (ok == -1)
@@ -87,4 +87,44 @@ int vfs_close(int fd)
     process_table[curr_process_pid].fd_table[fd] = NULL;
 
     return 0;
+}
+
+int vfs_read(int fd, void* buffer, size_t count)
+{
+    if (fd < 0 || fd >= MAX_FDS)
+        return -1;
+
+    int curr_process_pid = process_find_current();
+    if (process_table[curr_process_pid].fd_table[fd] == NULL)
+        return -1;
+
+    struct file* file_to_read = process_table[curr_process_pid].fd_table[fd];
+    if (file_to_read->node->ops->read == NULL)
+        return -1;
+
+    int bytes_read = file_to_read->node->ops->read(file_to_read, buffer, count);
+    if (bytes_read > 0)
+        file_to_read->offset += bytes_read;
+
+    return bytes_read;
+}
+
+int vfs_write(int fd, const void* buffer, size_t count)
+{
+    if (fd < 0 || fd >= MAX_FDS)
+        return -1;
+
+    int curr_process_pid = process_find_current();
+    if (process_table[curr_process_pid].fd_table[fd] == NULL)
+        return -1;
+
+    struct file* file_to_write = process_table[curr_process_pid].fd_table[fd];
+    if (file_to_write->node->ops->write == NULL)
+        return -1;
+
+    int bytes_written = file_to_write->node->ops->write(file_to_write, buffer, count);
+    if (bytes_written > 0)
+        file_to_write->offset += bytes_written;
+
+    return bytes_written;
 }
