@@ -9,7 +9,6 @@
 static spinlock_t uart_lock = SPINLOCK_INIT;
 
 volatile unsigned int* UART0_DR;
-// ... (rest of pointers)
 volatile unsigned int* UART0_FR;
 volatile unsigned int* UART0_IBRD;
 volatile unsigned int* UART0_FBRD;

@@ -53,13 +53,16 @@ int vfs_open(const char* path, int flags)
     if (node == NULL)
         return -1;
 
+    int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+        return -1;
+
     struct file* new_file = (struct file*)kmalloc(sizeof(struct file));
 
     new_file->node = node;
     new_file->offset = 0;
     new_file->flags = flags;
 
-    int curr_process_pid = process_find_current();
     int ok = -1;
     for (size_t i = 0; i < MAX_FDS && ok == -1; i++)
     {
@@ -80,6 +83,8 @@ int vfs_close(int fd)
         return -1;
 
     int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+        return -1;
     if (process_table[curr_process_pid].fd_table[fd] == NULL)
         return -1;
 
@@ -95,6 +100,8 @@ int vfs_read(int fd, void* buffer, size_t count)
         return -1;
 
     int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+        return -1;
     if (process_table[curr_process_pid].fd_table[fd] == NULL)
         return -1;
 
@@ -115,6 +122,8 @@ int vfs_write(int fd, const void* buffer, size_t count)
         return -1;
 
     int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+        return -1;
     if (process_table[curr_process_pid].fd_table[fd] == NULL)
         return -1;
 
