@@ -1,9 +1,12 @@
 #include "kernel/heap.h"
+#include "kernel/slab.h"
 #include "kernel/lock.h"
 #include "kernel/pmm.h"
 #include "lib/stdio.h"
 #include "lib/panic.h"
 #include "kernel/timer.h"
+
+#define SLAB_MAX 1024 // allocations <= this go through the slab layer
 
 // each allocation is preceded by a block header
 struct block_header
@@ -39,6 +42,8 @@ static struct block_header* expand_heap(unsigned long min_size)
 
 void heap_init(void)
 {
+    slab_init();
+
     free_list = expand_heap(PAGE_SIZE);
     if (!free_list)
     {
@@ -46,18 +51,21 @@ void heap_init(void)
         return;
     }
 
-    printf("[ HEAP ] First-fit allocator: %lu bytes initial pool\n", free_list->size);
+    printf("[ HEAP ] First-fit fallback: %lu bytes initial pool\n", free_list->size);
     printf("[ HEAP ] Header: %lu bytes, payload alignment: 16 bytes\n", (unsigned long)HEADER_SIZE);
 }
 
 void* kmalloc(unsigned long size)
 {
-    unsigned long int flags = spin_lock_irqsave(&heap_lock);
     if (size == 0)
-    {
-        spin_unlock_irqrestore(&heap_lock, flags);
         return 0;
-    }
+
+    // small allocations: O(1) slab path
+    if (size <= SLAB_MAX)
+        return slab_alloc(size);
+
+    // large allocations: first-fit fallback
+    unsigned long int flags = spin_lock_irqsave(&heap_lock);
 
     size = ALIGN(size);
 
@@ -129,12 +137,18 @@ void* kmalloc(unsigned long size)
 
 void kfree(void* ptr)
 {
-    unsigned long flags = spin_lock_irqsave(&heap_lock);
     if (!ptr)
+        return;
+
+    // if the slab allocator owns this pointer, free through slab
+    if (slab_owns(ptr))
     {
-        spin_unlock_irqrestore(&heap_lock, flags);
+        slab_free(ptr);
         return;
     }
+
+    // large-allocation free: first-fit path
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
     struct block_header* block = (struct block_header*)((unsigned char*)ptr - HEADER_SIZE);
 
     if (block->free)
