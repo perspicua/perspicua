@@ -43,8 +43,9 @@ void handle_syscall(struct trap_frame* tf)
     {
     case 1: // sys_write(const char* buf, size_t len)
     {
-        const char* buf = (const char*)(tf->x[0]);
-        size_t len = (size_t)(tf->x[1]);
+        int fd = (int)(tf->x[0]);
+        const char* buf = (const char*)(tf->x[1]);
+        size_t len = (size_t)(tf->x[2]);
 
         if (!validate_user_buffer(buf, len))
         {
@@ -54,7 +55,8 @@ void handle_syscall(struct trap_frame* tf)
                 asm volatile("wfe");
         }
 
-        uart_write(buf, len);
+        int bytes = vfs_write(fd, buf, len);
+        tf->x[0] = (uint64_t)bytes;
         break;
     }
     case 2: // sys_exit()

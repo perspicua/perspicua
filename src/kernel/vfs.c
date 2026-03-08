@@ -2,6 +2,7 @@
 #include "lib/string.h"
 #include "kernel/heap.h"
 #include "kernel/process.h"
+#include "lib/stdio.h"
 
 struct vnode* vfs_root;
 
@@ -47,16 +48,15 @@ struct vnode* vfs_resolve_path(const char* path)
     return target_vnode;
 }
 
-int vfs_open(const char* path, int flags)
+int vfs_open_pid(const char* path, int flags, uint32_t pid)
 {
     struct vnode* node = vfs_resolve_path(path);
+
     if (node == NULL)
         return -1;
 
-    int curr_process_pid = process_find_current();
-    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+    if (pid >= PROCESS_TABLE_SIZE)
         return -1;
-
     struct file* new_file = (struct file*)kmalloc(sizeof(struct file));
 
     new_file->node = node;
@@ -66,15 +66,23 @@ int vfs_open(const char* path, int flags)
     int ok = -1;
     for (size_t i = 0; i < MAX_FDS && ok == -1; i++)
     {
-        if (process_table[curr_process_pid].fd_table[i] == NULL)
+        if (process_table[pid].fd_table[i] == NULL)
         {
-            process_table[curr_process_pid].fd_table[i] = new_file;
+            process_table[pid].fd_table[i] = new_file;
             ok = (int)i;
         }
     }
     if (ok == -1)
         kfree(new_file);
     return ok;
+}
+
+int vfs_open(const char* path, int flags)
+{
+    int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0)
+        return -1;
+    return vfs_open_pid(path, flags, (uint32_t)curr_process_pid);
 }
 
 int vfs_close(int fd)
@@ -122,8 +130,10 @@ int vfs_write(int fd, const void* buffer, size_t count)
         return -1;
 
     int curr_process_pid = process_find_current();
+
     if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
         return -1;
+
     if (process_table[curr_process_pid].fd_table[fd] == NULL)
         return -1;
 
