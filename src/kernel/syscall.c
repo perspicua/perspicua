@@ -41,7 +41,7 @@ void handle_syscall(struct trap_frame* tf)
 
     switch (syscall_nr)
     {
-    case 1: // sys_write(const char* buf, size_t len)
+    case 1: // sys_write(int fd, const char* buf, size_t len)
     {
         int fd = (int)(tf->x[0]);
         const char* buf = (const char*)(tf->x[1]);

@@ -37,6 +37,7 @@ struct vnode* devfs_dev_lookup(struct vnode* dir, const char* filename)
 
 int devfs_uart_write(struct file* file, const void* buffer, size_t size)
 {
+    (void)file;
     char* char_buff = (char*)buffer;
     uart_write(char_buff, size);
     return (int)size;
@@ -44,6 +45,7 @@ int devfs_uart_write(struct file* file, const void* buffer, size_t size)
 
 int devfs_uart_read(struct file* file, void* buffer, size_t size)
 {
+    (void)file;
     char* char_buff = (char*)buffer;
     for (size_t i = 0; i < size; i++)
     {
