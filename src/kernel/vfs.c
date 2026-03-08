@@ -1,34 +1,112 @@
 #include "kernel/vfs.h"
+#include "kernel/devfs.h"
 #include "lib/string.h"
 #include "kernel/heap.h"
 #include "kernel/process.h"
 #include "lib/stdio.h"
+#include "lib/types.h"
 
-struct vnode* vfs_root;
+static struct mount_entry mount_table[MAX_MOUNTS];
+static int mount_count = 0;
 
 void vfs_init(void)
 {
-    vfs_root = NULL;
+    mount_count = 0;
+    for (size_t i = 0; i < MAX_MOUNTS; i++)
+    {
+        memset(mount_table[i].path, 0, MAX_PATH_LEN);
+        mount_table[i].root = NULL;
+    }
 }
 
-void vfs_set_root(struct vnode* root)
+int vfs_mount(const char* path, struct vnode* root)
 {
-    vfs_root = root;
+    if (path == NULL)
+        return -1;
+
+    if (path[0] != '/')
+        return -1;
+
+    if (root == NULL)
+        return -1;
+
+    if (mount_count >= MAX_MOUNTS)
+        return -1;
+
+    for (int i = 0; i < mount_count; i++)
+        if (strcmp(path, mount_table[i].path) == 0)
+            return -1;
+
+    strncpy(mount_table[mount_count].path, path, MAX_PATH_LEN);
+    mount_table[mount_count].root = root;
+    mount_count++;
+    return 0;
+}
+
+int vfs_unmount(const char* path)
+{
+    for (int i = 0; i < mount_count; i++)
+    {
+        if (strcmp(path, mount_table[i].path) == 0)
+        {
+            strncpy(mount_table[i].path, mount_table[mount_count - 1].path, MAX_PATH_LEN);
+            mount_table[i].root = mount_table[mount_count - 1].root;
+
+            memset(mount_table[mount_count - 1].path, 0, MAX_PATH_LEN);
+            mount_table[mount_count - 1].root = NULL;
+
+            mount_count--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static struct mount_entry* find_mount(const char* path)
+{
+    int longest_match_index = -1;
+    size_t longest_match_len = 0;
+    for (int i = 0; i < mount_count; i++)
+    {
+        size_t len = strlen(mount_table[i].path);
+
+        if (strncmp(mount_table[i].path, path, len) == 0 && (path[len] == '\0' || path[len] == '/'))
+        {
+            if (longest_match_len < len)
+            {
+                longest_match_len = len;
+                longest_match_index = i;
+            }
+        }
+    }
+
+    if (longest_match_index == -1)
+        return NULL;
+
+    return &mount_table[longest_match_index];
 }
 
 struct vnode* vfs_resolve_path(const char* path)
 {
-    if (vfs_root == NULL || path == NULL)
+    struct mount_entry* best_match = find_mount(path);
+    if (best_match == NULL)
         return NULL;
 
-    if (strcmp(path, "/") == 0)
-        return vfs_root;
+    // exact match
+    if (strcmp(path, best_match->path) == 0)
+        return best_match->root;
 
-    struct vnode* target_vnode = vfs_root;
+    struct vnode* target_vnode = best_match->root;
+
+    size_t len = strlen(best_match->path);
+    char* path_remainder = (char*)path + len;
+    if (*path_remainder == '/')
+        path_remainder++;
 
     char filepath[MAX_PATH_LEN];
-    strncpy(filepath, path, MAX_PATH_LEN - 1);
+    strncpy(filepath, path_remainder, MAX_PATH_LEN - 1);
     filepath[MAX_PATH_LEN - 1] = '\0';
+
     char* delimiter = "/";
     char* saveptr;
     char* token = strtok_r(filepath, delimiter, &saveptr);

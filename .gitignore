@@ -34,5 +34,6 @@ Desktop.ini
 *.swp
 *~
 *.bak
+.cache/
 
 pi4-boot/kernel8.img

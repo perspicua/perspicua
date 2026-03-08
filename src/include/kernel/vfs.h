@@ -7,6 +7,7 @@ struct file;
 
 #define MAX_PATH_LEN 4096
 #define MAX_FDS 32
+#define MAX_MOUNTS 8
 
 typedef enum
 {
@@ -14,6 +15,12 @@ typedef enum
     VNODE_TYPE_DIR,
     VNODE_TYPE_DEVICE
 } vnode_type_t;
+
+struct mount_entry
+{
+    char path[MAX_PATH_LEN];
+    struct vnode* root;
+};
 
 struct vnode
 {
@@ -40,9 +47,6 @@ struct file
 // intialize vfs system
 void vfs_init(void);
 
-// mount a vnode as the global root "/"
-void vfs_set_root(struct vnode* root);
-
 // walks a path and resolves the target vnode, or NULL if not found
 struct vnode* vfs_resolve_path(const char* path);
 
@@ -60,5 +64,11 @@ int vfs_read(int fd, void* buffer, size_t count);
 
 // wrties to a file. returns the bytes written to the file
 int vfs_write(int fd, const void* buffer, size_t count);
+
+// mount a filesystem's root vnode at given path. returns 0 on success, -1 on error
+int vfs_mount(const char* path, struct vnode* root);
+
+// unmont the filesystem at a given path. return 0 on success, -1 on error
+int vfs_unmount(const char* path);
 
 #endif // _VFS_H_

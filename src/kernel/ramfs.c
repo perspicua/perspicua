@@ -57,5 +57,5 @@ void ramfs_init(void)
     ramfs_hello_vnode->ops = &ramfs_file_ops;
     ramfs_hello_vnode->filesize = strlen(hello_file_data);
 
-    vfs_set_root(ramfs_root_vnode);
+    vfs_mount("/", ramfs_root_vnode);
 }

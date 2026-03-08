@@ -123,6 +123,7 @@ int main()
     vfs_init();
     process_init();
     ramfs_init();
+    devfs_init();
 
     int fd = vfs_open("/hello.txt", 0);
     char buf[100];
@@ -130,7 +131,6 @@ int main()
     buf[bytes] = '\0';
     printf("Read from VFS: %s", buf);
 
-    devfs_init();
     size_t hello_size = (size_t)(user_hello_end - user_hello_start);
     process_create((void*)user_hello_start, hello_size, 1);
 
