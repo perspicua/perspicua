@@ -4,6 +4,7 @@
 #include "lib/types.h"
 
 #define TEST_HEADER_SIZE 32 /* sizeof(block_header) */
+#define LARGE 2048              /* > SLAB_MAX (1024), forces first-fit path */
 
 void test_heap(void)
 {
@@ -140,25 +141,25 @@ void test_heap(void)
     }
     TEST_PASS("reuse same size");
 
-    // freed block reused for smaller alloc (fits in old block)
+    // freed block reused for smaller alloc (first-fit path, sizes > SLAB_MAX)
     {
-        void* p1 = kmalloc(256);
+        void* p1 = kmalloc(4096);
         kfree(p1);
-        void* p2 = kmalloc(16);
+        void* p2 = kmalloc(LARGE);
         // should reuse same address (first-fit), possibly splitting
         TEST_ASSERT("reuses for smaller", p2 == p1);
         kfree(p2);
     }
     TEST_PASS("reuse smaller alloc");
 
-    // first-fit: earlier free block chosen over later
+    // first-fit: earlier free block chosen over later (sizes > SLAB_MAX)
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64);
-        void* c = kmalloc(64);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE);
+        void* c = kmalloc(LARGE);
         kfree(a);
         kfree(c);
-        void* d = kmalloc(64);
+        void* d = kmalloc(LARGE);
         // first-fit should pick 'a' position
         TEST_ASSERT("first-fit picks earlier", d == a);
         kfree(d);
@@ -166,54 +167,56 @@ void test_heap(void)
     }
     TEST_PASS("first-fit ordering");
 
-    // block splitting
+    // block splitting (sizes > SLAB_MAX to exercise first-fit path)
 
     // split occurs when remainder >= header_size + 16 (48)
     //    Allocate a big block, free it, then allocate much smaller.
     //    The remainder should be split into a second usable block.
     {
-        void* big = kmalloc(256);
+        // Drain the initial pool so the freed block is the first-fit candidate.
+        // Initial pool is ~8160 bytes; allocating 8000 consumes it.
+        void* drain = kmalloc(8000);
+        void* big = kmalloc(8192);
         kfree(big);
-        // Freed block has size >= 256 (ALIGN(256)=256).
-        // Allocate 16 from it. Remainder = 256-16-32 = 208 >= 48 → splits.
-        void* small = kmalloc(16);
+        // Freed block has size >= 8192.
+        // Allocate LARGE from it. Remainder = 8192-2048-32 = 6112 >= 48 → splits.
+        void* small = kmalloc(LARGE);
         TEST_ASSERT("split: first part", small == big);
         // Second allocation should come from the split remainder
-        void* next = kmalloc(16);
+        void* next = kmalloc(LARGE);
         TEST_ASSERT("split: second from remainder", next != NULL);
-        // next should be right after small's block: small + 16 + HEADER_SIZE(32) = small + 48
-        unsigned long expected = (unsigned long)small + 16 + TEST_HEADER_SIZE;
+        // next should be right after small's block: small + LARGE + HEADER_SIZE
+        unsigned long expected = (unsigned long)small + LARGE + TEST_HEADER_SIZE;
         TEST_ASSERT("split: contiguous layout", (unsigned long)next == expected);
         kfree(small);
         kfree(next);
+        kfree(drain);
     }
     TEST_PASS("block splitting basic");
 
     // no split when remainder < header_size + 16 (48)
     //    If the remaining space after alloc is < 48 bytes, no split occurs.
-    //    We indirectly verify by checking that two allocs from a just-right
-    //    block still work.
     {
         // Allocate then free a block. Re-alloc the same size → no split expected.
-        void* p = kmalloc(64);
+        void* p = kmalloc(LARGE);
         kfree(p);
-        void* q = kmalloc(64);
+        void* q = kmalloc(LARGE);
         TEST_ASSERT("no-split same size reuse", q == p);
         kfree(q);
     }
     TEST_PASS("no unnecessary split");
 
-    // split creates usable blocks (write to both halves)
+    // split creates usable blocks (write to both halves, sizes > SLAB_MAX)
     {
-        void* big = kmalloc(512);
+        void* big = kmalloc(8192);
         kfree(big);
-        unsigned char* a = (unsigned char*)kmalloc(64);
-        unsigned char* b = (unsigned char*)kmalloc(64);
+        unsigned char* a = (unsigned char*)kmalloc(LARGE);
+        unsigned char* b = (unsigned char*)kmalloc(LARGE);
         // Write full patterns to both split parts
-        memset(a, 0x11, 64);
-        memset(b, 0x22, 64);
+        memset(a, 0x11, LARGE);
+        memset(b, 0x22, LARGE);
         int a_ok = 1, b_ok = 1;
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < LARGE; i++)
         {
             if (a[i] != 0x11)
                 a_ok = 0;
@@ -227,38 +230,38 @@ void test_heap(void)
     }
     TEST_PASS("split blocks usable");
 
-    // repeated splitting exhausts a block correctly
+    // repeated splitting exhausts a block correctly (sizes > SLAB_MAX)
     {
-        void* big = kmalloc(1024);
+        void* big = kmalloc(8192);
         kfree(big);
-        // Each 16-byte alloc uses 16 + 32 = 48 bytes of the original block.
-        // From 1024 bytes, we can fit floor(1024 / 48) = 21 splits.
-        // (21 * 48 = 1008, remainder 16 < 48 so last one absorbs it)
-        void* ptrs[21];
+        // Each LARGE (2048) alloc uses 2048 + 32 = 2080 bytes.
+        // From 8192 bytes, we can fit floor(8192 / 2080) = 3 splits.
+        // (3 * 2080 = 6240, remainder 1952 < 2080+32 so 4th needs expansion)
+        void* ptrs[3];
         int count = 0;
-        for (int i = 0; i < 21; i++)
+        for (int i = 0; i < 3; i++)
         {
-            ptrs[i] = kmalloc(16);
+            ptrs[i] = kmalloc(LARGE);
             if (ptrs[i] != NULL)
                 count++;
         }
-        TEST_ASSERT("repeated split fills block", count == 21);
-        for (int i = 0; i < 21; i++)
+        TEST_ASSERT("repeated split fills block", count == 3);
+        for (int i = 0; i < 3; i++)
             kfree(ptrs[i]);
     }
     TEST_PASS("repeated splitting");
 
-    // coalescing
+    // coalescing (sizes > SLAB_MAX)
 
     // two adjacent free blocks coalesce
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64);
-        void* guard = kmalloc(64); // prevent merging beyond b
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE);
+        void* guard = kmalloc(LARGE); // prevent merging beyond b
         kfree(a);
         kfree(b);
-        // a+b should coalesce: 64 + 32(header) + 64 = 160 usable
-        void* merged = kmalloc(160);
+        // a+b should coalesce: 2048 + 32(header) + 2048 = 4128 usable
+        void* merged = kmalloc(4128);
         TEST_ASSERT("coalesce: merged alloc succeeds", merged != NULL);
         TEST_ASSERT("coalesce: merged at a's position", merged == a);
         kfree(merged);
@@ -268,15 +271,15 @@ void test_heap(void)
 
     // three adjacent free blocks coalesce (chain)
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64);
-        void* c = kmalloc(64);
-        void* guard = kmalloc(64);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE);
+        void* c = kmalloc(LARGE);
+        void* guard = kmalloc(LARGE);
         kfree(a);
         kfree(b);
         kfree(c);
-        // Total coalesced usable = 64 + 32 + 64 + 32 + 64 = 256
-        void* merged = kmalloc(256);
+        // Total coalesced usable = 2048 + 32 + 2048 + 32 + 2048 = 6208
+        void* merged = kmalloc(6208);
         TEST_ASSERT("3-coalesce succeeds", merged != NULL);
         TEST_ASSERT("3-coalesce at a's position", merged == a);
         kfree(merged);
@@ -286,14 +289,14 @@ void test_heap(void)
 
     // non-adjacent free blocks do not coalesce
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64); // stays allocated
-        void* c = kmalloc(64);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE); // stays allocated
+        void* c = kmalloc(LARGE);
         kfree(a);
         kfree(c);
         // a and c are free but b separates them: should NOT coalesce
-        // Trying to alloc 160 should NOT reuse a (a is only 64)
-        void* big = kmalloc(160);
+        // Trying to alloc 4128 should NOT reuse a (a is only 2048)
+        void* big = kmalloc(4128);
         TEST_ASSERT("no false coalesce", big != a);
         kfree(big);
         kfree(b);
@@ -302,15 +305,15 @@ void test_heap(void)
 
     // coalesce then split: free two adjacent, alloc smaller
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64);
-        void* guard = kmalloc(64);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE);
+        void* guard = kmalloc(LARGE);
         kfree(a);
         kfree(b);
-        // Coalesced block = 160, alloc 32 from it → split (160-32-32=96 >= 48)
-        void* small = kmalloc(32);
+        // Coalesced block = 4128, alloc LARGE from it → split (4128-2048-32=2048 >= 48)
+        void* small = kmalloc(LARGE);
         TEST_ASSERT("coalesce+split: first part", small == a);
-        void* next = kmalloc(32);
+        void* next = kmalloc(LARGE);
         TEST_ASSERT("coalesce+split: second from remainder", next != NULL);
         kfree(small);
         kfree(next);
@@ -320,13 +323,13 @@ void test_heap(void)
 
     // free in reverse order still coalesces
     {
-        void* a = kmalloc(64);
-        void* b = kmalloc(64);
-        void* guard = kmalloc(64);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(LARGE);
+        void* guard = kmalloc(LARGE);
         // Free in forward order vs reverse - coalescing walks the list
         kfree(b);
         kfree(a);
-        void* merged = kmalloc(160);
+        void* merged = kmalloc(4128);
         TEST_ASSERT("reverse free coalesces", merged != NULL);
         kfree(merged);
         kfree(guard);
@@ -827,19 +830,17 @@ void test_heap(void)
     }
     TEST_PASS("ALIGN boundary sizes");
 
-    // alloc sizes near split threshold
+    // alloc sizes near split threshold (sizes > SLAB_MAX)
     //    Split happens when remaining >= HEADER_SIZE(32) + 16 = 48.
-    //    Allocate from a 128-byte block with sizes that leave various remainders.
     {
-        // Make a free block of exactly 128 bytes usable space
-        // by allocating 128 then freeing
-        void* blk = kmalloc(128);
+        // Make a free block of usable space via alloc+free
+        void* blk = kmalloc(4096);
         kfree(blk);
 
-        // Alloc 80: remaining = 128 - 80 = 48 = HEADER(32) + 16 → SHOULD split
-        void* a = kmalloc(80);
-        void* split_part = kmalloc(16); // should come from split remainder
-        TEST_ASSERT("threshold: 80→split exists", split_part != NULL);
+        // Alloc LARGE: remaining = 4096-2048 = 2048 >= 48 → SHOULD split
+        void* a = kmalloc(LARGE);
+        void* split_part = kmalloc(LARGE); // should come from split remainder
+        TEST_ASSERT("threshold: split exists", split_part != NULL);
         kfree(a);
         kfree(split_part);
     }
@@ -883,20 +884,20 @@ void test_heap(void)
     }
     TEST_PASS("full lifecycle");
 
-    // complex multi-size lifecycle
+    // complex multi-size lifecycle (sizes > SLAB_MAX)
     {
         // Phase 1: allocate various sizes
-        void* a = kmalloc(32);
-        void* b = kmalloc(128);
-        void* c = kmalloc(64);
-        void* d = kmalloc(256);
+        void* a = kmalloc(LARGE);
+        void* b = kmalloc(4096);
+        void* c = kmalloc(LARGE);
+        void* d = kmalloc(8192);
 
         // Phase 2: free middle ones, creating holes
         kfree(b);
         kfree(c);
 
         // Phase 3: alloc into holes (first-fit into b's old slot)
-        void* e = kmalloc(64);
+        void* e = kmalloc(LARGE);
         TEST_ASSERT("lifecycle2: reuse b slot", e == b);
 
         // Phase 4: free everything
@@ -905,7 +906,7 @@ void test_heap(void)
         kfree(d);
 
         // Phase 5: large alloc should succeed (coalesced space)
-        void* f = kmalloc(512);
+        void* f = kmalloc(8192);
         TEST_ASSERT("lifecycle2: post-coalesce", f != NULL);
         kfree(f);
     }

@@ -19,6 +19,7 @@ void run_all_tests(void)
     test_string();
     test_spinlock();
     test_pmm();
+    test_slab();
     test_heap();
     test_timer();
     test_mmu();

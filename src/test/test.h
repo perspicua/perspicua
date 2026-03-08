@@ -76,6 +76,7 @@ void test_string(void);
 // kernel tests
 void test_spinlock(void);
 void test_pmm(void);
+void test_slab(void);
 void test_heap(void);
 void test_timer(void);
 void test_mmu(void);
