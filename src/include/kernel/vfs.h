@@ -1,7 +1,7 @@
 #ifndef _VFS_H_
 #define _VFS_H_
 
-#include "../lib/types.h"
+#include "lib/types.h"
 struct vnode;
 struct file;
 

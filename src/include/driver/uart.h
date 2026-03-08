@@ -1,7 +1,7 @@
 #ifndef _UART_H_
 #define _UART_H_
 
-#include "../lib/types.h"
+#include "lib/types.h"
 
 void uart_init(void);
 void uart_send(char c);

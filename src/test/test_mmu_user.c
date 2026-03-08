@@ -1,8 +1,8 @@
 #include "test.h"
-#include "../kernel/mmu.h"
-#include "../kernel/pmm.h"
-#include "../kernel/addr.h"
-#include "../lib/string.h"
+#include "kernel/mmu.h"
+#include "kernel/pmm.h"
+#include "kernel/addr.h"
+#include "lib/string.h"
 
 // user VA range for tests — low addresses (TTBR0 space, below kernel VMA)
 #define USER_VA_BASE 0x200000000ULL

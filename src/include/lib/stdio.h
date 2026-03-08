@@ -1,7 +1,7 @@
 #ifndef _STDIO_H_
 #define _STDIO_H_
 
-#include "types.h"
+#include "lib/types.h"
 
 // Formatted print to UART
 // Supported format specifiers:

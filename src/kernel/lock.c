@@ -1,5 +1,5 @@
-#include "lock.h"
-#include "timer.h"
+#include "kernel/lock.h"
+#include "kernel/timer.h"
 
 void spin_lock(spinlock_t* lock)
 {

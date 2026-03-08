@@ -1,8 +1,8 @@
 #include "test.h"
-#include "../kernel/mmu.h"
-#include "../kernel/pmm.h"
-#include "../kernel/addr.h"
-#include "../lib/string.h"
+#include "kernel/mmu.h"
+#include "kernel/pmm.h"
+#include "kernel/addr.h"
+#include "lib/string.h"
 
 #define TEST_VA_BASE (KERNEL_VMA + 0x100000000ULL) // PGD index 4
 

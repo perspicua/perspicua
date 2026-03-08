@@ -1,6 +1,6 @@
 #include "test.h"
-#include "../kernel/pmm.h"
-#include "../lib/string.h"
+#include "kernel/pmm.h"
+#include "lib/string.h"
 
 void test_pmm(void)
 {

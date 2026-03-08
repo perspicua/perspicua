@@ -1,9 +1,9 @@
 #include "test.h"
-#include "../kernel/sched.h"
-#include "../kernel/heap.h"
-#include "../kernel/lock.h"
-#include "../kernel/timer.h"
-#include "../lib/string.h"
+#include "kernel/sched.h"
+#include "kernel/heap.h"
+#include "kernel/lock.h"
+#include "kernel/timer.h"
+#include "lib/string.h"
 
 // test constraints:
 //   - tests run as the "main task" (task id 0) on core 0

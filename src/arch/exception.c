@@ -1,12 +1,12 @@
-#include "exception.h"
-#include "../driver/uart.h"
-#include "../driver/gic.h"
-#include "../lib/stdio.h"
-#include "../lib/panic.h"
-#include "../kernel/timer.h"
-#include "../kernel/sched.h"
-#include "../kernel/process.h"
-#include "../kernel/syscall.h"
+#include "arch/exception.h"
+#include "driver/uart.h"
+#include "driver/gic.h"
+#include "lib/stdio.h"
+#include "lib/panic.h"
+#include "kernel/timer.h"
+#include "kernel/sched.h"
+#include "kernel/process.h"
+#include "kernel/syscall.h"
 
 // Exception Class values (EC field of ESR_EL1, bits [31:26])
 #define EC_SVC 0x15

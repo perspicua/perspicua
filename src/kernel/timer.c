@@ -1,5 +1,5 @@
-#include "timer.h"
-#include "../lib/stdio.h"
+#include "kernel/timer.h"
+#include "lib/stdio.h"
 
 // read timer frequency
 static inline unsigned int read_cntfrq(void)

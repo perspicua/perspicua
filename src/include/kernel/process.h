@@ -1,9 +1,9 @@
 #ifndef _PROCESS_H_
 #define _PROCESS_H_
 
-#include "../lib/types.h"
-#include "vfs.h"
-#include "sched.h"
+#include "lib/types.h"
+#include "kernel/vfs.h"
+#include "kernel/sched.h"
 
 #define PROCESS_TABLE_SIZE 16
 #define USER_VA_BASE 0x100000ULL // skip first 1MB (null guard)

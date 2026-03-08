@@ -1,9 +1,9 @@
-#include "syscall.h"
-#include "../driver/uart.h"
-#include "process.h"
-#include "mmu.h"
-#include "addr.h"
-#include "../lib/stdio.h"
+#include "kernel/syscall.h"
+#include "driver/uart.h"
+#include "kernel/process.h"
+#include "kernel/mmu.h"
+#include "kernel/addr.h"
+#include "lib/stdio.h"
 
 static int validate_user_buffer(const void* ptr, size_t len)
 {

@@ -1,10 +1,10 @@
-#include "uart.h"
-#include "gpio.h"
-#include "../kernel/timer.h"
-#include "../kernel/addr.h"
-#include "../kernel/lock.h"
-#include "../lib/panic.h"
-#include "../devicetree/pht.h"
+#include "driver/uart.h"
+#include "driver/gpio.h"
+#include "kernel/timer.h"
+#include "kernel/addr.h"
+#include "kernel/lock.h"
+#include "lib/panic.h"
+#include "devicetree/pht.h"
 
 static spinlock_t uart_lock = SPINLOCK_INIT;
 

@@ -1,10 +1,10 @@
-#include "mmu.h"
-#include "pmm.h"
-#include "lock.h"
-#include "addr.h"
-#include "../lib/stdio.h"
-#include "../lib/string.h"
-#include "../lib/panic.h"
+#include "kernel/mmu.h"
+#include "kernel/pmm.h"
+#include "kernel/lock.h"
+#include "kernel/addr.h"
+#include "lib/stdio.h"
+#include "lib/string.h"
+#include "lib/panic.h"
 
 #define PTE_VALID MMU_PTE_VALID
 #define PTE_TABLE MMU_PTE_TABLE

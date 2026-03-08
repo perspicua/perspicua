@@ -1,7 +1,7 @@
 #ifndef _MMU_H_
 #define _MMU_H_
 
-#include "../lib/types.h"
+#include "lib/types.h"
 
 #define MMU_PTE_VALID (1ULL << 0)
 #define MMU_PTE_TABLE (1ULL << 1)    // L1/L2: points to next-level table

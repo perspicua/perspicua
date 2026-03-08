@@ -1,9 +1,9 @@
-#include "gic.h"
-#include "../lib/stdio.h"
-#include "../devicetree/pht.h"
-#include "../lib/panic.h"
-#include "../kernel/addr.h"
-#include "uart.h"
+#include "driver/gic.h"
+#include "lib/stdio.h"
+#include "devicetree/pht.h"
+#include "lib/panic.h"
+#include "kernel/addr.h"
+#include "driver/uart.h"
 
 volatile unsigned int* GICD_CTLR = NULL;
 volatile unsigned int* GICD_ISENABLERn = NULL;

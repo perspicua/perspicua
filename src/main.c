@@ -16,7 +16,6 @@
 
 #include "test/test.h"
 #include "kernel/addr.h"
-#include "lib/user/syscall.h"
 
 extern void _entry(void);
 
@@ -119,7 +118,7 @@ int main()
     // run_scheduler_tests();
 
     process_init();
-    
+
     size_t hello_size = (size_t)(user_hello_end - user_hello_start);
     process_create((void*)user_hello_start, hello_size, 1);
 

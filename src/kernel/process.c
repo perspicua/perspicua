@@ -1,11 +1,11 @@
-#include "process.h"
-#include "pmm.h"
-#include "mmu.h"
-#include "../lib/string.h"
-#include "../lib/stdio.h"
-#include "../lib/panic.h"
-#include "../kernel/addr.h"
-#include "../arch/exception.h"
+#include "kernel/process.h"
+#include "kernel/pmm.h"
+#include "kernel/mmu.h"
+#include "lib/string.h"
+#include "lib/stdio.h"
+#include "lib/panic.h"
+#include "kernel/addr.h"
+#include "arch/exception.h"
 
 extern void ret_to_user(void);
 

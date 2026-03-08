@@ -1,7 +1,7 @@
 #ifndef _SCHED_H_
 #define _SCHED_H_
 
-#include "../lib/types.h"
+#include "lib/types.h"
 
 #define TASK_STACK_SIZE 8192
 #define MAX_TASKS 16

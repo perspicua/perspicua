@@ -1,7 +1,7 @@
-#include "vfs.h"
-#include "../lib/string.h"
-#include "heap.h"
-#include "process.h"
+#include "kernel/vfs.h"
+#include "lib/string.h"
+#include "kernel/heap.h"
+#include "kernel/process.h"
 
 struct vnode* vfs_root;
 

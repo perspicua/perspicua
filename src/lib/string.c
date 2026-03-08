@@ -1,6 +1,6 @@
-#include "string.h"
-#include "types.h"
-#include "../kernel/lock.h"
+#include "lib/string.h"
+#include "lib/types.h"
+#include "kernel/lock.h"
 
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 
