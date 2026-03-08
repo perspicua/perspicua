@@ -117,7 +117,7 @@ int main()
     run_all_tests();
 
     enable_interrupts();
-    // run_scheduler_tests();
+    run_scheduler_tests();
 
     process_init();
 
