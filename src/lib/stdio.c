@@ -1,6 +1,9 @@
 #include "stdio.h"
 #include "../driver/uart.h"
+#include "../kernel/lock.h"
 #include <stdarg.h>
+
+static spinlock_t printf_lock = SPINLOCK_INIT;
 
 static void print_unsigned_long(uint64_t n, int base)
 {
@@ -81,6 +84,7 @@ static void print_number(int32_t num, int base)
 
 void printf(const char* fmt, ...)
 {
+    unsigned long flags = spin_lock_irqsave(&printf_lock);
     va_list args;
     va_start(args, fmt);
 
@@ -115,7 +119,13 @@ void printf(const char* fmt, ...)
             case 's':
             {
                 char* s = va_arg(args, char*);
-                uart_puts(s);
+                // internal puts doesn't lock again
+                while (*s)
+                {
+                    if (*s == '\n')
+                        uart_send('\r');
+                    uart_send(*s++);
+                }
                 break;
             }
             case 'c':
@@ -177,4 +187,5 @@ void printf(const char* fmt, ...)
         }
     }
     va_end(args);
+    spin_unlock_irqrestore(&printf_lock, flags);
 }

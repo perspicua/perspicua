@@ -43,13 +43,32 @@ else
     CFLAGS  += -O2 -DNDEBUG
 endif
 
+# User-space configuration
+USER_SRC_DIR = src/user
+USER_LIB_DIR = src/lib/user
+USER_BUILD_DIR = build/user
+USER_LD = $(USER_SRC_DIR)/user.ld
+
 # sources and objects (recursive wildcard, deterministic order)
 rwildcard = $(foreach d,$(wildcard $(1:=/*)),$(call rwildcard,$d,$2) $(filter $(subst *,%,$2),$d))
-C_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.c))
-S_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.S))
+
+# EXCLUDE user-space sources from kernel build
+ALL_C_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.c))
+C_SOURCES = $(filter-out $(USER_SRC_DIR)/% $(USER_LIB_DIR)/%, $(ALL_C_SOURCES))
+ALL_S_SOURCES = $(sort $(call rwildcard,$(SRC_DIR),*.S))
+S_SOURCES = $(filter-out $(USER_SRC_DIR)/%, $(ALL_S_SOURCES))
 
 C_OBJECTS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SOURCES))
 S_OBJECTS = $(patsubst $(SRC_DIR)/%.S, $(BUILD_DIR)/%.o, $(S_SOURCES))
+
+# User library objects
+USER_LIB_SOURCES = $(wildcard $(USER_LIB_DIR)/*.c)
+USER_LIB_OBJECTS = $(patsubst $(USER_LIB_DIR)/%.c, $(USER_BUILD_DIR)/lib/%.o, $(USER_LIB_SOURCES))
+
+# User programs
+USER_SOURCES = $(wildcard $(USER_SRC_DIR)/*.c)
+USER_ELFS = $(patsubst $(USER_SRC_DIR)/%.c, $(USER_BUILD_DIR)/%.elf, $(USER_SOURCES))
+USER_BINS = $(patsubst $(USER_BUILD_DIR)/%.elf, $(USER_BUILD_DIR)/%.bin, $(USER_ELFS))
 
 # boot object linked first so .text.boot lands at entry
 BOOT_OBJ  = $(BUILD_DIR)/arch/boot.o
@@ -78,6 +97,30 @@ $(shell echo "$(CFLAGS)" | cmp -s - $(CFLAGS_FILE) || echo "$(CFLAGS)" > $(CFLAG
 
 all: $(IMAGE)
 
+# ensure user bins are built before kernel objects (since user_programs.S incbins them)
+$(BUILD_DIR)/kernel/user_programs.o: $(USER_BINS)
+
+# User-space build rules
+$(USER_BUILD_DIR)/lib/%.o: $(USER_LIB_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(call msg,"USER-LIB-CC",$(notdir $<))
+	$(Q)$(CC) $(CFLAGS) -c $< -o $@
+
+$(USER_BUILD_DIR)/crt0.o: $(USER_SRC_DIR)/crt0.S
+	@mkdir -p $(USER_BUILD_DIR)
+	$(call msg,"USER-AS",$(notdir $<))
+	$(Q)$(CC) $(ASFLAGS) -c $< -o $@
+
+$(USER_BUILD_DIR)/%.elf: $(USER_SRC_DIR)/%.c $(USER_BUILD_DIR)/crt0.o $(USER_LD) $(USER_LIB_OBJECTS)
+	@mkdir -p $(USER_BUILD_DIR)
+	$(call msg,"USER-CC",$(notdir $<))
+	$(Q)$(CC) $(CFLAGS) -I$(SRC_DIR) -T $(USER_LD) $(USER_BUILD_DIR)/crt0.o $< $(USER_LIB_OBJECTS) -o $@
+
+$(USER_BUILD_DIR)/%.bin: $(USER_BUILD_DIR)/%.elf
+	$(call msg,"USER-BIN",$(notdir $@))
+	$(Q)$(OBJCOPY) -O binary $< $@
+
+# Kernel build rules
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(CFLAGS_FILE)
 	$(call msg,"CC",$<)
 	@mkdir -p $(dir $@)

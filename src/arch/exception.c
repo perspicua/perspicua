@@ -6,6 +6,7 @@
 #include "../kernel/timer.h"
 #include "../kernel/sched.h"
 #include "../kernel/process.h"
+#include "../kernel/syscall.h"
 
 // Exception Class values (EC field of ESR_EL1, bits [31:26])
 #define EC_SVC 0x15
@@ -191,30 +192,7 @@ void c_sync_handler(struct trap_frame* tf)
     {
     case EC_SVC:
     {
-        uint64_t syscall_nr = tf->x[8];
-        switch (syscall_nr)
-        {
-        case 1:
-        {
-            const char* buf = (const char*)(tf->x[0]);
-            size_t len = (size_t)(tf->x[1]);
-            for (size_t i = 0; i < len; i++)
-                uart_send(buf[i]);
-            break;
-        }
-        case 2:
-        {
-            process_exit();
-            while (1)
-                asm volatile("wfe");
-            break;
-        }
-        default:
-        {
-            printf("Unknown syscall: %lu\n", syscall_nr);
-            break;
-        }
-        }
+        handle_syscall(tf);
         break;
     }
     case EC_INST_ABORT_LOWER:

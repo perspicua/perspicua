@@ -16,12 +16,17 @@
 
 #include "test/test.h"
 #include "kernel/addr.h"
+#include "lib/user/syscall.h"
 
 extern void _entry(void);
 
 static spinlock_t console_lock = SPINLOCK_INIT;
 
 #define KERNEL_VERSION "0.1"
+
+// Symbols from user_programs.S
+extern char user_hello_start[];
+extern char user_hello_end[];
 
 static inline unsigned long get_core_id(void)
 {
@@ -80,54 +85,6 @@ static void print_banner(void)
     printf("\n");
 }
 
-uint8_t user_stack[4096] __attribute__((aligned(16)));
-
-static inline __attribute__((always_inline)) void sys_write(const char* buf, size_t len)
-{
-    register const char* _buf asm("x0") = buf;
-    register size_t _len asm("x1") = len;
-    asm volatile("mov x8, #1\n svc #0" : : "r"(_buf), "r"(_len) : "x8");
-}
-
-static inline __attribute__((always_inline)) void sys_exit(void)
-{
-    asm volatile("mov x8, #2 \n svc #0" : : : "x8");
-}
-
-static void user_program_1(void)
-{
-    while (1)
-    {
-        char msg[25];
-        msg[0] = 'H';
-        msg[1] = 'e';
-        msg[2] = 'l';
-        msg[3] = 'l';
-        msg[4] = 'o';
-        msg[5] = ' ';
-        msg[6] = 'f';
-        msg[7] = 'r';
-        msg[8] = 'o';
-        msg[9] = 'm';
-        msg[10] = ' ';
-        msg[11] = 'u';
-        msg[12] = 's';
-        msg[13] = 'e';
-        msg[14] = 'r';
-        msg[15] = ' ';
-        msg[16] = 's';
-        msg[17] = 'p';
-        msg[18] = 'a';
-        msg[19] = 'c';
-        msg[20] = 'e';
-        msg[21] = '!';
-        msg[22] = '\n';
-        sys_write(msg, 23);
-        for (volatile int i = 0; i < 5000000; i++)
-            ;
-    }
-}
-
 __attribute__((used)) int main(void);
 int main()
 {
@@ -162,13 +119,9 @@ int main()
     // run_scheduler_tests();
 
     process_init();
-    process_create((void*)user_program_1, 1024, 1);
-    /* process_create((void*)user_program_2, 1024, 2); */
-    /* process_create((void*)user_program_3, 1024, 3); */
-    /* process_create((void*)user_program_4, 1024, 4); */
-    /* process_create((void*)user_program_5, 1024, 5); */
-    // struct cpu_context dummy;
-    // switch_context(&dummy, &current_process.context);
+    
+    size_t hello_size = (size_t)(user_hello_end - user_hello_start);
+    process_create((void*)user_hello_start, hello_size, 1);
 
     while (1)
         asm volatile("wfe");

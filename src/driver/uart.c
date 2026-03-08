@@ -2,10 +2,14 @@
 #include "gpio.h"
 #include "../kernel/timer.h"
 #include "../kernel/addr.h"
+#include "../kernel/lock.h"
 #include "../lib/panic.h"
 #include "../devicetree/pht.h"
 
+static spinlock_t uart_lock = SPINLOCK_INIT;
+
 volatile unsigned int* UART0_DR;
+// ... (rest of pointers)
 volatile unsigned int* UART0_FR;
 volatile unsigned int* UART0_IBRD;
 volatile unsigned int* UART0_FBRD;
@@ -61,6 +65,30 @@ void uart_init(void)
 
     // UARTEN (bit 0) | TXE (bit 8) | RXE (bit 9) -> 0b1100000001 -> 0x301
     *UART0_CR = 0x301;
+}
+
+void uart_write(const char* buf, size_t len)
+{
+    unsigned long flags = spin_lock_irqsave(&uart_lock);
+    for (size_t i = 0; i < len; i++)
+    {
+        if (buf[i] == '\n')
+            uart_send('\r');
+        uart_send(buf[i]);
+    }
+    spin_unlock_irqrestore(&uart_lock, flags);
+}
+
+void uart_puts_locked(const char* str)
+{
+    unsigned long flags = spin_lock_irqsave(&uart_lock);
+    while (*str)
+    {
+        if (*str == '\n')
+            uart_send('\r');
+        uart_send(*str++);
+    }
+    spin_unlock_irqrestore(&uart_lock, flags);
 }
 
 void uart_send(char c)
