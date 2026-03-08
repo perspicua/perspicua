@@ -9,6 +9,8 @@
 #include "kernel/timer.h"
 #include "kernel/lock.h"
 #include "kernel/process.h"
+#include "kernel/vfs.h"
+#include "kernel/ramfs.h"
 
 #include "lib/panic.h"
 #include "lib/stdio.h"
@@ -121,6 +123,13 @@ int main()
 
     size_t hello_size = (size_t)(user_hello_end - user_hello_start);
     process_create((void*)user_hello_start, hello_size, 1);
+
+    ramfs_init();
+    int fd = vfs_open("/hello.txt", 0);
+    char buf[100];
+    int bytes = vfs_read(fd, buf, 100);
+    buf[bytes] = '\0';
+    printf("Read from VFS: %s", buf);
 
     while (1)
         asm volatile("wfe");
