@@ -16,6 +16,15 @@ typedef enum
     VNODE_TYPE_DEVICE
 } vnode_type_t;
 
+#define O_RDONLY 0x0000
+#define O_WRONLY 0x0001
+#define O_RDWR 0x0002
+#define O_ACCMODE 0x0003
+
+#define O_CREAT 0x0100
+#define O_TRUNC 0x0200
+#define O_APPEND 0x0400
+
 struct mount_entry
 {
     char path[MAX_PATH_LEN];
@@ -44,6 +53,10 @@ struct file
     int flags;
 };
 
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
 // intialize vfs system
 void vfs_init(void);
 
@@ -58,6 +71,9 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid);
 
 // close a file, return 0 on succes
 int vfs_close(int fd);
+
+// seek in a file. returns the new offset
+int vfs_lseek(int fd, int offset, int whence);
 
 // reads from a file. returns the bytes read from the file
 int vfs_read(int fd, void* buffer, size_t count);

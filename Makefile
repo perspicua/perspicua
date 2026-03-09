@@ -97,8 +97,10 @@ $(shell echo "$(CFLAGS)" | cmp -s - $(CFLAGS_FILE) || echo "$(CFLAGS)" > $(CFLAG
 
 all: $(IMAGE)
 
-# ensure user bins are built before kernel objects (since user_programs.S incbins them)
-$(BUILD_DIR)/kernel/user_programs.o: $(USER_BINS)
+# ensure user bins/elfs are built before kernel objects (since user_programs.S incbins them)
+$(BUILD_DIR)/kernel/user_programs.o: $(USER_BINS) $(USER_ELFS)
+
+.PRECIOUS: $(USER_ELFS) $(USER_BINS)
 
 # User-space build rules
 $(USER_BUILD_DIR)/lib/%.o: $(USER_LIB_DIR)/%.c

@@ -5,6 +5,7 @@
 #include "kernel/vfs.h"
 
 void ramfs_init(void);
+void ramfs_register_file(const char* name, const void* data, size_t size);
 
 int ramfs_read(struct file* file, void* buffer, size_t size);
 

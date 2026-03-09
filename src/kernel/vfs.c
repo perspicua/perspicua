@@ -70,9 +70,12 @@ static struct mount_entry* find_mount(const char* path)
     {
         size_t len = strlen(mount_table[i].path);
 
-        if (strncmp(mount_table[i].path, path, len) == 0 && (path[len] == '\0' || path[len] == '/'))
+        if (strncmp(mount_table[i].path, path, len) == 0)
         {
-            if (longest_match_len < len)
+            if (len > 1 && path[len] != '\0' && path[len] != '/')
+                continue;
+
+            if (len >= longest_match_len)
             {
                 longest_match_len = len;
                 longest_match_index = i;
@@ -180,6 +183,39 @@ int vfs_close(int fd)
     return 0;
 }
 
+int vfs_lseek(int fd, int offset, int whence)
+{
+    if (fd < 0 || fd >= MAX_FDS)
+        return -1;
+
+    int curr_process_pid = process_find_current();
+    if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
+        return -1;
+    if (process_table[curr_process_pid].fd_table[fd] == NULL)
+        return -1;
+
+    struct file* f = process_table[curr_process_pid].fd_table[fd];
+
+    uint32_t new_offset = f->offset;
+    switch (whence)
+    {
+    case SEEK_SET:
+        new_offset = (uint32_t)offset;
+        break;
+    case SEEK_CUR:
+        new_offset = (uint32_t)((int)f->offset + offset);
+        break;
+    case SEEK_END:
+        new_offset = (uint32_t)((int)f->node->filesize + offset);
+        break;
+    default:
+        return -1;
+    }
+
+    f->offset = new_offset;
+    return (int)f->offset;
+}
+
 int vfs_read(int fd, void* buffer, size_t count)
 {
     if (fd < 0 || fd >= MAX_FDS)
@@ -192,6 +228,12 @@ int vfs_read(int fd, void* buffer, size_t count)
         return -1;
 
     struct file* file_to_read = process_table[curr_process_pid].fd_table[fd];
+
+    // check read flags
+    int access_mode = file_to_read->flags & O_ACCMODE;
+    if (access_mode != O_RDONLY && access_mode != O_RDWR)
+        return -1;
+
     if (file_to_read->node->ops->read == NULL)
         return -1;
 
@@ -216,8 +258,17 @@ int vfs_write(int fd, const void* buffer, size_t count)
         return -1;
 
     struct file* file_to_write = process_table[curr_process_pid].fd_table[fd];
+
+    // check write flags
+    int access_mode = file_to_write->flags & O_ACCMODE;
+    if (access_mode != O_WRONLY && access_mode != O_RDWR)
+        return -1;
+
     if (file_to_write->node->ops->write == NULL)
         return -1;
+
+    if (file_to_write->flags & O_APPEND)
+        file_to_write->offset = (uint32_t)file_to_write->node->filesize;
 
     int bytes_written = file_to_write->node->ops->write(file_to_write, buffer, count);
     if (bytes_written > 0)
