@@ -258,12 +258,7 @@ void test_mmu_user(void)
         mmu_user_map_page(pgd, USER_VA_BASE + 0x1000, V2P(p2), PAGE_USER_DATA);
         mmu_user_map_page(pgd, USER_VA_BASE + 0x200000, V2P(p3), PAGE_USER_DATA);
 
-        // free mapped pages first (caller responsibility)
-        pmm_free_page(p1);
-        pmm_free_page(p2);
-        pmm_free_page(p3);
-
-        // destroy should free PGD + L2 + L3 pages (no leak)
+        // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
         // if table pages leaked, we'd eventually run out — allocate to confirm
@@ -357,10 +352,7 @@ void test_mmu_user(void)
         mmu_user_map_page(pgd, 0x100000000ULL, V2P(p1), PAGE_USER_DATA); // L1[4]
         mmu_user_map_page(pgd, 0x200000000ULL, V2P(p2), PAGE_USER_DATA); // L1[8]
 
-        pmm_free_page(p1);
-        pmm_free_page(p2);
-
-        // should cleanly free both L1 subtrees
+        // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
         // verify PMM still works (no corruption)
@@ -407,7 +399,6 @@ void test_mmu_user(void)
 
         for (int i = 0; i < STRESS_COUNT; i++)
         {
-            pmm_free_page(phys[i]);
             mmu_destroy_user_pgd(pgds[i]);
         }
 #undef STRESS_COUNT

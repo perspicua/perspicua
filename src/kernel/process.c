@@ -269,16 +269,8 @@ void process_exit(void)
     unsigned long ttbr0 = mmu_kernel_ttbr0();
     asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(ttbr0));
 
-    // TODO: a more robust system is needed to track all physical pages mapped to a process.
-    // currently, we only store single pointers which is insufficient for ELF processes.
-    // for now, we only free if the paddr is non-zero (avoiding PFN 0/reserved panic).
-    if (process_table[pid].paddr_code)
-        pmm_free_page((void*)P2V(process_table[pid].paddr_code));
-
-    // WARNING: THIS LEAKS but prevents a panic! CHANGE SOON!!!
-    if (process_table[pid].paddr_user_stack)
-        pmm_free_page((void*)P2V(process_table[pid].paddr_user_stack));
-
+    // mmu_destroy_user_pgd walks the page tables and frees all mapped
+    // physical pages (ELF segments, stack, etc.) as well as table pages.
     if (process_table[pid].user_pgd)
     {
         mmu_destroy_user_pgd(process_table[pid].user_pgd);

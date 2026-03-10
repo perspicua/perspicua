@@ -372,11 +372,18 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
                 continue;
             if (l2[j] & PTE_TABLE)
             {
-                // L3 table — free the page table page itself
                 unsigned long* l3 = (unsigned long*)P2V(l2[j] & PTE_ADDR_MASK);
+                // free every physical page mapped by L3 entries
+                for (int k = 0; k < 512; k++)
+                {
+                    if ((l3[k] & PTE_VALID) && (l3[k] & PTE_PAGE))
+                    {
+                        unsigned long pa = l3[k] & PTE_ADDR_MASK;
+                        pmm_free_page((void*)P2V(pa));
+                    }
+                }
                 pmm_free_page(l3);
             }
-            // block entries: nothing to free (caller frees mapped pages)
         }
         pmm_free_page(l2);
     }
