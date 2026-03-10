@@ -1,6 +1,8 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
+#include "driver/mailbox.h"
+#include "driver/fb.h"
 
 #include "kernel/pmm.h"
 #include "kernel/mmu.h"
@@ -98,6 +100,8 @@ int main()
 {
     gpio_init();
     uart_init();
+    mbox_init();
+    fb_init();
     tty_init(&console_tty);
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);

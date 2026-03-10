@@ -3,7 +3,7 @@
 
 struct pht_header system_pht = {
     .magic = PHT_MAGIC,
-    .nr_devices = 4,
+    .nr_devices = 5,
     .nodes = {
         // memory
         {.name = "memory", .address[0] = 0x00000000, .size[0] = 1024 * 1024 * 1024 * 2LU, .reg_count = 1, .irq = 0},
@@ -18,7 +18,9 @@ struct pht_header system_pht = {
          .reg_count = 2,
          .irq = 0},
         // gpio
-        {.name = "gpio", .address[0] = 0xFE200000, .size[0] = 0x1000, .reg_count = 1, .irq = 0}}};
+        {.name = "gpio", .address[0] = 0xFE200000, .size[0] = 0x1000, .reg_count = 1, .irq = 0},
+        // mailbox
+        {.name = "mailbox", .address[0] = 0xFE00B880, .size[0] = 0x100, .reg_count = 1, .irq = 0}}};
 
 struct pht_node* pht_find_device(const char* name)
 {
