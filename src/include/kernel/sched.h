@@ -39,6 +39,7 @@ struct task
     task_state_t state;
     unsigned long wake_time;
     unsigned long id;
+    uint32_t pid;
     unsigned char* stack;
 
     struct task* next;
@@ -49,6 +50,13 @@ void sched_create_task(void (*entry)(void));
 void sched_sleep_ms(unsigned long ms);
 void schedule(void);
 void sched_secondary_init(void);
+
+void sched_block(void);
+void sched_unblock(struct task* t);
+
+void post_switch_hook(void);
+
+struct task* sched_get_current(void);
 
 void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
 // defined in switch.S

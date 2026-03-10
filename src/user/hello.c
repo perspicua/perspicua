@@ -13,12 +13,12 @@ int main(void)
         else
             msg[32] = '?';
 
-        sys_write(0, msg, sizeof(msg) - 1);
+        sys_write(1, msg, sizeof(msg) - 1);
         sys_sleep(500);
     }
 
     char bye[] = "Process exiting now...\n";
-    sys_write(0, bye, sizeof(bye) - 1);
+    sys_write(1, bye, sizeof(bye) - 1);
 
     sys_exit();
     return 0;

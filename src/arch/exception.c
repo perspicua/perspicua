@@ -7,6 +7,27 @@
 #include "kernel/sched.h"
 #include "kernel/process.h"
 #include "kernel/syscall.h"
+#include "kernel/tty.h"
+#include "arch/uaccess.h"
+
+extern struct tty console_tty;
+
+extern unsigned long __ex_table_start[];
+extern unsigned long __ex_table_end[];
+
+int fixup_exception(struct trap_frame* tf)
+{
+    unsigned long* p;
+    for (p = __ex_table_start; p < __ex_table_end; p += 2)
+    {
+        if (tf->elr_el1 == p[0])
+        {
+            tf->elr_el1 = p[1];
+            return 1;
+        }
+    }
+    return 0;
+}
 
 // Exception Class values (EC field of ESR_EL1, bits [31:26])
 #define EC_SVC 0x15
@@ -70,6 +91,11 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
     unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
+    if (fixup_exception(tf))
+    {
+        return;
+    }
+
     uint32_t fsc = esr & FSC_MASK;
     int is_write = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
     int is_user = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
@@ -83,6 +109,8 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
         int pid = process_find_current();
 
         printf("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data", pid);
+        if (far < 0x1000)
+            printf("  Type     : NULL Pointer Dereference\n");
         printf("  FAR_EL1  : 0x%lx\n", far);
         printf("  ELR_EL1  : 0x%lx\n", tf->elr_el1);
         printf("  ESR_EL1  : 0x%lx\n", (unsigned long)esr);
@@ -92,7 +120,16 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
         if (pid >= 0)
         {
             printf("  Action   : killing PID %d\n", pid);
-            process_exit();
+            struct task* curr = sched_get_current();
+            if (curr && curr->pid == (uint32_t)pid)
+            {
+                curr->state = TASK_DEAD;
+                schedule();
+            }
+            else
+            {
+                process_exit((uint32_t)pid);
+            }
         }
         else
         {
@@ -105,6 +142,8 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
     else
     {
         printf("\n[KERNEL PANIC] %s abort in kernel!\n", is_inst ? "Instruction" : "Data");
+        if (far < 0x1000)
+            printf("  Type     : NULL Pointer Dereference\n");
         printf("  FAR_EL1  : 0x%lx\n", far);
         printf("  ELR_EL1  : 0x%lx\n", tf->elr_el1);
         printf("  ESR_EL1  : 0x%lx\n", (unsigned long)esr);
@@ -136,6 +175,9 @@ void c_unhandled_vector(void)
         asm volatile("wfe");
     }
 }
+
+static unsigned int uart_irq_cached = 0;
+
 void c_irq_handler(void)
 {
     // check before even reading IAR — a panic IPI may have woken us
@@ -146,7 +188,10 @@ void c_irq_handler(void)
             asm volatile("wfe");
     }
 
-    unsigned int iar = *GICC_IAR;
+    if (uart_irq_cached == 0)
+        uart_irq_cached = uart_get_irq();
+
+    unsigned int iar = mmio_read(GICC_IAR);
     unsigned int irq_id = iar & 0x3FF;
 
     if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
@@ -154,7 +199,7 @@ void c_irq_handler(void)
 
     if (irq_id == 0) // SGI 0: panic IPI from another core
     {
-        *GICC_EOIR = iar;
+        mmio_write(GICC_EOIR, iar);
         disable_interrupts();
         for (;;)
             asm volatile("wfe");
@@ -162,23 +207,34 @@ void c_irq_handler(void)
     else if (irq_id == TIMER_IRQ)
     {
         timer_interrupt_reset();
-        *GICC_EOIR = iar;
+        mmio_write(GICC_EOIR, iar);
         schedule();
         return;
     }
-    else if (irq_id == uart_get_irq())
+    else if (irq_id == uart_irq_cached)
     {
-        while (uart_data_ready())
+        uint32_t mis = mmio_read(UART0_MIS);
+
+        // Handle RX and RX Timeout
+        if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS))
         {
-            char c = uart_getc();
-            if (c == '\n')
-                uart_send('\r');
-            uart_send(c);
+            while (!(mmio_read(UART0_FR) & UART_FR_RXFE))
+            {
+                char c = (char)(mmio_read(UART0_DR) & 0xFF);
+                tty_handle_rx(&console_tty, c);
+            }
         }
-        uart_clear_interrupt();
+
+        // Handle TX
+        if (mis & UART_MIS_TXMIS)
+        {
+            tty_handle_rx(&console_tty, 0); // Trigger pump_tx
+        }
+
+        uart_clear_interrupt(mis);
     }
 
-    *GICC_EOIR = iar;
+    mmio_write(GICC_EOIR, iar);
 }
 
 void c_sync_handler(struct trap_frame* tf)

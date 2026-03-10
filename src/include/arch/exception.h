@@ -3,6 +3,8 @@
 
 #include "lib/types.h"
 
+typedef __uint128_t uint128_t;
+
 struct trap_frame
 {
     uint64_t sp_el0;
@@ -12,7 +14,10 @@ struct trap_frame
     // registers
     uint64_t x[30]; // x0 - x29
     uint64_t x30;   // link
-    uint64_t _pad2; // alignment to 288 bytes (matching vector.S)
+    uint32_t fpsr;
+    uint32_t fpcr;
+
+    uint128_t q[32]; // NEON/FPU registers
 } __attribute__((aligned(16)));
 
 void c_unhandled_vector(void);

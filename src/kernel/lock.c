@@ -38,3 +38,30 @@ void spin_unlock_irqrestore(spinlock_t* lock, unsigned long flags)
     spin_unlock(lock);
     irq_restore(flags);
 }
+
+void atomic_inc(atomic_t* a)
+{
+    int val, tmp;
+    asm volatile("1: ldaxr   %w0, [%2]\n"
+                 "   add     %w0, %w0, #1\n"
+                 "   stxr    %w1, %w0, [%2]\n"
+                 "   cbnz    %w1, 1b\n"
+                 : "=&r"(val), "=&r"(tmp)
+                 : "r"(&a->counter)
+                 : "memory");
+}
+
+int atomic_dec_and_test(atomic_t* a)
+{
+    int val, tmp, result;
+    asm volatile("1: ldaxr   %w0, [%3]\n"
+                 "   sub     %w0, %w0, #1\n"
+                 "   stxr    %w1, %w0, [%3]\n"
+                 "   cbnz    %w1, 1b\n"
+                 "   cmp     %w0, #0\n"
+                 "   cset    %w2, eq\n"
+                 : "=&r"(val), "=&r"(tmp), "=r"(result)
+                 : "r"(&a->counter)
+                 : "memory");
+    return result;
+}

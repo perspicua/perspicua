@@ -29,13 +29,8 @@ static spinlock_t console_lock = SPINLOCK_INIT;
 // Symbols from user_programs.S
 extern char user_hello_start[];
 extern char user_hello_end[];
-
-static inline unsigned long get_core_id(void)
-{
-    unsigned long core_id;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
-    return core_id & 3;
-}
+extern char user_hello_elf_start[];
+extern char user_hello_elf_end[];
 
 static void smp_init(void)
 {
@@ -51,6 +46,11 @@ static void smp_init(void)
     *spin_cpu1 = entry_phys;
     *spin_cpu2 = entry_phys;
     *spin_cpu3 = entry_phys;
+
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu1));
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu2));
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu3));
+    asm volatile("dsb sy");
 
     // wake up parked cores
     asm volatile("sev");
@@ -74,6 +74,10 @@ void secondary_main(void)
     spin_unlock_irqrestore(&console_lock, flags);
 
     sched_secondary_init();
+
+    // should never be reached
+    for (;;)
+        asm volatile("wfe");
 }
 
 static void print_banner(void)
@@ -87,11 +91,15 @@ static void print_banner(void)
     printf("\n");
 }
 
+#include "kernel/tty.h"
+extern struct tty console_tty;
+
 __attribute__((used)) int main(void);
 int main()
 {
     gpio_init();
     uart_init();
+    tty_init(&console_tty);
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
     printf("[  0.000] BOOT: EL1 entry at 0x%lx (higher-half VMA 0x%lx)\n", V2P((unsigned long)main),
@@ -124,15 +132,36 @@ int main()
     process_init();
     ramfs_init();
     devfs_init();
+    vfs_mount("/dev", devfs_get_root());
 
-    int fd = vfs_open("/hello.txt", 0);
-    char buf[100];
-    int bytes = vfs_read(fd, buf, 100);
-    buf[bytes] = '\0';
-    printf("Read from VFS: %s", buf);
+    size_t hello_elf_size = (size_t)(user_hello_elf_end - user_hello_elf_start);
+    ramfs_register_file("hello.elf", user_hello_elf_start, hello_elf_size);
 
-    size_t hello_size = (size_t)(user_hello_end - user_hello_start);
-    process_create((void*)user_hello_start, hello_size, 1);
+    int fd = vfs_open("/hello.txt", O_RDONLY);
+    if (fd >= 0)
+    {
+        char buf[100];
+        int bytes = vfs_read(fd, buf, sizeof(buf) - 1);
+        if (bytes >= 0)
+        {
+            buf[bytes] = '\0';
+            printf("Read from VFS: %s", buf);
+        }
+        else
+        {
+            printf("[  VFS ] Error: failed to read /hello.txt\n");
+        }
+        vfs_close(fd);
+    }
+    else
+    {
+        printf("[  VFS ] Error: could not open /hello.txt\n");
+    }
+
+    if (process_create_from_file("/hello.elf", 1) != 0)
+    {
+        printf("[  ELF ] Error: failed to load /hello.elf\n");
+    }
 
     while (1)
         asm volatile("wfe");

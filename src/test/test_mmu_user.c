@@ -38,10 +38,10 @@ void test_mmu_user(void)
         int mapped = mmu_user_query(pgd, vaddr, &out_pa, &out_fl);
         TEST_ASSERT("user map: mapped", mapped == 1);
         TEST_ASSERT("user map: paddr correct", out_pa == paddr);
-        TEST_ASSERT("user map: valid+page", (out_fl & (MMU_PTE_VALID | MMU_PTE_PAGE)) == (MMU_PTE_VALID | MMU_PTE_PAGE));
+        TEST_ASSERT("user map: valid+page",
+                    (out_fl & (MMU_PTE_VALID | MMU_PTE_PAGE)) == (MMU_PTE_VALID | MMU_PTE_PAGE));
 
         mmu_user_unmap_page(pgd, vaddr);
-        pmm_free_page(phys);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user map+query");
@@ -58,7 +58,6 @@ void test_mmu_user(void)
         int mapped = mmu_user_query(pgd, vaddr, 0, 0);
         TEST_ASSERT("user unmap: not mapped", mapped == 0);
 
-        pmm_free_page(phys);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user unmap");
@@ -92,8 +91,6 @@ void test_mmu_user(void)
 
         mmu_user_unmap_page(pgd, va_code);
         mmu_user_unmap_page(pgd, va_data);
-        pmm_free_page(p1);
-        pmm_free_page(p2);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user code vs data flags");
@@ -124,7 +121,6 @@ void test_mmu_user(void)
         for (int i = 0; i < MP_COUNT; i++)
         {
             mmu_user_unmap_page(pgd, vas[i]);
-            pmm_free_page(pages[i]);
         }
 
         // confirm all unmapped
@@ -146,8 +142,8 @@ void test_mmu_user(void)
         unsigned long* pgd = mmu_create_user_pgd();
         void* p1 = pmm_alloc_page();
         void* p2 = pmm_alloc_page();
-        unsigned long va1 = USER_VA_BASE;                     // L2 index 0
-        unsigned long va2 = USER_VA_BASE + 0x200000;          // L2 index 1 (+2MB)
+        unsigned long va1 = USER_VA_BASE;            // L2 index 0
+        unsigned long va2 = USER_VA_BASE + 0x200000; // L2 index 1 (+2MB)
 
         mmu_user_map_page(pgd, va1, V2P(p1), PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(p2), PAGE_USER_DATA);
@@ -158,8 +154,6 @@ void test_mmu_user(void)
 
         mmu_user_unmap_page(pgd, va1);
         mmu_user_unmap_page(pgd, va2);
-        pmm_free_page(p1);
-        pmm_free_page(p2);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("pages across L2 regions");
@@ -169,8 +163,8 @@ void test_mmu_user(void)
         unsigned long* pgd = mmu_create_user_pgd();
         void* p1 = pmm_alloc_page();
         void* p2 = pmm_alloc_page();
-        unsigned long va1 = 0x100000000ULL;       // L1 index 4
-        unsigned long va2 = 0x200000000ULL;       // L1 index 8
+        unsigned long va1 = 0x100000000ULL; // L1 index 4
+        unsigned long va2 = 0x200000000ULL; // L1 index 8
 
         mmu_user_map_page(pgd, va1, V2P(p1), PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(p2), PAGE_USER_DATA);
@@ -181,8 +175,6 @@ void test_mmu_user(void)
 
         mmu_user_unmap_page(pgd, va1);
         mmu_user_unmap_page(pgd, va2);
-        pmm_free_page(p1);
-        pmm_free_page(p2);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("pages across L1 entries");
@@ -203,8 +195,6 @@ void test_mmu_user(void)
         TEST_ASSERT("remap: second", mmu_user_query(pgd, vaddr, &pa, 0) && pa == V2P(p2));
 
         mmu_user_unmap_page(pgd, vaddr);
-        pmm_free_page(p1);
-        pmm_free_page(p2);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("remap same VA different phys");
@@ -229,14 +219,14 @@ void test_mmu_user(void)
 
         // mapping in A doesn't appear in B's other addresses
         unsigned long va_other = USER_VA_BASE + 0x6000;
+        pmm_hold_page(pa);
         mmu_user_map_page(pgd_a, va_other, V2P(pa), PAGE_USER_DATA);
         TEST_ASSERT("iso: other VA not in B", mmu_user_query(pgd_b, va_other, 0, 0) == 0);
 
         mmu_user_unmap_page(pgd_a, vaddr);
         mmu_user_unmap_page(pgd_a, va_other);
         mmu_user_unmap_page(pgd_b, vaddr);
-        pmm_free_page(pa);
-        pmm_free_page(pb);
+
         mmu_destroy_user_pgd(pgd_a);
         mmu_destroy_user_pgd(pgd_b);
     }
@@ -258,12 +248,7 @@ void test_mmu_user(void)
         mmu_user_map_page(pgd, USER_VA_BASE + 0x1000, V2P(p2), PAGE_USER_DATA);
         mmu_user_map_page(pgd, USER_VA_BASE + 0x200000, V2P(p3), PAGE_USER_DATA);
 
-        // free mapped pages first (caller responsibility)
-        pmm_free_page(p1);
-        pmm_free_page(p2);
-        pmm_free_page(p3);
-
-        // destroy should free PGD + L2 + L3 pages (no leak)
+        // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
         // if table pages leaked, we'd eventually run out — allocate to confirm
@@ -343,7 +328,6 @@ void test_mmu_user(void)
         TEST_ASSERT("uq: different L2", mmu_user_query(pgd, USER_VA_BASE + 0x200000, 0, 0) == 0);
 
         mmu_user_unmap_page(pgd, USER_VA_BASE);
-        pmm_free_page(p);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("query unmapped in user PGD");
@@ -357,10 +341,7 @@ void test_mmu_user(void)
         mmu_user_map_page(pgd, 0x100000000ULL, V2P(p1), PAGE_USER_DATA); // L1[4]
         mmu_user_map_page(pgd, 0x200000000ULL, V2P(p2), PAGE_USER_DATA); // L1[8]
 
-        pmm_free_page(p1);
-        pmm_free_page(p2);
-
-        // should cleanly free both L1 subtrees
+        // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
         // verify PMM still works (no corruption)
@@ -380,8 +361,7 @@ void test_mmu_user(void)
         {
             pgds[i] = mmu_create_user_pgd();
             phys[i] = pmm_alloc_page();
-            mmu_user_map_page(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000,
-                              V2P(phys[i]), PAGE_USER_DATA);
+            mmu_user_map_page(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, V2P(phys[i]), PAGE_USER_DATA);
         }
 
         // verify each PGD has its own mapping
@@ -407,7 +387,6 @@ void test_mmu_user(void)
 
         for (int i = 0; i < STRESS_COUNT; i++)
         {
-            pmm_free_page(phys[i]);
             mmu_destroy_user_pgd(pgds[i]);
         }
 #undef STRESS_COUNT
@@ -421,6 +400,7 @@ void test_mmu_user(void)
         void* shared_page = pmm_alloc_page();
         unsigned long vaddr = USER_VA_BASE + 0x7000;
 
+        pmm_hold_page(shared_page); // Hold because we map it twice and mmu_user_unmap_page frees
         mmu_user_map_page(pgd_a, vaddr, V2P(shared_page), PAGE_USER_DATA);
         mmu_user_map_page(pgd_b, vaddr, V2P(shared_page), PAGE_USER_DATA);
 
@@ -432,7 +412,7 @@ void test_mmu_user(void)
 
         mmu_user_unmap_page(pgd_a, vaddr);
         mmu_user_unmap_page(pgd_b, vaddr);
-        pmm_free_page(shared_page);
+
         mmu_destroy_user_pgd(pgd_a);
         mmu_destroy_user_pgd(pgd_b);
     }
@@ -465,7 +445,6 @@ void test_mmu_user(void)
         for (int i = 0; i < FILL_COUNT; i++)
         {
             mmu_user_unmap_page(pgd, vas[i]);
-            pmm_free_page(pages[i]);
         }
 
         ok = 1;
@@ -498,7 +477,6 @@ void test_mmu_user(void)
         TEST_ASSERT("kernel unaffected: paddr", kernel_pa == 0x200000);
 
         mmu_user_unmap_page(pgd, USER_VA_BASE + 0x8000);
-        pmm_free_page(p);
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user PGD doesn't affect kernel");
