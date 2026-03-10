@@ -124,15 +124,26 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     va_init(&process_table[pid].va);
 
     void* code_page = pmm_alloc_page();
+    if (!code_page)
+        PANIC("Out of memory for process code");
     void* stack_page = pmm_alloc_page();
+    if (!stack_page)
+        PANIC("Out of memory for process stack");
 
     process_table[pid].vaddr_code = process_va_alloc(&process_table[pid].va, 1);
+    if (!process_table[pid].vaddr_code)
+        PANIC("Out of virtual address space for process code");
     process_table[pid].vaddr_user_stack = process_va_alloc(&process_table[pid].va, 1);
+    if (!process_table[pid].vaddr_user_stack)
+        PANIC("Out of virtual address space for process stack");
 
     process_table[pid].paddr_code = V2P(code_page);
     process_table[pid].paddr_user_stack = V2P(stack_page);
 
     unsigned long* user_pgd = mmu_create_user_pgd();
+    if (!user_pgd)
+        PANIC("Failed to create user PGD for process");
+
     process_table[pid].user_pgd = user_pgd;
     process_table[pid].asid = pid;
 
@@ -193,6 +204,11 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     size_t stack_pages = 4;
     uintptr_t vaddr_stack = process_va_alloc(&process_table[pid].va, stack_pages);
+    if (!vaddr_stack)
+    {
+        mmu_destroy_user_pgd(user_pgd);
+        return -1;
+    }
     for (size_t i = 0; i < stack_pages; i++)
     {
         void* page = pmm_alloc_page();
@@ -202,7 +218,9 @@ int process_create_from_file(const char* path, uint32_t pid)
     }
 
     void* kstack = alloc_kernel_stack();
-
+    if(!kstack)
+        PANIC("Out of memory for kernel stack");
+        
     process_table[pid].pid = pid;
     process_table[pid].state = PROCESS_STATE_RUNNING;
     process_table[pid].user_pgd = user_pgd;

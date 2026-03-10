@@ -111,13 +111,16 @@ int main()
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
     printf("[  0.000] BOOT: Kernel VMA base: 0x%lx\n", KERNEL_VMA);
 
-    uart_enable_interrupts();
-    printf("[  0.000] UART: PL011 @ 0xFE201000, 115200 8N1, FIFO enabled\n");
+    
 
     pmm_init();
     mmu_init();
     heap_init();
     gic_init();
+
+    uart_enable_interrupts();
+    printf("[  0.000] UART: PL011 @ 0xFE201000, 115200 8N1, FIFO enabled\n");
+    
     timer_interrupt_init();
     sched_init();
 
