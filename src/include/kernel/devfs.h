@@ -5,11 +5,7 @@
 #include "kernel/vfs.h"
 
 void devfs_init(void);
-
-int devfs_uart_write(struct file* file, const void* buffer, size_t size);
-int devfs_uart_read(struct file* file, void* buffer, size_t size);
-
-struct vnode* devfs_root_lookup(struct vnode* dir, const char* filename);
-struct vnode* devfs_dev_lookup(struct vnode* dir, const char* filename);
+struct vnode* devfs_get_root(void);
+int devfs_register_device(const char* name, struct vnode_ops* ops, void* internal_info);
 
 #endif // _DEVFS_H_

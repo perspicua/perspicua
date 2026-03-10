@@ -12,7 +12,7 @@ static void print_unsigned_long(uint64_t n, int base)
 
     if (n == 0)
     {
-        uart_send('0');
+        uart_write("0", 1);
         return;
     }
 
@@ -29,14 +29,14 @@ static void print_unsigned_long(uint64_t n, int base)
     }
 
     while (i > 0)
-        uart_send(buf[--i]);
+        uart_write(&buf[--i], 1);
 }
 
 static void print_long(int64_t num, int base)
 {
     if (num < 0 && base == 10)
     {
-        uart_send('-');
+        uart_write("-", 1);
         print_unsigned_long((uint64_t)(-(num + 1)) + 1, base);
     }
     else
@@ -52,7 +52,7 @@ static void print_number(int32_t num, int base)
     uint32_t n;
     if (num < 0 && base == 10)
     {
-        uart_send('-');
+        uart_write("-", 1);
         n = (uint32_t)(-(num + 1)) + 1;
     }
     else
@@ -62,7 +62,7 @@ static void print_number(int32_t num, int base)
 
     if (n == 0)
     {
-        uart_send('0');
+        uart_write("0", 1);
         return;
     }
 
@@ -79,7 +79,7 @@ static void print_number(int32_t num, int base)
     }
 
     while (i > 0)
-        uart_send(buf[--i]);
+        uart_write(&buf[--i], 1);
 }
 
 void printf(const char* fmt, ...)
@@ -111,27 +111,25 @@ void printf(const char* fmt, ...)
             case 'p':
             {
                 unsigned long i = va_arg(args, unsigned long);
-                uart_send('0');
-                uart_send('x');
+                uart_write("0x", 2);
                 print_unsigned_long(i, 16);
                 break;
             }
             case 's':
             {
                 char* s = va_arg(args, char*);
-                // internal puts doesn't lock again
                 while (*s)
                 {
                     if (*s == '\n')
-                        uart_send('\r');
-                    uart_send(*s++);
+                        uart_write("\r", 1);
+                    uart_write(s++, 1);
                 }
                 break;
             }
             case 'c':
             {
-                int c = va_arg(args, int);
-                uart_send((char)c);
+                char c = (char)va_arg(args, int);
+                uart_write(&c, 1);
                 break;
             }
             case 'u':
@@ -168,13 +166,13 @@ void printf(const char* fmt, ...)
             }
             case '%':
             {
-                uart_send('%');
+                uart_write("%", 1);
                 break;
             }
             default:
             {
-                uart_send('%');
-                uart_send(*p);
+                uart_write("%", 1);
+                uart_write(p, 1);
                 break;
             }
             }
@@ -182,8 +180,8 @@ void printf(const char* fmt, ...)
         else
         {
             if (*p == '\n')
-                uart_send('\r');
-            uart_send(*p);
+                uart_write("\r", 1);
+            uart_write(p, 1);
         }
     }
     va_end(args);

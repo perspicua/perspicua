@@ -27,6 +27,10 @@ SECTIONS
     .rodata : AT(ADDR(.rodata) - KERNEL_VMA) ALIGN(4096) {
         __rodata_start = .;
         *(.rodata .rodata.*)
+        . = ALIGN(8);
+        __ex_table_start = .;
+        *(__ex_table)
+        __ex_table_end = .;
         __rodata_end = .;
     } :rodata
 

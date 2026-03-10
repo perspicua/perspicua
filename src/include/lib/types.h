@@ -48,4 +48,12 @@ typedef signed long intptr_t;
 
 #define SIZE_MAX UINT64_MAX
 
+// ---------------------------------------------------------------------------
+// Atomic types
+// ---------------------------------------------------------------------------
+typedef struct
+{
+    volatile int counter;
+} atomic_t;
+
 #endif // _TYPES_H_

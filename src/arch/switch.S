@@ -27,4 +27,20 @@ switch_context:
     // for new tasks, x19 holds the entry point arg
     mov x0, x19
 
+    dsb ish
     ret
+
+.global task_wrapper_asm
+task_wrapper_asm:
+    bl  post_switch_hook
+    mov x0, x19         // x19 holds the entry point
+    bl  enable_interrupts
+    blr x0              // call entry point
+    bl  disable_interrupts
+    bl  sched_get_current
+    cbz x0, 1f
+    mov x1, #3          // TASK_DEAD
+    str x1, [x0, #112]  // offset of 'state' in struct task
+    bl  schedule
+1:  wfe
+    b 1b

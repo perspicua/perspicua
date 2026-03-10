@@ -4,6 +4,7 @@
 #include "lib/types.h"
 #include "kernel/vfs.h"
 #include "kernel/sched.h"
+#include "kernel/lock.h"
 
 #define PROCESS_TABLE_SIZE 16
 #define USER_VA_BASE 0x40000000ULL // 1GB - leaves lower area for ELF loading
@@ -50,6 +51,7 @@ struct process
     struct va_allocator va; // per-process user VA allocator
 
     struct file* fd_table[MAX_FDS];
+    spinlock_t fd_lock;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];
@@ -57,7 +59,7 @@ extern struct process process_table[PROCESS_TABLE_SIZE];
 void process_init(void);
 void process_create(void* code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char* path, uint32_t pid);
-void process_exit(void);
+void process_exit(uint32_t pid);
 void drop_to_user(void* code_vaddr, void* stack_vaddr);
 
 // Returns the TTBR0 value for a given PID (0 if no such process).

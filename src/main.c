@@ -47,6 +47,11 @@ static void smp_init(void)
     *spin_cpu2 = entry_phys;
     *spin_cpu3 = entry_phys;
 
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu1));
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu2));
+    asm volatile("dc cvac, %0" : : "r"(spin_cpu3));
+    asm volatile("dsb sy");
+
     // wake up parked cores
     asm volatile("sev");
 
@@ -69,6 +74,10 @@ void secondary_main(void)
     spin_unlock_irqrestore(&console_lock, flags);
 
     sched_secondary_init();
+
+    // should never be reached
+    for (;;)
+        asm volatile("wfe");
 }
 
 static void print_banner(void)
@@ -82,11 +91,15 @@ static void print_banner(void)
     printf("\n");
 }
 
+#include "kernel/tty.h"
+extern struct tty console_tty;
+
 __attribute__((used)) int main(void);
 int main()
 {
     gpio_init();
     uart_init();
+    tty_init(&console_tty);
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
     printf("[  0.000] BOOT: EL1 entry at 0x%lx (higher-half VMA 0x%lx)\n", V2P((unsigned long)main),
@@ -119,6 +132,7 @@ int main()
     process_init();
     ramfs_init();
     devfs_init();
+    vfs_mount("/dev", devfs_get_root());
 
     size_t hello_elf_size = (size_t)(user_hello_elf_end - user_hello_elf_start);
     ramfs_register_file("hello.elf", user_hello_elf_start, hello_elf_size);

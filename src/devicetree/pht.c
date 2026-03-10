@@ -3,8 +3,10 @@
 
 struct pht_header system_pht = {
     .magic = PHT_MAGIC,
-    .nr_devices = 3,
-    .nodes = {// uart
+    .nr_devices = 4,
+    .nodes = {// memory
+              {.name = "memory", .address[0] = 0x00000000, .size[0] = 1024 * 1024 * 1024, .reg_count = 1, .irq = 0},
+              // uart
               {.name = "uart", .address[0] = 0xFE201000, .size[0] = 0x1000, .reg_count = 1, .irq = 153},
               // general interrupt controller (gic)
               {.name = "gic",

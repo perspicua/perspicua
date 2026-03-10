@@ -4,6 +4,7 @@
 #include "lib/panic.h"
 #include "kernel/addr.h"
 #include "driver/uart.h"
+#include "lib/io.h"
 
 volatile unsigned int* GICD_CTLR = NULL;
 volatile unsigned int* GICD_ISENABLERn = NULL;
@@ -16,10 +17,12 @@ volatile unsigned int* GICC_PMR = NULL;
 volatile unsigned int* GICC_IAR = NULL;
 volatile unsigned int* GICC_EOIR = NULL;
 
+static unsigned int cached_uart_irq = 0;
+
 void gic_send_panic_ipi(void)
 {
     // SGI ID 0, target filter 0b10 = all cores except self
-    *GICD_SGIR = (0b10 << 24) | 0;
+    mmio_write(GICD_SGIR, (0b10 << 24) | 0);
 }
 
 void gic_init(void)
@@ -43,27 +46,27 @@ void gic_init(void)
     GICC_IAR = (volatile unsigned int*)(gicc_vbase + 0x00C);
     GICC_EOIR = (volatile unsigned int*)(gicc_vbase + 0x010);
 
-    *GICD_CTLR = 1;
+    mmio_write(GICD_CTLR, 1);
 
-    GICD_ISENABLERn[TIMER_IRQ / 32] = (1 << (TIMER_IRQ % 32));
-    GICD_IPRIORITYR[TIMER_IRQ] = 0;
+    mmio_write(&GICD_ISENABLERn[TIMER_IRQ / 32], (1 << (TIMER_IRQ % 32)));
+    mmio_write8(&GICD_IPRIORITYR[TIMER_IRQ], 0);
 
-    unsigned int uart_irq = uart_get_irq();
-    GICD_ISENABLERn[uart_irq / 32] = (1 << (uart_irq % 32));
-    GICD_IPRIORITYR[uart_irq] = 0;
-    GICD_ITARGETSR[uart_irq] = 0x01;
+    cached_uart_irq = uart_get_irq();
+    mmio_write(&GICD_ISENABLERn[cached_uart_irq / 32], (1 << (cached_uart_irq % 32)));
+    mmio_write8(&GICD_IPRIORITYR[cached_uart_irq], 0);
+    mmio_write8(&GICD_ITARGETSR[cached_uart_irq], 0x01);
 
-    *GICC_CTLR = 1;
-    *GICC_PMR = 0xFF;
+    mmio_write(GICC_CTLR, 1);
+    mmio_write(GICC_PMR, 0xFF);
 
-    printf("[  GIC ] GIC-400 distributor @ 0x%lx, CPU interface @ 0x%lx\n", (unsigned long)0xFF841000,
-           (unsigned long)0xFF842000);
-    printf("[  GIC ] IRQ %d (phys timer) enabled, IRQ %d (UART0) -> CPU0\n", TIMER_IRQ, uart_irq);
+    printf("[  GIC ] GIC-400 distributor @ 0x%lx, CPU interface @ 0x%lx\n", (unsigned long)gicd_vbase,
+           (unsigned long)gicc_vbase);
+    printf("[  GIC ] IRQ %d (phys timer) enabled, IRQ %d (UART0) -> CPU0\n", TIMER_IRQ, cached_uart_irq);
 }
 
 void gic_secondary_init(void)
 {
-    *GICC_CTLR = 1;
-    *GICC_PMR = 0xFF;
-    GICD_ISENABLERn[TIMER_IRQ / 32] = (1 << (TIMER_IRQ % 32));
+    mmio_write(GICC_CTLR, 1);
+    mmio_write(GICC_PMR, 0xFF);
+    mmio_write(&GICD_ISENABLERn[TIMER_IRQ / 32], (1 << (TIMER_IRQ % 32)));
 }

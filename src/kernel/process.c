@@ -11,21 +11,15 @@
 
 extern void ret_to_user(void);
 
-// flush D-cache to Point of Unification and invalidate I-cache for a range.
-// required after copying code into a page that will be executed —
-// without this, real hardware (Cortex-A72) may execute stale I-cache contents.
 void flush_icache_range(void* start, size_t size)
 {
-    // Cortex-A72 cache line = 64 bytes
     unsigned long addr = (unsigned long)start & ~63UL;
     unsigned long end = (unsigned long)start + size;
 
-    // 1. clean D-cache to PoU so writes reach the level where I-cache reads
     for (unsigned long a = addr; a < end; a += 64)
         asm volatile("dc cvau, %0" : : "r"(a));
     asm volatile("dsb ish");
 
-    // 2. invalidate I-cache so stale lines are discarded
     for (unsigned long a = addr; a < end; a += 64)
         asm volatile("ic ivau, %0" : : "r"(a));
     asm volatile("dsb ish");
@@ -80,22 +74,11 @@ void process_va_free(struct va_allocator* va, uintptr_t base)
 
 int process_find_current(void)
 {
-    unsigned long ttbr0;
-    asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
-    unsigned long pgd_phys = ttbr0 & 0x0000FFFFFFFFF000ULL;
+    struct task* t = sched_get_current();
+    if (!t)
+        return -1;
 
-    if (pgd_phys == mmu_kernel_ttbr0())
-        return 0;
-
-    for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++)
-    {
-        if (process_table[i].state == PROCESS_STATE_RUNNING && process_table[i].user_pgd &&
-            V2P(process_table[i].user_pgd) == pgd_phys)
-        {
-            return (int)i;
-        }
-    }
-    return -1;
+    return (int)t->pid;
 }
 
 void process_init(void)
@@ -103,6 +86,7 @@ void process_init(void)
     for (size_t i = 0; i < PROCESS_TABLE_SIZE; i++)
     {
         process_table[i].state = PROCESS_STATE_EMPTY;
+        process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
         for (size_t j = 0; j < MAX_FDS; j++)
             process_table[i].fd_table[j] = NULL;
     }
@@ -112,6 +96,16 @@ void process_init(void)
     process_table[0].state = PROCESS_STATE_RUNNING;
     process_table[0].user_pgd = 0;
     process_table[0].asid = 0;
+}
+
+static void* alloc_kernel_stack(void)
+{
+    // 3 pages: 1 guard + 2 usable
+    unsigned char* stack = (unsigned char*)pmm_alloc_pages(3);
+    mmu_unmap_page((unsigned long)stack);
+    // Write canary to bottom of usable part
+    *(unsigned long*)(stack + PAGE_SIZE) = 0xDEADC0DEDEADC0DEULL;
+    return stack;
 }
 
 void process_create(void* code_ptr, size_t code_size, uint32_t pid)
@@ -138,29 +132,29 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].paddr_code = V2P(code_page);
     process_table[pid].paddr_user_stack = V2P(stack_page);
 
-    // create per-process user page table and map code + stack into it
     unsigned long* user_pgd = mmu_create_user_pgd();
     process_table[pid].user_pgd = user_pgd;
-    process_table[pid].asid = pid; // simple: use PID as ASID
+    process_table[pid].asid = pid;
 
     mmu_user_map_page(user_pgd, process_table[pid].vaddr_code, process_table[pid].paddr_code, PAGE_USER_CODE);
     mmu_user_map_page(user_pgd, process_table[pid].vaddr_user_stack, process_table[pid].paddr_user_stack,
                       PAGE_USER_DATA);
 
-    process_table[pid].vaddr_kernel_stack = (uintptr_t)pmm_alloc_page();
-    process_table[pid].paddr_kernel_stack = V2P(process_table[pid].vaddr_kernel_stack);
+    void* kstack = alloc_kernel_stack();
+    process_table[pid].vaddr_kernel_stack = (uintptr_t)kstack;
+    process_table[pid].paddr_kernel_stack = V2P(kstack);
 
     memcpy(code_page, code_ptr, code_size);
     flush_icache_range(code_page, code_size);
 
     asm volatile("ic ialluis\n dsb ish\n isb");
 
-    uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 4096;
+    uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 3 * PAGE_SIZE;
     struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
     memset(tf, 0, sizeof(struct trap_frame));
     tf->elr_el1 = process_table[pid].vaddr_code;
     tf->spsr_el1 = 0x340;
-    tf->sp_el0 = process_table[pid].vaddr_user_stack + PAGE_SIZE;
+    tf->sp_el0 = (process_table[pid].vaddr_user_stack + PAGE_SIZE) & ~15UL;
 
     process_table[pid].context.sp = (unsigned long)tf;
     process_table[pid].context.lr = (unsigned long)ret_to_user;
@@ -170,15 +164,10 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 
     for (size_t i = 0; i < MAX_FDS; i++)
         process_table[pid].fd_table[i] = NULL;
-    vfs_open_pid("/dev/uart", O_RDONLY, pid); // fd 0 : stdin
-    vfs_open_pid("/dev/uart", O_WRONLY, pid); // fd 1 : stdout
-    vfs_open_pid("/dev/uart", O_WRONLY, pid); // fd 2 : stderr
+    vfs_open_pid("/dev/uart", O_RDONLY, pid);
+    vfs_open_pid("/dev/uart", O_WRONLY, pid);
+    vfs_open_pid("/dev/uart", O_WRONLY, pid);
 
-    printf("[PROCESS] Created PID %d (ASID %lu, TTBR0 0x%lx)\n", process_table[pid].pid, process_table[pid].asid,
-           V2P(process_table[pid].user_pgd));
-    printf("[PROCESS]   code  VA 0x%lx -> PA 0x%lx\n", process_table[pid].vaddr_code, process_table[pid].paddr_code);
-    printf("[PROCESS]   stack VA 0x%lx -> PA 0x%lx\n", process_table[pid].vaddr_user_stack,
-           process_table[pid].paddr_user_stack);
     sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
 }
 
@@ -204,20 +193,15 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     size_t stack_pages = 4;
     uintptr_t vaddr_stack = process_va_alloc(&process_table[pid].va, stack_pages);
-    uintptr_t first_stack_paddr = 0;
     for (size_t i = 0; i < stack_pages; i++)
     {
         void* page = pmm_alloc_page();
         if (!page)
             PANIC("Out of memory for user stack");
-        if (i == 0)
-            first_stack_paddr = V2P(page);
         mmu_user_map_page(user_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), PAGE_USER_DATA);
     }
 
-    void* kstack = pmm_alloc_page();
-    if (!kstack)
-        PANIC("Out of memory for kernel stack");
+    void* kstack = alloc_kernel_stack();
 
     process_table[pid].pid = pid;
     process_table[pid].state = PROCESS_STATE_RUNNING;
@@ -225,27 +209,25 @@ int process_create_from_file(const char* path, uint32_t pid)
     process_table[pid].asid = pid;
     process_table[pid].vaddr_code = entry_point;
     process_table[pid].vaddr_user_stack = vaddr_stack;
-    process_table[pid].paddr_user_stack = first_stack_paddr; // Store first stack page
-    process_table[pid].paddr_code = 0;                       // ELF pages are multiple, tracked by PGD for now
     process_table[pid].vaddr_kernel_stack = (uintptr_t)kstack;
     process_table[pid].paddr_kernel_stack = V2P(kstack);
 
-    uintptr_t kernel_stack_top = (uintptr_t)kstack + PAGE_SIZE;
+    uintptr_t kernel_stack_top = (uintptr_t)kstack + 3 * PAGE_SIZE;
     struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
     memset(tf, 0, sizeof(struct trap_frame));
 
     tf->elr_el1 = entry_point;
-    tf->spsr_el1 = 0x340; // EL0t mode, interrupts enabled
-    tf->sp_el0 = vaddr_stack + (stack_pages * PAGE_SIZE);
+    tf->spsr_el1 = 0x340;
+    tf->sp_el0 = (vaddr_stack + (stack_pages * PAGE_SIZE)) & ~15UL;
 
     process_table[pid].context.sp = (unsigned long)tf;
     process_table[pid].context.lr = (unsigned long)ret_to_user;
 
     for (size_t i = 0; i < MAX_FDS; i++)
         process_table[pid].fd_table[i] = NULL;
-    vfs_open_pid("/dev/uart", O_RDONLY, pid); // fd 0 : stdin
-    vfs_open_pid("/dev/uart", O_WRONLY, pid); // fd 1 : stdout
-    vfs_open_pid("/dev/uart", O_WRONLY, pid); // fd 2 : stderr
+    vfs_open_pid("/dev/uart", O_RDONLY, pid);
+    vfs_open_pid("/dev/uart", O_WRONLY, pid);
+    vfs_open_pid("/dev/uart", O_WRONLY, pid);
 
     sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
 
@@ -253,36 +235,20 @@ int process_create_from_file(const char* path, uint32_t pid)
     return 0;
 }
 
-void process_exit(void)
+void process_exit(uint32_t pid)
 {
-    int found = process_find_current();
-    if (found < 0)
-        return;
-    uint32_t pid = (uint32_t)found;
-
     if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state != PROCESS_STATE_RUNNING)
         return;
 
-    printf("[PROCESS] PID %d exiting. Reclaiming memory...\n", process_table[pid].pid);
+    printf("[PROCESS] PID %d exiting. Reclaiming user memory...\n", process_table[pid].pid);
 
-    // switch TTBR0 to empty before destroying this process's page tables
-    unsigned long ttbr0 = mmu_kernel_ttbr0();
-    asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(ttbr0));
-
-    // mmu_destroy_user_pgd walks the page tables and frees all mapped
-    // physical pages (ELF segments, stack, etc.) as well as table pages.
     if (process_table[pid].user_pgd)
     {
         mmu_destroy_user_pgd(process_table[pid].user_pgd);
         process_table[pid].user_pgd = 0;
     }
 
-    if (process_table[pid].paddr_kernel_stack)
-    {
-        pmm_free_page((void*)P2V(process_table[pid].paddr_kernel_stack));
-        process_table[pid].paddr_kernel_stack = 0;
-    }
-
+    // Kernel stack freeing is deferred to the scheduler
     process_table[pid].va.count = 0;
     process_table[pid].state = PROCESS_STATE_DEAD;
 }

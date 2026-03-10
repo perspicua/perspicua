@@ -1,6 +1,7 @@
 #include "kernel/ramfs.h"
 #include "kernel/heap.h"
 #include "kernel/vfs.h"
+#include "kernel/slab.h"
 #include "lib/string.h"
 #include "lib/stdio.h"
 
@@ -25,12 +26,12 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
     if (!data)
         return -1;
 
-    if (file->offset >= data->size)
+    if (file->offset >= (off_t)data->size)
         return 0; // eof
 
     size_t bytes_to_read = size;
-    if (file->offset + bytes_to_read > data->size)
-        bytes_to_read = data->size - file->offset;
+    if (file->offset + (off_t)bytes_to_read > (off_t)data->size)
+        bytes_to_read = data->size - (size_t)file->offset;
 
     memcpy(buffer, (const char*)data->data + file->offset, bytes_to_read);
 
@@ -46,11 +47,12 @@ struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
     {
         if (strcmp(filename, ramfs_files[i].name) == 0)
         {
-            struct vnode* vn = (struct vnode*)kmalloc(sizeof(struct vnode));
+            struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode));
             vn->type = VNODE_TYPE_REGULAR;
             vn->ops = &ramfs_file_ops;
-            vn->filesize = ramfs_files[i].size;
+            vn->filesize = (off_t)ramfs_files[i].size;
             vn->internal_info = &ramfs_files[i];
+            vn->refcount.counter = 1;
             return vn;
         }
     }
@@ -73,7 +75,7 @@ const char* hello_txt = "Hello from the Raspberry Pi 4 RAMFS!\n";
 
 void ramfs_init(void)
 {
-    ramfs_root_vnode = (struct vnode*)kmalloc(sizeof(struct vnode));
+    ramfs_root_vnode = (struct vnode*)slab_alloc(sizeof(struct vnode));
 
     ramfs_dir_ops.lookup = ramfs_lookup;
     ramfs_dir_ops.read = NULL;
@@ -86,6 +88,7 @@ void ramfs_init(void)
     ramfs_root_vnode->type = VNODE_TYPE_DIR;
     ramfs_root_vnode->ops = &ramfs_dir_ops;
     ramfs_root_vnode->internal_info = NULL;
+    ramfs_root_vnode->refcount.counter = 1;
 
     vfs_mount("/", ramfs_root_vnode);
 

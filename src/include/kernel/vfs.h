@@ -31,12 +31,15 @@ struct mount_entry
     struct vnode* root;
 };
 
+typedef int64_t off_t;
+
 struct vnode
 {
     vnode_type_t type;
-    size_t filesize;
+    off_t filesize;
     struct vnode_ops* ops;
     void* internal_info;
+    atomic_t refcount;
 };
 
 struct vnode_ops
@@ -49,8 +52,9 @@ struct vnode_ops
 struct file
 {
     struct vnode* node;
-    uint32_t offset;
+    off_t offset;
     int flags;
+    atomic_t refcount;
 };
 
 #define SEEK_SET 0
@@ -73,7 +77,7 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid);
 int vfs_close(int fd);
 
 // seek in a file. returns the new offset
-int vfs_lseek(int fd, int offset, int whence);
+off_t vfs_lseek(int fd, off_t offset, int whence);
 
 // reads from a file. returns the bytes read from the file
 int vfs_read(int fd, void* buffer, size_t count);

@@ -3,7 +3,9 @@
 #include "kernel/process.h"
 #include "kernel/mmu.h"
 #include "kernel/addr.h"
+#include "kernel/heap.h"
 #include "lib/stdio.h"
+#include "arch/uaccess.h"
 
 static int validate_user_buffer(const void* ptr, size_t len)
 {
@@ -25,10 +27,17 @@ static int validate_user_buffer(const void* ptr, size_t len)
     uintptr_t curr = start & ~0xFFFUL;
     while (curr < end)
     {
-        if (!mmu_user_query(pgd, curr, NULL, NULL))
+        unsigned long current_flags;
+        if (!mmu_user_query(pgd, curr, NULL, &current_flags))
         {
             return 0;
         }
+
+        if (!(current_flags & MMU_AP_USER)) // MMU_AP_USER implies PTE_USER_READ
+        {
+            return 0;
+        }
+
         curr += 4096;
     }
 
@@ -38,6 +47,8 @@ static int validate_user_buffer(const void* ptr, size_t len)
 void handle_syscall(struct trap_frame* tf)
 {
     uint64_t syscall_nr = tf->x[8];
+    struct task* curr = sched_get_current();
+    uint32_t pid = curr->pid;
 
     switch (syscall_nr)
     {
@@ -49,26 +60,38 @@ void handle_syscall(struct trap_frame* tf)
 
         if (!validate_user_buffer(buf, len))
         {
-            printf("[SYSCALL] PID %d passed invalid buffer to sys_write! Killing process.\n", process_find_current());
-            process_exit();
-            while (1)
-                asm volatile("wfe");
+            tf->x[0] = (uint64_t)-1; // -EFAULT
+            break;
         }
 
-        int bytes = vfs_write(fd, buf, len);
+        char* kbuf = kmalloc(len);
+        if (!kbuf)
+        {
+            tf->x[0] = (uint64_t)-1; // -ENOMEM
+            break;
+        }
+
+        if (copy_from_user(kbuf, buf, len) != 0)
+        {
+            kfree(kbuf);
+            tf->x[0] = (uint64_t)-1; // -EFAULT
+            break;
+        }
+
+        int bytes = vfs_write(fd, kbuf, len);
+        kfree(kbuf);
         tf->x[0] = (uint64_t)bytes;
         break;
     }
     case 2: // sys_exit()
     {
-        process_exit();
-        while (1)
-            asm volatile("wfe");
+        curr->state = TASK_DEAD;
+        schedule();
         break;
     }
     case 3: // sys_getpid()
     {
-        tf->x[0] = (uint64_t)process_find_current();
+        tf->x[0] = (uint64_t)pid;
         break;
     }
     case 4: // sys_yield()
