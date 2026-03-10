@@ -235,6 +235,74 @@ int process_create_from_file(const char* path, uint32_t pid)
     return 0;
 }
 
+int process_exec(const char* path)
+{
+    int pid = process_find_current();
+    if (pid < 0)
+        return -1;
+
+    struct process* p = &process_table[pid];
+
+    unsigned long* new_pgd = mmu_create_user_pgd();
+    if (!new_pgd)
+        return -1;
+
+    uint64_t entry_point;
+    if (elf_load(path, new_pgd, &entry_point) != 0)
+    {
+        mmu_destroy_user_pgd(new_pgd);
+        return -1;
+    }
+
+    struct va_allocator new_va;
+    va_init(&new_va);
+    size_t stack_pages = 4;
+    uintptr_t vaddr_stack = process_va_alloc(&new_va, stack_pages);
+    for (size_t i = 0; i < stack_pages; i++)
+    {
+        void* page = pmm_alloc_page();
+        if (!page)
+            PANIC("Out of memory for exec stack");
+        mmu_user_map_page(new_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), PAGE_USER_DATA);
+    }
+
+    unsigned long* old_pgd = p->user_pgd;
+
+    p->user_pgd = new_pgd;
+    p->vaddr_code = entry_point;
+    p->vaddr_user_stack = vaddr_stack;
+    p->va = new_va;
+
+    mmu_switch_user(new_pgd, p->asid);
+
+    struct task* curr_task = sched_get_current();
+    if (curr_task)
+    {
+        curr_task->ttbr0 = V2P(new_pgd) | (p->asid << 48);
+    }
+
+    unsigned long aside = (p->asid << 48);
+    asm volatile("dsb ishst");
+    asm volatile("tlbi aside1is, %0" : : "r"(aside));
+    asm volatile("dsb ish");
+    asm volatile("isb");
+
+    if (old_pgd)
+    {
+        mmu_destroy_user_pgd(old_pgd);
+    }
+
+    uintptr_t kernel_stack_top = p->vaddr_kernel_stack + 3 * PAGE_SIZE;
+    struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
+
+    memset(tf, 0, sizeof(struct trap_frame));
+    tf->elr_el1 = entry_point;
+    tf->spsr_el1 = 0x340; // EL0t, interrupts enabled
+    tf->sp_el0 = (vaddr_stack + (stack_pages * PAGE_SIZE)) & ~15UL;
+
+    return 0;
+}
+
 void process_exit(uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state != PROCESS_STATE_RUNNING)

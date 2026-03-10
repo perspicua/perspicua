@@ -59,6 +59,7 @@ extern struct process process_table[PROCESS_TABLE_SIZE];
 void process_init(void);
 void process_create(void* code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char* path, uint32_t pid);
+int process_exec(const char* path);
 void process_exit(uint32_t pid);
 void drop_to_user(void* code_vaddr, void* stack_vaddr);
 

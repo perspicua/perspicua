@@ -130,7 +130,7 @@ void mmu_init(void)
     asm volatile("dsb ish");
     asm volatile("isb");
 
-    printf("[  MMU ] TTBR1 → 0x%lx, TTBR0 -> empty (trap user access)\n", kernel_pgd_phys);
+    printf("[  MMU ] TTBR1 -> 0x%lx, TTBR0 -> empty (trap user access)\n", kernel_pgd_phys);
     printf("[  MMU ] Mapped: 4 GB range (Blocks + Kernel Pages)\n");
     printf("[  MMU ]   .text   [0x%lx — 0x%lx] RO+X\n", (unsigned long)__text_start, (unsigned long)__text_end);
     printf("[  MMU ]   .rodata [0x%lx — 0x%lx] RO+NX\n", (unsigned long)__rodata_start, (unsigned long)__rodata_end);

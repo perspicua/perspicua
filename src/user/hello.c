@@ -7,7 +7,6 @@ int main(void)
     for (int i = 0; i < 5; i++)
     {
         char msg[] = "Hello from separate binary! PID:  \n";
-        // Simple int to char for 1-9
         if (pid >= 0 && pid <= 9)
             msg[32] = (char)(pid + '0');
         else

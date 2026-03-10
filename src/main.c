@@ -10,6 +10,7 @@
 #include "kernel/lock.h"
 #include "kernel/process.h"
 #include "kernel/vfs.h"
+#include "kernel/initrd.h"
 #include "kernel/ramfs.h"
 #include "kernel/devfs.h"
 
@@ -27,10 +28,8 @@ static spinlock_t console_lock = SPINLOCK_INIT;
 #define KERNEL_VERSION "0.1"
 
 // Symbols from user_programs.S
-extern char user_hello_start[];
-extern char user_hello_end[];
-extern char user_hello_elf_start[];
-extern char user_hello_elf_end[];
+extern char initrd_start[];
+extern char initrd_end[];
 
 static void smp_init(void)
 {
@@ -134,8 +133,8 @@ int main()
     devfs_init();
     vfs_mount("/dev", devfs_get_root());
 
-    size_t hello_elf_size = (size_t)(user_hello_elf_end - user_hello_elf_start);
-    ramfs_register_file("hello.elf", user_hello_elf_start, hello_elf_size);
+    // mount initrd
+    initrd_init(initrd_start);
 
     int fd = vfs_open("/hello.txt", O_RDONLY);
     if (fd >= 0)
@@ -158,9 +157,9 @@ int main()
         printf("[  VFS ] Error: could not open /hello.txt\n");
     }
 
-    if (process_create_from_file("/hello.elf", 1) != 0)
+    if (process_create_from_file("/sh.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /hello.elf\n");
+        printf("[  ELF ] Error: failed to load /sh.elf\n");
     }
 
     while (1)
