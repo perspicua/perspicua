@@ -1,0 +1,82 @@
+#include "driver/fb.h"
+#include "types.h"
+#include "driver/mailbox.h"
+#include "stdio.h"
+#include "addr.h"
+
+__attribute__((aligned(16))) unsigned int mbox[36];
+
+struct framebuffer fb_info;
+
+void fb_init(void)
+{
+    mbox[0] = 26 * 4;  // Total size of this message (26 elements * 4 bytes)
+    mbox[1] = 0;       // Request
+    mbox[2] = 0x48003; // Set Physical Width/Height
+    mbox[3] = 8;
+    mbox[4] = 8;
+    mbox[5] = 1024;
+    mbox[6] = 768;
+    mbox[7] = 0x48004; // Set Virtual Width/Height
+    mbox[8] = 8;
+    mbox[9] = 8;
+    mbox[10] = 1024;
+    mbox[11] = 768;
+    mbox[12] = 0x48005; // Set Depth (32-bit)
+    mbox[13] = 4;
+    mbox[14] = 4;
+    mbox[15] = 32;
+    mbox[16] = 0x40001; // ALLOCATE BUFFER (Action tag)
+    mbox[17] = 8;
+    mbox[18] = 8;
+    mbox[19] = 4096;    // Request: Alignment. Response: Framebuffer Address
+    mbox[20] = 0;       // Response: Framebuffer Size
+    mbox[21] = 0x40008; // GET PITCH (Bytes per line)
+    mbox[22] = 4;
+    mbox[23] = 4;
+    mbox[24] = 0; // Response will go here
+    mbox[25] = 0; // End Tag
+    mbox_call(mbox);
+
+    if (mbox[20] != 0 && mbox[1] == 0x80000000)
+    {
+        fb_info.width = mbox[5];
+        fb_info.height = mbox[6];
+
+        fb_info.size = mbox[20];
+        fb_info.pitch = mbox[24];
+
+        uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
+        fb_info.ptr = (unsigned char*)P2V(phys_addr);
+        printf("[   FB ] Framebuffer initialized: %dx%d @ %p (size %d, pitch %d)\n", fb_info.width, fb_info.height,
+               fb_info.ptr, fb_info.size, fb_info.pitch);
+
+        unsigned int sqare_start = 200;
+        unsigned int sqare_end = 400;
+
+        for (unsigned int y = 0; y < fb_info.height; y++)
+        {
+            for (unsigned int x = 0; x < fb_info.width; x++)
+            {
+                unsigned int offset = (y * fb_info.pitch) + (x * 4);
+
+                fb_info.ptr[offset + 0] = 0x87;
+                fb_info.ptr[offset + 1] = 0xCE;
+                fb_info.ptr[offset + 2] = 0xEB;
+                fb_info.ptr[offset + 3] = 0xFF;
+
+                if (y > sqare_start && y < sqare_end && x > sqare_start && x < sqare_end)
+                {
+                    fb_info.ptr[offset + 0] = 0x87;
+                    fb_info.ptr[offset + 1] = 0x00;
+                    fb_info.ptr[offset + 2] = 0x00;
+                    fb_info.ptr[offset + 3] = 0xFF;
+                }
+            }
+        }
+    }
+    else
+    {
+        printf("[   FB ] Error: Could not initialize framebuffer!\n");
+    }
+}
