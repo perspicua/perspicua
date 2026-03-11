@@ -1,0 +1,109 @@
+#include "syscall.h"
+#include <uapi/syscalls.h>
+
+void sys_exit(void)
+{
+    asm volatile("mov x8, %0\n"
+                 "svc #0"
+                 :
+                 : "i"(SYS_EXIT)
+                 : "x8", "memory");
+}
+
+void sys_write(int fd, const char* buf, size_t len)
+{
+    asm volatile("mov x0, %0\n"
+                 "mov x1, %1\n"
+                 "mov x2, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0"
+                 :
+                 : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_WRITE)
+                 : "x0", "x1", "x2", "x8", "memory");
+}
+
+int sys_getpid(void)
+{
+    long pid;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(pid)
+                 : "i"(SYS_GETPID)
+                 : "x0", "x8", "memory");
+    return (int)pid;
+}
+
+void sys_yield(void)
+{
+    asm volatile("mov x8, %0\n"
+                 "svc #0"
+                 :
+                 : "i"(SYS_YIELD)
+                 : "x8", "memory");
+}
+
+void sys_sleep(unsigned long ms)
+{
+    asm volatile("mov x0, %0\n"
+                 "mov x8, %1\n"
+                 "svc #0"
+                 :
+                 : "r"(ms), "i"(SYS_SLEEP)
+                 : "x0", "x8", "memory");
+}
+
+int sys_open(const char* path, int flags)
+{
+    long fd;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(fd)
+                 : "r"(path), "r"((long)flags), "i"(SYS_OPEN)
+                 : "x0", "x1", "x8", "memory");
+    return (int)fd;
+}
+
+int sys_read(int fd, void* buf, size_t len)
+{
+    long bytes;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(bytes)
+                 : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_READ)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return (int)bytes;
+}
+
+int sys_close(int fd)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "i"(SYS_CLOSE)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}
+
+int sys_exec(const char* path)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "i"(SYS_EXEC)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}
