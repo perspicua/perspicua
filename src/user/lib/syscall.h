@@ -17,5 +17,9 @@ void sys_exit(void);
 int sys_getpid(void);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
+int sys_open(const char* path, int flags);
+int sys_read(int fd, void* buf, size_t len);
+int sys_close(int fd);
+int sys_exec(const char* path);
 
 #endif // _LIBUSER_SYSCALL_H_

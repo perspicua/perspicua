@@ -38,6 +38,7 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
     return (int)bytes_to_read;
 }
 
+// REMINDER TO FREE VNODE WHEN FILE DELETED
 struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
 {
     if (dir->type != VNODE_TYPE_DIR)
@@ -47,7 +48,7 @@ struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
     {
         if (strcmp(filename, ramfs_files[i].name) == 0)
         {
-            struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode));
+            struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode)); //allocd here so it can be freed when file is deleted
             vn->type = VNODE_TYPE_REGULAR;
             vn->ops = &ramfs_file_ops;
             vn->filesize = (off_t)ramfs_files[i].size;

@@ -102,6 +102,29 @@ void tty_handle_rx(struct tty* tty, char c)
         if (c == '\r')
             c = '\n';
 
+        // In canonical mode, handle erase (backspace/DEL) at the TTY layer
+        // so the line delivered to the reader is already clean.
+        if (tty->canon && (c == '\b' || c == 127))
+        {
+            if (tty->rx_head != tty->rx_tail)
+            {
+                // Remove the last character from the rx buffer
+                tty->rx_head = (tty->rx_head + TTY_BUF_SIZE - 1) % TTY_BUF_SIZE;
+
+                if (tty->echo)
+                {
+                    // Erase the character visually: move back, overwrite with
+                    // space, move back again.
+                    tty_put_tx_char(tty, '\b');
+                    tty_put_tx_char(tty, ' ');
+                    tty_put_tx_char(tty, '\b');
+                    tty_pump_tx(tty);
+                }
+            }
+            spin_unlock_irqrestore(&tty->lock, flags);
+            return;
+        }
+
         if (tty->echo)
         {
             if (c == '\n')
@@ -131,6 +154,24 @@ void tty_handle_rx(struct tty* tty, char c)
             char rc = (char)(mmio_read(UART0_DR) & 0xFF);
             if (rc == '\r')
                 rc = '\n';
+
+            // In canonical mode, handle erase at the TTY layer
+            if (tty->canon && (rc == '\b' || rc == 127))
+            {
+                if (tty->rx_head != tty->rx_tail)
+                {
+                    tty->rx_head = (tty->rx_head + TTY_BUF_SIZE - 1) % TTY_BUF_SIZE;
+
+                    if (tty->echo)
+                    {
+                        tty_put_tx_char(tty, '\b');
+                        tty_put_tx_char(tty, ' ');
+                        tty_put_tx_char(tty, '\b');
+                        tty_pump_tx(tty);
+                    }
+                }
+                continue;
+            }
 
             if (tty->echo)
             {

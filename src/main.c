@@ -1,6 +1,8 @@
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
+#include "driver/mailbox.h"
+#include "driver/fb.h"
 
 #include "kernel/pmm.h"
 #include "kernel/mmu.h"
@@ -10,6 +12,7 @@
 #include "kernel/lock.h"
 #include "kernel/process.h"
 #include "kernel/vfs.h"
+#include "kernel/initrd.h"
 #include "kernel/ramfs.h"
 #include "kernel/devfs.h"
 
@@ -27,10 +30,8 @@ static spinlock_t console_lock = SPINLOCK_INIT;
 #define KERNEL_VERSION "0.1"
 
 // Symbols from user_programs.S
-extern char user_hello_start[];
-extern char user_hello_end[];
-extern char user_hello_elf_start[];
-extern char user_hello_elf_end[];
+extern char initrd_start[];
+extern char initrd_end[];
 
 static void smp_init(void)
 {
@@ -99,6 +100,8 @@ int main()
 {
     gpio_init();
     uart_init();
+    mbox_init();
+    fb_init();
     tty_init(&console_tty);
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
@@ -108,13 +111,16 @@ int main()
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
     printf("[  0.000] BOOT: Kernel VMA base: 0x%lx\n", KERNEL_VMA);
 
-    uart_enable_interrupts();
-    printf("[  0.000] UART: PL011 @ 0xFE201000, 115200 8N1, FIFO enabled\n");
+    
 
     pmm_init();
     mmu_init();
     heap_init();
     gic_init();
+
+    uart_enable_interrupts();
+    printf("[  0.000] UART: PL011 @ 0xFE201000, 115200 8N1, FIFO enabled\n");
+    
     timer_interrupt_init();
     sched_init();
 
@@ -134,8 +140,8 @@ int main()
     devfs_init();
     vfs_mount("/dev", devfs_get_root());
 
-    size_t hello_elf_size = (size_t)(user_hello_elf_end - user_hello_elf_start);
-    ramfs_register_file("hello.elf", user_hello_elf_start, hello_elf_size);
+    // mount initrd
+    initrd_init(initrd_start);
 
     int fd = vfs_open("/hello.txt", O_RDONLY);
     if (fd >= 0)
@@ -158,9 +164,9 @@ int main()
         printf("[  VFS ] Error: could not open /hello.txt\n");
     }
 
-    if (process_create_from_file("/hello.elf", 1) != 0)
+    if (process_create_from_file("/sh.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /hello.elf\n");
+        printf("[  ELF ] Error: failed to load /sh.elf\n");
     }
 
     while (1)

@@ -7,7 +7,7 @@
 #include "lib/stdio.h"
 #include "arch/uaccess.h"
 
-static int validate_user_buffer(const void* ptr, size_t len)
+static int validate_user_buffer(const void* ptr, size_t len, int writable)
 {
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
@@ -33,7 +33,12 @@ static int validate_user_buffer(const void* ptr, size_t len)
             return 0;
         }
 
-        if (!(current_flags & MMU_AP_USER)) // MMU_AP_USER implies PTE_USER_READ
+        if (!(current_flags & MMU_AP_USER))
+        {
+            return 0;
+        }
+
+        if (writable && (current_flags & (1ULL << 7))) // AP[2] bit 7 is RO
         {
             return 0;
         }
@@ -58,7 +63,7 @@ void handle_syscall(struct trap_frame* tf)
         const char* buf = (const char*)(tf->x[1]);
         size_t len = (size_t)(tf->x[2]);
 
-        if (!validate_user_buffer(buf, len))
+        if (!validate_user_buffer(buf, len, 0))
         {
             tf->x[0] = (uint64_t)-1; // -EFAULT
             break;
@@ -103,6 +108,105 @@ void handle_syscall(struct trap_frame* tf)
     {
         unsigned long ms = tf->x[0];
         sched_sleep_ms(ms);
+        break;
+    }
+    case 6: // sys_open(const char* path, int flags)
+    {
+        const char* path = (const char*)(tf->x[0]);
+        int flags = (int)(tf->x[1]);
+
+        size_t path_len = 0;
+        const char* p = path;
+        while (path_len < MAX_PATH_LEN)
+        {
+            unsigned char c;
+            if (copy_from_user(&c, p++, 1) != 0)
+            {
+                path_len = (size_t)-1;
+                break;
+            }
+            if (c == '\0')
+                break;
+            path_len++;
+        }
+
+        if (path_len == (size_t)-1 || path_len >= MAX_PATH_LEN)
+        {
+            tf->x[0] = (uint64_t)-1;
+            break;
+        }
+
+        char* kpath = kmalloc(path_len + 1);
+        copy_from_user(kpath, path, path_len + 1);
+
+        int fd = vfs_open(kpath, flags);
+        kfree(kpath);
+        tf->x[0] = (uint64_t)fd;
+        break;
+    }
+    case 7: // sys_read(int fd, char* buf, size_t len)
+    {
+        int fd = (int)(tf->x[0]);
+        char* buf = (char*)(tf->x[1]);
+        size_t len = (size_t)(tf->x[2]);
+
+        if (!validate_user_buffer(buf, len, 1))
+        {
+            tf->x[0] = (uint64_t)-1;
+            break;
+        }
+
+        char* kbuf = kmalloc(len);
+        int bytes = vfs_read(fd, kbuf, len);
+        if (bytes > 0)
+        {
+            copy_to_user(buf, kbuf, (size_t)bytes);
+        }
+        kfree(kbuf);
+        tf->x[0] = (uint64_t)bytes;
+        break;
+    }
+    case 8: // sys_close(int fd)
+    {
+        int fd = (int)(tf->x[0]);
+        tf->x[0] = (uint64_t)vfs_close(fd);
+        break;
+    }
+    case 9: // sys_exec(const char* path)
+    {
+        const char* path = (const char*)(tf->x[0]);
+
+        size_t path_len = 0;
+        const char* p = path;
+        while (path_len < MAX_PATH_LEN)
+        {
+            unsigned char c;
+            if (copy_from_user(&c, p++, 1) != 0)
+            {
+                path_len = (size_t)-1;
+                break;
+            }
+            if (c == '\0')
+                break;
+            path_len++;
+        }
+
+        if (path_len == (size_t)-1 || path_len >= MAX_PATH_LEN)
+        {
+            tf->x[0] = (uint64_t)-1;
+            break;
+        }
+
+        char* kpath = kmalloc(path_len + 1);
+        copy_from_user(kpath, path, path_len + 1);
+
+        int res = process_exec(kpath);
+        kfree(kpath);
+
+        if (res < 0)
+        {
+            tf->x[0] = (uint64_t)-1;
+        }
         break;
     }
     default:

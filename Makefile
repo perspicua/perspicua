@@ -70,6 +70,8 @@ USER_SOURCES = $(wildcard $(USER_SRC_DIR)/*.c)
 USER_ELFS = $(patsubst $(USER_SRC_DIR)/%.c, $(USER_BUILD_DIR)/%.elf, $(USER_SOURCES))
 USER_BINS = $(patsubst $(USER_BUILD_DIR)/%.elf, $(USER_BUILD_DIR)/%.bin, $(USER_ELFS))
 
+INITRD = $(BUILD_DIR)/initrd.cpio
+
 # boot object linked first so .text.boot lands at entry
 BOOT_OBJ  = $(BUILD_DIR)/arch/boot.o
 OBJECTS   = $(BOOT_OBJ) $(filter-out $(BOOT_OBJ), $(S_OBJECTS) $(C_OBJECTS))
@@ -97,8 +99,15 @@ $(shell echo "$(CFLAGS)" | cmp -s - $(CFLAGS_FILE) || echo "$(CFLAGS)" > $(CFLAG
 
 all: $(IMAGE)
 
-# ensure user bins/elfs are built before kernel objects (since user_programs.S incbins them)
-$(BUILD_DIR)/kernel/user_programs.o: $(USER_BINS) $(USER_ELFS)
+# generate initrd.cpio from all user binaries
+$(INITRD): $(USER_ELFS)
+	$(call msg,"INITRD",$@)
+	@mkdir -p $(BUILD_DIR)/root
+	@cp $(USER_ELFS) $(BUILD_DIR)/root/
+	$(Q)cd $(BUILD_DIR)/root && find . -maxdepth 1 -not -path "." | sed 's|^\./||' | cpio -o -H newc > ../initrd.cpio 2>/dev/null
+
+# ensure initrd is built before kernel objects (since user_programs.S incbins it)
+$(BUILD_DIR)/kernel/user_programs.o: $(INITRD)
 
 .PRECIOUS: $(USER_ELFS) $(USER_BINS)
 

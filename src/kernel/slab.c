@@ -16,16 +16,19 @@
 // slab page, then read the slab_page header at the top of that page.
 // ---------------------------------------------------------------------------
 
-#define SLAB_MAGIC 0x534C4142U // "SLAB"
+#define SLAB_MAGIC      0x534C4142U          // "SLAB"
+#define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL // written to every free slot
 
 // size classes: 16, 32, 64, 128, 256, 512, 1024
 #define NUM_CLASSES 7
 static const unsigned long class_size[NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 // free-list node embedded inside every free slot
+// NOTE: sizeof(slab_obj) == 16, which fits exactly in the smallest class (16B)
 struct slab_obj
 {
     struct slab_obj* next;
+    uint64_t         free_canary; // SLAB_FREE_POISON when slot is free
 };
 
 // per-page header living at the start of every slab page
@@ -92,6 +95,7 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
     {
         struct slab_obj* obj = (struct slab_obj*)((unsigned char*)page + off);
         obj->next = sp->free;
+        obj->free_canary = SLAB_FREE_POISON;
         sp->free = obj;
         count++;
     }
@@ -158,6 +162,7 @@ void* slab_alloc(unsigned long size)
     // pop from freelist
     struct slab_obj* obj = sp->free;
     sp->free = obj->next;
+    obj->free_canary = 0; // clear poison — slot is now live
     sp->in_use++;
 
     // if page is now full, move it from partial → full
@@ -184,10 +189,14 @@ void slab_free(void* ptr)
     struct slab_class* sc = &classes[sp->class_idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
+    struct slab_obj* obj = (struct slab_obj*)ptr;
+    if (obj->free_canary == SLAB_FREE_POISON)
+        PANIC("SLAB: double free detected\n");
+
     int was_full = (sp->free == 0);
 
     // push back onto freelist
-    struct slab_obj* obj = (struct slab_obj*)ptr;
+    obj->free_canary = SLAB_FREE_POISON;
     obj->next = sp->free;
     sp->free = obj;
     sp->in_use--;

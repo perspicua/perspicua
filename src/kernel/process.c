@@ -124,15 +124,26 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     va_init(&process_table[pid].va);
 
     void* code_page = pmm_alloc_page();
+    if (!code_page)
+        PANIC("Out of memory for process code");
     void* stack_page = pmm_alloc_page();
+    if (!stack_page)
+        PANIC("Out of memory for process stack");
 
     process_table[pid].vaddr_code = process_va_alloc(&process_table[pid].va, 1);
+    if (!process_table[pid].vaddr_code)
+        PANIC("Out of virtual address space for process code");
     process_table[pid].vaddr_user_stack = process_va_alloc(&process_table[pid].va, 1);
+    if (!process_table[pid].vaddr_user_stack)
+        PANIC("Out of virtual address space for process stack");
 
     process_table[pid].paddr_code = V2P(code_page);
     process_table[pid].paddr_user_stack = V2P(stack_page);
 
     unsigned long* user_pgd = mmu_create_user_pgd();
+    if (!user_pgd)
+        PANIC("Failed to create user PGD for process");
+
     process_table[pid].user_pgd = user_pgd;
     process_table[pid].asid = pid;
 
@@ -193,6 +204,11 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     size_t stack_pages = 4;
     uintptr_t vaddr_stack = process_va_alloc(&process_table[pid].va, stack_pages);
+    if (!vaddr_stack)
+    {
+        mmu_destroy_user_pgd(user_pgd);
+        return -1;
+    }
     for (size_t i = 0; i < stack_pages; i++)
     {
         void* page = pmm_alloc_page();
@@ -202,7 +218,9 @@ int process_create_from_file(const char* path, uint32_t pid)
     }
 
     void* kstack = alloc_kernel_stack();
-
+    if(!kstack)
+        PANIC("Out of memory for kernel stack");
+        
     process_table[pid].pid = pid;
     process_table[pid].state = PROCESS_STATE_RUNNING;
     process_table[pid].user_pgd = user_pgd;
@@ -232,6 +250,74 @@ int process_create_from_file(const char* path, uint32_t pid)
     sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
 
     printf("[PROCESS] Loaded ELF %s for PID %d, entry at 0x%lx\n", path, pid, entry_point);
+    return 0;
+}
+
+int process_exec(const char* path)
+{
+    int pid = process_find_current();
+    if (pid < 0)
+        return -1;
+
+    struct process* p = &process_table[pid];
+
+    unsigned long* new_pgd = mmu_create_user_pgd();
+    if (!new_pgd)
+        return -1;
+
+    uint64_t entry_point;
+    if (elf_load(path, new_pgd, &entry_point) != 0)
+    {
+        mmu_destroy_user_pgd(new_pgd);
+        return -1;
+    }
+
+    struct va_allocator new_va;
+    va_init(&new_va);
+    size_t stack_pages = 4;
+    uintptr_t vaddr_stack = process_va_alloc(&new_va, stack_pages);
+    for (size_t i = 0; i < stack_pages; i++)
+    {
+        void* page = pmm_alloc_page();
+        if (!page)
+            PANIC("Out of memory for exec stack");
+        mmu_user_map_page(new_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), PAGE_USER_DATA);
+    }
+
+    unsigned long* old_pgd = p->user_pgd;
+
+    p->user_pgd = new_pgd;
+    p->vaddr_code = entry_point;
+    p->vaddr_user_stack = vaddr_stack;
+    p->va = new_va;
+
+    mmu_switch_user(new_pgd, p->asid);
+
+    struct task* curr_task = sched_get_current();
+    if (curr_task)
+    {
+        curr_task->ttbr0 = V2P(new_pgd) | (p->asid << 48);
+    }
+
+    unsigned long aside = (p->asid << 48);
+    asm volatile("dsb ishst");
+    asm volatile("tlbi aside1is, %0" : : "r"(aside));
+    asm volatile("dsb ish");
+    asm volatile("isb");
+
+    if (old_pgd)
+    {
+        mmu_destroy_user_pgd(old_pgd);
+    }
+
+    uintptr_t kernel_stack_top = p->vaddr_kernel_stack + 3 * PAGE_SIZE;
+    struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
+
+    memset(tf, 0, sizeof(struct trap_frame));
+    tf->elr_el1 = entry_point;
+    tf->spsr_el1 = 0x340; // EL0t, interrupts enabled
+    tf->sp_el0 = (vaddr_stack + (stack_pages * PAGE_SIZE)) & ~15UL;
+
     return 0;
 }
 
