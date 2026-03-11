@@ -30,6 +30,7 @@ static spinlock_t sleep_queue_lock = SPINLOCK_INIT;
 
 static struct task* task_to_free[4] = {0, 0, 0, 0};
 static struct task* last_switched_from[4] = {0, 0, 0, 0};
+static int core_pids[4] = {-1, -1, -1, -1};
 
 static int next_task_id = 0;
 static spinlock_t next_task_id_lock = SPINLOCK_INIT;
@@ -272,6 +273,13 @@ struct task* sched_get_current(void)
     return t;
 }
 
+int sched_get_core_pid(int cpu)
+{
+    if (cpu < 0 || cpu >= 4)
+        return -1;
+    return core_pids[cpu];
+}
+
 void schedule(void)
 {
     unsigned long flags = irq_save();
@@ -358,6 +366,7 @@ void schedule(void)
 
     // 6. perform switch
     next->state = TASK_RUNNING;
+    core_pids[cpu] = (int)next->pid;
     asm volatile("msr tpidr_el1, %0" : : "r"(next));
 
     if (prev != next)

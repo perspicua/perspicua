@@ -12,4 +12,7 @@ void pmm_hold_page(void* ptr);
 void* pmm_alloc_pages(unsigned long count);
 void pmm_free_pages(void* ptr, unsigned long count);
 
+unsigned long pmm_get_free_pages(void);
+unsigned long pmm_get_total_pages(void);
+
 #endif

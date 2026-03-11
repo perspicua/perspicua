@@ -226,3 +226,49 @@ int slab_owns(void* ptr)
     struct slab_page* sp = ptr_to_slab(ptr);
     return sp->magic == SLAB_MAGIC;
 }
+
+unsigned long slab_get_used(void)
+{
+    unsigned long used = 0;
+    for (int i = 0; i < NUM_CLASSES; i++)
+    {
+        unsigned long flags = spin_lock_irqsave(&classes[i].lock);
+        struct slab_page* sp = classes[i].partial;
+        while (sp)
+        {
+            used += sp->in_use * classes[i].obj_size;
+            sp = sp->next;
+        }
+        sp = classes[i].full;
+        while (sp)
+        {
+            used += sp->in_use * classes[i].obj_size;
+            sp = sp->next;
+        }
+        spin_unlock_irqrestore(&classes[i].lock, flags);
+    }
+    return used;
+}
+
+unsigned long slab_get_total(void)
+{
+    unsigned long total = 0;
+    for (int i = 0; i < NUM_CLASSES; i++)
+    {
+        unsigned long flags = spin_lock_irqsave(&classes[i].lock);
+        struct slab_page* sp = classes[i].partial;
+        while (sp)
+        {
+            total += sp->total * classes[i].obj_size;
+            sp = sp->next;
+        }
+        sp = classes[i].full;
+        while (sp)
+        {
+            total += sp->total * classes[i].obj_size;
+            sp = sp->next;
+        }
+        spin_unlock_irqrestore(&classes[i].lock, flags);
+    }
+    return total;
+}

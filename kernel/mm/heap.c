@@ -21,6 +21,8 @@ struct block_header
 
 static struct block_header* free_list;
 static spinlock_t heap_lock = SPINLOCK_INIT;
+static unsigned long heap_total_size = 0;
+static unsigned long heap_used_size = 0;
 
 // request enough contiguous pages from PMM to satisfy at least 'min_size' bytes
 static struct block_header* expand_heap(unsigned long min_size)
@@ -36,6 +38,8 @@ static struct block_header* expand_heap(unsigned long min_size)
     block->size = pages * PAGE_SIZE - HEADER_SIZE;
     block->next = 0;
     block->free = 1;
+
+    heap_total_size += pages * PAGE_SIZE;
 
     return block;
 }
@@ -90,6 +94,7 @@ void* kmalloc(unsigned long size)
             }
 
             curr->free = 0;
+            heap_used_size += curr->size + HEADER_SIZE;
             spin_unlock_irqrestore(&heap_lock, flags);
             return (void*)((unsigned char*)curr + HEADER_SIZE);
         }
@@ -131,6 +136,7 @@ void* kmalloc(unsigned long size)
     }
 
     new_page->free = 0;
+    heap_used_size += new_page->size + HEADER_SIZE;
     spin_unlock_irqrestore(&heap_lock, flags);
     return (void*)((unsigned char*)new_page + HEADER_SIZE);
 }
@@ -155,6 +161,7 @@ void kfree(void* ptr)
         PANIC("HEAP: Double free detected.\n");
 
     block->free = 1;
+    heap_used_size -= block->size + HEADER_SIZE;
 
     // coalesce physically adjacent free blocks
     struct block_header* curr = free_list;
@@ -174,4 +181,14 @@ void kfree(void* ptr)
         curr = curr->next;
     }
     spin_unlock_irqrestore(&heap_lock, flags);
+}
+
+unsigned long heap_get_used(void)
+{
+    return heap_used_size + slab_get_used();
+}
+
+unsigned long heap_get_total(void)
+{
+    return heap_total_size + slab_get_total();
 }
