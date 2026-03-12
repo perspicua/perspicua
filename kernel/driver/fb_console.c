@@ -1,19 +1,23 @@
 #include "driver/graphics.h"
 #include "driver/fb.h"
+#include "lock.h"
 #include "string.h"
 
 #define CONSOLE_Y_OFFSET 20
 #define CHAR_WIDTH 8
-#define CHAR_HEIGHT 8
+#define CHAR_HEIGHT 12
 
 static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
+static spinlock_t fb_console_lock = SPINLOCK_INIT;
 
 void fb_console_init(void)
 {
+    spin_lock(&fb_console_lock);
     cursor_x = 0;
     cursor_y = CONSOLE_Y_OFFSET;
     graphics_clear(0x00000000); // black
+    spin_unlock(&fb_console_lock);
 }
 
 static void fb_console_scroll(void)
@@ -32,10 +36,16 @@ static void fb_console_scroll(void)
 
 void fb_console_putc(char c)
 {
+    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+
     if (c == '\n')
     {
         cursor_x = 0;
         cursor_y += CHAR_HEIGHT;
+    }
+    else if (c == '\r')
+    {
+        cursor_x = 0;
     }
     else if (c == '\b' || c == 127)
     {
@@ -61,6 +71,8 @@ void fb_console_putc(char c)
     {
         fb_console_scroll();
     }
+
+    spin_unlock_irqrestore(&fb_console_lock, flags);
 }
 
 void fb_console_puts(const char* s)

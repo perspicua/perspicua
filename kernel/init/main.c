@@ -102,7 +102,7 @@ static void dashboard_task(void)
     while (1)
     {
         dashboard_update();
-        sched_sleep_ms(1000);
+        sched_sleep_ms(100);
     }
 }
 

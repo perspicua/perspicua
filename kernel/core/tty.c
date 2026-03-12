@@ -1,5 +1,6 @@
 #include "tty.h"
 #include "driver/uart.h"
+#include "driver/fb_console.h"
 #include "stdio.h"
 #include "string.h"
 
@@ -20,8 +21,8 @@ void tty_init(struct tty* tty)
     tty->tx_wait_queue_head = NULL;
     tty->tx_wait_queue_tail = NULL;
     tty->lock = (spinlock_t)SPINLOCK_INIT;
-    tty->echo = 1;
-    tty->canon = 1;
+    tty->echo = 0;
+    tty->canon = 0;
 }
 
 static void wait_queue_add(struct task** head, struct task** tail, struct task* t)
@@ -86,115 +87,67 @@ static void tty_put_tx_char(struct tty* tty, char c)
     }
 }
 
+static void tty_echo_char(struct tty* tty, char c)
+{
+    if (!tty->echo)
+        return;
+
+    if (c == '\b' || c == 127)
+    {
+        tty_put_tx_char(tty, '\b');
+        tty_put_tx_char(tty, ' ');
+        tty_put_tx_char(tty, '\b');
+        fb_console_putc('\b');
+    }
+    else
+    {
+        if (c == '\n')
+            tty_put_tx_char(tty, '\r');
+        tty_put_tx_char(tty, c);
+        fb_console_putc(c);
+    }
+    tty_pump_tx(tty);
+}
+
 void tty_handle_rx(struct tty* tty, char c)
 {
     unsigned long flags = spin_lock_irqsave(&tty->lock);
 
-    uint32_t mis = mmio_read(UART0_MIS);
-
-    if (mis & UART_MIS_TXMIS)
+    if (c == 0)
     {
         tty_pump_tx(tty);
+        spin_unlock_irqrestore(&tty->lock, flags);
+        return;
     }
 
-    if (c != 0)
+    if (c == '\r')
+        c = '\n';
+
+    if (tty->canon && (c == '\b' || c == 127))
     {
-        if (c == '\r')
-            c = '\n';
-
-        // In canonical mode, handle erase (backspace/DEL) at the TTY layer
-        // so the line delivered to the reader is already clean.
-        if (tty->canon && (c == '\b' || c == 127))
+        if (tty->rx_head != tty->rx_tail)
         {
-            if (tty->rx_head != tty->rx_tail)
-            {
-                // Remove the last character from the rx buffer
-                tty->rx_head = (tty->rx_head + TTY_BUF_SIZE - 1) % TTY_BUF_SIZE;
-
-                if (tty->echo)
-                {
-                    // Erase the character visually: move back, overwrite with
-                    // space, move back again.
-                    tty_put_tx_char(tty, '\b');
-                    tty_put_tx_char(tty, ' ');
-                    tty_put_tx_char(tty, '\b');
-                    tty_pump_tx(tty);
-                }
-            }
-            spin_unlock_irqrestore(&tty->lock, flags);
-            return;
+            tty->rx_head = (tty->rx_head + TTY_BUF_SIZE - 1) % TTY_BUF_SIZE;
+            tty_echo_char(tty, c);
         }
-
-        if (tty->echo)
-        {
-            if (c == '\n')
-                tty_put_tx_char(tty, '\r');
-            tty_put_tx_char(tty, c);
-            tty_pump_tx(tty);
-        }
-
-        size_t next_rx_head = (tty->rx_head + 1) % TTY_BUF_SIZE;
-        if (next_rx_head != tty->rx_tail)
-        {
-            tty->rx_buf[tty->rx_head] = c;
-            tty->rx_head = next_rx_head;
-        }
-
-        if (!tty->canon || c == '\n')
-        {
-            struct task* t = wait_queue_remove(&tty->wait_queue_head, &tty->wait_queue_tail);
-            if (t)
-                sched_unblock(t);
-        }
+        spin_unlock_irqrestore(&tty->lock, flags);
+        return;
     }
-    else if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS))
+
+    tty_echo_char(tty, c);
+
+    size_t next_rx_head = (tty->rx_head + 1) % TTY_BUF_SIZE;
+    if (next_rx_head != tty->rx_tail)
     {
-        while (!(mmio_read(UART0_FR) & UART_FR_RXFE))
-        {
-            char rc = (char)(mmio_read(UART0_DR) & 0xFF);
-            if (rc == '\r')
-                rc = '\n';
+        tty->rx_buf[tty->rx_head] = c;
+        tty->rx_head = next_rx_head;
+    }
 
-            // In canonical mode, handle erase at the TTY layer
-            if (tty->canon && (rc == '\b' || rc == 127))
-            {
-                if (tty->rx_head != tty->rx_tail)
-                {
-                    tty->rx_head = (tty->rx_head + TTY_BUF_SIZE - 1) % TTY_BUF_SIZE;
-
-                    if (tty->echo)
-                    {
-                        tty_put_tx_char(tty, '\b');
-                        tty_put_tx_char(tty, ' ');
-                        tty_put_tx_char(tty, '\b');
-                        tty_pump_tx(tty);
-                    }
-                }
-                continue;
-            }
-
-            if (tty->echo)
-            {
-                if (rc == '\n')
-                    tty_put_tx_char(tty, '\r');
-                tty_put_tx_char(tty, rc);
-                tty_pump_tx(tty);
-            }
-
-            size_t next_rx_head = (tty->rx_head + 1) % TTY_BUF_SIZE;
-            if (next_rx_head != tty->rx_tail)
-            {
-                tty->rx_buf[tty->rx_head] = rc;
-                tty->rx_head = next_rx_head;
-            }
-
-            if (!tty->canon || rc == '\n')
-            {
-                struct task* t = wait_queue_remove(&tty->wait_queue_head, &tty->wait_queue_tail);
-                if (t)
-                    sched_unblock(t);
-            }
-        }
+    if (!tty->canon || c == '\n')
+    {
+        struct task* t = wait_queue_remove(&tty->wait_queue_head, &tty->wait_queue_tail);
+        if (t)
+            sched_unblock(t);
     }
 
     spin_unlock_irqrestore(&tty->lock, flags);
@@ -265,9 +218,12 @@ int tty_write(struct tty* tty, const char* buf, size_t count)
             flags = spin_lock_irqsave(&tty->lock);
         }
 
-        if (buf[i] == '\n')
+        char c = buf[i];
+        if (c == '\n')
             tty_put_tx_char(tty, '\r');
-        tty_put_tx_char(tty, buf[i]);
+        tty_put_tx_char(tty, c);
+
+        fb_console_putc(c);
 
         tty_pump_tx(tty);
         spin_unlock_irqrestore(&tty->lock, flags);
