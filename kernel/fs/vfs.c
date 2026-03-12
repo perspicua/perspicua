@@ -1,5 +1,6 @@
 #include "vfs.h"
 #include "devfs.h"
+#include "lock.h"
 #include "string.h"
 #include "heap.h"
 #include "process.h"
@@ -21,6 +22,16 @@ void vfs_init(void)
         mount_table[i].root = NULL;
     }
     spin_unlock(&vfs_lock);
+}
+
+static void vnode_put(struct vnode* node)
+{
+    if (!node)
+        return;
+    if (atomic_dec_and_test(&node->refcount))
+    {
+        slab_free(node);
+    }
 }
 
 int vfs_mount(const char* path, struct vnode* root)
@@ -69,7 +80,7 @@ int vfs_unmount(const char* path)
             mount_count--;
             spin_unlock(&vfs_lock);
 
-            atomic_dec_and_test(&root->refcount);
+            vnode_put(root);
             return 0;
         }
     }
@@ -147,7 +158,7 @@ struct vnode* vfs_resolve_path(const char* path)
     {
         if (curr->ops->lookup == NULL)
         {
-            atomic_dec_and_test(&curr->refcount);
+            vnode_put(curr);
             spin_unlock(&vfs_lock);
             return NULL;
         }
@@ -155,15 +166,13 @@ struct vnode* vfs_resolve_path(const char* path)
         struct vnode* next = curr->ops->lookup(curr, token);
         if (next == NULL)
         {
-            atomic_dec_and_test(&curr->refcount);
+            vnode_put(curr);
             spin_unlock(&vfs_lock);
             return NULL;
         }
 
-        struct vnode* old = curr;
+        vnode_put(curr);
         curr = next;
-        atomic_inc(&curr->refcount);
-        atomic_dec_and_test(&old->refcount);
 
         token = strtok_r(NULL, "/", &saveptr);
     }
@@ -179,14 +188,31 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
 
     if (pid >= PROCESS_TABLE_SIZE)
     {
-        atomic_dec_and_test(&node->refcount);
+        vnode_put(node);
         return -1;
     }
+
+    spin_lock(&process_table[pid].fd_lock);
+    for (size_t i = 0; i < MAX_FDS; i++)
+    {
+        struct file* f = process_table[pid].fd_table[i];
+
+        if (f && f->node->internal_info == node->internal_info && f->node->ops == node->ops)
+        {
+            if (node->type == VNODE_TYPE_DEVICE)
+                continue;
+
+            spin_unlock(&process_table[pid].fd_lock);
+            vnode_put(node);
+            return -1;
+        }
+    }
+    spin_unlock(&process_table[pid].fd_lock);
 
     struct file* new_file = (struct file*)slab_alloc(sizeof(struct file));
     if (!new_file)
     {
-        atomic_dec_and_test(&node->refcount);
+        vnode_put(node);
         return -1;
     }
 
@@ -209,7 +235,7 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
 
     if (ok == -1)
     {
-        atomic_dec_and_test(&node->refcount);
+        vnode_put(node);
         slab_free(new_file);
     }
     return ok;
@@ -245,7 +271,7 @@ int vfs_close(int fd)
 
     if (atomic_dec_and_test(&f->refcount))
     {
-        atomic_dec_and_test(&f->node->refcount);
+        vnode_put(f->node);
         slab_free(f);
     }
 

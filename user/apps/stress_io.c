@@ -6,12 +6,6 @@ void print(const char* s)
     sys_write(1, s, strlen(s));
 }
 
-// WARNING: AFTER RUNNING THIS TEST, THERE IS A POSSIBLE MEMORY LEAK IN THE KERNEL
-// THE HEAP USSAGE STAYS AT ABOUT 300KB
-// THERE ARE THREE POSSIBLE CASES:
-// 1. THIS TEST IS SHIT (not likely, the code is small and seems to be good)
-// 2. THE DISPLAY IN THE KERNEL DASHBOARD IS BROKEN (more probable, worth checking out)
-// 3. THERE IS AN ACTUAL LEAK IN THE I/O (check this one last, as it might be the hardest to track down)
 int main(void)
 {
     print("STRESS: Starting I/O Stress Test (VFS/Devs)...\n");
