@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "vfs.h"
+#include "arch/exception.h"
 #include "sched.h"
 #include "lock.h"
 
@@ -64,6 +65,7 @@ int process_create_from_file(const char* path, uint32_t pid);
 int process_exec(const char* path);
 void process_exit(uint32_t pid);
 void drop_to_user(void* code_vaddr, void* stack_vaddr);
+int process_fork(struct trap_frame* parent_tf);
 
 // Returns the TTBR0 value for a given PID (0 if no such process).
 unsigned long process_get_ttbr0(uint32_t pid);

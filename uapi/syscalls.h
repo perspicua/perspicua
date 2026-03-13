@@ -10,5 +10,6 @@
 #define SYS_READ 7
 #define SYS_CLOSE 8
 #define SYS_EXEC 9
+#define SYS_FORK 10
 
 #endif // _UAPI_SYSCALLS_H_

@@ -177,9 +177,9 @@ int main()
         printf("[  VFS ] Error: could not open /hello.txt\n");
     }
 
-    if (process_create_from_file("/sh.elf", 1) != 0)
+    if (process_create_from_file("/init.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /sh.elf\n");
+        printf("[  ELF ] Error: failed to load /init.elf\n");
     }
 
     while (1)

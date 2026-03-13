@@ -391,6 +391,67 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
     pmm_free_page(pgd);
 }
 
+unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
+{
+    unsigned long* child_pgd = mmu_create_user_pgd();
+    if (!child_pgd)
+        return NULL;
+
+    unsigned long flags = spin_lock_irqsave(&mmu_lock);
+
+    for (int i = 0; i < 512; i++)
+    {
+        if (!(parent_pgd[i] & MMU_PTE_VALID))
+            continue;
+
+        unsigned long* parent_pmd = (unsigned long*)P2V(parent_pgd[i] & PTE_ADDR_MASK);
+        unsigned long* child_pmd = alloc_table_page();
+        child_pgd[i] = V2P(child_pmd) | MMU_PTE_VALID | MMU_PTE_TABLE;
+
+        for (int j = 0; j < 512; j++)
+        {
+            if (!(parent_pmd[j] & MMU_PTE_VALID))
+                continue;
+
+            if (parent_pmd[j] & MMU_PTE_TABLE)
+            {
+                unsigned long* parent_pte = (unsigned long*)P2V(parent_pmd[j] & PTE_ADDR_MASK);
+                unsigned long* child_pte = alloc_table_page();
+                child_pmd[j] = V2P(child_pte) | MMU_PTE_VALID | MMU_PTE_TABLE;
+
+                for (int k = 0; k < 512; k++)
+                {
+                    if (!(parent_pte[k] & MMU_PTE_VALID))
+                        continue;
+
+                    unsigned long pte = parent_pte[k];
+
+                    // COW LOGIC. mooooooooo
+                    if ((pte & (3ULL << 6)) == MMU_AP_RW)
+                    {
+                        pte &= ~(3ULL << 6);
+                        pte |= MMU_AP_RO;
+                        pte |= MMU_PTE_COW;
+                        parent_pte[k] = pte;
+                    }
+
+                    child_pte[k] = pte;
+
+                    pmm_hold_page((void*)P2V(pte & PTE_ADDR_MASK));
+                }
+            }
+            else
+            {
+                // TODO: Bonus pt riciu
+            }
+        }
+    }
+
+    asm volatile("tlbi vmalle1is\n dsb ish\n isb");
+
+    spin_unlock_irqrestore(&mmu_lock, flags);
+    return child_pgd;
+}
 void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags)
 {
     ASSERT((vaddr & 0xFFF) == 0);
@@ -528,6 +589,33 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
 
     spin_unlock_irqrestore(&mmu_lock, irqflags);
     return 1;
+}
+
+int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
+{
+    vaddr &= ~0xFFFULL;
+    unsigned long paddr, flags;
+
+    if (!mmu_user_query(pgd, vaddr, &paddr, &flags))
+        return -1;
+
+    if (!(flags & MMU_PTE_COW))
+        return -1;
+
+    void* new_page = pmm_alloc_page();
+    if (!new_page)
+        return -1;
+
+    // copy data from old page
+    memcpy(new_page, (void*)P2V(paddr), PAGE_SIZE);
+
+    // map the new page as RW and clear COW bit
+    unsigned long new_flags = (flags & ~MMU_PTE_COW);
+    new_flags &= ~(3ULL << 6); // Clear AP
+    new_flags |= MMU_AP_RW;
+
+    mmu_user_map_page(pgd, vaddr, V2P(new_page), new_flags);
+    return 0;
 }
 
 unsigned long mmu_kernel_ttbr0(void)

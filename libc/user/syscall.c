@@ -107,3 +107,15 @@ int sys_exec(const char* path)
                  : "x0", "x8", "memory");
     return (int)res;
 }
+
+int sys_fork(void)
+{
+    long res;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "i"(SYS_FORK)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}

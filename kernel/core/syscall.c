@@ -219,6 +219,11 @@ void handle_syscall(struct trap_frame* tf)
         }
         break;
     }
+    case SYS_FORK: // sys_fork()
+    {
+        tf->x[0] = (uint64_t)process_fork(tf);
+        break;
+    }
     default:
     {
         printf("Unknown syscall: %lu\n", syscall_nr);
