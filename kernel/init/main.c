@@ -156,12 +156,6 @@ int main()
     // mount initrd
     initrd_init(initrd_start);
 
-    while(1)
-    {
-        kmalloc(1024*1024);
-        sched_sleep_ms(10);
-        // sleep_ms(100);
-    }
     int fd = vfs_open("/hello.txt", O_RDONLY);
     if (fd >= 0)
     {
