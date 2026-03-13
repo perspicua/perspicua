@@ -41,20 +41,26 @@ void fb_init(void)
 
     if (mbox[20] != 0 && mbox[1] == 0x80000000)
     {
+        uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
+        if (phys_addr == 0)
+        {
+            printf("[   FB ] Error: VideoCore returned NULL or invalid address!\n");
+            return;
+        }
+
         fb_info.width = mbox[5];
         fb_info.height = mbox[6];
 
         fb_info.size = mbox[20];
         fb_info.pitch = mbox[24];
 
-        uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
         fb_info.ptr = (unsigned char*)P2V(phys_addr);
 
         // PMM is initialized later; reserve framebuffer pages now so buddy never hands them out.
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
-        printf("[   FB ] Framebuffer initialized: %dx%d @ %p (size %d, pitch %d)\n", fb_info.width, fb_info.height,
-               fb_info.ptr, fb_info.size, fb_info.pitch);
+        printf("[   FB ] Framebuffer initialized: %dx%d @ %p (phys 0x%lx, size %d, pitch %d)\n", fb_info.width,
+               fb_info.height, fb_info.ptr, (unsigned long)phys_addr, fb_info.size, fb_info.pitch);
     }
     else
     {

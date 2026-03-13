@@ -27,6 +27,15 @@ void mbox_init(void)
 
 void mbox_call(unsigned int* buffer)
 {
+    // Clean D-cache for the buffer so the VideoCore sees our request
+    unsigned long size = buffer[0];
+    unsigned long addr = (unsigned long)buffer;
+    for (unsigned long i = 0; i < size; i += 64)
+    {
+        asm volatile("dc cvac, %0" : : "r"(addr + i));
+    }
+    asm volatile("dsb sy");
+
     unsigned int request = (unsigned int)((V2P(buffer) | 0xC0000000) & ~0xF) | 8;
     while (*MBOX_STATUS & MBOX_FULL)
         ;
@@ -40,6 +49,15 @@ void mbox_call(unsigned int* buffer)
         unsigned int response = *MBOX_READ;
 
         if ((response & 0xF) == 8)
+        {
+            // Invalidate D-cache for the buffer so we see the VideoCore's response
+            for (unsigned long i = 0; i < size; i += 64)
+            {
+                asm volatile("dc ivac, %0" : : "r"(addr + i));
+            }
+            asm volatile("dsb sy");
+            asm volatile("isb");
             return;
+        }
     }
 }
