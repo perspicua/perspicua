@@ -52,6 +52,8 @@ struct process
 
     struct file* fd_table[MAX_FDS];
     spinlock_t fd_lock;
+
+    struct vnode* cwd;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

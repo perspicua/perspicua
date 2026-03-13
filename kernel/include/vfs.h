@@ -37,6 +37,7 @@ struct vnode
 {
     vnode_type_t type;
     off_t filesize;
+    struct vnode* parent;
     struct vnode_ops* ops;
     void* internal_info;
     atomic_t refcount;
@@ -65,7 +66,10 @@ struct file
 void vfs_init(void);
 
 // walks a path and resolves the target vnode, or NULL if not found
-struct vnode* vfs_resolve_path(const char* path);
+struct vnode* vfs_resolve_path(const char* path, struct vnode* cwd, int* error);
+
+// Put a vnode, decrement refcount and free if 0
+void vfs_vnode_put(struct vnode* node);
 
 // open a file, returns file descriptor if succesfull, -1 otherwise
 int vfs_open(const char* path, int flags);

@@ -53,6 +53,7 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
     node->ops = ops;
     node->internal_info = internal_info;
     node->filesize = 0;
+    node->parent = devfs_root_vnode;
     node->refcount.counter = 1;
 
     struct devfs_node* dev_node = (struct devfs_node*)slab_alloc(sizeof(struct devfs_node));
@@ -104,6 +105,8 @@ void devfs_init(void)
     devfs_root_vnode->type = VNODE_TYPE_DIR;
     devfs_root_vnode->ops = &devfs_root_ops;
     devfs_root_vnode->internal_info = NULL;
+    devfs_root_vnode->parent = NULL;
+    devfs_root_vnode->filesize = 0;
     devfs_root_vnode->refcount.counter = 1;
 
     if (devfs_register_device("uart", &devfs_tty_ops, &console_tty) != 0)

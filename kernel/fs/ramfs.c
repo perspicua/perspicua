@@ -1,5 +1,6 @@
 #include "ramfs.h"
 #include "heap.h"
+#include "lock.h"
 #include "vfs.h"
 #include "slab.h"
 #include "string.h"
@@ -10,6 +11,7 @@ struct ramfs_file_data
     const char* name;
     const void* data;
     size_t size;
+    struct vnode* node;
 };
 
 #define MAX_RAMFS_FILES 16
@@ -38,7 +40,6 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
     return (int)bytes_to_read;
 }
 
-// REMINDER TO FREE VNODE WHEN FILE DELETED
 struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
 {
     if (dir->type != VNODE_TYPE_DIR)
@@ -48,14 +49,8 @@ struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
     {
         if (strcmp(filename, ramfs_files[i].name) == 0)
         {
-            struct vnode* vn =
-                (struct vnode*)slab_alloc(sizeof(struct vnode)); // allocd here so it can be freed when file is deleted
-            vn->type = VNODE_TYPE_REGULAR;
-            vn->ops = &ramfs_file_ops;
-            vn->filesize = (off_t)ramfs_files[i].size;
-            vn->internal_info = &ramfs_files[i];
-            vn->refcount.counter = 1;
-            return vn;
+            atomic_inc(&ramfs_files[i].node->refcount);
+            return ramfs_files[i].node;
         }
     }
 
@@ -66,9 +61,29 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
 {
     if (ramfs_file_count >= MAX_RAMFS_FILES)
         return;
+
     ramfs_files[ramfs_file_count].name = name;
     ramfs_files[ramfs_file_count].data = data;
     ramfs_files[ramfs_file_count].size = size;
+
+    struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode));
+    if (!vn)
+    {
+        // TODO: change to err code in the future
+        return;
+    }
+
+    vn->type = VNODE_TYPE_REGULAR;
+    vn->ops = &ramfs_file_ops;
+    vn->filesize = (off_t)size;
+    vn->parent = ramfs_root_vnode;
+
+    vn->internal_info = &ramfs_files[ramfs_file_count];
+
+    vn->refcount.counter = 1;
+
+    ramfs_files[ramfs_file_count].node = vn;
+
     ramfs_file_count++;
     printf("[RAMFS ] Registered file: %s (%u bytes)\n", name, size);
 }
@@ -90,6 +105,8 @@ void ramfs_init(void)
     ramfs_root_vnode->type = VNODE_TYPE_DIR;
     ramfs_root_vnode->ops = &ramfs_dir_ops;
     ramfs_root_vnode->internal_info = NULL;
+    ramfs_root_vnode->parent = NULL;
+    ramfs_root_vnode->filesize = 0;
     ramfs_root_vnode->refcount.counter = 1;
 
     vfs_mount("/", ramfs_root_vnode);

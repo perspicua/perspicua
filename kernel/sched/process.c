@@ -89,6 +89,7 @@ void process_init(void)
         process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
         for (size_t j = 0; j < MAX_FDS; j++)
             process_table[i].fd_table[j] = NULL;
+        process_table[i].cwd = NULL;
     }
 
     // PID 0 is the kernel/boot process
@@ -172,6 +173,8 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 
     process_table[pid].pid = pid;
     process_table[pid].state = PROCESS_STATE_RUNNING;
+    int err;
+    process_table[pid].cwd = vfs_resolve_path("/", NULL, &err);
 
     for (size_t i = 0; i < MAX_FDS; i++)
         process_table[pid].fd_table[i] = NULL;
@@ -229,6 +232,9 @@ int process_create_from_file(const char* path, uint32_t pid)
     process_table[pid].vaddr_user_stack = vaddr_stack;
     process_table[pid].vaddr_kernel_stack = (uintptr_t)kstack;
     process_table[pid].paddr_kernel_stack = V2P(kstack);
+
+    int err;
+    process_table[pid].cwd = vfs_resolve_path("/", NULL, &err);
 
     uintptr_t kernel_stack_top = (uintptr_t)kstack + 3 * PAGE_SIZE;
     struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
@@ -332,6 +338,12 @@ void process_exit(uint32_t pid)
     {
         mmu_destroy_user_pgd(process_table[pid].user_pgd);
         process_table[pid].user_pgd = 0;
+    }
+
+    if (process_table[pid].cwd)
+    {
+        vfs_vnode_put(process_table[pid].cwd);
+        process_table[pid].cwd = NULL;
     }
 
     // Kernel stack freeing is deferred to the scheduler
