@@ -26,15 +26,14 @@ int main(void)
         {
             sys_exec("/sh.elf");
             print("[INIT  ] Error: failed to exec /sh.elf\n");
-            sys_exit();
+            sys_exit(1);
         }
         else
         {
-            while (1)
-            {
-                sys_sleep(5000);
-                print("[INIT  ] Heartbeat\n");
-            }
+            int status = 0;
+            sys_waitpid(pid, &status);
+            print("[INIT  ] Shell exited, restarting...\n");
+            sys_sleep(500);
         }
     }
 

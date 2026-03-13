@@ -59,12 +59,13 @@ int main(void)
                                 print("Error: command not found: ");
                                 print(path);
                                 print("\n");
-                                sys_exit();
+                                sys_exit(1);
                             }
                         }
                         else
                         {
-                            sys_sleep(500);
+                            int status = 0;
+                            sys_waitpid(pid, &status);
                         }
                     }
                 }

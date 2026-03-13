@@ -13,7 +13,7 @@
 #define O_APPEND 0x0400
 
 void sys_write(int fd, const char* buf, size_t len);
-void sys_exit(void);
+void sys_exit(int status);
 int sys_getpid(void);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
@@ -22,5 +22,6 @@ int sys_read(int fd, void* buf, size_t len);
 int sys_close(int fd);
 int sys_exec(const char* path);
 int sys_fork(void);
+int sys_waitpid(int pid, int* status);
 
 #endif // _LIBUSER_SYSCALL_H_

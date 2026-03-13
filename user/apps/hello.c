@@ -4,7 +4,7 @@ int main(void)
 {
     int pid = sys_getpid();
 
-    for (int i = 0; i < 100; i++)
+    for (int i = 0; i < 5; i++)
     {
         char msg[] = "Hello from separate binary! PID:  \n";
         if (pid >= 0 && pid <= 9)
@@ -19,6 +19,6 @@ int main(void)
     char bye[] = "Process exiting now...\n";
     sys_write(1, bye, sizeof(bye) - 1);
 
-    sys_exit();
+    sys_exit(0);
     return 0;
 }

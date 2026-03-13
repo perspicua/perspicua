@@ -93,8 +93,10 @@ void handle_syscall(struct trap_frame* tf)
         tf->x[0] = (uint64_t)bytes;
         break;
     }
-    case SYS_EXIT: // sys_exit()
+    case SYS_EXIT: // sys_exit(int status)
     {
+        int status = (int)tf->x[0];
+        process_exit(pid, status);
         curr->state = TASK_DEAD;
         schedule();
         break;
@@ -222,6 +224,23 @@ void handle_syscall(struct trap_frame* tf)
     case SYS_FORK: // sys_fork()
     {
         tf->x[0] = (uint64_t)process_fork(tf);
+        break;
+    }
+    case SYS_WAITPID: // sys_waitpid(int pid, int* status)
+    {
+        int wait_pid = (int)tf->x[0];
+        int* ustatus = (int*)tf->x[1];
+        int kstatus = 0;
+
+        int res = process_waitpid(wait_pid, &kstatus);
+        if (res >= 0 && ustatus)
+        {
+            if (validate_user_buffer(ustatus, sizeof(int), 1))
+            {
+                copy_to_user(ustatus, &kstatus, sizeof(int));
+            }
+        }
+        tf->x[0] = (uint64_t)res;
         break;
     }
     default:

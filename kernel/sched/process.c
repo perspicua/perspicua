@@ -1,6 +1,7 @@
 #include "process.h"
 #include "pmm.h"
 #include "mmu.h"
+#include "sched.h"
 #include "slab.h"
 #include "types.h"
 #include "uapi/errors.h"
@@ -331,13 +332,12 @@ int process_exec(const char* path)
     return PERS_SUCCESS;
 }
 
-void process_exit(uint32_t pid)
+void process_exit(uint32_t pid, int exit_status)
 {
-    if (pid >= PROCESS_TABLE_SIZE ||
-        process_table[pid].state == PROCESS_STATE_EMPTY) // TODO: Change to dead when waitpid gets implemented
+    if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state == PROCESS_STATE_EMPTY)
         return;
 
-    printf("[PROCESS] PID %d exiting. Reclaiming resources...\n", pid);
+    printf("[PROCESS] PID %d exiting with status %d. Reclaiming resources...\n", pid, exit_status);
 
     for (int i = 0; i < MAX_FDS; i++)
     {
@@ -366,7 +366,13 @@ void process_exit(uint32_t pid)
     }
 
     process_table[pid].va.count = 0;
-    process_table[pid].state = PROCESS_STATE_EMPTY; // TODO: change to DEAD once waitpid is implemented
+    process_table[pid].exit_status = exit_status;
+    process_table[pid].state = PROCESS_STATE_DEAD;
+
+    if (process_table[pid].parent_task)
+    {
+        sched_unblock(process_table[pid].parent_task);
+    }
 }
 
 int process_fork(struct trap_frame* parent_tf)
@@ -401,6 +407,8 @@ int process_fork(struct trap_frame* parent_tf)
     child->vaddr_code = parent->vaddr_code;
     child->vaddr_user_stack = parent->vaddr_user_stack;
     child->va = parent->va;
+    child->parent_pid = (uint32_t)parent_pid;
+    child->parent_task = sched_get_current();
 
     if (parent->cwd)
     {
@@ -447,6 +455,44 @@ int process_fork(struct trap_frame* parent_tf)
 
     printf("[PROCESS] PID %d forked child PID %d\n", parent_pid, child_pid);
     return child_pid;
+}
+
+int process_waitpid(int pid, int* status)
+{
+    int parent_pid = process_find_current();
+    if (parent_pid < 0)
+        return -PERS_ERR_NO_SUCH_PROCESS;
+
+    while (1)
+    {
+        int has_children = 0;
+        for (int i = 0; i < PROCESS_TABLE_SIZE; i++)
+        {
+            if (process_table[i].state == PROCESS_STATE_EMPTY)
+                continue;
+            if (process_table[i].parent_pid != (uint32_t)parent_pid)
+                continue;
+
+            if (pid != -1 && (int)process_table[i].pid != pid)
+                continue;
+
+            has_children = 1;
+
+            if (process_table[i].state == PROCESS_STATE_DEAD)
+            {
+                if (status)
+                    *status = process_table[i].exit_status;
+                int found_pid = (int)process_table[i].pid;
+                process_table[i].state = PROCESS_STATE_EMPTY;
+                return found_pid;
+            }
+        }
+
+        if (!has_children)
+            return -PERS_ERR_NO_SUCH_PROCESS;
+
+        sched_block();
+    }
 }
 
 unsigned long process_get_ttbr0(uint32_t pid)

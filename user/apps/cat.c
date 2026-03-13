@@ -7,7 +7,7 @@ int main(void)
     {
         char err[] = "Error: could not open /hello.txt\n";
         sys_write(1, err, sizeof(err) - 1);
-        sys_exit();
+        sys_exit(1);
     }
 
     char buf[64];
@@ -18,6 +18,6 @@ int main(void)
     }
 
     sys_close(fd);
-    sys_exit();
+    sys_exit(0);
     return 0;
 }

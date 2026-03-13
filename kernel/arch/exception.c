@@ -142,7 +142,7 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
             }
             else
             {
-                process_exit((uint32_t)pid);
+                process_exit((uint32_t)pid, 1);
             }
         }
         else
