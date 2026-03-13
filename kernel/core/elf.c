@@ -1,4 +1,5 @@
 #include "elf.h"
+#include "uapi/errors.h"
 #include "vfs.h"
 #include "pmm.h"
 #include "mmu.h"
@@ -18,17 +19,17 @@ static int elf_check_header(Elf64_Ehdr* hdr)
     if (hdr->e_ident[EI_MAG0] != ELFMAG0 || hdr->e_ident[EI_MAG1] != ELFMAG1 || hdr->e_ident[EI_MAG2] != ELFMAG2 ||
         hdr->e_ident[EI_MAG3] != ELFMAG3)
     {
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
     if (hdr->e_ident[EI_CLASS] != ELFCLASS64)
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     if (hdr->e_ident[EI_DATA] != ELFDATA2LSB)
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     if (hdr->e_type != ET_EXEC)
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     if (hdr->e_machine != EM_AARCH64)
-        return -1;
-    return 0;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+    return PERS_SUCCESS;
 }
 
 int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
@@ -37,22 +38,24 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     if (fd < 0)
     {
         printf("[  ELF ] Error: could not open %s\n", path);
-        return -1;
+        return fd;
     }
 
     Elf64_Ehdr ehdr;
-    if (vfs_read(fd, &ehdr, sizeof(Elf64_Ehdr)) != sizeof(Elf64_Ehdr))
+    int rc = vfs_read(fd, &ehdr, sizeof(Elf64_Ehdr));
+    if (rc != sizeof(Elf64_Ehdr))
     {
         printf("[  ELF ] Error: could not read ELF header\n");
         vfs_close(fd);
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
-    if (elf_check_header(&ehdr) != 0)
+    rc = elf_check_header(&ehdr);
+    if (rc != 0)
     {
         printf("[  ELF ] Error: invalid ELF header\n");
         vfs_close(fd);
-        return -1;
+        return rc;
     }
 
     *entry_point = ehdr.e_entry;
@@ -63,7 +66,8 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     {
         printf("[  ELF ] Error: could not allocate memory for program headers\n");
         vfs_close(fd);
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
+        ;
     }
 
     vfs_lseek(fd, ehdr.e_phoff, SEEK_SET);
@@ -72,7 +76,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         printf("[  ELF ] Error: could not read program headers\n");
         kfree(phdrs);
         vfs_close(fd);
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
     for (int i = 0; i < ehdr.e_phnum; i++)
@@ -160,5 +164,5 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
 
     kfree(phdrs);
     vfs_close(fd);
-    return 0;
+    return PERS_SUCCESS;
 }
