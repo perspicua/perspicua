@@ -123,6 +123,8 @@ int main()
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
     printf("[  0.000] BOOT: Kernel VMA base: 0x%lx\n", KERNEL_VMA);
 
+    pmm_reserve_range(V2P((unsigned long)initrd_start), (unsigned long)(initrd_end - initrd_start), "initrd");
+
     pmm_init();
     mmu_init();
     heap_init();
@@ -154,6 +156,12 @@ int main()
     // mount initrd
     initrd_init(initrd_start);
 
+    while(1)
+    {
+        kmalloc(1024*1024);
+        sched_sleep_ms(10);
+        // sleep_ms(100);
+    }
     int fd = vfs_open("/hello.txt", O_RDONLY);
     if (fd >= 0)
     {
