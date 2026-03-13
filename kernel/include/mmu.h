@@ -22,6 +22,7 @@
 // execute-never bits
 #define MMU_PXN (1ULL << 53) // privileged execute-never
 #define MMU_UXN (1ULL << 54) // unprivileged execute-never
+#define MMU_PTE_COW (1ULL << 55)
 
 // memory attribute indices (must match MAIR_EL1 setup)
 #define MMU_ATTR_NORMAL (0ULL << 2) // MAIR index 0: normal cacheable
@@ -59,6 +60,9 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
 // Returns the virtual address of the PGD page.
 unsigned long* mmu_create_user_pgd(void);
 
+// Duplicates a user PGD for fork (CoW)
+unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd);
+
 // Free a user PGD and all L2/L3 tables it references.
 // Does NOT free the physical pages that were mapped (caller handles that).
 void mmu_destroy_user_pgd(unsigned long* pgd);
@@ -71,6 +75,9 @@ void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr);
 
 // Query a user PGD. Returns 1 if vaddr is mapped, 0 if not.
 int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags);
+
+// Handle a CoW fault
+int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr);
 
 // Load a user PGD into TTBR0 with the given ASID. Flushes TLB.
 void mmu_switch_user(unsigned long* pgd, unsigned long asid);

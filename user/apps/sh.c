@@ -47,11 +47,25 @@ int main(void)
                             strcat(path, ".elf");
                         }
 
-                        if (sys_exec(path) < 0)
+                        int pid = sys_fork();
+                        if (pid < 0)
                         {
-                            print("Error: command not found: ");
-                            print(path);
-                            print("\n");
+                            print("Error: fork failed\n");
+                        }
+                        else if (pid == 0)
+                        {
+                            if (sys_exec(path) < 0)
+                            {
+                                print("Error: command not found: ");
+                                print(path);
+                                print("\n");
+                                sys_exit(1);
+                            }
+                        }
+                        else
+                        {
+                            int status = 0;
+                            sys_waitpid(pid, &status);
                         }
                     }
                 }

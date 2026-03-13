@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include "vfs.h"
+#include "arch/exception.h"
 #include "sched.h"
 #include "lock.h"
 
@@ -47,6 +48,10 @@ struct process
     unsigned long* user_pgd; // per-process TTBR0 page table
     unsigned long asid;      // address space ID for TLB tagging
 
+    uint32_t parent_pid;
+    struct task* parent_task;
+    int exit_status;
+
     struct cpu_context context;
     struct va_allocator va; // per-process user VA allocator
 
@@ -62,8 +67,10 @@ void process_init(void);
 void process_create(void* code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char* path, uint32_t pid);
 int process_exec(const char* path);
-void process_exit(uint32_t pid);
+void process_exit(uint32_t pid, int status);
 void drop_to_user(void* code_vaddr, void* stack_vaddr);
+int process_fork(struct trap_frame* parent_tf);
+int process_waitpid(int pid, int* status);
 
 // Returns the TTBR0 value for a given PID (0 if no such process).
 unsigned long process_get_ttbr0(uint32_t pid);

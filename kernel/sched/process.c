@@ -1,6 +1,9 @@
 #include "process.h"
 #include "pmm.h"
 #include "mmu.h"
+#include "sched.h"
+#include "slab.h"
+#include "types.h"
 #include "uapi/errors.h"
 #include "vfs.h"
 #include "elf.h"
@@ -190,6 +193,7 @@ int process_create_from_file(const char* path, uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE)
         return -PERS_ERR_INVALID_ARGUMENT;
+
     if (process_table[pid].state != PROCESS_STATE_EMPTY)
         return -PERS_ERR_ALREADY_EXISTS;
 
@@ -328,12 +332,26 @@ int process_exec(const char* path)
     return PERS_SUCCESS;
 }
 
-void process_exit(uint32_t pid)
+void process_exit(uint32_t pid, int exit_status)
 {
-    if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state != PROCESS_STATE_RUNNING)
+    if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state == PROCESS_STATE_EMPTY)
         return;
 
-    printf("[PROCESS] PID %d exiting. Reclaiming user memory...\n", process_table[pid].pid);
+    printf("[PROCESS] PID %d exiting with status %d. Reclaiming resources...\n", pid, exit_status);
+
+    for (int i = 0; i < MAX_FDS; i++)
+    {
+        struct file* f = process_table[pid].fd_table[i];
+        if (f)
+        {
+            process_table[pid].fd_table[i] = NULL;
+            if (atomic_dec_and_test(&f->refcount))
+            {
+                vfs_vnode_put(f->node);
+                slab_free(f);
+            }
+        }
+    }
 
     if (process_table[pid].user_pgd)
     {
@@ -347,9 +365,134 @@ void process_exit(uint32_t pid)
         process_table[pid].cwd = NULL;
     }
 
-    // Kernel stack freeing is deferred to the scheduler
     process_table[pid].va.count = 0;
+    process_table[pid].exit_status = exit_status;
     process_table[pid].state = PROCESS_STATE_DEAD;
+
+    if (process_table[pid].parent_task)
+    {
+        sched_unblock(process_table[pid].parent_task);
+    }
+}
+
+int process_fork(struct trap_frame* parent_tf)
+{
+    int parent_pid = process_find_current();
+    if (parent_pid < 0)
+        return parent_pid;
+    struct process* parent = &process_table[parent_pid];
+
+    int child_pid = -1;
+    for (int i = 1; i < PROCESS_TABLE_SIZE; i++)
+    {
+        if (process_table[i].state == PROCESS_STATE_EMPTY)
+        {
+            child_pid = i;
+            break;
+        }
+    }
+    if (child_pid == -1)
+        return -PERS_ERR_OUT_OF_RESOURCES;
+
+    struct process* child = &process_table[child_pid];
+
+    unsigned long* child_pgd = mmu_copy_user_pgd(parent->user_pgd);
+    if (!child_pgd)
+        return -PERS_ERR_OUT_OF_MEMORY;
+
+    child->pid = (uint32_t)child_pid;
+    child->state = PROCESS_STATE_RUNNING;
+    child->user_pgd = child_pgd;
+    child->asid = (uint32_t)child_pid;
+    child->vaddr_code = parent->vaddr_code;
+    child->vaddr_user_stack = parent->vaddr_user_stack;
+    child->va = parent->va;
+    child->parent_pid = (uint32_t)parent_pid;
+    child->parent_task = sched_get_current();
+
+    if (parent->cwd)
+    {
+        child->cwd = parent->cwd;
+        atomic_inc(&child->cwd->refcount);
+    }
+
+    spin_lock(&parent->fd_lock);
+    for (int i = 0; i < MAX_FDS; i++)
+    {
+        if (parent->fd_table[i])
+        {
+            child->fd_table[i] = parent->fd_table[i];
+            atomic_inc(&child->fd_table[i]->refcount);
+        }
+        else
+        {
+            child->fd_table[i] = NULL;
+        }
+    }
+    spin_unlock(&parent->fd_lock);
+
+    void* kstack = alloc_kernel_stack();
+    if (!kstack)
+    {
+        mmu_destroy_user_pgd(child_pgd);
+        child->state = PROCESS_STATE_EMPTY;
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    child->vaddr_kernel_stack = (uintptr_t)kstack;
+    child->paddr_kernel_stack = V2P(kstack);
+
+    uintptr_t kernel_stack_top = (uintptr_t)kstack + 3 * PAGE_SIZE;
+    struct trap_frame* child_tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
+    memcpy(child_tf, parent_tf, sizeof(struct trap_frame));
+
+    child_tf->x[0] = 0;
+
+    child->context.sp = (unsigned long)child_tf;
+    child->context.lr = (unsigned long)ret_to_user;
+
+    sched_create_user_task(child->context.sp, child->context.lr, (uint32_t)child_pid);
+
+    printf("[PROCESS] PID %d forked child PID %d\n", parent_pid, child_pid);
+    return child_pid;
+}
+
+int process_waitpid(int pid, int* status)
+{
+    int parent_pid = process_find_current();
+    if (parent_pid < 0)
+        return -PERS_ERR_NO_SUCH_PROCESS;
+
+    while (1)
+    {
+        int has_children = 0;
+        for (int i = 0; i < PROCESS_TABLE_SIZE; i++)
+        {
+            if (process_table[i].state == PROCESS_STATE_EMPTY)
+                continue;
+            if (process_table[i].parent_pid != (uint32_t)parent_pid)
+                continue;
+
+            if (pid != -1 && (int)process_table[i].pid != pid)
+                continue;
+
+            has_children = 1;
+
+            if (process_table[i].state == PROCESS_STATE_DEAD)
+            {
+                if (status)
+                    *status = process_table[i].exit_status;
+                int found_pid = (int)process_table[i].pid;
+                process_table[i].state = PROCESS_STATE_EMPTY;
+                return found_pid;
+            }
+        }
+
+        if (!has_children)
+            return -PERS_ERR_NO_SUCH_PROCESS;
+
+        sched_block();
+    }
 }
 
 unsigned long process_get_ttbr0(uint32_t pid)

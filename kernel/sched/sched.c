@@ -294,7 +294,7 @@ void schedule(void)
 
         if (dead->pid != 0)
         {
-            process_exit(dead->pid);
+            process_exit(dead->pid, 0); // TODO: not sure if this has to exit with status 0
         }
 
         if (dead->stack)

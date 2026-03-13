@@ -16,10 +16,15 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
 {
     if (x >= fb_info.width || y >= fb_info.height)
         return;
-    if (x + w > fb_info.width)
+    
+    // Use safer comparisons to prevent integer overflow
+    if (w > fb_info.width - x)
         w = fb_info.width - x;
-    if (y + h > fb_info.height)
+    if (h > fb_info.height - y)
         h = fb_info.height - y;
+
+    if (w == 0 || h == 0)
+        return;
 
     uint32_t* fb = (uint32_t*)fb_info.ptr;
     uint32_t stride = fb_info.pitch >> 2;
@@ -54,7 +59,9 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
 {
     if ((unsigned char)c >= 128)
         return;
-    if (x + 8 > fb_info.width || y + 8 > fb_info.height)
+    
+    // Safer bounds check
+    if (x > fb_info.width - 8 || y > fb_info.height - 8 || fb_info.width < 8 || fb_info.height < 8)
         return;
 
     uint32_t* fb = (uint32_t*)fb_info.ptr;

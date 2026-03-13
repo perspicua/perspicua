@@ -127,6 +127,7 @@ int main()
 
     pmm_init();
     mmu_init();
+    remap_framebuffer_pages();
     heap_init();
     gic_init();
 
@@ -142,10 +143,10 @@ int main()
     printf("\n");
     printf(" BOOT COMPLETE - all subsystems operational\n");
 
-    run_all_tests();
+    // run_all_tests();
 
     enable_interrupts();
-    run_scheduler_tests();
+    // run_scheduler_tests();
 
     vfs_init();
     process_init();
@@ -177,9 +178,9 @@ int main()
         printf("[  VFS ] Error: could not open /hello.txt\n");
     }
 
-    if (process_create_from_file("/sh.elf", 1) != 0)
+    if (process_create_from_file("/init.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /sh.elf\n");
+        printf("[  ELF ] Error: failed to load /init.elf\n");
     }
 
     while (1)

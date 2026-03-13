@@ -9,6 +9,7 @@
 #include "syscall.h"
 #include "tty.h"
 #include "arch/uaccess.h"
+#include "mmu.h"
 
 extern struct tty console_tty;
 
@@ -102,6 +103,19 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
     int is_inst = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
     int is_translation = (fsc >= FSC_TRANSLATION_L0 && fsc <= FSC_TRANSLATION_L3);
 
+    if (is_user && is_write && (fsc == FSC_PERMISSION_L3))
+    {
+        int pid = process_find_current();
+        if (pid >= 0)
+        {
+            unsigned long* pgd = process_table[pid].user_pgd;
+            if (mmu_handle_cow(pgd, far) == 0)
+            {
+                return;
+            }
+        }
+    }
+
     (void)is_translation; // demand paging hook (ca tot ma batea la cap riciu cu demand paging)
 
     if (is_user)
@@ -128,7 +142,7 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
             }
             else
             {
-                process_exit((uint32_t)pid);
+                process_exit((uint32_t)pid, 1);
             }
         }
         else

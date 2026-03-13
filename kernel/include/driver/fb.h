@@ -1,6 +1,7 @@
 #ifndef _FB_H_
 #define _FB_H_
 
+#include "mmu.h"
 struct framebuffer
 {
     unsigned int width;
@@ -10,6 +11,7 @@ struct framebuffer
     unsigned char* ptr;
 };
 extern struct framebuffer fb_info;
-void fb_init(void);
 
+void fb_init(void);
+void remap_framebuffer_pages(void);
 #endif // _FB_H_

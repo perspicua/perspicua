@@ -1,13 +1,14 @@
 #include "syscall.h"
 #include <uapi/syscalls.h>
 
-void sys_exit(void)
+void sys_exit(int status)
 {
-    asm volatile("mov x8, %0\n"
+    asm volatile("mov x0, %0\n"
+                 "mov x8, %1\n"
                  "svc #0"
                  :
-                 : "i"(SYS_EXIT)
-                 : "x8", "memory");
+                 : "r"((long)status), "i"(SYS_EXIT)
+                 : "x0", "x8", "memory");
 }
 
 void sys_write(int fd, const char* buf, size_t len)
@@ -105,5 +106,31 @@ int sys_exec(const char* path)
                  : "=r"(res)
                  : "r"(path), "i"(SYS_EXEC)
                  : "x0", "x8", "memory");
+    return (int)res;
+}
+
+int sys_fork(void)
+{
+    long res;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "i"(SYS_FORK)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}
+
+int sys_waitpid(int pid, int* status)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "r"(status), "i"(SYS_WAITPID)
+                 : "x0", "x1", "x8", "memory");
     return (int)res;
 }
