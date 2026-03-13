@@ -7,10 +7,13 @@
 #include "slab.h"
 #include "stdio.h"
 #include "types.h"
+#include "uapi/errors.h"
 
 static struct mount_entry mount_table[MAX_MOUNTS];
 static int mount_count = 0;
 static spinlock_t vfs_lock = SPINLOCK_INIT;
+
+static struct vnode* vfs_resolve_path_locked(const char* path, struct vnode* cwd, int* error);
 
 void vfs_init(void)
 {
@@ -24,26 +27,36 @@ void vfs_init(void)
     spin_unlock(&vfs_lock);
 }
 
-static void vnode_put(struct vnode* node)
+void vfs_vnode_put(struct vnode* node)
 {
     if (!node)
         return;
+
     if (atomic_dec_and_test(&node->refcount))
     {
+        struct vnode* parent = node->parent;
         slab_free(node);
+        if (parent)
+            vfs_vnode_put(parent);
     }
 }
 
 int vfs_mount(const char* path, struct vnode* root)
 {
-    if (path == NULL || path[0] != '/' || root == NULL)
-        return -1;
+    if (path == NULL)
+        return -PERS_ERR_INVALID_ARGUMENT;
+
+    if (path[0] != '/')
+        return -PERS_ERR_NOT_A_DIRECTORY;
+
+    if (root == NULL)
+        return -PERS_ERR_INVALID_ARGUMENT;
 
     spin_lock(&vfs_lock);
     if (mount_count >= MAX_MOUNTS)
     {
         spin_unlock(&vfs_lock);
-        return -1;
+        return -PERS_ERR_OUT_OF_RESOURCES;
     }
 
     for (int i = 0; i < mount_count; i++)
@@ -51,8 +64,31 @@ int vfs_mount(const char* path, struct vnode* root)
         if (strcmp(path, mount_table[i].path) == 0)
         {
             spin_unlock(&vfs_lock);
-            return -1;
+            return -PERS_ERR_ALREADY_EXISTS;
         }
+    }
+
+    if (strcmp(path, "/") != 0)
+    {
+        char parent_path[MAX_PATH_LEN];
+        strncpy(parent_path, path, MAX_PATH_LEN - 1);
+        parent_path[MAX_PATH_LEN - 1] = '\0';
+        char* last_slash = strrchr(parent_path, '/');
+        if (last_slash == parent_path)
+            parent_path[1] = '\0';
+        else if (last_slash)
+            *last_slash = '\0';
+
+        int err;
+        struct vnode* parent = vfs_resolve_path_locked(parent_path, NULL, &err);
+        if (parent)
+        {
+            root->parent = parent;
+        }
+    }
+    else
+    {
+        root->parent = NULL;
     }
 
     strncpy(mount_table[mount_count].path, path, MAX_PATH_LEN);
@@ -60,11 +96,14 @@ int vfs_mount(const char* path, struct vnode* root)
     atomic_inc(&root->refcount);
     mount_count++;
     spin_unlock(&vfs_lock);
-    return 0;
+    return PERS_SUCCESS;
 }
 
 int vfs_unmount(const char* path)
 {
+    if (path == NULL)
+        return -PERS_ERR_NOT_FOUND;
+
     spin_lock(&vfs_lock);
     for (int i = 0; i < mount_count; i++)
     {
@@ -80,15 +119,15 @@ int vfs_unmount(const char* path)
             mount_count--;
             spin_unlock(&vfs_lock);
 
-            vnode_put(root);
-            return 0;
+            vfs_vnode_put(root);
+            return PERS_SUCCESS;
         }
     }
     spin_unlock(&vfs_lock);
-    return -1;
+    return -PERS_ERR_NOT_FOUND;
 }
 
-static struct mount_entry* find_mount(const char* path)
+static struct mount_entry* find_mount(const char* path, int* error)
 {
     int longest_match_index = -1;
     size_t longest_match_len = 0;
@@ -111,43 +150,67 @@ static struct mount_entry* find_mount(const char* path)
     }
 
     if (longest_match_index == -1)
+    {
+        *error = -PERS_ERR_NOT_FOUND;
         return NULL;
-
+    }
+    *error = PERS_SUCCESS;
     return &mount_table[longest_match_index];
 }
 
-struct vnode* vfs_resolve_path(const char* path)
+static struct vnode* vfs_resolve_path_locked(const char* path, struct vnode* cwd, int* error)
 {
-    spin_lock(&vfs_lock);
-    struct mount_entry* best_match = find_mount(path);
-    if (best_match == NULL)
+    struct vnode* curr = NULL;
+    char filepath[MAX_PATH_LEN];
+    const char* path_remainder = path;
+
+    if (path[0] == '/')
     {
-        spin_unlock(&vfs_lock);
-        return NULL;
+        struct mount_entry* best_match = find_mount(path, error);
+        if (best_match == NULL)
+        {
+            return NULL;
+        }
+
+        curr = best_match->root;
+        atomic_inc(&curr->refcount);
+        size_t len = strlen(best_match->path);
+
+        // exact match
+        if (strcmp(path, best_match->path) == 0)
+        {
+            *error = PERS_SUCCESS;
+            return curr;
+        }
+
+        path_remainder = (char*)path + len;
+        if (*path_remainder == '/')
+            path_remainder++;
     }
-
-    struct vnode* curr = best_match->root;
-    atomic_inc(&curr->refcount);
-    size_t len = strlen(best_match->path);
-
-    // exact match
-    if (strcmp(path, best_match->path) == 0)
+    else
     {
-        spin_unlock(&vfs_lock);
-        return curr;
+        if (cwd == NULL)
+        {
+            struct mount_entry* root_match = find_mount("/", error);
+            if (root_match == NULL)
+            {
+                return NULL;
+            }
+            curr = root_match->root;
+        }
+        else
+        {
+            curr = cwd;
+        }
+        atomic_inc(&curr->refcount);
     }
-
-    char* path_remainder = (char*)path + len;
-    if (*path_remainder == '/')
-        path_remainder++;
 
     if (*path_remainder == '\0')
     {
-        spin_unlock(&vfs_lock);
+        *error = PERS_SUCCESS;
         return curr;
     }
 
-    char filepath[MAX_PATH_LEN];
     strncpy(filepath, path_remainder, MAX_PATH_LEN - 1);
     filepath[MAX_PATH_LEN - 1] = '\0';
 
@@ -156,41 +219,69 @@ struct vnode* vfs_resolve_path(const char* path)
 
     while (token != NULL)
     {
-        if (curr->ops->lookup == NULL)
+        struct vnode* next = NULL;
+        if (strcmp(token, ".") == 0)
         {
-            vnode_put(curr);
-            spin_unlock(&vfs_lock);
-            return NULL;
+            next = curr;
+            atomic_inc(&next->refcount);
+        }
+        else if (strcmp(token, "..") == 0)
+        {
+            if (curr->parent != NULL)
+            {
+                next = curr->parent;
+                atomic_inc(&next->refcount);
+            }
+            else
+            {
+                next = curr;
+                atomic_inc(&next->refcount);
+            }
+        }
+        else
+        {
+            if (curr->ops->lookup == NULL)
+            {
+                vfs_vnode_put(curr);
+                *error = -PERS_ERR_NOT_A_DIRECTORY;
+                return NULL;
+            }
+
+            next = curr->ops->lookup(curr, token);
+            if (next == NULL)
+            {
+                vfs_vnode_put(curr);
+                *error = -PERS_ERR_NOT_FOUND;
+                return NULL;
+            }
         }
 
-        struct vnode* next = curr->ops->lookup(curr, token);
-        if (next == NULL)
-        {
-            vnode_put(curr);
-            spin_unlock(&vfs_lock);
-            return NULL;
-        }
-
-        vnode_put(curr);
+        vfs_vnode_put(curr);
         curr = next;
 
         token = strtok_r(NULL, "/", &saveptr);
     }
-    spin_unlock(&vfs_lock);
+    *error = PERS_SUCCESS;
     return curr;
+}
+
+struct vnode* vfs_resolve_path(const char* path, struct vnode* cwd, int* error)
+{
+    spin_lock(&vfs_lock);
+    struct vnode* res = vfs_resolve_path_locked(path, cwd, error);
+    spin_unlock(&vfs_lock);
+    return res;
 }
 
 int vfs_open_pid(const char* path, int flags, uint32_t pid)
 {
-    struct vnode* node = vfs_resolve_path(path);
-    if (node == NULL)
-        return -1;
-
+    int error = 0;
     if (pid >= PROCESS_TABLE_SIZE)
-    {
-        vnode_put(node);
-        return -1;
-    }
+        return -PERS_ERR_NO_SUCH_PROCESS;
+
+    struct vnode* node = vfs_resolve_path(path, process_table[pid].cwd, &error);
+    if (node == NULL)
+        return error;
 
     spin_lock(&process_table[pid].fd_lock);
     for (size_t i = 0; i < MAX_FDS; i++)
@@ -203,8 +294,8 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
                 continue;
 
             spin_unlock(&process_table[pid].fd_lock);
-            vnode_put(node);
-            return -1;
+            vfs_vnode_put(node);
+            return -PERS_ERR_ALREADY_EXISTS;
         }
     }
     spin_unlock(&process_table[pid].fd_lock);
@@ -212,8 +303,8 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
     struct file* new_file = (struct file*)slab_alloc(sizeof(struct file));
     if (!new_file)
     {
-        vnode_put(node);
-        return -1;
+        vfs_vnode_put(node);
+        return -PERS_ERR_OUT_OF_MEMORY;
     }
 
     new_file->node = node;
@@ -235,8 +326,9 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
 
     if (ok == -1)
     {
-        vnode_put(node);
+        vfs_vnode_put(node);
         slab_free(new_file);
+        return -PERS_ERR_OUT_OF_RESOURCES;
     }
     return ok;
 }
@@ -245,47 +337,49 @@ int vfs_open(const char* path, int flags)
 {
     int curr_process_pid = process_find_current();
     if (curr_process_pid < 0)
-        return -1;
+        return curr_process_pid; // this is the err code
     return vfs_open_pid(path, flags, (uint32_t)curr_process_pid);
 }
 
 int vfs_close(int fd)
 {
     if (fd < 0 || fd >= MAX_FDS)
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
 
     int curr_process_pid = process_find_current();
     if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
-        return -1;
+        return curr_process_pid; // error code from process_find_current()
 
     struct process* p = &process_table[curr_process_pid];
     spin_lock(&p->fd_lock);
     struct file* f = p->fd_table[fd];
+
     if (f == NULL)
     {
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
+
     p->fd_table[fd] = NULL;
     spin_unlock(&p->fd_lock);
 
     if (atomic_dec_and_test(&f->refcount))
     {
-        vnode_put(f->node);
+        vfs_vnode_put(f->node);
         slab_free(f);
     }
 
-    return 0;
+    return PERS_SUCCESS;
 }
 
 off_t vfs_lseek(int fd, off_t offset, int whence)
 {
     if (fd < 0 || fd >= MAX_FDS)
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
 
     int curr_process_pid = process_find_current();
     if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
-        return -1;
+        return curr_process_pid; // error code from process....
 
     struct process* p = &process_table[curr_process_pid];
     spin_lock(&p->fd_lock);
@@ -293,7 +387,7 @@ off_t vfs_lseek(int fd, off_t offset, int whence)
     if (f == NULL)
     {
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
     off_t new_offset = f->offset;
@@ -310,13 +404,13 @@ off_t vfs_lseek(int fd, off_t offset, int whence)
         break;
     default:
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_NOT_IMPLEMENTED;
     }
 
     if (new_offset < 0)
     {
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_INVALID_ARGUMENT;
     }
 
     f->offset = new_offset;
@@ -328,11 +422,11 @@ off_t vfs_lseek(int fd, off_t offset, int whence)
 int vfs_read(int fd, void* buffer, size_t count)
 {
     if (fd < 0 || fd >= MAX_FDS)
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
 
     int curr_process_pid = process_find_current();
     if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
-        return -1;
+        return curr_process_pid;
 
     struct process* p = &process_table[curr_process_pid];
     spin_lock(&p->fd_lock);
@@ -340,7 +434,7 @@ int vfs_read(int fd, void* buffer, size_t count)
     if (f == NULL)
     {
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
     spin_unlock(&p->fd_lock);
@@ -350,7 +444,7 @@ int vfs_read(int fd, void* buffer, size_t count)
     if ((access_mode != O_RDONLY && access_mode != O_RDWR) || f->node->ops->read == NULL)
     {
         atomic_dec_and_test(&f->refcount);
-        return -1;
+        return -PERS_ERR_PERMISSION_DENIED;
     }
 
     int bytes_read = f->node->ops->read(f, buffer, count);
@@ -368,11 +462,11 @@ int vfs_read(int fd, void* buffer, size_t count)
 int vfs_write(int fd, const void* buffer, size_t count)
 {
     if (fd < 0 || fd >= MAX_FDS)
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
 
     int curr_process_pid = process_find_current();
     if (curr_process_pid < 0 || curr_process_pid >= PROCESS_TABLE_SIZE)
-        return -1;
+        return curr_process_pid;
 
     struct process* p = &process_table[curr_process_pid];
     spin_lock(&p->fd_lock);
@@ -380,7 +474,7 @@ int vfs_write(int fd, const void* buffer, size_t count)
     if (f == NULL)
     {
         spin_unlock(&p->fd_lock);
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
     spin_unlock(&p->fd_lock);
@@ -390,7 +484,7 @@ int vfs_write(int fd, const void* buffer, size_t count)
     if ((access_mode != O_WRONLY && access_mode != O_RDWR) || f->node->ops->write == NULL)
     {
         atomic_dec_and_test(&f->refcount);
-        return -1;
+        return -PERS_ERR_PERMISSION_DENIED;
     }
 
     if (f->flags & O_APPEND)

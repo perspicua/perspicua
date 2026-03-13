@@ -41,17 +41,13 @@ void initrd_init(void* initrd_start)
         char* filename = ptr + sizeof(struct cpio_newc_header);
 
         if (strcmp(filename, "TRAILER!!!") == 0)
-        {
             break;
-        }
 
         char* data = ptr + sizeof(struct cpio_newc_header) + namesize;
         data = (char*)(((uintptr_t)data + 3) & ~3UL);
 
         if ((mode & 0xF000) == 0x8000)
-        {
             ramfs_register_file(filename, data, filesize);
-        }
 
         ptr = data + filesize;
         ptr = (char*)(((uintptr_t)ptr + 3) & ~3UL);

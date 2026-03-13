@@ -6,6 +6,7 @@
 #include "timer.h"
 #include "lock.h"
 #include "process.h"
+#include "uapi/errors.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -276,7 +277,7 @@ struct task* sched_get_current(void)
 int sched_get_core_pid(int cpu)
 {
     if (cpu < 0 || cpu >= 4)
-        return -1;
+        return -PERS_ERR_INVALID_ARGUMENT;
     return core_pids[cpu];
 }
 

@@ -32,7 +32,7 @@ static struct block_header* expand_heap(unsigned long min_size)
 
     void* region = pmm_alloc_pages(pages);
     if (!region)
-        return 0;
+        return NULL;
 
     struct block_header* block = (struct block_header*)region;
     block->size = pages * PAGE_SIZE - HEADER_SIZE;
@@ -63,7 +63,6 @@ void* kmalloc(unsigned long size)
 {
     if (size == 0)
         return 0;
-    printf("[ HEAP ] kmalloc request: %lu bytes\n", size);
     // small allocations: O(1) slab path
     if (size <= SLAB_MAX)
         return slab_alloc(size);
@@ -91,11 +90,9 @@ void* kmalloc(unsigned long size)
 
                 curr->size = size;
                 curr->next = new_block;
-                printf("[ HEAP ] Splitting block: %lu bytes used, %lu bytes free\n", size, remaining);
             }
 
             curr->free = 0;
-            printf("[ HEAP ] Alloc: %lu bytes (used: %lu / %lu)\n", size, heap_used_size + size + HEADER_SIZE, heap_total_size);
             heap_used_size += curr->size + HEADER_SIZE;
             spin_unlock_irqrestore(&heap_lock, flags);
             return (void*)((unsigned char*)curr + HEADER_SIZE);
@@ -108,7 +105,6 @@ void* kmalloc(unsigned long size)
     struct block_header* new_page = expand_heap(size);
     if (!new_page)
         PANIC("HEAP: Out of memory.\n");
-    printf("reached here\n");
     // insert in address order so coalescing works across regions
     if (!free_list || (unsigned long)new_page < (unsigned long)free_list)
     {

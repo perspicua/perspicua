@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "stdio.h"
 #include "arch/uaccess.h"
+#include "uapi/errors.h"
 #include <uapi/syscalls.h>
 
 static int validate_user_buffer(const void* ptr, size_t len, int writable)
@@ -66,21 +67,24 @@ void handle_syscall(struct trap_frame* tf)
 
         if (!validate_user_buffer(buf, len, 0))
         {
-            tf->x[0] = (uint64_t)-1; // -EFAULT
+            // TODO: maybe put better error codes here
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
         char* kbuf = kmalloc(len);
         if (!kbuf)
         {
-            tf->x[0] = (uint64_t)-1; // -ENOMEM
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
 
         if (copy_from_user(kbuf, buf, len) != 0)
         {
             kfree(kbuf);
-            tf->x[0] = (uint64_t)-1; // -EFAULT
+
+            // TODO: maybe put better error codes here
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
 
@@ -123,7 +127,8 @@ void handle_syscall(struct trap_frame* tf)
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
             {
-                path_len = (size_t)-1;
+                // TODO: maybe put better error codes here
+                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
                 break;
             }
             if (c == '\0')
@@ -131,9 +136,10 @@ void handle_syscall(struct trap_frame* tf)
             path_len++;
         }
 
-        if (path_len == (size_t)-1 || path_len >= MAX_PATH_LEN)
+        // TODO: maybe put better error codes here
+        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
         {
-            tf->x[0] = (uint64_t)-1;
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
 
@@ -153,7 +159,8 @@ void handle_syscall(struct trap_frame* tf)
 
         if (!validate_user_buffer(buf, len, 1))
         {
-            tf->x[0] = (uint64_t)-1;
+            // TODO: maybe put better error codes here
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
 
@@ -184,7 +191,8 @@ void handle_syscall(struct trap_frame* tf)
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
             {
-                path_len = (size_t)-1;
+                // TODO: maybe put better error codes here
+                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
                 break;
             }
             if (c == '\0')
@@ -192,9 +200,10 @@ void handle_syscall(struct trap_frame* tf)
             path_len++;
         }
 
-        if (path_len == (size_t)-1 || path_len >= MAX_PATH_LEN)
+        // TODO: maybe put better error codes here
+        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
         {
-            tf->x[0] = (uint64_t)-1;
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
 
@@ -206,7 +215,7 @@ void handle_syscall(struct trap_frame* tf)
 
         if (res < 0)
         {
-            tf->x[0] = (uint64_t)-1;
+            tf->x[0] = (uint64_t)-res;
         }
         break;
     }

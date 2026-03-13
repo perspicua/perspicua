@@ -1,5 +1,6 @@
 #include "devfs.h"
 #include "heap.h"
+#include "uapi/errors.h"
 #include "vfs.h"
 #include "tty.h"
 #include "slab.h"
@@ -47,19 +48,20 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
 {
     struct vnode* node = (struct vnode*)slab_alloc(sizeof(struct vnode));
     if (!node)
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
 
     node->type = VNODE_TYPE_DEVICE;
     node->ops = ops;
     node->internal_info = internal_info;
     node->filesize = 0;
+    node->parent = devfs_root_vnode;
     node->refcount.counter = 1;
 
     struct devfs_node* dev_node = (struct devfs_node*)slab_alloc(sizeof(struct devfs_node));
     if (!dev_node)
     {
         slab_free(node);
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
     }
 
     strncpy(dev_node->name, name, 31);
@@ -71,7 +73,7 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
     devfs_devices = dev_node;
     spin_unlock(&devfs_lock);
 
-    return 0;
+    return PERS_SUCCESS;
 }
 
 struct vnode* devfs_get_root(void)
@@ -104,6 +106,8 @@ void devfs_init(void)
     devfs_root_vnode->type = VNODE_TYPE_DIR;
     devfs_root_vnode->ops = &devfs_root_ops;
     devfs_root_vnode->internal_info = NULL;
+    devfs_root_vnode->parent = NULL;
+    devfs_root_vnode->filesize = 0;
     devfs_root_vnode->refcount.counter = 1;
 
     if (devfs_register_device("uart", &devfs_tty_ops, &console_tty) != 0)
