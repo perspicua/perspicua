@@ -56,7 +56,7 @@ void uart_init(void)
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
     // TODO: i am not sure if this is needed, needs testing
-    sleep_ms(1);
+    sleep_ms(10);
 
     mmio_write(UART0_ICR, 0x7FF);
 
