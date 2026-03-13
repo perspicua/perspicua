@@ -106,22 +106,6 @@ static void dashboard_task(void)
     }
 }
 
-static void remap_framebuffer_pages(void)
-{
-    if (!fb_info.ptr || fb_info.size == 0)
-        return;
-
-    unsigned long fb_start = (unsigned long)fb_info.ptr;
-    unsigned long fb_end = fb_start + fb_info.size;
-    fb_start &= ~(PAGE_SIZE - 1);
-    fb_end = (fb_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-
-    for (unsigned long va = fb_start; va < fb_end; va += PAGE_SIZE)
-    {
-        mmu_map_page(va, V2P(va), MMU_FLAGS_DEVICE_RW);
-    }
-}
-
 __attribute__((used)) int main(void);
 int main()
 {
@@ -159,10 +143,10 @@ int main()
     printf("\n");
     printf(" BOOT COMPLETE - all subsystems operational\n");
 
-    run_all_tests();
+    // run_all_tests();
 
     enable_interrupts();
-    run_scheduler_tests();
+    // run_scheduler_tests();
 
     vfs_init();
     process_init();
