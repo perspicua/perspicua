@@ -3,6 +3,8 @@
 #include "driver/gic.h"
 #include "driver/mailbox.h"
 #include "driver/fb.h"
+#include "driver/fb_console.h"
+#include "driver/dashboard.h"
 
 #include "pmm.h"
 #include "mmu.h"
@@ -95,6 +97,15 @@ static void print_banner(void)
 #include "tty.h"
 extern struct tty console_tty;
 
+static void dashboard_task(void)
+{
+    while (1)
+    {
+        dashboard_update();
+        sched_sleep_ms(100);
+    }
+}
+
 __attribute__((used)) int main(void);
 int main()
 {
@@ -102,6 +113,7 @@ int main()
     uart_init();
     mbox_init();
     fb_init();
+    fb_console_init();
     tty_init(&console_tty);
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
@@ -121,6 +133,7 @@ int main()
 
     timer_interrupt_init();
     sched_init();
+    sched_create_task(dashboard_task);
 
     smp_init();
 

@@ -58,6 +58,8 @@ void post_switch_hook(void);
 
 struct task* sched_get_current(void);
 
+int sched_get_core_pid(int cpu);
+
 void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
 // defined in switch.S
 extern void switch_context(struct cpu_context* prev, struct cpu_context* next);

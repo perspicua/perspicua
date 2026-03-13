@@ -50,30 +50,6 @@ void fb_init(void)
         fb_info.ptr = (unsigned char*)P2V(phys_addr);
         printf("[   FB ] Framebuffer initialized: %dx%d @ %p (size %d, pitch %d)\n", fb_info.width, fb_info.height,
                fb_info.ptr, fb_info.size, fb_info.pitch);
-
-        unsigned int sqare_start = 200;
-        unsigned int sqare_end = 400;
-
-        for (unsigned int y = 0; y < fb_info.height; y++)
-        {
-            for (unsigned int x = 0; x < fb_info.width; x++)
-            {
-                unsigned int offset = (y * fb_info.pitch) + (x * 4);
-
-                fb_info.ptr[offset + 0] = 0x87;
-                fb_info.ptr[offset + 1] = 0xCE;
-                fb_info.ptr[offset + 2] = 0xEB;
-                fb_info.ptr[offset + 3] = 0xFF;
-
-                if (y > sqare_start && y < sqare_end && x > sqare_start && x < sqare_end)
-                {
-                    fb_info.ptr[offset + 0] = 0x87;
-                    fb_info.ptr[offset + 1] = 0x00;
-                    fb_info.ptr[offset + 2] = 0x00;
-                    fb_info.ptr[offset + 3] = 0xFF;
-                }
-            }
-        }
     }
     else
     {

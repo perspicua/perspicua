@@ -4,7 +4,7 @@ int main(void)
 {
     int pid = sys_getpid();
 
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < 100; i++)
     {
         char msg[] = "Hello from separate binary! PID:  \n";
         if (pid >= 0 && pid <= 9)

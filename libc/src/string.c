@@ -232,14 +232,14 @@ void* memcpy(void* dest, const void* src, size_t count)
     unsigned char* d8 = (unsigned char*)dest;
     const unsigned char* s8 = (const unsigned char*)src;
 
-    // handle unaligned head (align dest; if src also becomes aligned, fast path kicks in)
+    // handle unaligned head
     while (count && ((uintptr_t)d8 & 7))
     {
         *d8++ = *s8++;
         count--;
     }
 
-    // 8-byte aligned fast path (only if both pointers are aligned)
+    // 8-byte aligned fast path
     if (((uintptr_t)s8 & 7) == 0)
     {
         uint64_t* d64 = (uint64_t*)d8;
@@ -262,23 +262,56 @@ void* memcpy(void* dest, const void* src, size_t count)
 
 void* memmove(void* dest, const void* src, size_t count)
 {
-    char* destination = (char*)dest;
-    char* source = (char*)src;
-    if (destination < source)
+    unsigned char* d8 = (unsigned char*)dest;
+    const unsigned char* s8 = (const unsigned char*)src;
+
+    if (d8 < s8)
     {
-        while (count--)
+        // Copy forward (same as optimized memcpy)
+        while (count && ((uintptr_t)d8 & 7))
         {
-            *destination++ = *source++;
+            *d8++ = *s8++;
+            count--;
         }
+        if (((uintptr_t)s8 & 7) == 0)
+        {
+            uint64_t* d64 = (uint64_t*)d8;
+            const uint64_t* s64 = (const uint64_t*)s8;
+            while (count >= 8)
+            {
+                *d64++ = *s64++;
+                count -= 8;
+            }
+            d8 = (unsigned char*)d64;
+            s8 = (const unsigned char*)s64;
+        }
+        while (count--)
+            *d8++ = *s8++;
     }
-    else if (destination > source)
+    else if (d8 > s8)
     {
-        destination += count;
-        source += count;
-        while (count--)
+        // Copy backward
+        d8 += count;
+        s8 += count;
+        while (count && ((uintptr_t)d8 & 7))
         {
-            *--destination = *--source;
+            *--d8 = *--s8;
+            count--;
         }
+        if (((uintptr_t)s8 & 7) == 0)
+        {
+            uint64_t* d64 = (uint64_t*)d8;
+            const uint64_t* s64 = (const uint64_t*)s8;
+            while (count >= 8)
+            {
+                *--d64 = *--s64;
+                count -= 8;
+            }
+            d8 = (unsigned char*)d64;
+            s8 = (const unsigned char*)s64;
+        }
+        while (count--)
+            *--d8 = *--s8;
     }
     return dest;
 }

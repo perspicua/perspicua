@@ -9,4 +9,7 @@ void slab_free(void* ptr);
 // returns 1 if ptr was allocated by the slab allocator, 0 otherwise
 int slab_owns(void* ptr);
 
+unsigned long slab_get_used(void);
+unsigned long slab_get_total(void);
+
 #endif // _SLAB_H_

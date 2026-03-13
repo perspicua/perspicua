@@ -24,6 +24,7 @@ struct page
 static struct page* page_array;
 static struct page* free_lists[MAX_ORDER + 1];
 static unsigned long pmm_reserved_pages;
+static unsigned long free_pages_count = 0;
 static spinlock_t pmm_lock = SPINLOCK_INIT;
 
 static inline unsigned int get_order(unsigned long count)
@@ -49,6 +50,7 @@ static inline unsigned long page_to_pfn(struct page* p)
 
 static void __free_buddy(unsigned long pfn, unsigned int order)
 {
+    free_pages_count += (1UL << order);
     while (order < MAX_ORDER)
     {
         unsigned long buddy_pfn = pfn ^ (1UL << order);
@@ -158,6 +160,7 @@ void* pmm_alloc_pages(unsigned long count)
     struct page* p = free_lists[current_order];
     free_lists[current_order] = p->next;
     p->is_free = 0;
+    free_pages_count -= (1UL << target_order);
     unsigned long pfn = page_to_pfn(p);
 
     while (current_order > target_order)
@@ -226,4 +229,14 @@ void* pmm_alloc_page(void)
 void pmm_free_page(void* ptr)
 {
     pmm_free_pages(ptr, 1);
+}
+
+unsigned long pmm_get_free_pages(void)
+{
+    return free_pages_count;
+}
+
+unsigned long pmm_get_total_pages(void)
+{
+    return num_pages;
 }
