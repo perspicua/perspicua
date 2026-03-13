@@ -61,7 +61,8 @@ static inline unsigned long page_to_pfn(struct page* p)
     return p - page_array;
 }
 
-static int reserved_range_overlaps(unsigned long a_start, unsigned long a_end, unsigned long b_start, unsigned long b_end)
+static int reserved_range_overlaps(unsigned long a_start, unsigned long a_end, unsigned long b_start,
+                                   unsigned long b_end)
 {
     return a_start < b_end && b_start < a_end;
 }
@@ -201,35 +202,34 @@ void pmm_init(void)
         page_array[i].refcount = 0;
     }
 
-        unsigned long reserved_total_pages = count_reserved_pages();
-        printf("[  PMM ] Buddy allocator: %lu pages total, %lu reserved\n", (unsigned long)num_pages,
-               reserved_total_pages);
+    unsigned long reserved_total_pages = count_reserved_pages();
+    printf("[  PMM ] Buddy allocator: %lu pages total, %lu reserved\n", (unsigned long)num_pages, reserved_total_pages);
     printf("[  PMM ] Page array: %lu KB metadata at 0x%lx\n", array_size / 1024, (unsigned long)page_array);
-        printf("[  PMM ] Usable range: PFN %lu..%lu, max order %d (%lu KB blocks)\n", reserved_pages,
+    printf("[  PMM ] Usable range: PFN %lu..%lu, max order %d (%lu KB blocks)\n", reserved_pages,
            (unsigned long)num_pages - 1, MAX_ORDER, (unsigned long)((1UL << MAX_ORDER) * PAGE_SIZE) / 1024);
 
-        for (unsigned int i = 0; i < reserved_range_count; i++)
-        {
-            unsigned long start = reserved_ranges[i].start_phys;
-            unsigned long end = reserved_ranges[i].end_phys;
-            if (start >= end)
-                continue;
-            const char* tag = reserved_ranges[i].tag ? reserved_ranges[i].tag : "(untagged)";
-            printf("[  PMM ] reserve: 0x%lx..0x%lx (%s)\n", start, end - 1, tag);
-        }
+    for (unsigned int i = 0; i < reserved_range_count; i++)
+    {
+        unsigned long start = reserved_ranges[i].start_phys;
+        unsigned long end = reserved_ranges[i].end_phys;
+        if (start >= end)
+            continue;
+        const char* tag = reserved_ranges[i].tag ? reserved_ranges[i].tag : "(untagged)";
+        printf("[  PMM ] reserve: 0x%lx..0x%lx (%s)\n", start, end - 1, tag);
+    }
 
-        unsigned long pfn = 0;
+    unsigned long pfn = 0;
     while (pfn < num_pages)
     {
-            if (pfn_is_reserved(pfn))
+        if (pfn_is_reserved(pfn))
         {
-                pfn++;
+            pfn++;
             continue;
         }
 
         unsigned int order = MAX_ORDER;
-            while (order > 0 && ((pfn & ((1UL << order) - 1)) != 0 || pfn + (1UL << order) > num_pages ||
-                                 range_overlaps_reserved_pfns(pfn, pfn + (1UL << order))))
+        while (order > 0 && ((pfn & ((1UL << order) - 1)) != 0 || pfn + (1UL << order) > num_pages ||
+                             range_overlaps_reserved_pfns(pfn, pfn + (1UL << order))))
         {
             order--;
         }
@@ -238,17 +238,17 @@ void pmm_init(void)
         pfn += (1UL << order);
     }
 
-        managed_pages_count = free_pages_count;
-        pmm_ready = 1;
+    managed_pages_count = free_pages_count;
+    pmm_ready = 1;
 
-    printf("[  PMM ] %lu MB free (%lu pages) — buddy system ready\n",
-           (free_pages_count * PAGE_SIZE) / (1024 * 1024), free_pages_count);
+    printf("[  PMM ] %lu MB free (%lu pages) — buddy system ready\n", (free_pages_count * PAGE_SIZE) / (1024 * 1024),
+           free_pages_count);
 }
 
 void* pmm_alloc_pages(unsigned long count)
 {
     if (count == 0)
-        return 0;
+        return NULL;
 
     unsigned int target_order = get_order(count);
     if (target_order > MAX_ORDER)
@@ -266,7 +266,7 @@ void* pmm_alloc_pages(unsigned long count)
     {
         spin_unlock_irqrestore(&pmm_lock, flags);
         PANIC("PMM: Out of Memory!");
-        return 0;
+        return NULL;
     }
 
     struct page* p = free_lists[current_order];

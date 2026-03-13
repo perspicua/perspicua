@@ -152,6 +152,9 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                     (int)bytes_to_read)
                 {
                     printf("[  ELF ] Error: failed to read segment data\n");
+                    kfree(phdrs);
+                    vfs_close(fd);
+                    return -PERS_ERR_IO_ERROR;
                 }
             }
 

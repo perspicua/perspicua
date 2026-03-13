@@ -5,6 +5,7 @@
 #include "slab.h"
 #include "string.h"
 #include "stdio.h"
+#include "uapi/errors.h"
 
 struct ramfs_file_data
 {
@@ -26,7 +27,7 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
 {
     struct ramfs_file_data* data = (struct ramfs_file_data*)file->node->internal_info;
     if (!data)
-        return -1;
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
 
     if (file->offset >= (off_t)data->size)
         return 0; // eof
@@ -69,7 +70,6 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
     struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode));
     if (!vn)
     {
-        // TODO: change to err code in the future
         return;
     }
 

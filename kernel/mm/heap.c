@@ -32,7 +32,7 @@ static struct block_header* expand_heap(unsigned long min_size)
 
     void* region = pmm_alloc_pages(pages);
     if (!region)
-        return 0;
+        return NULL;
 
     struct block_header* block = (struct block_header*)region;
     block->size = pages * PAGE_SIZE - HEADER_SIZE;

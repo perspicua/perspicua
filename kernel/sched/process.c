@@ -1,6 +1,7 @@
 #include "process.h"
 #include "pmm.h"
 #include "mmu.h"
+#include "uapi/errors.h"
 #include "vfs.h"
 #include "elf.h"
 #include "string.h"
@@ -76,7 +77,7 @@ int process_find_current(void)
 {
     struct task* t = sched_get_current();
     if (!t)
-        return -1;
+        return -PERS_ERR_NO_SUCH_PROCESS;
 
     return (int)t->pid;
 }
@@ -188,21 +189,21 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 int process_create_from_file(const char* path, uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE)
-        return -1;
+        return -PERS_ERR_INVALID_ARGUMENT;
     if (process_table[pid].state != PROCESS_STATE_EMPTY)
-        return -1;
+        return -PERS_ERR_ALREADY_EXISTS;
 
     va_init(&process_table[pid].va);
 
     unsigned long* user_pgd = mmu_create_user_pgd();
     if (!user_pgd)
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
 
     uint64_t entry_point;
     if (elf_load(path, user_pgd, &entry_point) != 0)
     {
         mmu_destroy_user_pgd(user_pgd);
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
     size_t stack_pages = 4;
@@ -210,7 +211,7 @@ int process_create_from_file(const char* path, uint32_t pid)
     if (!vaddr_stack)
     {
         mmu_destroy_user_pgd(user_pgd);
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
     }
     for (size_t i = 0; i < stack_pages; i++)
     {
@@ -256,26 +257,26 @@ int process_create_from_file(const char* path, uint32_t pid)
     sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
 
     printf("[PROCESS] Loaded ELF %s for PID %d, entry at 0x%lx\n", path, pid, entry_point);
-    return 0;
+    return PERS_SUCCESS;
 }
 
 int process_exec(const char* path)
 {
     int pid = process_find_current();
     if (pid < 0)
-        return -1;
+        return pid;
 
     struct process* p = &process_table[pid];
 
     unsigned long* new_pgd = mmu_create_user_pgd();
     if (!new_pgd)
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
 
     uint64_t entry_point;
     if (elf_load(path, new_pgd, &entry_point) != 0)
     {
         mmu_destroy_user_pgd(new_pgd);
-        return -1;
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
     struct va_allocator new_va;
@@ -324,7 +325,7 @@ int process_exec(const char* path)
     tf->spsr_el1 = 0x340; // EL0t, interrupts enabled
     tf->sp_el0 = (vaddr_stack + (stack_pages * PAGE_SIZE)) & ~15UL;
 
-    return 0;
+    return PERS_SUCCESS;
 }
 
 void process_exit(uint32_t pid)

@@ -1,5 +1,6 @@
 #include "devfs.h"
 #include "heap.h"
+#include "uapi/errors.h"
 #include "vfs.h"
 #include "tty.h"
 #include "slab.h"
@@ -47,7 +48,7 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
 {
     struct vnode* node = (struct vnode*)slab_alloc(sizeof(struct vnode));
     if (!node)
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
 
     node->type = VNODE_TYPE_DEVICE;
     node->ops = ops;
@@ -60,7 +61,7 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
     if (!dev_node)
     {
         slab_free(node);
-        return -1;
+        return -PERS_ERR_OUT_OF_MEMORY;
     }
 
     strncpy(dev_node->name, name, 31);
@@ -72,7 +73,7 @@ int devfs_register_device(const char* name, struct vnode_ops* ops, void* interna
     devfs_devices = dev_node;
     spin_unlock(&devfs_lock);
 
-    return 0;
+    return PERS_SUCCESS;
 }
 
 struct vnode* devfs_get_root(void)
