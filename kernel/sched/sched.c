@@ -199,15 +199,21 @@ void sched_create_task(void (*entry)(void))
 
 void sched_sleep_ms(unsigned long ms)
 {
+    unsigned long flags = irq_save();
     struct task* curr = sched_get_current();
     int cpu = get_core_id();
     if (!curr || curr == idle_task_ptr[cpu])
+    {
+        irq_restore(flags);
         return;
+    }
 
     curr->state = TASK_BLOCKED;
     curr->wake_time = get_system_time() + ms;
     insert_sleep(curr);
+    
     schedule();
+    irq_restore(flags);
 }
 
 void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
@@ -248,6 +254,8 @@ void sched_block(void)
 
 void sched_unblock(struct task* t)
 {
+    if (!t)
+        return;
     task_state_t expected = TASK_BLOCKED;
     if (__atomic_compare_exchange_n(&t->state, &expected, TASK_READY, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
     {

@@ -12,6 +12,7 @@
 #include "panic.h"
 #include "addr.h"
 #include "arch/exception.h"
+#include "timer.h"
 
 spinlock_t process_table_lock = SPINLOCK_INIT;
 
@@ -48,15 +49,15 @@ static void va_init(struct va_allocator* va)
 uintptr_t process_va_alloc(struct va_allocator* va, size_t pages)
 {
     if (pages == 0 || va->count >= USER_VA_MAX_REGIONS)
-        return (uintptr_t)-1;
+        return 0;
 
     uintptr_t base = va->next_va;
     size_t size = pages * PAGE_SIZE;
 
     if (base + size < base) // overflow
-        return (uintptr_t)-1;
+        return 0;
     if (base + size > 0x8000000000ULL) // 39-bit VA limit
-        return (uintptr_t)-1;
+        return 0;
 
     va->next_va = base + size;
     va->regions[va->count].base = base;
@@ -226,12 +227,16 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     unsigned long* user_pgd = mmu_create_user_pgd();
     if (!user_pgd)
+    {
+        process_table[pid].state = PROCESS_STATE_EMPTY;
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     uint64_t entry_point;
     if (elf_load(path, user_pgd, &entry_point) != 0)
     {
         mmu_destroy_user_pgd(user_pgd);
+        process_table[pid].state = PROCESS_STATE_EMPTY;
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
@@ -240,6 +245,7 @@ int process_create_from_file(const char* path, uint32_t pid)
     if (!vaddr_stack)
     {
         mmu_destroy_user_pgd(user_pgd);
+        process_table[pid].state = PROCESS_STATE_EMPTY;
         return -PERS_ERR_OUT_OF_MEMORY;
     }
     for (size_t i = 0; i < stack_pages; i++)
@@ -312,7 +318,12 @@ int process_exec(const char* path)
     struct va_allocator new_va;
     va_init(&new_va);
     size_t stack_pages = 4;
+
     uintptr_t vaddr_stack = process_va_alloc(&new_va, stack_pages);
+    if (!vaddr_stack) { // FIX: Protected against memory faults skipping checks  
+        mmu_destroy_user_pgd(new_pgd);
+        return -PERS_ERR_OUT_OF_MEMORY; 
+    }
     for (size_t i = 0; i < stack_pages; i++)
     {
         void* page = pmm_alloc_page();
@@ -373,6 +384,16 @@ void process_exit(uint32_t pid, int exit_status)
 
     printf("[PROCESS] PID %d exiting with status %d. Reclaiming resources...\n", pid, exit_status);
 
+    // Reparent orphans immediately to evade dead-struct-task Use-After-Free
+    for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
+        if (i != (int)pid && process_table[i].state != PROCESS_STATE_EMPTY && process_table[i].parent_pid == pid) {
+            process_table[i].parent_pid = 1; 
+            process_table[i].parent_task = NULL; // Clear dead context referencing
+        }
+    }
+
+    // Realigned FD checks under specific atomic lock scoping
+    spin_lock(&process_table[pid].fd_lock);
     for (int i = 0; i < MAX_FDS; i++)
     {
         struct file* f = process_table[pid].fd_table[i];
@@ -386,6 +407,7 @@ void process_exit(uint32_t pid, int exit_status)
             }
         }
     }
+    spin_unlock(&process_table[pid].fd_lock);
 
     unsigned long* pgd = process_table[pid].user_pgd;
     process_table[pid].user_pgd = 0;
@@ -544,6 +566,7 @@ int process_waitpid(int pid, int* status)
             return -PERS_ERR_NO_SUCH_PROCESS;
         }
 
+        unsigned long flags = irq_save(); 
         struct task* curr = sched_get_current();
         if (curr)
             curr->state = TASK_BLOCKED;
@@ -551,8 +574,10 @@ int process_waitpid(int pid, int* status)
         spin_unlock(&process_table_lock);
 
         schedule();
+        irq_restore(flags);
     }
 }
+
 unsigned long process_get_ttbr0(uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
