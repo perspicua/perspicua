@@ -2,8 +2,8 @@
 #define _SCHED_H_
 
 #include "types.h"
+#include "pmm.h"
 
-#define TASK_STACK_SIZE 8192
 #define MAX_TASKS 16
 
 // callee-saved registers + sp + pc
@@ -53,8 +53,6 @@ void sched_secondary_init(void);
 
 void sched_block(void);
 void sched_unblock(struct task* t);
-
-void post_switch_hook(void);
 
 struct task* sched_get_current(void);
 

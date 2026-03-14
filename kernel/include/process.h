@@ -11,6 +11,12 @@
 #define USER_VA_BASE 0x40000000ULL // 1GB - leaves lower area for ELF loading
 #define USER_VA_MAX_REGIONS 16
 
+#define SPSR_EL0_USER 0x00000000ULL
+#define SPSR_EL1_KERN 0x000003C5ULL
+
+#define STACK_CANARY_VALUE 0xDEADC0DEDEADC0DEULL
+extern spinlock_t process_table_lock;
+
 typedef enum
 {
     PROCESS_STATE_EMPTY = 0,
@@ -47,6 +53,7 @@ struct process
 
     unsigned long* user_pgd; // per-process TTBR0 page table
     unsigned long asid;      // address space ID for TLB tagging
+    unsigned long ttbr0;     // hardware-ready TTBR0 value (Phys PGD | ASID)
 
     uint32_t parent_pid;
     struct task* parent_task;

@@ -1,6 +1,6 @@
 #include "sched.h"
 #include "heap.h"
-#include "pmm.h"
+
 #include "mmu.h"
 #include "addr.h"
 #include "timer.h"
@@ -16,8 +16,14 @@ _Static_assert(sizeof(struct cpu_context) == 104, "struct cpu_context size misma
 _Static_assert(__builtin_offsetof(struct task, state) == 112, "struct task->state offset mismatch");
 
 #define STACK_CANARY 0xDEADC0DEDEADC0DEULL
-#define STACK_PAGES 3 // 1 guard page + 2 usable pages (8 KB usable)
 
+#define STACK_GUARD_PAGES 1
+#define STACK_USABLE_PAGES 2
+#define STACK_PAGES (STACK_GUARD_PAGES + STACK_USABLE_PAGES)
+#define TASK_STACK_SIZE (STACK_USABLE_PAGES * PAGE_SIZE)
+#define TASK_CANARY_PTR(t) ((unsigned long*)((t)->stack + PAGE_SIZE))
+
+_Static_assert(TASK_STACK_SIZE == (STACK_PAGES - 1) * PAGE_SIZE, "TASK_STACK_SIZE must match usable stack pages");
 static struct task* idle_task_ptr[4] = {0, 0, 0, 0};
 static struct task init_tasks[4];
 
@@ -46,8 +52,10 @@ static inline int get_core_id(void)
 // --- queue helpers ---
 static void enqueue_ready(int cpu, struct task* t)
 {
+    ASSERT(t != NULL);
+    ASSERT(t->state == TASK_READY);
     unsigned long flags = spin_lock_irqsave(&ready_queue_lock[cpu]);
-    t->next = 0;
+    t->next = NULL;
     if (!ready_queue_head[cpu])
     {
         ready_queue_head[cpu] = t;
@@ -102,20 +110,6 @@ static void insert_sleep(struct task* t)
 
 extern void task_wrapper_asm(void);
 
-void post_switch_hook(void)
-{
-    int cpu = get_core_id();
-    struct task* sw_from = last_switched_from[cpu];
-    if (sw_from)
-    {
-        last_switched_from[cpu] = NULL;
-        if (sw_from->state == TASK_READY)
-        {
-            enqueue_ready(cpu, sw_from);
-        }
-    }
-}
-
 static void idle_task_entry(void)
 {
     while (1)
@@ -130,7 +124,6 @@ static struct task* create_idle_task(int id)
     mmu_unmap_page((unsigned long)stack);
     unsigned char* usable = stack + PAGE_SIZE;
     unsigned long sp = ((unsigned long)usable + TASK_STACK_SIZE) & ~15UL;
-    *(unsigned long*)usable = STACK_CANARY;
 
     idle->state = TASK_READY;
     idle->id = 900 + id;
@@ -140,6 +133,8 @@ static struct task* create_idle_task(int id)
     idle->context.sp = sp;
     idle->context.lr = (unsigned long)task_wrapper_asm;
     idle->context.x19 = (unsigned long)idle_task_entry;
+    *TASK_CANARY_PTR(idle) = STACK_CANARY;
+
     return idle;
 }
 
@@ -169,6 +164,7 @@ void sched_secondary_init(void)
     boot_task->state = TASK_DEAD;
     boot_task->id = 800 + core_id;
     boot_task->pid = 0;
+    boot_task->ttbr0 = mmu_kernel_ttbr0();
     asm volatile("msr tpidr_el1, %0" : : "r"(boot_task));
 
     idle_task_ptr[core_id] = create_idle_task(core_id);
@@ -184,7 +180,6 @@ void sched_create_task(void (*entry)(void))
     mmu_unmap_page((unsigned long)stack);
     unsigned char* usable = stack + PAGE_SIZE;
     unsigned long sp = ((unsigned long)usable + TASK_STACK_SIZE) & ~15UL;
-    *(unsigned long*)usable = STACK_CANARY;
 
     t->state = TASK_READY;
     t->context.sp = sp;
@@ -192,32 +187,27 @@ void sched_create_task(void (*entry)(void))
     t->context.x19 = (unsigned long)entry;
     t->ttbr0 = mmu_kernel_ttbr0();
     t->pid = 0;
+    t->stack = stack;
+    *TASK_CANARY_PTR(t) = STACK_CANARY;
 
     unsigned long flags = spin_lock_irqsave(&next_task_id_lock);
     t->id = next_task_id++;
     spin_unlock_irqrestore(&next_task_id_lock, flags);
 
-    t->stack = stack;
     enqueue_ready(get_core_id(), t);
 }
 
 void sched_sleep_ms(unsigned long ms)
 {
-    unsigned long flags = irq_save();
     struct task* curr = sched_get_current();
     int cpu = get_core_id();
     if (!curr || curr == idle_task_ptr[cpu])
-    {
-        irq_restore(flags);
         return;
-    }
 
     curr->state = TASK_BLOCKED;
     curr->wake_time = get_system_time() + ms;
     insert_sleep(curr);
-
     schedule();
-    irq_restore(flags);
 }
 
 void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
@@ -229,7 +219,7 @@ void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, ui
     t->context.sp = forged_sp;
     t->context.lr = forged_lr;
 
-    t->stack = (unsigned char*)process_table[pid].vaddr_kernel_stack;
+    t->stack = (unsigned char*)(process_table[pid].vaddr_kernel_stack - PAGE_SIZE);
 
     t->ttbr0 = process_get_ttbr0(pid);
     t->pid = pid;
@@ -258,15 +248,12 @@ void sched_block(void)
 
 void sched_unblock(struct task* t)
 {
-    unsigned long flags = irq_save();
-    if (t->state == TASK_BLOCKED)
+    task_state_t expected = TASK_BLOCKED;
+    if (__atomic_compare_exchange_n(&t->state, &expected, TASK_READY, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
     {
-        t->state = TASK_READY;
         enqueue_ready(get_core_id(), t);
     }
-    irq_restore(flags);
 }
-
 struct task* sched_get_current(void)
 {
     struct task* t;
@@ -290,6 +277,10 @@ void schedule(void)
     struct task* dead = task_to_free[cpu];
     if (dead)
     {
+        struct task* curr = sched_get_current();
+        if (curr == dead)
+            PANIC("Attempt to free currently running task stack");
+
         task_to_free[cpu] = 0;
 
         if (dead->pid != 0)
@@ -330,18 +321,15 @@ void schedule(void)
     // 3. verify stack integrity
     if (prev->stack)
     {
-        unsigned char* usable = prev->stack + PAGE_SIZE;
-        if (*(unsigned long*)usable != STACK_CANARY)
-            PANIC("Stack overflow: canary corrupted!");
+        if (*TASK_CANARY_PTR(prev) != STACK_CANARY)
+            PANIC("Stack overflow: canary corrupted");
     }
 
     // 4. handle current task state
-    if (prev->state == TASK_RUNNING)
+    if (prev->state == TASK_RUNNING && prev != idle_task_ptr[cpu])
     {
-        if (prev != idle_task_ptr[cpu])
-        {
-            prev->state = TASK_READY;
-        }
+        prev->state = TASK_READY;
+        enqueue_ready(cpu, prev);
     }
     else if (prev->state == TASK_DEAD)
     {
@@ -368,18 +356,14 @@ void schedule(void)
     // 6. perform switch
     next->state = TASK_RUNNING;
     core_pids[cpu] = (int)next->pid;
-    asm volatile("msr tpidr_el1, %0" : : "r"(next));
+    asm volatile("msr tpidr_el1, %0" ::"r"(next));
+    asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));
+    asm volatile("dsb sy");
+    asm volatile("isb");
 
     if (prev != next)
     {
-        last_switched_from[cpu] = prev;
-        asm volatile("msr ttbr0_el1, %0\n"
-                     "isb"
-                     :
-                     : "r"(next->ttbr0));
         switch_context(&prev->context, &next->context);
-
-        post_switch_hook();
     }
 
     irq_restore(flags);

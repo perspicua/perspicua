@@ -24,6 +24,7 @@ typedef enum
 #define O_CREAT 0x0100
 #define O_TRUNC 0x0200
 #define O_APPEND 0x0400
+#define O_CLOEXEC 0x0800
 
 struct mount_entry
 {

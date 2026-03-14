@@ -24,7 +24,14 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
     {
         return 0;
     }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
     unsigned long* pgd = process_table[pid].user_pgd;
+    if (!pgd)
+    {
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return 0;
+    }
 
     uintptr_t curr = start & ~0xFFFUL;
     while (curr < end)
@@ -32,21 +39,25 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
         unsigned long current_flags;
         if (!mmu_user_query(pgd, curr, NULL, &current_flags))
         {
+            spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
 
         if (!(current_flags & MMU_AP_USER))
         {
+            spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
 
         if (writable && (current_flags & (1ULL << 7))) // AP[2] bit 7 is RO
         {
+            spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
 
         curr += 4096;
     }
+    spin_unlock_irqrestore(&process_table_lock, flags);
 
     return 1;
 }
@@ -146,7 +157,12 @@ void handle_syscall(struct trap_frame* tf)
         }
 
         char* kpath = kmalloc(path_len + 1);
-        copy_from_user(kpath, path, path_len + 1);
+        if (copy_from_user(kpath, path, path_len + 1) != 0)
+        {
+            kfree(kpath);
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
 
         int fd = vfs_open(kpath, flags);
         kfree(kpath);
@@ -170,7 +186,10 @@ void handle_syscall(struct trap_frame* tf)
         int bytes = vfs_read(fd, kbuf, len);
         if (bytes > 0)
         {
-            copy_to_user(buf, kbuf, (size_t)bytes);
+            if (copy_to_user(buf, kbuf, (size_t)bytes) != 0)
+            {
+                bytes = -PERS_ERR_INVALID_ARGUMENT;
+            }
         }
         kfree(kbuf);
         tf->x[0] = (uint64_t)bytes;
@@ -210,14 +229,19 @@ void handle_syscall(struct trap_frame* tf)
         }
 
         char* kpath = kmalloc(path_len + 1);
-        copy_from_user(kpath, path, path_len + 1);
+        if (copy_from_user(kpath, path, path_len + 1) != 0)
+        {
+            kfree(kpath);
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
 
         int res = process_exec(kpath);
         kfree(kpath);
 
         if (res < 0)
         {
-            tf->x[0] = (uint64_t)-res;
+            tf->x[0] = (uint64_t)res;
         }
         break;
     }
@@ -237,7 +261,11 @@ void handle_syscall(struct trap_frame* tf)
         {
             if (validate_user_buffer(ustatus, sizeof(int), 1))
             {
-                copy_to_user(ustatus, &kstatus, sizeof(int));
+                if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0)
+                {
+                    tf->x[0] = -PERS_ERR_UNKNOWN;
+                    break;
+                }
             }
         }
         tf->x[0] = (uint64_t)res;
