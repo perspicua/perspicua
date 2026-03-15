@@ -143,10 +143,10 @@ int main()
     printf("\n");
     printf(" BOOT COMPLETE - all subsystems operational\n");
 
-    // run_all_tests();
+    run_all_tests();
 
     enable_interrupts();
-    // run_scheduler_tests();
+    run_scheduler_tests();
 
     vfs_init();
     process_init();

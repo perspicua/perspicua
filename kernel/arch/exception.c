@@ -205,7 +205,7 @@ void exception_irq_handler(void)
     if (uart_irq_cached == 0)
         uart_irq_cached = uart_get_irq();
 
-    unsigned int iar = mmio_read(GICC_IAR);
+    unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
     if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
@@ -213,15 +213,15 @@ void exception_irq_handler(void)
 
     if (irq_id == 0) // SGI 0: panic IPI from another core
     {
-        mmio_write(GICC_EOIR, iar);
+        mmio_write(gic_c_eoir, iar);
         disable_interrupts();
         for (;;)
             asm volatile("wfe");
     }
-    else if (irq_id == TIMER_IRQ)
+    else if (irq_id == GIC_TIMER_IRQ)
     {
         timer_interrupt_reset();
-        mmio_write(GICC_EOIR, iar);
+        mmio_write(gic_c_eoir, iar);
         schedule();
         return;
     }
@@ -248,7 +248,7 @@ void exception_irq_handler(void)
         uart_clear_interrupt(mis);
     }
 
-    mmio_write(GICC_EOIR, iar);
+    mmio_write(gic_c_eoir, iar);
 }
 
 void exception_sync_handler(struct exception_trap_frame* tf)
