@@ -1,14 +1,29 @@
+/*
+ * fb.c - Implementation of the framebuffer driver.
+ *
+ * This file handles the low-level mailbox communication with the
+ * VideoCore GPU to set up and manage the display buffer.
+ */
+
 #include "driver/fb.h"
+
 #include "types.h"
-#include "driver/mailbox.h"
 #include "stdio.h"
 #include "addr.h"
+
 #include "pmm.h"
 
-__attribute__((aligned(16))) unsigned int mbox[36];
+#include "driver/mailbox.h"
 
-struct framebuffer fb_info;
+/* The mailbox communication buffer for GPU requests. */
+static __attribute__((aligned(16))) unsigned int mbox[36];
 
+/* The global framebuffer device information. */
+struct fb_info_struct fb_info;
+
+/*
+ * fb_init - Initializes the Raspberry Pi 4 framebuffer.
+ */
 void fb_init(void)
 {
     mbox[0] = 26 * 4;  // Total size of this message (26 elements * 4 bytes)
@@ -37,6 +52,7 @@ void fb_init(void)
     mbox[23] = 4;
     mbox[24] = 0; // Response will go here
     mbox[25] = 0; // End Tag
+
     mbox_call(mbox);
 
     if (mbox[20] != 0 && mbox[1] == 0x80000000)
@@ -56,7 +72,7 @@ void fb_init(void)
 
         fb_info.ptr = (unsigned char*)P2V(phys_addr);
 
-        // PMM is initialized later; reserve framebuffer pages now so buddy never hands them out.
+        // Reserve framebuffer pages in the PMM before they are allocated elsewhere.
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
         printf("[   FB ] Framebuffer initialized: %dx%d @ %p (phys 0x%lx, size %d, pitch %d)\n", fb_info.width,
@@ -68,13 +84,19 @@ void fb_init(void)
     }
 }
 
+/*
+ * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.
+ */
 void remap_framebuffer_pages(void)
 {
     if (!fb_info.ptr || fb_info.size == 0)
+    {
         return;
+    }
 
     unsigned long fb_start = (unsigned long)fb_info.ptr;
     unsigned long fb_end = fb_start + fb_info.size;
+
     fb_start &= ~(PAGE_SIZE - 1);
     fb_end = (fb_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
