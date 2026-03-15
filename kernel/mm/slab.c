@@ -1,274 +1,321 @@
+/*
+ * slab.c - Implementation of the size-class slab allocator.
+ *
+ * This file implements a per-page slab allocator for small objects.
+ * It manages multiple size classes to reduce fragmentation and uses
+ * per-class spinlocks to minimize contention.
+ */
+
 #include "slab.h"
+
 #include "pmm.h"
 #include "lock.h"
 #include "stdio.h"
 #include "panic.h"
 
-// ---------------------------------------------------------------------------
-// Size-class slab allocator
-//
-// Each size class owns a pool of PAGE_SIZE slabs.  Every slab is carved into
-// fixed-size slots.  A per-slot freelist provides O(1) alloc/free with zero
-// per-object header overhead.  Each size class has its own spinlock so
-// different-class allocations never contend.
-//
-// Object -> slab lookup: mask off the low 12 bits of any pointer to get the
-// slab page, then read the slab_page header at the top of that page.
-// ---------------------------------------------------------------------------
+/* Magic number for validating slab pages */
+#define SLAB_MAGIC 0x534C4142U
 
-#define SLAB_MAGIC 0x534C4142U                 // "SLAB"
-#define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL // written to every free slot
+/* Poison value used to detect double-frees and identify unallocated slots */
+#define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
 
-// size classes: 16, 32, 64, 128, 256, 512, 1024
-#define NUM_CLASSES 7
-static const unsigned long class_size[NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
+/* Total number of supported size classes */
+#define SLAB_NUM_CLASSES 7
 
-// free-list node embedded inside every free slot
-// NOTE: sizeof(slab_obj) == 16, which fits exactly in the smallest class (16B)
+/* The available object size classes in bytes */
+static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
+
+/*
+ * slab_obj - A free-list node embedded directly into unallocated slots.
+ */
 struct slab_obj
 {
     struct slab_obj* next;
-    uint64_t free_canary; // SLAB_FREE_POISON when slot is free
+    uint64_t free_canary;
 };
 
-// per-page header living at the start of every slab page
+/*
+ * slab_page - Header structure located at the start of every physical page
+ * managed by the slab allocator.
+ */
 struct slab_page
 {
-    unsigned int magic;     // SLAB_MAGIC — used by slab_owns()
-    unsigned int class_idx; // which size class this page belongs to
-    unsigned int total;     // total slots in this page
-    unsigned int in_use;    // currently allocated slots
-    struct slab_obj* free;  // per-page freelist head
-    struct slab_page* next; // next slab page in this class
+    unsigned int magic;
+    unsigned int class_idx;
+    unsigned int total_slots;
+    unsigned int in_use_count;
+    struct slab_obj* free_list;
+    struct slab_page* next;
 };
 
-// per-class metadata
+/*
+ * slab_class - Metadata for a specific size class pool.
+ */
 struct slab_class
 {
-    unsigned long obj_size;    // slot size (bytes)
-    struct slab_page* partial; // pages with free slots (alloc pops head → O(1))
-    struct slab_page* full;    // pages with no free slots
+    unsigned long object_size;
+    struct slab_page* partial_list;
+    struct slab_page* full_list;
     spinlock_t lock;
 };
 
-static struct slab_class classes[NUM_CLASSES];
+/* Internal array of slab class descriptors */
+static struct slab_class slab_classes[SLAB_NUM_CLASSES];
 
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-// given a pointer inside a slab page, recover the slab_page header
+/*
+ * ptr_to_slab - Recovers the slab page header from a pointer to an
+ * object within that page by masking the page offset.
+ */
 static inline struct slab_page* ptr_to_slab(void* ptr)
 {
     return (struct slab_page*)((unsigned long)ptr & ~(PAGE_SIZE - 1UL));
 }
 
-// return the class index for a given size, or -1 if too large
-static inline int size_to_class(unsigned long size)
+/*
+ * size_to_class_index - Determines the best-fit size class index for
+ * a requested allocation size. Returns -1 if the size is too large.
+ */
+static inline int size_to_class_index(unsigned long size)
 {
-    for (int i = 0; i < NUM_CLASSES; i++)
-        if (size <= class_size[i])
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
+    {
+        if (size <= slab_class_sizes[i])
+        {
             return i;
+        }
+    }
     return -1;
 }
 
-// allocate a new slab page for the given class and prepend to partial list
+/*
+ * slab_grow - Allocates a fresh physical page from the PMM, initializes
+ * its header, and carves it into fixed-size slots for the specified class.
+ */
 static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
 {
     void* page = pmm_alloc_page();
     if (!page)
-        return 0;
+    {
+        return (void*)0;
+    }
 
     struct slab_page* sp = (struct slab_page*)page;
     sp->magic = SLAB_MAGIC;
     sp->class_idx = idx;
-    sp->in_use = 0;
-    sp->free = 0;
+    sp->in_use_count = 0;
+    sp->free_list = (void*)0;
 
-    unsigned long obj_size = sc->obj_size;
-    // first slot starts right after the header, aligned to obj_size
-    unsigned long hdr = sizeof(struct slab_page);
-    unsigned long start = (hdr + obj_size - 1) & ~(obj_size - 1);
+    unsigned long obj_size = sc->object_size;
+    unsigned long hdr_size = sizeof(struct slab_page);
+    unsigned long start_offset = (hdr_size + obj_size - 1) & ~(obj_size - 1);
 
     unsigned int count = 0;
-    for (unsigned long off = start; off + obj_size <= PAGE_SIZE; off += obj_size)
+    for (unsigned long off = start_offset; off + obj_size <= PAGE_SIZE; off += obj_size)
     {
         struct slab_obj* obj = (struct slab_obj*)((unsigned char*)page + off);
-        obj->next = sp->free;
+        obj->next = sp->free_list;
         obj->free_canary = SLAB_FREE_POISON;
-        sp->free = obj;
+        sp->free_list = obj;
         count++;
     }
-    sp->total = count;
+    sp->total_slots = count;
 
-    // new page has free slots → partial list
-    sp->next = sc->partial;
-    sc->partial = sp;
+    /* Prepend the new page to the partial list since it has free slots */
+    sp->next = sc->partial_list;
+    sc->partial_list = sp;
     return sp;
 }
 
-// ---------------------------------------------------------------------------
-// public API
-// ---------------------------------------------------------------------------
-
+/*
+ * slab_init - Boot-time initialization of the slab allocator.
+ */
 void slab_init(void)
 {
-    for (int i = 0; i < NUM_CLASSES; i++)
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
-        classes[i].obj_size = class_size[i];
-        classes[i].partial = 0;
-        classes[i].full = 0;
-        classes[i].lock = (spinlock_t)SPINLOCK_INIT;
+        slab_classes[i].object_size = slab_class_sizes[i];
+        slab_classes[i].partial_list = (void*)0;
+        slab_classes[i].full_list = (void*)0;
+        slab_classes[i].lock = (spinlock_t)SPINLOCK_INIT;
     }
 
-    // pre-allocate one slab page per class so early allocs don't fault
-    for (int i = 0; i < NUM_CLASSES; i++)
+    /* Seed every size class with one page to avoid early allocation failures */
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
-        if (!slab_grow(&classes[i], (unsigned int)i))
-            PANIC("SLAB: Failed to grow class \n");
+        if (!slab_grow(&slab_classes[i], (unsigned int)i))
+        {
+            PANIC("SLAB: Failed to grow initial class pool");
+        }
     }
 
-    printf("[ SLAB ] %d size classes:", NUM_CLASSES);
-    for (int i = 0; i < NUM_CLASSES; i++)
-        printf(" %lu", class_size[i]);
-    printf(" bytes\n");
-    printf("[ SLAB ] Per-class spinlock, O(1) alloc/free, zero per-object overhead\n");
+    printf("[ SLAB ] Initialized %d size classes from 16 to 1024 bytes\n", SLAB_NUM_CLASSES);
 }
 
+/*
+ * slab_alloc - Allocates an object of at least 'size' bytes.
+ */
 void* slab_alloc(unsigned long size)
 {
-    int idx = size_to_class(size);
+    int idx = size_to_class_index(size);
     if (idx < 0)
-        return 0; // too large for slab
+    {
+        return (void*)0;
+    }
 
-    struct slab_class* sc = &classes[idx];
+    struct slab_class* sc = &slab_classes[idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
-    // O(1): grab head of partial list
-    struct slab_page* sp = sc->partial;
+    struct slab_page* sp = sc->partial_list;
 
-    // no partial pages — grow
+    /* Grow the class if all current pages are full */
     if (!sp)
     {
         sp = slab_grow(sc, (unsigned int)idx);
         if (!sp)
         {
             spin_unlock_irqrestore(&sc->lock, flags);
-            PANIC("SLAB: Out of memory for class \n");
-            return 0;
+            return (void*)0;
         }
     }
 
-    // pop from freelist
-    struct slab_obj* obj = sp->free;
-    sp->free = obj->next;
-    obj->free_canary = 0; // clear poison — slot is now live
-    sp->in_use++;
+    /* Pop an object from the page's free list */
+    struct slab_obj* obj = sp->free_list;
+    sp->free_list = obj->next;
+    obj->free_canary = 0;
+    sp->in_use_count++;
 
-    // if page is now full, move it from partial → full
-    if (!sp->free)
+    /* Move the page to the full list if no more slots are available */
+    if (!sp->free_list)
     {
-        sc->partial = sp->next;
-        sp->next = sc->full;
-        sc->full = sp;
+        sc->partial_list = sp->next;
+        sp->next = sc->full_list;
+        sc->full_list = sp;
     }
 
     spin_unlock_irqrestore(&sc->lock, flags);
     return (void*)obj;
 }
 
+/*
+ * slab_free - Deallocates an object and returns its slot to the owner page.
+ */
 void slab_free(void* ptr)
 {
     if (!ptr)
+    {
         return;
+    }
 
     struct slab_page* sp = ptr_to_slab(ptr);
     if (sp->magic != SLAB_MAGIC)
-        PANIC("SLAB: slab_free on non-slab pointer \n");
+    {
+        PANIC("SLAB: Attempted to free a non-slab pointer");
+    }
 
-    struct slab_class* sc = &classes[sp->class_idx];
+    struct slab_class* sc = &slab_classes[sp->class_idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
     struct slab_obj* obj = (struct slab_obj*)ptr;
     if (obj->free_canary == SLAB_FREE_POISON)
-        PANIC("SLAB: double free detected\n");
+    {
+        PANIC("SLAB: Double-free detected");
+    }
 
-    int was_full = (sp->free == 0);
+    int was_full = (sp->free_list == (void*)0);
 
-    // push back onto freelist
+    /* Push the slot back onto the free list and poison its canary */
     obj->free_canary = SLAB_FREE_POISON;
-    obj->next = sp->free;
-    sp->free = obj;
-    sp->in_use--;
+    obj->next = sp->free_list;
+    sp->free_list = obj;
+    sp->in_use_count--;
 
-    // if page was full, move it from full → partial
+    /* If the page was previously full, move it back to the partial list */
     if (was_full)
     {
-        // unlink from full list
-        struct slab_page** prev = &sc->full;
+        struct slab_page** prev = &sc->full_list;
         while (*prev && *prev != sp)
+        {
             prev = &(*prev)->next;
+        }
         if (*prev)
+        {
             *prev = sp->next;
+        }
 
-        // prepend to partial list
-        sp->next = sc->partial;
-        sc->partial = sp;
+        sp->next = sc->partial_list;
+        sc->partial_list = sp;
     }
 
     spin_unlock_irqrestore(&sc->lock, flags);
 }
 
+/*
+ * slab_owns - Validates if a pointer belongs to the slab allocator.
+ */
 int slab_owns(void* ptr)
 {
     if (!ptr)
+    {
         return 0;
+    }
     struct slab_page* sp = ptr_to_slab(ptr);
     return sp->magic == SLAB_MAGIC;
 }
 
+/*
+ * slab_get_used - Returns total bytes used across all size classes.
+ */
 unsigned long slab_get_used(void)
 {
     unsigned long used = 0;
-    for (int i = 0; i < NUM_CLASSES; i++)
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
-        unsigned long flags = spin_lock_irqsave(&classes[i].lock);
-        struct slab_page* sp = classes[i].partial;
+        unsigned long flags = spin_lock_irqsave(&slab_classes[i].lock);
+
+        struct slab_page* sp = slab_classes[i].partial_list;
         while (sp)
         {
-            used += sp->in_use * classes[i].obj_size;
+            used += sp->in_use_count * slab_classes[i].object_size;
             sp = sp->next;
         }
-        sp = classes[i].full;
+
+        sp = slab_classes[i].full_list;
         while (sp)
         {
-            used += sp->in_use * classes[i].obj_size;
+            used += sp->in_use_count * slab_classes[i].object_size;
             sp = sp->next;
         }
-        spin_unlock_irqrestore(&classes[i].lock, flags);
+
+        spin_unlock_irqrestore(&slab_classes[i].lock, flags);
     }
     return used;
 }
 
+/*
+ * slab_get_total - Returns total capacity across all allocated slab pages.
+ */
 unsigned long slab_get_total(void)
 {
     unsigned long total = 0;
-    for (int i = 0; i < NUM_CLASSES; i++)
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
-        unsigned long flags = spin_lock_irqsave(&classes[i].lock);
-        struct slab_page* sp = classes[i].partial;
+        unsigned long flags = spin_lock_irqsave(&slab_classes[i].lock);
+
+        struct slab_page* sp = slab_classes[i].partial_list;
         while (sp)
         {
-            total += sp->total * classes[i].obj_size;
+            total += sp->total_slots * slab_classes[i].object_size;
             sp = sp->next;
         }
-        sp = classes[i].full;
+
+        sp = slab_classes[i].full_list;
         while (sp)
         {
-            total += sp->total * classes[i].obj_size;
+            total += sp->total_slots * slab_classes[i].object_size;
             sp = sp->next;
         }
-        spin_unlock_irqrestore(&classes[i].lock, flags);
+
+        spin_unlock_irqrestore(&slab_classes[i].lock, flags);
     }
     return total;
 }
