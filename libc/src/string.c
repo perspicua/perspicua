@@ -10,7 +10,7 @@
 #include "types.h"
 
 #ifdef __KERNEL__
-#include "lock.h"
+    #include "lock.h"
 /* Global synchronization for thread-unsafe string tokenization */
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 #endif
@@ -48,7 +48,7 @@ char* strcpy(char* dest, const char* src)
 char* strncpy(char* dest, const char* src, size_t count)
 {
     char* start = dest;
-    size_t len = 0;
+    size_t len  = 0;
     while (len < count && (*dest = *src) != '\0')
     {
         dest++;
@@ -87,7 +87,7 @@ char* strcat(char* dest, const char* src)
 char* strncat(char* dest, const char* src, size_t count)
 {
     char* start = dest;
-    size_t len = 0;
+    size_t len  = 0;
     while (*dest != '\0')
     {
         dest++;
@@ -267,7 +267,7 @@ char* strtok_r(char* str, const char* delim, char** saveptr)
     }
     else
     {
-        *end = '\0';
+        *end     = '\0';
         *saveptr = end + 1;
     }
 
@@ -282,7 +282,7 @@ char* strtok(char* str, const char* delim)
     static char* last_token;
 #ifdef __KERNEL__
     unsigned long flags = spin_lock_irqsave(&strtok_lock);
-    char* result = strtok_r(str, delim, &last_token);
+    char* result        = strtok_r(str, delim, &last_token);
     spin_unlock_irqrestore(&strtok_lock, flags);
     return result;
 #else
@@ -313,7 +313,7 @@ int memcmp(const void* ptr1, const void* ptr2, size_t num)
 void* memset(void* dest, int val, size_t num)
 {
     unsigned char* d8 = (unsigned char*)dest;
-    unsigned char v8 = (unsigned char)val;
+    unsigned char v8  = (unsigned char)val;
 
     /* Handle leading unaligned bytes */
     while (num && ((uintptr_t)d8 & 7))
@@ -323,8 +323,8 @@ void* memset(void* dest, int val, size_t num)
     }
 
     /* 8-byte aligned fast path */
-    uint64_t v64 = (uint64_t)v8 | ((uint64_t)v8 << 8) | ((uint64_t)v8 << 16) | ((uint64_t)v8 << 24) |
-                   ((uint64_t)v8 << 32) | ((uint64_t)v8 << 40) | ((uint64_t)v8 << 48) | ((uint64_t)v8 << 56);
+    uint64_t v64 = (uint64_t)v8 | ((uint64_t)v8 << 8) | ((uint64_t)v8 << 16) | ((uint64_t)v8 << 24)
+                   | ((uint64_t)v8 << 32) | ((uint64_t)v8 << 40) | ((uint64_t)v8 << 48) | ((uint64_t)v8 << 56);
     uint64_t* d64 = (uint64_t*)d8;
     while (num >= 8)
     {
@@ -347,7 +347,7 @@ void* memset(void* dest, int val, size_t num)
  */
 void* memcpy(void* dest, const void* src, size_t count)
 {
-    unsigned char* d8 = (unsigned char*)dest;
+    unsigned char* d8       = (unsigned char*)dest;
     const unsigned char* s8 = (const unsigned char*)src;
 
     while (count && ((uintptr_t)d8 & 7))
@@ -358,7 +358,7 @@ void* memcpy(void* dest, const void* src, size_t count)
 
     if (((uintptr_t)s8 & 7) == 0)
     {
-        uint64_t* d64 = (uint64_t*)d8;
+        uint64_t* d64       = (uint64_t*)d8;
         const uint64_t* s64 = (const uint64_t*)s8;
         while (count >= 8)
         {
@@ -382,7 +382,7 @@ void* memcpy(void* dest, const void* src, size_t count)
  */
 void* memmove(void* dest, const void* src, size_t count)
 {
-    unsigned char* d8 = (unsigned char*)dest;
+    unsigned char* d8       = (unsigned char*)dest;
     const unsigned char* s8 = (const unsigned char*)src;
 
     if (d8 < s8)
@@ -395,7 +395,7 @@ void* memmove(void* dest, const void* src, size_t count)
         }
         if (((uintptr_t)s8 & 7) == 0)
         {
-            uint64_t* d64 = (uint64_t*)d8;
+            uint64_t* d64       = (uint64_t*)d8;
             const uint64_t* s64 = (const uint64_t*)s8;
             while (count >= 8)
             {
@@ -422,7 +422,7 @@ void* memmove(void* dest, const void* src, size_t count)
         }
         if (((uintptr_t)s8 & 7) == 0)
         {
-            uint64_t* d64 = (uint64_t*)d8;
+            uint64_t* d64       = (uint64_t*)d8;
             const uint64_t* s64 = (const uint64_t*)s8;
             while (count >= 8)
             {

@@ -177,4 +177,11 @@ irq_handler:
 
 .global ret_to_user
 ret_to_user:
+    mrs x0, spsr_el1
+    and x0, x0, #0xf
+    cbnz x0, 1f
+
+    mov x0, sp
+    bl signal_handle_pending
+1:
     restore_all

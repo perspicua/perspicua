@@ -86,4 +86,4 @@ void test_scheduler(void);
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
 
-#endif // _TEST_H_
+#endif  // _TEST_H_

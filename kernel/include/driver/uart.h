@@ -17,13 +17,13 @@
 #define UART_FR_TXFE (1 << 7)
 
 /* UART Line Control Register (LCRH) bits */
-#define UART_LCRH_FEN (1 << 4)
+#define UART_LCRH_FEN    (1 << 4)
 #define UART_LCRH_WLEN_8 (3 << 5)
 
 /* UART Control Register (CR) bits */
 #define UART_CR_UARTEN (1 << 0)
-#define UART_CR_TXE (1 << 8)
-#define UART_CR_RXE (1 << 9)
+#define UART_CR_TXE    (1 << 8)
+#define UART_CR_RXE    (1 << 9)
 
 /* UART Interrupt Mask Set/Clear (IMSC) bits */
 #define UART_IMSC_RXIM (1 << 4)

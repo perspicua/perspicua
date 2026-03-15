@@ -34,7 +34,7 @@ void test_spinlock(void)
 
     // irqsave / irqrestore
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock     = SPINLOCK_INIT;
         unsigned long flags = spin_lock_irqsave(&lock);
         TEST_ASSERT_EQ("irqsave locked", lock.locked, 1);
         spin_unlock_irqrestore(&lock, flags);
@@ -44,7 +44,7 @@ void test_spinlock(void)
 
     // irqs are actually masked while holding lock
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock     = SPINLOCK_INIT;
         unsigned long flags = spin_lock_irqsave(&lock);
 
         unsigned long daif;
@@ -108,7 +108,7 @@ void test_spinlock(void)
 
     // lock protects a shared counter (single-core)
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock      = SPINLOCK_INIT;
         volatile int counter = 0;
 
         for (int i = 0; i < 500; i++)
@@ -123,7 +123,7 @@ void test_spinlock(void)
 
     // lock protects a shared counter (irqsave variant)
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock      = SPINLOCK_INIT;
         volatile int counter = 0;
 
         for (int i = 0; i < 500; i++)
@@ -223,7 +223,7 @@ void test_spinlock(void)
 
     // memory barrier semantics: data visible after unlock
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock               = SPINLOCK_INIT;
         volatile unsigned long shared = 0;
 
         spin_lock(&lock);
@@ -263,7 +263,7 @@ void test_spinlock(void)
 
     // alternating lock/unlock doesn't corrupt state
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock            = SPINLOCK_INIT;
         volatile unsigned long val = 0;
 
         for (int i = 0; i < 200; i++)
@@ -279,7 +279,7 @@ void test_spinlock(void)
 
     // lock/unlock timing: doesn't hang
     {
-        spinlock_t lock = SPINLOCK_INIT;
+        spinlock_t lock  = SPINLOCK_INIT;
         unsigned long t1 = get_system_time();
 
         for (int i = 0; i < 5000; i++)
@@ -288,7 +288,7 @@ void test_spinlock(void)
             spin_unlock(&lock);
         }
 
-        unsigned long t2 = get_system_time();
+        unsigned long t2      = get_system_time();
         unsigned long elapsed = t2 - t1;
         // 5000 uncontended lock/unlock cycles should complete in <1s
         TEST_ASSERT("timing: not hung", elapsed < 1000);

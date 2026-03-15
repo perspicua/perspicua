@@ -29,7 +29,7 @@ static void uint_to_str(unsigned long n, char* buf)
     if (n == 0)
     {
         buf[i++] = '0';
-        buf[i] = '\0';
+        buf[i]   = '\0';
         return;
     }
 
@@ -43,8 +43,8 @@ static void uint_to_str(unsigned long n, char* buf)
     // Reverse the string in-place
     for (int j = 0; j < i / 2; j++)
     {
-        char tmp = buf[j];
-        buf[j] = buf[i - j - 1];
+        char tmp       = buf[j];
+        buf[j]         = buf[i - j - 1];
         buf[i - j - 1] = tmp;
     }
 }
@@ -54,14 +54,14 @@ static void uint_to_str(unsigned long n, char* buf)
  */
 void dashboard_update(void)
 {
-    graphics_draw_rect(0, 0, fb_info.width, 20, 0x00333333, 1); // Dark grey
+    graphics_draw_rect(0, 0, fb_info.width, 20, 0x00333333, 1);  // Dark grey
 
     char buf[64];
     unsigned long uptime = get_system_time() / 1000;
 
     unsigned int x = 10;
     uint_to_str(uptime, buf);
-    graphics_draw_string(x, 6, buf, 0xFFFFFF00, 0xFFFFFFFF); // Yellow
+    graphics_draw_string(x, 6, buf, 0xFFFFFF00, 0xFFFFFFFF);  // Yellow
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "s", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
@@ -69,14 +69,14 @@ void dashboard_update(void)
     // PMM Usage
     graphics_draw_string(x, 6, "PMM:", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
-    unsigned long p_free = pmm_get_free_pages();
+    unsigned long p_free  = pmm_get_free_pages();
     unsigned long p_total = pmm_get_total_pages();
-    uint_to_str((p_total - p_free) * 4 / 1024, buf);         // MB
-    graphics_draw_string(x, 6, buf, 0xFF00FF00, 0xFFFFFFFF); // Green
+    uint_to_str((p_total - p_free) * 4 / 1024, buf);          // MB
+    graphics_draw_string(x, 6, buf, 0xFF00FF00, 0xFFFFFFFF);  // Green
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "/", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8;
-    uint_to_str(p_total * 4 / 1024, buf); // MB
+    uint_to_str(p_total * 4 / 1024, buf);  // MB
     graphics_draw_string(x, 6, buf, 0xFFFFFFFF, 0xFFFFFFFF);
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "MB", 0xFFFFFFFF, 0xFFFFFFFF);
@@ -85,14 +85,14 @@ void dashboard_update(void)
     // HEAP Usage
     graphics_draw_string(x, 6, "HEP:", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
-    unsigned long h_used = heap_get_used();
+    unsigned long h_used  = heap_get_used();
     unsigned long h_total = heap_get_total();
-    uint_to_str(h_used / 1024, buf);                         // KB
-    graphics_draw_string(x, 6, buf, 0xFF00FFFF, 0xFFFFFFFF); // Cyan
+    uint_to_str(h_used / 1024, buf);                          // KB
+    graphics_draw_string(x, 6, buf, 0xFF00FFFF, 0xFFFFFFFF);  // Cyan
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "/", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8;
-    uint_to_str(h_total / 1024, buf); // KB
+    uint_to_str(h_total / 1024, buf);  // KB
     graphics_draw_string(x, 6, buf, 0xFFFFFFFF, 0xFFFFFFFF);
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "KB", 0xFFFFFFFF, 0xFFFFFFFF);
@@ -102,7 +102,7 @@ void dashboard_update(void)
     for (int i = 0; i < 4; i++)
     {
         char c_label[4] = "C0:";
-        c_label[1] = '0' + i;
+        c_label[1]      = '0' + i;
         graphics_draw_string(x, 6, c_label, 0xFFAAAAAA, 0xFFFFFFFF);
         x += 8 * 3;
 

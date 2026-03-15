@@ -11,17 +11,17 @@
 #include "types.h"
 
 /* ELF Identification indexes */
-#define ELF_IDENT_MAG0 0
-#define ELF_IDENT_MAG1 1
-#define ELF_IDENT_MAG2 2
-#define ELF_IDENT_MAG3 3
-#define ELF_IDENT_CLASS 4
-#define ELF_IDENT_DATA 5
-#define ELF_IDENT_VERSION 6
-#define ELF_IDENT_OSABI 7
+#define ELF_IDENT_MAG0       0
+#define ELF_IDENT_MAG1       1
+#define ELF_IDENT_MAG2       2
+#define ELF_IDENT_MAG3       3
+#define ELF_IDENT_CLASS      4
+#define ELF_IDENT_DATA       5
+#define ELF_IDENT_VERSION    6
+#define ELF_IDENT_OSABI      7
 #define ELF_IDENT_ABIVERSION 8
-#define ELF_IDENT_PAD 9
-#define ELF_IDENT_NIDENT 16
+#define ELF_IDENT_PAD        9
+#define ELF_IDENT_NIDENT     16
 
 /* ELF Magic numbers */
 #define ELF_MAG0 0x7f
@@ -30,11 +30,11 @@
 #define ELF_MAG3 'F'
 
 /* ELF Class and Data constants */
-#define ELF_CLASS_64 2
+#define ELF_CLASS_64  2
 #define ELF_DATA_2LSB 1
 
 /* ELF Type and Machine constants */
-#define ELF_TYPE_EXEC 2
+#define ELF_TYPE_EXEC       2
 #define ELF_MACHINE_AARCH64 183
 
 /* Program Header Type constants */

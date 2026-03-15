@@ -27,7 +27,7 @@ void test_timer(void)
     {
         unsigned long before = get_system_time();
         sleep_ms(50);
-        unsigned long after = get_system_time();
+        unsigned long after   = get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("sleep 50ms lower bound", elapsed >= 40);
         TEST_ASSERT("sleep 50ms upper bound", elapsed < 200);
@@ -39,7 +39,7 @@ void test_timer(void)
         unsigned long before = get_system_time();
         sleep_ms(20);
         sleep_ms(20);
-        unsigned long after = get_system_time();
+        unsigned long after   = get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("double sleep lower", elapsed >= 30);
         TEST_ASSERT("double sleep upper", elapsed < 200);

@@ -1,7 +1,7 @@
 #include "test.h"
 
-int tests_passed = 0;
-int tests_failed = 0;
+int tests_passed  = 0;
+int tests_failed  = 0;
 int _suite_failed = 0;
 
 // run all pre-interrupt tests

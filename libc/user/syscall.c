@@ -208,3 +208,62 @@ int sys_dup2(int oldfd, int newfd)
                  : "x0", "x1", "x8", "memory");
     return (int)res;
 }
+
+/*
+ * sys_signal - Sets the handler for a specific signal.
+ */
+int sys_signal(int sig, signal_handler_t handler)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)sig), "r"(handler), "i"(SYS_SIGNAL)
+                 : "x0", "x1", "x8", "memory");
+    return (int)res;
+}
+
+/*
+ * sys_kill - Sends a signal to a process.
+ */
+int sys_kill(int pid, int sig)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "r"((long)sig), "i"(SYS_KILL)
+                 : "x0", "x1", "x8", "memory");
+    return (int)res;
+}
+
+/*
+ * sys_sigreturn - Returns from a signal handler, restoring the context.
+ */
+void sys_sigreturn(void)
+{
+    asm volatile("mov x8, %0\n"
+                 "svc #0"
+                 :
+                 : "i"(SYS_SIGRETURN)
+                 : "x8", "memory");
+}
+
+/*
+ * sys_sigrestore - Registers the restorer for a signal handler.
+ */
+void sys_sigrestore(uintptr_t restorer)
+{
+    asm volatile("mov x0, %0\n"
+                 "mov x8, %1\n"
+                 "svc #0"
+                 :
+                 : "r"(restorer), "i"(SYS_SIGRESTORE)
+                 : "x0", "x8", "memory");
+}

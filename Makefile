@@ -70,7 +70,7 @@ compile_commands: clean
 	@printf "  $(COL_CYAN)BEAR$(COL_DEFAULT)     compile_commands.json\n"
 	$(Q)bear -- $(MAKE) V=1 all
 
-FORMAT_FILES = $(shell find kernel libc user -name "*.c" -o -name "*.h")
+FORMAT_FILES = $(shell find kernel libc uapi user -name "*.c" -o -name "*.h")
 
 format:
 	@printf "  $(COL_CYAN)FORMAT$(COL_DEFAULT)   all C and H files\n"

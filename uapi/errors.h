@@ -14,7 +14,7 @@
 /* Standard error codes (returned as negative values) */
 #define PERS_ERR_NOT_FOUND               1  /* No such file, directory, or process */
 #define PERS_ERR_NOT_A_DIRECTORY         2  /* Component in path is not a directory */
-#define PERS_ERR_IS_A_DIRECTORY           3  /* Operation not allowed on a directory */
+#define PERS_ERR_IS_A_DIRECTORY          3  /* Operation not allowed on a directory */
 #define PERS_ERR_PERMISSION_DENIED       4  /* Operation not permitted */
 #define PERS_ERR_ALREADY_EXISTS          5  /* Resource already exists */
 #define PERS_ERR_OUT_OF_RESOURCES        6  /* System-wide limit reached */
@@ -43,6 +43,6 @@
 #define PERS_ERR_CROSS_DEVICE_LINK       29 /* Link across mount points failed */
 #define PERS_ERR_OPERATION_NOT_SUPPORTED 30 /* Unsupported operation for object type */
 
-#define PERS_ERR_UNKNOWN                 99 /* Unspecified internal error */
+#define PERS_ERR_UNKNOWN 99 /* Unspecified internal error */
 
 #endif /* PERSPICUA_UAPI_ERRORS_H */

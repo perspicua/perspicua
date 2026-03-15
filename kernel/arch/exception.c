@@ -31,18 +31,18 @@ int exception_fixup(struct exception_trap_frame* tf)
 }
 
 // Exception Class values (EC field of ESR_EL1, bits [31:26])
-#define EC_SVC 0x15
+#define EC_SVC              0x15
 #define EC_INST_ABORT_LOWER 0x20
-#define EC_INST_ABORT_SAME 0x21
+#define EC_INST_ABORT_SAME  0x21
 #define EC_DATA_ABORT_LOWER 0x24
-#define EC_DATA_ABORT_SAME 0x25
+#define EC_DATA_ABORT_SAME  0x25
 
 // Fault Status Code masks (IFSC/DFSC, bits [5:0] of ESR_EL1)
-#define FSC_MASK 0x3F
+#define FSC_MASK           0x3F
 #define FSC_TRANSLATION_L0 0x04
 #define FSC_TRANSLATION_L3 0x07
-#define FSC_PERMISSION_L1 0x0D
-#define FSC_PERMISSION_L3 0x0F
+#define FSC_PERMISSION_L1  0x0D
+#define FSC_PERMISSION_L3  0x0F
 
 static const char* fsc_to_string(uint32_t fsc)
 {
@@ -108,10 +108,10 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         return;
     }
 
-    uint32_t fsc = esr & FSC_MASK;
-    int is_write = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
-    int is_user = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
-    int is_inst = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
+    uint32_t fsc       = esr & FSC_MASK;
+    int is_write       = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
+    int is_user        = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
+    int is_inst        = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
     int is_translation = (fsc >= FSC_TRANSLATION_L0 && fsc <= FSC_TRANSLATION_L3);
 
     if (is_user && is_write && (fsc == FSC_PERMISSION_L3))
@@ -127,7 +127,7 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         }
     }
 
-    (void)is_translation; // demand paging hook (ca tot ma batea la cap riciu cu demand paging)
+    (void)is_translation;  // demand paging hook (ca tot ma batea la cap riciu cu demand paging)
 
     if (is_user)
     {
@@ -169,7 +169,7 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     else
     {
         struct task* curr = sched_get_current();
-        int pid = curr ? (int)curr->pid : -1;
+        int pid           = curr ? (int)curr->pid : -1;
         unsigned long tid = curr ? curr->id : 0;
 
         printf("\n[KERNEL PANIC] %s abort in kernel! (PID %d, TID %lu)\n", is_inst ? "Instruction" : "Data", pid, tid);
@@ -224,13 +224,13 @@ void exception_irq_handler(void)
     if (uart_irq_cached == 0)
         uart_irq_cached = uart_get_irq();
 
-    unsigned int iar = mmio_read(gic_c_iar);
+    unsigned int iar    = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
-    if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
+    if (irq_id >= 1020)  // spurious interrupt — do NOT write EOIR
         return;
 
-    if (irq_id == 0) // SGI 0: panic IPI from another core
+    if (irq_id == 0)  // SGI 0: panic IPI from another core
     {
         mmio_write(gic_c_eoir, iar);
         disable_interrupts();
@@ -261,7 +261,7 @@ void exception_irq_handler(void)
         // Handle TX
         if (mis & UART_MIS_TXMIS)
         {
-            tty_handle_rx(&console_tty, 0); // Trigger pump_tx
+            tty_handle_rx(&console_tty, 0);  // Trigger pump_tx
         }
 
         uart_clear_interrupt(mis);

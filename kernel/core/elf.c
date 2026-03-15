@@ -29,8 +29,8 @@
  */
 static int elf_check_header(struct elf64_header* hdr)
 {
-    if (hdr->identity[ELF_IDENT_MAG0] != ELF_MAG0 || hdr->identity[ELF_IDENT_MAG1] != ELF_MAG1 ||
-        hdr->identity[ELF_IDENT_MAG2] != ELF_MAG2 || hdr->identity[ELF_IDENT_MAG3] != ELF_MAG3)
+    if (hdr->identity[ELF_IDENT_MAG0] != ELF_MAG0 || hdr->identity[ELF_IDENT_MAG1] != ELF_MAG1
+        || hdr->identity[ELF_IDENT_MAG2] != ELF_MAG2 || hdr->identity[ELF_IDENT_MAG3] != ELF_MAG3)
     {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
@@ -89,7 +89,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
 
     *entry_point = ehdr.entry;
 
-    size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
+    size_t phdr_table_size             = ehdr.ph_num * sizeof(struct elf64_program_header);
     struct elf64_program_header* phdrs = heap_malloc(phdr_table_size);
     if (!phdrs)
     {
@@ -114,14 +114,14 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
             continue;
         }
 
-        uint64_t vaddr = phdrs[i].vaddr;
-        uint64_t memsz = phdrs[i].mem_size;
+        uint64_t vaddr  = phdrs[i].vaddr;
+        uint64_t memsz  = phdrs[i].mem_size;
         uint64_t filesz = phdrs[i].file_size;
         uint64_t offset = phdrs[i].offset;
-        uint32_t flags = phdrs[i].flags;
+        uint32_t flags  = phdrs[i].flags;
 
         uint64_t start_vpage = vaddr & ~0xFFFULL;
-        uint64_t end_vpage = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
+        uint64_t end_vpage   = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
 
         unsigned long mmu_flags = (flags & ELF_PROG_FLAG_X) ? MMU_PAGE_USER_CODE : MMU_PAGE_USER_DATA;
 
@@ -153,9 +153,9 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                 mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags);
             }
 
-            uint64_t page_end = page + PAGE_SIZE;
+            uint64_t page_end           = page + PAGE_SIZE;
             uint64_t copy_start_in_page = (vaddr > page) ? (vaddr - page) : 0;
-            uint64_t segment_end_vaddr = vaddr + filesz;
+            uint64_t segment_end_vaddr  = vaddr + filesz;
             uint64_t copy_end_in_page;
 
             if (segment_end_vaddr <= page)
@@ -174,11 +174,11 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
             if (copy_start_in_page < copy_end_in_page)
             {
                 uint64_t bytes_to_read = copy_end_in_page - copy_start_in_page;
-                uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
+                uint64_t file_offset   = offset + (page + copy_start_in_page - vaddr);
 
                 vfs_lseek(fd, file_offset, VFS_SEEK_SET);
-                if (vfs_read(fd, (void*)((uintptr_t)kernel_vaddr + copy_start_in_page), bytes_to_read) !=
-                    (int)bytes_to_read)
+                if (vfs_read(fd, (void*)((uintptr_t)kernel_vaddr + copy_start_in_page), bytes_to_read)
+                    != (int)bytes_to_read)
                 {
                     printf("[  ELF ] Error: failed to read segment data\n");
                     heap_free(phdrs);

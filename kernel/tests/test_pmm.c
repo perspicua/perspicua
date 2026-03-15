@@ -88,9 +88,9 @@ void test_pmm(void)
         TEST_ASSERT("4p a ok", a != NULL);
         TEST_ASSERT("4p b ok", b != NULL);
         unsigned long a_start = (unsigned long)a;
-        unsigned long a_end = a_start + 4 * PAGE_SIZE;
+        unsigned long a_end   = a_start + 4 * PAGE_SIZE;
         unsigned long b_start = (unsigned long)b;
-        unsigned long b_end = b_start + 4 * PAGE_SIZE;
+        unsigned long b_end   = b_start + 4 * PAGE_SIZE;
         TEST_ASSERT("4p no overlap", a_end <= b_start || b_end <= a_start);
         pmm_free_pages(a, 4);
         pmm_free_pages(b, 4);
@@ -143,14 +143,14 @@ void test_pmm(void)
         for (int order = 0; order <= 5; order++)
         {
             unsigned long count = 1UL << order;
-            void* blk = pmm_alloc_pages(count);
+            void* blk           = pmm_alloc_pages(count);
             TEST_ASSERT("order alloc", blk != NULL);
             TEST_ASSERT("order aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
             // Write first and last byte of each page
             for (unsigned long i = 0; i < count; i++)
             {
                 volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
-                *pg = (unsigned char)(i & 0xFF);
+                *pg                        = (unsigned char)(i & 0xFF);
                 TEST_ASSERT("order writable", *pg == (unsigned char)(i & 0xFF));
             }
             pmm_free_pages(blk, count);
@@ -164,7 +164,7 @@ void test_pmm(void)
         TEST_ASSERT("64-page alloc", blk != NULL);
         TEST_ASSERT("64-page aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
         // Touch first, middle, last pages
-        *(volatile unsigned char*)blk = 0xAA;
+        *(volatile unsigned char*)blk                    = 0xAA;
         *((volatile unsigned char*)blk + 32 * PAGE_SIZE) = 0xBB;
         *((volatile unsigned char*)blk + 63 * PAGE_SIZE) = 0xCC;
         TEST_ASSERT("64p first", *(volatile unsigned char*)blk == 0xAA);
@@ -178,7 +178,7 @@ void test_pmm(void)
     {
         void* blk = pmm_alloc_pages(256);
         TEST_ASSERT("256-page alloc", blk != NULL);
-        *(volatile unsigned long*)blk = 0x1234567890ABCDEFULL;
+        *(volatile unsigned long*)blk                                               = 0x1234567890ABCDEFULL;
         *((volatile unsigned long*)blk + 255 * (PAGE_SIZE / sizeof(unsigned long))) = 0xFEDCBA0987654321ULL;
         TEST_ASSERT("1MB first", *(volatile unsigned long*)blk == 0x1234567890ABCDEFULL);
         pmm_free_pages(blk, 256);
@@ -205,7 +205,7 @@ void test_pmm(void)
         for (int i = 0; i < 3; i++)
         {
             volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
-            *pg = (unsigned char)i;
+            *pg                        = (unsigned char)i;
         }
         pmm_free_pages(blk, 3);
     }
@@ -218,7 +218,7 @@ void test_pmm(void)
         for (int i = 0; i < 5; i++)
         {
             volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
-            *pg = (unsigned char)(0x50 + i);
+            *pg                        = (unsigned char)(0x50 + i);
             TEST_ASSERT("5p write", *pg == (unsigned char)(0x50 + i));
         }
         pmm_free_pages(blk, 5);
@@ -345,7 +345,7 @@ void test_pmm(void)
     // multi-page block is truly contiguous
     {
         unsigned long count = 8;
-        unsigned char* blk = (unsigned char*)pmm_alloc_pages(count);
+        unsigned char* blk  = (unsigned char*)pmm_alloc_pages(count);
         TEST_ASSERT("contig alloc", blk != NULL);
         // Write a different byte at the start of each page
         for (unsigned long i = 0; i < count; i++)
@@ -363,7 +363,7 @@ void test_pmm(void)
     // fill entire multi-page block
     {
         unsigned long count = 4;
-        unsigned char* blk = (unsigned char*)pmm_alloc_pages(count);
+        unsigned char* blk  = (unsigned char*)pmm_alloc_pages(count);
         TEST_ASSERT("fill4p alloc", blk != NULL);
         // Fill entire 16KB with pattern
         unsigned long total = count * PAGE_SIZE;
@@ -668,13 +668,13 @@ void test_pmm(void)
     // write boundary words of each page in multi-page block
     {
         unsigned long count = 16;
-        unsigned long* blk = (unsigned long*)pmm_alloc_pages(count);
+        unsigned long* blk  = (unsigned long*)pmm_alloc_pages(count);
         TEST_ASSERT("16p word alloc", blk != NULL);
         unsigned long words_per_page = PAGE_SIZE / sizeof(unsigned long);
         for (unsigned long pg = 0; pg < count; pg++)
         {
             // Write first and last word of each page
-            blk[pg * words_per_page] = 0xAAAAAAAA00000000UL | pg;
+            blk[pg * words_per_page]                      = 0xAAAAAAAA00000000UL | pg;
             blk[pg * words_per_page + words_per_page - 1] = 0xBBBBBBBB00000000UL | pg;
         }
         int ok = 1;
@@ -698,7 +698,7 @@ void test_pmm(void)
         for (int i = 0; i < 6; i++)
         {
             unsigned long count = 1UL << i;
-            ptrs[i] = pmm_alloc_pages(count);
+            ptrs[i]             = pmm_alloc_pages(count);
             TEST_ASSERT("growing alloc", ptrs[i] != NULL);
         }
         for (int i = 5; i >= 0; i--)
@@ -712,7 +712,7 @@ void test_pmm(void)
         for (int i = 0; i < 6; i++)
         {
             unsigned long count = 32UL >> i;
-            ptrs[i] = pmm_alloc_pages(count);
+            ptrs[i]             = pmm_alloc_pages(count);
             TEST_ASSERT("shrinking alloc", ptrs[i] != NULL);
         }
         for (int i = 0; i < 6; i++)

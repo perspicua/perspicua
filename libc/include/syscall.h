@@ -9,15 +9,16 @@
 #define PERSPICUA_LIBC_SYSCALL_H
 
 #include "types.h"
+#include "signals.h"
 
 /* Filesystem access mode and control flags */
-#define VFS_O_RDONLY 0x0000
-#define VFS_O_WRONLY 0x0001
-#define VFS_O_RDWR 0x0002
+#define VFS_O_RDONLY  0x0000
+#define VFS_O_WRONLY  0x0001
+#define VFS_O_RDWR    0x0002
 #define VFS_O_ACCMODE 0x0003
 
-#define VFS_O_CREAT 0x0100
-#define VFS_O_TRUNC 0x0200
+#define VFS_O_CREAT  0x0100
+#define VFS_O_TRUNC  0x0200
 #define VFS_O_APPEND 0x0400
 
 /* System call wrapper prototypes */
@@ -34,5 +35,9 @@ int sys_fork(void);
 int sys_waitpid(int pid, int* status);
 int sys_pipe(int pipefd[2]);
 int sys_dup2(int oldfd, int newfd);
+int sys_signal(int sig, signal_handler_t handler);
+int sys_kill(int pid, int sig);
+void sys_sigreturn(void);
+void sys_sigrestore(uintptr_t restorer);
 
 #endif /* PERSPICUA_LIBC_SYSCALL_H */
