@@ -160,7 +160,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
 
             if (flags & PF_X)
             {
-                flush_icache_range(kernel_vaddr, PAGE_SIZE);
+                process_flush_icache_range(kernel_vaddr, PAGE_SIZE);
             }
         }
     }

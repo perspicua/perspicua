@@ -1,24 +1,74 @@
+/*
+ * kernel/sched/process.c
+ *
+ * Core process management, lifecycle, and task definitions.
+ * Handles user-space execution, process tracking, and address spaces.
+ */
+
 #include "process.h"
-#include "pmm.h"
+
+#include "uapi/errors.h"
+
+#include "arch/exception.h"
+
+#include "addr.h"
+#include "elf.h"
 #include "mmu.h"
+#include "panic.h"
+#include "pmm.h"
 #include "sched.h"
 #include "slab.h"
-#include "types.h"
-#include "uapi/errors.h"
-#include "vfs.h"
-#include "elf.h"
-#include "string.h"
 #include "stdio.h"
-#include "panic.h"
-#include "addr.h"
-#include "arch/exception.h"
+#include "string.h"
 #include "timer.h"
+#include "types.h"
+#include "vfs.h"
 
+/* --- Global Variables --- */
 spinlock_t process_table_lock = SPINLOCK_INIT;
+struct process process_table[PROCESS_TABLE_SIZE];
 
+/* --- External References --- */
 extern void ret_to_user(void);
 
-void flush_icache_range(void* start, size_t size)
+/* --- Private Helper Functions --- */
+
+/*
+ * Initializes the virtual address allocator for a new process.
+ */
+static void va_init(struct va_allocator* va)
+{
+    va->count = 0;
+    va->next_va = USER_VA_BASE;
+    for (size_t i = 0; i < USER_VA_MAX_REGIONS; i++)
+    {
+        va->regions[i].base = 0;
+        va->regions[i].pages = 0;
+    }
+}
+
+/*
+ * Allocates a kernel stack for a new process.
+ * Includes a guard page and a canary value.
+ */
+static void* alloc_kernel_stack(void)
+{
+    unsigned char* base = (unsigned char*)pmm_alloc_pages(3);
+    ASSERT(base != NULL);
+    mmu_unmap_page((unsigned long)base);
+
+    asm volatile("dsb ish" ::: "memory");
+    *(unsigned long*)(base + PAGE_SIZE) = 0xDEADC0DEDEADC0DEULL;
+
+    return base + PAGE_SIZE;
+}
+
+/* --- Public API Implementations --- */
+
+/*
+ * Flushes the instruction cache for a given range.
+ */
+void process_flush_icache_range(void* start, size_t size)
 {
     unsigned long addr = (unsigned long)start & ~63UL;
     unsigned long end = ((unsigned long)start + size + 63UL) & ~63UL;
@@ -33,19 +83,9 @@ void flush_icache_range(void* start, size_t size)
     asm volatile("isb");
 }
 
-struct process process_table[PROCESS_TABLE_SIZE];
-
-static void va_init(struct va_allocator* va)
-{
-    va->count = 0;
-    va->next_va = USER_VA_BASE;
-    for (size_t i = 0; i < USER_VA_MAX_REGIONS; i++)
-    {
-        va->regions[i].base = 0;
-        va->regions[i].pages = 0;
-    }
-}
-
+/*
+ * Allocates user virtual memory regions.
+ */
 uintptr_t process_va_alloc(struct va_allocator* va, size_t pages)
 {
     if (pages == 0 || va->count >= USER_VA_MAX_REGIONS)
@@ -66,6 +106,9 @@ uintptr_t process_va_alloc(struct va_allocator* va, size_t pages)
     return base;
 }
 
+/*
+ * Frees user virtual memory regions.
+ */
 void process_va_free(struct va_allocator* va, uintptr_t base)
 {
     for (size_t i = 0; i < va->count; i++)
@@ -80,6 +123,9 @@ void process_va_free(struct va_allocator* va, uintptr_t base)
     }
 }
 
+/*
+ * Returns the PID of the currently running process.
+ */
 int process_find_current(void)
 {
     struct task* t = sched_get_current();
@@ -89,6 +135,9 @@ int process_find_current(void)
     return (int)t->pid;
 }
 
+/*
+ * Initializes the process subsystem.
+ */
 void process_init(void)
 {
     for (size_t i = 0; i < PROCESS_TABLE_SIZE; i++)
@@ -107,18 +156,9 @@ void process_init(void)
     process_table[0].asid = 0;
 }
 
-static void* alloc_kernel_stack(void)
-{
-    unsigned char* base = (unsigned char*)pmm_alloc_pages(3);
-    ASSERT(base != NULL);
-    mmu_unmap_page((unsigned long)base);
-
-    asm volatile("dsb ish" ::: "memory");
-    *(unsigned long*)(base + PAGE_SIZE) = 0xDEADC0DEDEADC0DEULL;
-
-    return base + PAGE_SIZE;
-}
-
+/*
+ * Manually creates a user process from a raw code blob (used for initial user tasks).
+ */
 void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -179,7 +219,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].paddr_kernel_stack = V2P(kstack);
 
     memcpy(code_page, code_ptr, code_size);
-    flush_icache_range(code_page, code_size);
+    process_flush_icache_range(code_page, code_size);
 
     asm volatile("ic ialluis\n dsb ish\n isb");
 
@@ -207,6 +247,9 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
 }
 
+/*
+ * Creates a process from an ELF file on disk.
+ */
 int process_create_from_file(const char* path, uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -296,6 +339,9 @@ int process_create_from_file(const char* path, uint32_t pid)
     return PERS_SUCCESS;
 }
 
+/*
+ * Replaces the current process's image with a new executable (exec syscall).
+ */
 int process_exec(const char* path)
 {
     int pid = process_find_current();
@@ -320,9 +366,10 @@ int process_exec(const char* path)
     size_t stack_pages = 4;
 
     uintptr_t vaddr_stack = process_va_alloc(&new_va, stack_pages);
-    if (!vaddr_stack) { // FIX: Protected against memory faults skipping checks  
+    if (!vaddr_stack)
+    { // FIX: Protected against memory faults skipping checks
         mmu_destroy_user_pgd(new_pgd);
-        return -PERS_ERR_OUT_OF_MEMORY; 
+        return -PERS_ERR_OUT_OF_MEMORY;
     }
     for (size_t i = 0; i < stack_pages; i++)
     {
@@ -372,6 +419,9 @@ int process_exec(const char* path)
     return PERS_SUCCESS;
 }
 
+/*
+ * Terminates a process and reclaims its resources.
+ */
 void process_exit(uint32_t pid, int exit_status)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -385,9 +435,11 @@ void process_exit(uint32_t pid, int exit_status)
     printf("[PROCESS] PID %d exiting with status %d. Reclaiming resources...\n", pid, exit_status);
 
     // Reparent orphans immediately to evade dead-struct-task Use-After-Free
-    for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
-        if (i != (int)pid && process_table[i].state != PROCESS_STATE_EMPTY && process_table[i].parent_pid == pid) {
-            process_table[i].parent_pid = 1; 
+    for (int i = 0; i < PROCESS_TABLE_SIZE; i++)
+    {
+        if (i != (int)pid && process_table[i].state != PROCESS_STATE_EMPTY && process_table[i].parent_pid == pid)
+        {
+            process_table[i].parent_pid = 1;
             process_table[i].parent_task = NULL; // Clear dead context referencing
         }
     }
@@ -434,6 +486,9 @@ void process_exit(uint32_t pid, int exit_status)
     }
 }
 
+/*
+ * Duplicates the current process (fork syscall).
+ */
 int process_fork(struct trap_frame* parent_tf)
 {
     int parent_pid = process_find_current();
@@ -528,6 +583,9 @@ int process_fork(struct trap_frame* parent_tf)
     return child_pid;
 }
 
+/*
+ * Waits for a specific child process (or any) to terminate.
+ */
 int process_waitpid(int pid, int* status)
 {
     int parent_pid = process_find_current();
@@ -566,7 +624,7 @@ int process_waitpid(int pid, int* status)
             return -PERS_ERR_NO_SUCH_PROCESS;
         }
 
-        unsigned long flags = irq_save(); 
+        unsigned long flags = irq_save();
         struct task* curr = sched_get_current();
         if (curr)
             curr->state = TASK_BLOCKED;
@@ -578,6 +636,9 @@ int process_waitpid(int pid, int* status)
     }
 }
 
+/*
+ * Retrieves the hardware TTBR0 value for a given PID.
+ */
 unsigned long process_get_ttbr0(uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -598,7 +659,10 @@ unsigned long process_get_ttbr0(uint32_t pid)
     return ttbr0;
 }
 
-void drop_to_user(void* code_vaddr, void* stack_vaddr)
+/*
+ * Jumps to user-space at the specified code and stack addresses.
+ */
+void process_drop_to_user(void* code_vaddr, void* stack_vaddr)
 {
     uint64_t spsr = 0;
 
