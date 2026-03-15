@@ -1,12 +1,20 @@
-// perspicua hardware tree
+/*
+ * pht.h - Perspicua Hardware Tree (PHT) public API.
+ *
+ * This file defines the structures and functions used to interact with the
+ * hardware tree, which describes the system's memory and peripheral layout.
+ */
 
-#ifndef _PHT_H_
-#define _PHT_H_
+#ifndef PERSPICUA_DEVICETREE_PHT_H
+#define PERSPICUA_DEVICETREE_PHT_H
 
 #include "types.h"
 
-#define PHT_MAGIC 0x52494349 // RICI because Riciu is cool
+#define PHT_MAGIC 0x52494349 /* RICI */
 
+/*
+ * pht_node - Represents a single hardware device or memory region.
+ */
 struct pht_node
 {
     char name[32];
@@ -16,6 +24,9 @@ struct pht_node
     uint32_t irq;
 } __attribute__((aligned(16)));
 
+/*
+ * pht_header - The root structure of the Perspicua Hardware Tree.
+ */
 struct pht_header
 {
     uint32_t magic;
@@ -23,6 +34,10 @@ struct pht_header
     struct pht_node nodes[16];
 } __attribute__((aligned(16)));
 
+/*
+ * pht_find_device - Searches the hardware tree for a device by its name.
+ * Returns a pointer to the node if found, or NULL otherwise.
+ */
 struct pht_node* pht_find_device(const char* name);
 
-#endif // _PHT_H_
+#endif /* PERSPICUA_DEVICETREE_PHT_H */

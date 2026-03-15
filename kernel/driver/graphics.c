@@ -16,7 +16,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
 {
     if (x >= fb_info.width || y >= fb_info.height)
         return;
-    
+
     // Use safer comparisons to prevent integer overflow
     if (w > fb_info.width - x)
         w = fb_info.width - x;
@@ -59,7 +59,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
 {
     if ((unsigned char)c >= 128)
         return;
-    
+
     // Safer bounds check
     if (x > fb_info.width - 8 || y > fb_info.height - 8 || fb_info.width < 8 || fb_info.height < 8)
         return;

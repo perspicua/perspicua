@@ -224,8 +224,9 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     asm volatile("ic ialluis\n dsb ish\n isb");
 
     uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 2 * PAGE_SIZE;
-    struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
-    memset(tf, 0, sizeof(struct trap_frame));
+    struct exception_trap_frame* tf =
+        (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
+    memset(tf, 0, sizeof(struct exception_trap_frame));
     tf->elr_el1 = process_table[pid].vaddr_code;
     tf->spsr_el1 = SPSR_EL0_USER;
     tf->sp_el0 = (process_table[pid].vaddr_user_stack + PAGE_SIZE) & ~15UL;
@@ -317,8 +318,9 @@ int process_create_from_file(const char* path, uint32_t pid)
     process_table[pid].cwd = vfs_resolve_path("/", NULL, &err);
 
     uintptr_t kernel_stack_top = (uintptr_t)kstack + 2 * PAGE_SIZE;
-    struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
-    memset(tf, 0, sizeof(struct trap_frame));
+    struct exception_trap_frame* tf =
+        (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
+    memset(tf, 0, sizeof(struct exception_trap_frame));
 
     tf->elr_el1 = entry_point;
     tf->spsr_el1 = SPSR_EL0_USER;
@@ -398,9 +400,10 @@ int process_exec(const char* path)
         mmu_destroy_user_pgd(old_pgd);
 
     uintptr_t kernel_stack_top = p->vaddr_kernel_stack + 2 * PAGE_SIZE;
-    struct trap_frame* tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
+    struct exception_trap_frame* tf =
+        (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
 
-    memset(tf, 0, sizeof(struct trap_frame));
+    memset(tf, 0, sizeof(struct exception_trap_frame));
     tf->elr_el1 = entry_point;
     tf->spsr_el1 = SPSR_EL0_USER;
     tf->sp_el0 = (vaddr_stack + (stack_pages * PAGE_SIZE)) & ~15UL;
@@ -489,7 +492,7 @@ void process_exit(uint32_t pid, int exit_status)
 /*
  * Duplicates the current process (fork syscall).
  */
-int process_fork(struct trap_frame* parent_tf)
+int process_fork(struct exception_trap_frame* parent_tf)
 {
     int parent_pid = process_find_current();
     if (parent_pid < 0)
@@ -568,8 +571,9 @@ int process_fork(struct trap_frame* parent_tf)
     child->paddr_kernel_stack = V2P(kstack);
 
     uintptr_t kernel_stack_top = (uintptr_t)kstack + 2 * PAGE_SIZE;
-    struct trap_frame* child_tf = (struct trap_frame*)(kernel_stack_top - sizeof(struct trap_frame));
-    memcpy(child_tf, parent_tf, sizeof(struct trap_frame));
+    struct exception_trap_frame* child_tf =
+        (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
+    memcpy(child_tf, parent_tf, sizeof(struct exception_trap_frame));
 
     child_tf->x[0] = 0;
 

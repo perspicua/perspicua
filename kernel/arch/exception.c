@@ -16,7 +16,7 @@ extern struct tty console_tty;
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 
-int fixup_exception(struct trap_frame* tf)
+int exception_fixup(struct exception_trap_frame* tf)
 {
     unsigned long* p;
     for (p = __ex_table_start; p < __ex_table_end; p += 2)
@@ -87,12 +87,12 @@ static const char* fsc_to_string(uint32_t fsc)
     }
 }
 
-static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
+static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t esr)
 {
     unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
-    if (fixup_exception(tf))
+    if (exception_fixup(tf))
     {
         return;
     }
@@ -167,7 +167,7 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
     }
 }
 
-void c_unhandled_vector(void)
+void exception_unhandled_vector(void)
 {
     unsigned int esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
@@ -192,7 +192,7 @@ void c_unhandled_vector(void)
 
 static unsigned int uart_irq_cached = 0;
 
-void c_irq_handler(void)
+void exception_irq_handler(void)
 {
     // check before even reading IAR — a panic IPI may have woken us
     if (kernel_panicked)
@@ -251,7 +251,7 @@ void c_irq_handler(void)
     mmio_write(GICC_EOIR, iar);
 }
 
-void c_sync_handler(struct trap_frame* tf)
+void exception_sync_handler(struct exception_trap_frame* tf)
 {
     uintptr_t esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));

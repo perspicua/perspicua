@@ -91,7 +91,7 @@ void process_init(void);
 void process_create(void* code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char* path, uint32_t pid);
 int process_exec(const char* path);
-int process_fork(struct trap_frame* parent_tf);
+int process_fork(struct exception_trap_frame* parent_tf);
 void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int* status);
 

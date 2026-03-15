@@ -35,7 +35,7 @@ vector_table:
     ventry default_exception_handler // SError
 
 default_exception_handler:
-    bl c_unhandled_vector
+    bl exception_unhandled_vector
 1:  wfe
     b 1b
 
@@ -166,13 +166,13 @@ fiq_discard:
 sync_handler:
     save_all
     mov x0, sp
-    bl c_sync_handler
+    bl exception_sync_handler
     b ret_to_user
 
 .global irq_handler
 irq_handler:
     save_all
-    bl c_irq_handler
+    bl exception_irq_handler
     // fallthrough to ret_to_user
 
 .global ret_to_user

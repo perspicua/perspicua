@@ -211,7 +211,7 @@ void sched_sleep_ms(unsigned long ms)
     curr->state = TASK_BLOCKED;
     curr->wake_time = get_system_time() + ms;
     insert_sleep(curr);
-    
+
     schedule();
     irq_restore(flags);
 }

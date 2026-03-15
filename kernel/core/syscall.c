@@ -62,7 +62,7 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
     return 1;
 }
 
-void handle_syscall(struct trap_frame* tf)
+void handle_syscall(struct exception_trap_frame* tf)
 {
     uint64_t syscall_nr = tf->x[8];
     struct task* curr = sched_get_current();

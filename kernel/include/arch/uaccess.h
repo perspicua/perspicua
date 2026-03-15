@@ -1,13 +1,35 @@
-#ifndef _UACCESS_H_
-#define _UACCESS_H_
+/*
+ * kernel/include/arch/uaccess.h
+ *
+ * Safe access to user-space memory and exception fixup mechanisms.
+ */
+
+#ifndef PERSPICUA_ARCH_UACCESS_H
+#define PERSPICUA_ARCH_UACCESS_H
 
 #include "types.h"
 
-// returns the number of bytes that could not be copied (0 on success)
+/* Forward declaration for the exception_trap_frame struct */
+struct exception_trap_frame;
+
+/* --- Function Prototypes --- */
+
+/*
+ * Safely copies data from user-space to kernel-space.
+ * Returns the number of bytes that could NOT be copied (0 on success).
+ */
 int copy_from_user(void* dest, const void* src, size_t n);
+
+/*
+ * Safely copies data from kernel-space to user-space.
+ * Returns the number of bytes that could NOT be copied (0 on success).
+ */
 int copy_to_user(void* dest, const void* src, size_t n);
 
-// returns 1 if a fixup was applied, 0 otherwise
-int fixup_exception(struct trap_frame* tf);
+/*
+ * Checks if a fault occurred in a safe copy routine and applies fixups.
+ * Returns 1 if a fixup was applied, 0 otherwise.
+ */
+int exception_fixup(struct exception_trap_frame* tf);
 
-#endif // _UACCESS_H_
+#endif /* PERSPICUA_ARCH_UACCESS_H */

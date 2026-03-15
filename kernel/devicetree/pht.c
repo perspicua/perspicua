@@ -1,7 +1,18 @@
+/*
+ * pht.c - Implementation of the Perspicua Hardware Tree (PHT).
+ *
+ * This file contains the system's static hardware tree definition and
+ * functions for searching it.
+ */
+
 #include "devicetree/pht.h"
+
+#include <stddef.h>
+
 #include "string.h"
 
-struct pht_header system_pht = {
+/* The main system hardware tree. */
+static struct pht_header system_pht = {
     .magic = PHT_MAGIC,
     .nr_devices = 5,
     .nodes = {
@@ -22,10 +33,15 @@ struct pht_header system_pht = {
         // mailbox
         {.name = "mailbox", .address[0] = 0xFE00B880, .size[0] = 0x100, .reg_count = 1, .irq = 0}}};
 
+/*
+ * pht_find_device - Searches the hardware tree for a device by its name.
+ */
 struct pht_node* pht_find_device(const char* name)
 {
     if (system_pht.magic != PHT_MAGIC)
+    {
         return NULL;
+    }
 
     for (size_t i = 0; i < system_pht.nr_devices; i++)
     {
