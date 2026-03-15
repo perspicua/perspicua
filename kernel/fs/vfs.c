@@ -434,6 +434,12 @@ int vfs_close(int fd)
 
     if (atomic_dec_and_test(&f->refcount))
     {
+        /* Perform filesystem-specific cleanup before freeing the file object */
+        if (f->node->ops && f->node->ops->close)
+        {
+            f->node->ops->close(f);
+        }
+
         vfs_vnode_put(f->node);
         slab_free(f);
     }
@@ -591,4 +597,63 @@ int vfs_write(int fd, const void* buffer, size_t count)
 
     atomic_dec_and_test(&f->refcount);
     return bytes;
+}
+
+/*
+ * vfs_dup2 - Duplicates a file descriptor to a specific new descriptor.
+ */
+int vfs_dup2(int oldfd, int newfd)
+{
+    if (oldfd < 0 || oldfd >= VFS_MAX_FDS || newfd < 0 || newfd >= VFS_MAX_FDS)
+    {
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0)
+    {
+        return pid;
+    }
+
+    struct process* p = &process_table[pid];
+    struct vfs_file* to_free = (void*)0;
+
+    spin_lock(&p->fd_lock);
+    struct vfs_file* old_f = p->fd_table[oldfd];
+    if (!old_f)
+    {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    if (oldfd == newfd)
+    {
+        spin_unlock(&p->fd_lock);
+        return newfd;
+    }
+
+    struct vfs_file* existing_f = p->fd_table[newfd];
+    if (existing_f)
+    {
+        if (atomic_dec_and_test(&existing_f->refcount))
+        {
+            to_free = existing_f;
+        }
+    }
+
+    p->fd_table[newfd] = old_f;
+    atomic_inc(&old_f->refcount);
+    spin_unlock(&p->fd_lock);
+
+    if (to_free)
+    {
+        if (to_free->node->ops && to_free->node->ops->close)
+        {
+            to_free->node->ops->close(to_free);
+        }
+        vfs_vnode_put(to_free->node);
+        slab_free(to_free);
+    }
+
+    return newfd;
 }

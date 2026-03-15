@@ -21,5 +21,7 @@
 #define SYS_EXEC    9
 #define SYS_FORK    10
 #define SYS_WAITPID 11
+#define SYS_PIPE    12
+#define SYS_DUP2    13
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

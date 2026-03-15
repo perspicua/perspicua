@@ -60,6 +60,7 @@ struct vfs_vnode_ops
     int (*read)(struct vfs_file* file, void* buffer, size_t size);
     int (*write)(struct vfs_file* file, const void* buffer, size_t size);
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
+    int (*close)(struct vfs_file* file);
 };
 
 /*
@@ -138,6 +139,11 @@ int vfs_read(int fd, void* buffer, size_t count);
  * vfs_write - Writes data from a buffer to a file descriptor.
  */
 int vfs_write(int fd, const void* buffer, size_t count);
+
+/*
+ * vfs_dup2 - Duplicates a file descriptor.
+ */
+int vfs_dup2(int oldfd, int newfd);
 
 /*
  * vfs_mount - Attaches a filesystem root vnode to the global namespace
