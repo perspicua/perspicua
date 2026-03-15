@@ -1,7 +1,10 @@
 .section ".text.boot"
 
 .global _entry
+
 _entry:
+    mov x20, x0      // save the dtb pointer for later use in main()
+
     mrs x0, CurrentEL
     lsr x0, x0, #2
     cmp x0, #2
@@ -149,8 +152,9 @@ clear_bss_loop:
     b 1b
 
 jump_main:
-    ldr x0, =main
-    br x0               // Core 0 goes to main()
+    mov x0, x20         // pass the dtb pointer to main() as the first argument
+    ldr x1, =main
+    br x1               // Core 0 goes to main()
 
 jump_secondary_main:
     ldr x0, =secondary_main

@@ -36,6 +36,8 @@
 #include "driver/dashboard.h"
 #include "driver/sd.h"
 
+#include "devicetree/fdt.h"
+
 #include "test.h"
 
 /* Kernel metadata and versioning */
@@ -140,8 +142,13 @@ static void dashboard_task(void)
 /*
  * main - The primary kernel initialization routine.
  */
-__attribute__((used)) int main(void)
+__attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
+    
+    /* Stage 0: initialize devicetree parser*/
+    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
+    fdt_init(global_dtb_ptr);
+    printf("[  DTB ] DTB parsed successfully, root node: \n");
     /* Stage 1: Basic hardware and console bring-up */
     gpio_init();
     uart_init();
@@ -157,9 +164,16 @@ __attribute__((used)) int main(void)
 
     /* Stage 2: Memory management initialization */
     pmm_reserve_range(V2P((unsigned long)initrd_start), (unsigned long)(initrd_end - initrd_start), "initrd");
+    
+    // Parse DTB memory reservations right before initializing the PMM
+    fdt_parse_memory_reservations();
 
     pmm_init();
     mmu_init();
+
+    // Re-base DTB pointers to virtual addresses post-MMU
+    fdt_rebase(P2V(global_dtb_ptr));
+
     remap_framebuffer_pages();
     heap_init();
 

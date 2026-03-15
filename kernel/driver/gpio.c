@@ -10,7 +10,7 @@
 #include "panic.h"
 #include "addr.h"
 
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 
 /* GPIO Register Pointers (Static) */
 static volatile unsigned int* gpio_gpfsel0 = (void*)0;
@@ -21,13 +21,24 @@ static volatile unsigned int* gpio_gppupdn0 = (void*)0;
  */
 void gpio_init(void)
 {
-    struct pht_node* gpio_node = pht_find_device("gpio");
-    if (gpio_node == (void*)0)
+    const uint32_t *gpio_node = fdt_find_node_by_compatible("brcm,bcm2711-gpio");
+    if (!gpio_node)
     {
-        PANIC("[ GPIO ] Device node not found in hardware tree!\n");
+        PANIC("[ GPIO ] Device node not found in DTB!\n");
     }
 
-    uintptr_t vbase = P2V(gpio_node->address[0]);
+    struct fdt_property reg_prop;
+    if (fdt_get_property(gpio_node, "reg", &reg_prop) != 0) {
+        PANIC("[ GPIO ] Missing 'reg' property in DTB!\n");
+    }
+
+    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
+    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
+    if (phys_base < 0xFC000000) { 
+        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+    }
+    
+    uintptr_t vbase = P2V(phys_base);
 
     // BCM2711 GPIO register offsets
     gpio_gpfsel0 = (unsigned int*)(vbase + 0x00);
