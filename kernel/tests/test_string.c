@@ -166,7 +166,7 @@ void test_string(void)
 
     // strtok
     {
-        char buf[] = "   hello   world   from   strtok   ";
+        char buf[]  = "   hello   world   from   strtok   ";
         char* token = strtok(buf, " ");
         TEST_ASSERT("strtok first", token != NULL && strcmp(token, "hello") == 0);
         token = strtok(NULL, " ");
@@ -179,13 +179,13 @@ void test_string(void)
         TEST_ASSERT("strtok end", token == NULL);
 
         char buf2[] = "no_delims";
-        token = strtok(buf2, " ");
+        token       = strtok(buf2, " ");
         TEST_ASSERT("strtok single", token != NULL && strcmp(token, "no_delims") == 0);
         token = strtok(NULL, " ");
         TEST_ASSERT("strtok single end", token == NULL);
 
         char buf3[] = ",,,";
-        token = strtok(buf3, ",");
+        token       = strtok(buf3, ",");
         TEST_ASSERT("strtok only delims", token == NULL);
     }
     TEST_PASS("strtok");

@@ -18,12 +18,12 @@ void spin_lock(spinlock_t* lock)
     unsigned int tmp;
     unsigned int one = 1;
 
-    asm volatile("   sevl\n"                   // set event flag so first wfe falls through
-                 "1: wfe\n"                    // power-efficient wait
-                 "2: ldaxr   %w0, [%1]\n"      // load-acquire exclusive
-                 "   cbnz    %w0, 1b\n"        // if locked, go back to wfe
-                 "   stxr    %w0, %w2, [%1]\n" // try to store 1
-                 "   cbnz    %w0, 2b\n"        // if store failed, retry ldaxr
+    asm volatile("   sevl\n"                    // set event flag so first wfe falls through
+                 "1: wfe\n"                     // power-efficient wait
+                 "2: ldaxr   %w0, [%1]\n"       // load-acquire exclusive
+                 "   cbnz    %w0, 1b\n"         // if locked, go back to wfe
+                 "   stxr    %w0, %w2, [%1]\n"  // try to store 1
+                 "   cbnz    %w0, 2b\n"         // if store failed, retry ldaxr
                  : "=&r"(tmp)
                  : "r"(&lock->locked), "r"(one)
                  : "memory");
@@ -34,8 +34,8 @@ void spin_lock(spinlock_t* lock)
  */
 void spin_unlock(spinlock_t* lock)
 {
-    asm volatile("   stlr    %w0, [%1]\n" // store-release (0 -> unlocked)
-                 "   sev\n"               // signal event to wake waiting cores
+    asm volatile("   stlr    %w0, [%1]\n"  // store-release (0 -> unlocked)
+                 "   sev\n"                // signal event to wake waiting cores
                  :
                  : "r"(0), "r"(&lock->locked)
                  : "memory");

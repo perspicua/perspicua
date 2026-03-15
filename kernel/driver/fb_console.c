@@ -15,12 +15,12 @@
 
 /* Console dimensions and rendering offsets. */
 #define CONSOLE_Y_OFFSET 20
-#define CHAR_WIDTH 8
-#define CHAR_HEIGHT 12
+#define CHAR_WIDTH       8
+#define CHAR_HEIGHT      12
 
 /* Cursor state and access protection. */
-static unsigned int cursor_x = 0;
-static unsigned int cursor_y = CONSOLE_Y_OFFSET;
+static unsigned int cursor_x      = 0;
+static unsigned int cursor_y      = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
 
 /*
@@ -49,7 +49,7 @@ void fb_console_init(void)
     spin_lock(&fb_console_lock);
     cursor_x = 0;
     cursor_y = CONSOLE_Y_OFFSET;
-    graphics_clear(0x00000000); // black
+    graphics_clear(0x00000000);  // black
     spin_unlock(&fb_console_lock);
 }
 

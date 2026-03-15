@@ -8,6 +8,7 @@
 #ifndef PERSPICUA_KERNEL_PROCESS_H
 #define PERSPICUA_KERNEL_PROCESS_H
 
+#include "signals.h"
 #include "types.h"
 #include "vfs.h"
 #include "sched.h"
@@ -18,12 +19,12 @@
 #define PROCESS_TABLE_SIZE 16
 
 /* --- User Virtual Address Space --- */
-#define USER_VA_BASE 0x40000000ULL /* 1GB - leaves lower area for ELF loading */
+#define USER_VA_BASE        0x40000000ULL /* 1GB - leaves lower area for ELF loading */
 #define USER_VA_MAX_REGIONS 16
 
 /* --- Hardware/Architecture Specifics --- */
-#define SPSR_EL0_USER 0x00000000ULL
-#define SPSR_EL1_KERN 0x000003C5ULL
+#define SPSR_EL0_USER      0x00000000ULL
+#define SPSR_EL1_KERN      0x000003C5ULL
 #define STACK_CANARY_VALUE 0xDEADC0DEDEADC0DEULL
 
 typedef enum
@@ -81,6 +82,11 @@ struct process
     struct vfs_file* fd_table[VFS_MAX_FDS];
     spinlock_t fd_lock;
     struct vfs_vnode* cwd;
+
+    /* Signals */
+    uint32_t pending_signals;
+    signal_handler_t signal_handlers[SIGNAL_COUNT];
+    uintptr_t sig_restorer;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

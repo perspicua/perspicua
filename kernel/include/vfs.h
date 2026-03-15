@@ -16,8 +16,8 @@ struct vfs_file;
 
 /* VFS Limits */
 #define VFS_MAX_PATH_LEN 4096
-#define VFS_MAX_FDS 32
-#define VFS_MAX_MOUNTS 8
+#define VFS_MAX_FDS      32
+#define VFS_MAX_MOUNTS   8
 
 /*
  * vfs_vnode_type - Enumeration of supported vnode types.
@@ -30,14 +30,14 @@ enum vfs_vnode_type
 };
 
 /* Standard file open flags */
-#define VFS_O_RDONLY 0x0000
-#define VFS_O_WRONLY 0x0001
-#define VFS_O_RDWR 0x0002
+#define VFS_O_RDONLY  0x0000
+#define VFS_O_WRONLY  0x0001
+#define VFS_O_RDWR    0x0002
 #define VFS_O_ACCMODE 0x0003
 
-#define VFS_O_CREAT 0x0100
-#define VFS_O_TRUNC 0x0200
-#define VFS_O_APPEND 0x0400
+#define VFS_O_CREAT   0x0100
+#define VFS_O_TRUNC   0x0200
+#define VFS_O_APPEND  0x0400
 #define VFS_O_CLOEXEC 0x0800
 
 /*

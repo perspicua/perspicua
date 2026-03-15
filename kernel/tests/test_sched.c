@@ -16,7 +16,7 @@
 static volatile int counter_a = 0;
 static volatile int counter_b = 0;
 static volatile int counter_c = 0;
-static spinlock_t test_lock = SPINLOCK_INIT;
+static spinlock_t test_lock   = SPINLOCK_INIT;
 
 // task functions
 
@@ -166,7 +166,7 @@ static void task_multi_sleep(void)
 
 // timestamp recording task
 static volatile unsigned long ts_short_done = 0;
-static volatile unsigned long ts_long_done = 0;
+static volatile unsigned long ts_long_done  = 0;
 
 static void task_short_sleep_ts(void)
 {
@@ -261,7 +261,7 @@ void test_scheduler(void)
     {
         unsigned long before = get_system_time();
         sched_sleep_ms(50);
-        unsigned long after = get_system_time();
+        unsigned long after   = get_system_time();
         unsigned long elapsed = after - before;
         // Timer has 100Hz tick (10ms granularity), allow generous bounds
         TEST_ASSERT("sleep >= 30ms", elapsed >= 30);
@@ -284,7 +284,7 @@ void test_scheduler(void)
         sched_sleep_ms(30);
         sched_sleep_ms(30);
         sched_sleep_ms(30);
-        unsigned long after = get_system_time();
+        unsigned long after   = get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("3x30ms >= 60", elapsed >= 60);
     }
@@ -293,9 +293,9 @@ void test_scheduler(void)
     // sleep ordering: short sleeper wakes before long sleeper
     {
         ts_short_done = 0;
-        ts_long_done = 0;
-        sched_create_task(task_long_sleep_ts);  // sleeps 40ms
-        sched_create_task(task_short_sleep_ts); // sleeps 20ms
+        ts_long_done  = 0;
+        sched_create_task(task_long_sleep_ts);   // sleeps 40ms
+        sched_create_task(task_short_sleep_ts);  // sleeps 20ms
         sched_sleep_ms(80);
         TEST_ASSERT("short done", ts_short_done != 0);
         TEST_ASSERT("long done", ts_long_done != 0);
@@ -338,8 +338,8 @@ void test_scheduler(void)
     {
         counter_a = 0;
         counter_b = 0;
-        sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
+        sched_create_task(task_sleep_then_inc);       // sleeps 20ms, inc a
+        sched_create_task(task_long_sleep_then_inc);  // sleeps 40ms, inc b
         sched_sleep_ms(30);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
@@ -353,7 +353,7 @@ void test_scheduler(void)
     // parent task creates child tasks
     {
         counter_a = 0;
-        sched_create_task(task_spawner); // creates 2 task_inc_a's
+        sched_create_task(task_spawner);  // creates 2 task_inc_a's
         sched_sleep_ms(100);
         TEST_ASSERT("spawned children ran", counter_a == 2);
     }
@@ -426,8 +426,8 @@ void test_scheduler(void)
     {
         counter_a = 0;
         counter_b = 0;
-        sched_create_task(task_inc_a);               // instant
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
+        sched_create_task(task_inc_a);                // instant
+        sched_create_task(task_long_sleep_then_inc);  // sleeps 40ms, inc b
         sched_sleep_ms(30);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);

@@ -35,7 +35,7 @@ static inline unsigned long read_cntpct(void)
  */
 unsigned long get_system_time(void)
 {
-    unsigned long freq = read_cntfrq();
+    unsigned long freq  = read_cntfrq();
     unsigned long count = read_cntpct();
 
     if (freq < 1000)
@@ -57,9 +57,9 @@ void sleep_ms(unsigned long ms)
         return;
     }
 
-    unsigned long ticks_per_ms = freq / 1000;
+    unsigned long ticks_per_ms  = freq / 1000;
     unsigned long current_count = read_cntpct();
-    unsigned long target_count = current_count + (ms * ticks_per_ms);
+    unsigned long target_count  = current_count + (ms * ticks_per_ms);
 
     while (read_cntpct() < target_count)
     {
@@ -93,7 +93,7 @@ void timer_interrupt_init(void)
     core_id &= 3;
 
     /* The Raspberry Pi 4 local interrupt controller base for core timers */
-    unsigned long base_addr = 0xFFFFFF80FF800040 + (core_id * 4);
+    unsigned long base_addr                    = 0xFFFFFF80FF800040 + (core_id * 4);
     volatile unsigned int* core_timer_irq_ctrl = (unsigned int*)base_addr;
 
     /* Enable physical timer interrupt routing for this core */

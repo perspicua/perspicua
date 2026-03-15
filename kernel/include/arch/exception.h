@@ -23,16 +23,16 @@ typedef __uint128_t uint128_t;
 struct exception_trap_frame
 {
     uint64_t sp_el0;
-    uint64_t _pad;     // alignment padding (xzr)
-    uintptr_t elr_el1; // addr to return after syscall
-    uint64_t spsr_el1; // cpu state
+    uint64_t _pad;      // alignment padding (xzr)
+    uintptr_t elr_el1;  // addr to return after syscall
+    uint64_t spsr_el1;  // cpu state
     // registers
-    uint64_t x[30]; // x0 - x29
-    uint64_t x30;   // link
+    uint64_t x[30];  // x0 - x29
+    uint64_t x30;    // link
     uint32_t fpsr;
     uint32_t fpcr;
 
-    uint128_t q[32]; // NEON/FPU registers
+    uint128_t q[32];  // NEON/FPU registers
 } __attribute__((aligned(16)));
 
 /* --- Function Prototypes --- */

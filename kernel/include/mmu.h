@@ -11,16 +11,16 @@
 #include "types.h"
 
 /* Page Table Entry (PTE) attribute bits */
-#define MMU_PTE_VALID (1ULL << 0)
-#define MMU_PTE_TABLE (1ULL << 1)    /* L1/L2: points to next-level table */
-#define MMU_PTE_PAGE (1ULL << 1)     /* L3: 4KB page descriptor */
-#define MMU_PTE_BLOCK (0ULL << 1)    /* L1/L2: 2MB/1GB block descriptor */
-#define MMU_PTE_AF (1ULL << 10)      /* Access flag (must be set for entry to be valid) */
-#define MMU_PTE_SH_INNER (3ULL << 8) /* Inner shareable memory */
+#define MMU_PTE_VALID    (1ULL << 0)
+#define MMU_PTE_TABLE    (1ULL << 1)  /* L1/L2: points to next-level table */
+#define MMU_PTE_PAGE     (1ULL << 1)  /* L3: 4KB page descriptor */
+#define MMU_PTE_BLOCK    (0ULL << 1)  /* L1/L2: 2MB/1GB block descriptor */
+#define MMU_PTE_AF       (1ULL << 10) /* Access flag (must be set for entry to be valid) */
+#define MMU_PTE_SH_INNER (3ULL << 8)  /* Inner shareable memory */
 
 /* Access Permissions (AP) */
-#define MMU_AP_RW (0ULL << 6)   /* Read/Write */
-#define MMU_AP_RO (2ULL << 6)   /* Read-Only */
+#define MMU_AP_RW   (0ULL << 6) /* Read/Write */
+#define MMU_AP_RO   (2ULL << 6) /* Read-Only */
 #define MMU_AP_USER (1ULL << 6) /* User-mode access bit */
 
 /* Execute-Never (XN) bits */

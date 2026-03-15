@@ -42,7 +42,7 @@ void test_types(void)
 
     // signedness
     uint8_t u8 = 255;
-    int8_t s8 = -1;
+    int8_t s8  = -1;
     TEST_ASSERT("uint8 wrap", u8 + 1 == 256);
     TEST_ASSERT("int8 neg", s8 < 0);
     TEST_PASS("signedness");

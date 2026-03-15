@@ -11,21 +11,21 @@
 
 /* The main system hardware tree. */
 static struct pht_header system_pht = {
-    .magic = PHT_MAGIC,
+    .magic      = PHT_MAGIC,
     .nr_devices = 5,
-    .nodes = {
+    .nodes      = {
         // memory
         {.name = "memory", .address[0] = 0x00000000, .size[0] = 1024 * 1024 * 1024 * 2LU, .reg_count = 1, .irq = 0},
         // uart
         {.name = "uart", .address[0] = 0xFE201000, .size[0] = 0x1000, .reg_count = 1, .irq = 153},
         // general interrupt controller (gic)
-        {.name = "gic",
-         .address[0] = 0xFF841000,
-         .size[0] = 0x1000,
-         .address[1] = 0xFF842000,
-         .size[1] = 0x2000,
-         .reg_count = 2,
-         .irq = 0},
+        {.name       = "gic",
+              .address[0] = 0xFF841000,
+              .size[0]    = 0x1000,
+              .address[1] = 0xFF842000,
+              .size[1]    = 0x2000,
+              .reg_count  = 2,
+              .irq        = 0},
         // gpio
         {.name = "gpio", .address[0] = 0xFE200000, .size[0] = 0x1000, .reg_count = 1, .irq = 0},
         // mailbox

@@ -100,28 +100,28 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
     }
 
     struct slab_page* sp = (struct slab_page*)page;
-    sp->magic = SLAB_MAGIC;
-    sp->class_idx = idx;
-    sp->in_use_count = 0;
-    sp->free_list = (void*)0;
+    sp->magic            = SLAB_MAGIC;
+    sp->class_idx        = idx;
+    sp->in_use_count     = 0;
+    sp->free_list        = (void*)0;
 
-    unsigned long obj_size = sc->object_size;
-    unsigned long hdr_size = sizeof(struct slab_page);
+    unsigned long obj_size     = sc->object_size;
+    unsigned long hdr_size     = sizeof(struct slab_page);
     unsigned long start_offset = (hdr_size + obj_size - 1) & ~(obj_size - 1);
 
     unsigned int count = 0;
     for (unsigned long off = start_offset; off + obj_size <= PAGE_SIZE; off += obj_size)
     {
         struct slab_obj* obj = (struct slab_obj*)((unsigned char*)page + off);
-        obj->next = sp->free_list;
-        obj->free_canary = SLAB_FREE_POISON;
-        sp->free_list = obj;
+        obj->next            = sp->free_list;
+        obj->free_canary     = SLAB_FREE_POISON;
+        sp->free_list        = obj;
         count++;
     }
     sp->total_slots = count;
 
     /* Prepend the new page to the partial list since it has free slots */
-    sp->next = sc->partial_list;
+    sp->next         = sc->partial_list;
     sc->partial_list = sp;
     return sp;
 }
@@ -133,10 +133,10 @@ void slab_init(void)
 {
     for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
-        slab_classes[i].object_size = slab_class_sizes[i];
+        slab_classes[i].object_size  = slab_class_sizes[i];
         slab_classes[i].partial_list = (void*)0;
-        slab_classes[i].full_list = (void*)0;
-        slab_classes[i].lock = (spinlock_t)SPINLOCK_INIT;
+        slab_classes[i].full_list    = (void*)0;
+        slab_classes[i].lock         = (spinlock_t)SPINLOCK_INIT;
     }
 
     /* Seed every size class with one page to avoid early allocation failures */
@@ -163,7 +163,7 @@ void* slab_alloc(unsigned long size)
     }
 
     struct slab_class* sc = &slab_classes[idx];
-    unsigned long flags = spin_lock_irqsave(&sc->lock);
+    unsigned long flags   = spin_lock_irqsave(&sc->lock);
 
     struct slab_page* sp = sc->partial_list;
 
@@ -180,16 +180,16 @@ void* slab_alloc(unsigned long size)
 
     /* Pop an object from the page's free list */
     struct slab_obj* obj = sp->free_list;
-    sp->free_list = obj->next;
-    obj->free_canary = 0;
+    sp->free_list        = obj->next;
+    obj->free_canary     = 0;
     sp->in_use_count++;
 
     /* Move the page to the full list if no more slots are available */
     if (!sp->free_list)
     {
         sc->partial_list = sp->next;
-        sp->next = sc->full_list;
-        sc->full_list = sp;
+        sp->next         = sc->full_list;
+        sc->full_list    = sp;
     }
 
     spin_unlock_irqrestore(&sc->lock, flags);
@@ -213,7 +213,7 @@ void slab_free(void* ptr)
     }
 
     struct slab_class* sc = &slab_classes[sp->class_idx];
-    unsigned long flags = spin_lock_irqsave(&sc->lock);
+    unsigned long flags   = spin_lock_irqsave(&sc->lock);
 
     struct slab_obj* obj = (struct slab_obj*)ptr;
     if (obj->free_canary == SLAB_FREE_POISON)
@@ -225,8 +225,8 @@ void slab_free(void* ptr)
 
     /* Push the slot back onto the free list and poison its canary */
     obj->free_canary = SLAB_FREE_POISON;
-    obj->next = sp->free_list;
-    sp->free_list = obj;
+    obj->next        = sp->free_list;
+    sp->free_list    = obj;
     sp->in_use_count--;
 
     /* If the page was previously full, move it back to the partial list */
@@ -242,7 +242,7 @@ void slab_free(void* ptr)
             *prev = sp->next;
         }
 
-        sp->next = sc->partial_list;
+        sp->next         = sc->partial_list;
         sc->partial_list = sp;
     }
 

@@ -3,8 +3,8 @@
 #include "string.h"
 #include "types.h"
 
-#define TEST_HEADER_SIZE 32 /* sizeof(block_header) */
-#define LARGE 2048          /* > SLAB_MAX (1024), forces first-fit path */
+#define TEST_HEADER_SIZE 32   /* sizeof(block_header) */
+#define LARGE            2048 /* > SLAB_MAX (1024), forces first-fit path */
 
 void test_heap(void)
 {
@@ -46,7 +46,7 @@ void test_heap(void)
     {
         unsigned long sizes[] = {1,  2,  3,  4,  5,  7,   8,   9,   13,  15,  16,  17,  23,   31,   32,
                                  33, 48, 63, 64, 65, 100, 127, 128, 255, 256, 500, 512, 1000, 1024, 4096};
-        int nsizes = sizeof(sizes) / sizeof(sizes[0]);
+        int nsizes            = sizeof(sizes) / sizeof(sizes[0]);
         void* ptrs[30];
         int all_aligned = 1;
         for (int i = 0; i < nsizes; i++)
@@ -176,7 +176,7 @@ void test_heap(void)
         // Drain the initial pool so the freed block is the first-fit candidate.
         // Initial pool is ~8160 bytes; allocating 8000 consumes it.
         void* drain = heap_malloc(8000);
-        void* big = heap_malloc(8192);
+        void* big   = heap_malloc(8192);
         heap_free(big);
         // Freed block has size >= 8192.
         // Allocate LARGE from it. Remainder = 8192-2048-32 = 6112 >= 48 → splits.
@@ -255,9 +255,9 @@ void test_heap(void)
 
     // two adjacent free blocks coalesce
     {
-        void* a = heap_malloc(LARGE);
-        void* b = heap_malloc(LARGE);
-        void* guard = heap_malloc(LARGE); // prevent merging beyond b
+        void* a     = heap_malloc(LARGE);
+        void* b     = heap_malloc(LARGE);
+        void* guard = heap_malloc(LARGE);  // prevent merging beyond b
         heap_free(a);
         heap_free(b);
         // a+b should coalesce: 2048 + 32(header) + 2048 = 4128 usable
@@ -271,9 +271,9 @@ void test_heap(void)
 
     // three adjacent free blocks coalesce (chain)
     {
-        void* a = heap_malloc(LARGE);
-        void* b = heap_malloc(LARGE);
-        void* c = heap_malloc(LARGE);
+        void* a     = heap_malloc(LARGE);
+        void* b     = heap_malloc(LARGE);
+        void* c     = heap_malloc(LARGE);
         void* guard = heap_malloc(LARGE);
         heap_free(a);
         heap_free(b);
@@ -290,7 +290,7 @@ void test_heap(void)
     // non-adjacent free blocks do not coalesce
     {
         void* a = heap_malloc(LARGE);
-        void* b = heap_malloc(LARGE); // stays allocated
+        void* b = heap_malloc(LARGE);  // stays allocated
         void* c = heap_malloc(LARGE);
         heap_free(a);
         heap_free(c);
@@ -305,8 +305,8 @@ void test_heap(void)
 
     // coalesce then split: free two adjacent, alloc smaller
     {
-        void* a = heap_malloc(LARGE);
-        void* b = heap_malloc(LARGE);
+        void* a     = heap_malloc(LARGE);
+        void* b     = heap_malloc(LARGE);
         void* guard = heap_malloc(LARGE);
         heap_free(a);
         heap_free(b);
@@ -323,8 +323,8 @@ void test_heap(void)
 
     // free in reverse order still coalesces
     {
-        void* a = heap_malloc(LARGE);
-        void* b = heap_malloc(LARGE);
+        void* a     = heap_malloc(LARGE);
+        void* b     = heap_malloc(LARGE);
         void* guard = heap_malloc(LARGE);
         // Free in forward order vs reverse - coalescing walks the list
         heap_free(b);
@@ -340,11 +340,11 @@ void test_heap(void)
 
     // allocation larger than initial page triggers expansion
     {
-        void* big = heap_malloc(8192); // 2 pages
+        void* big = heap_malloc(8192);  // 2 pages
         TEST_ASSERT("expand: large alloc ok", big != NULL);
         TEST_ASSERT("expand: aligned", ((unsigned long)big & 0xF) == 0);
         // Write boundaries
-        *(volatile unsigned char*)big = 0xDE;
+        *(volatile unsigned char*)big          = 0xDE;
         *((volatile unsigned char*)big + 8191) = 0xAD;
         TEST_ASSERT("expand: first byte", *(volatile unsigned char*)big == 0xDE);
         TEST_ASSERT("expand: last byte", *((volatile unsigned char*)big + 8191) == 0xAD);
@@ -358,8 +358,8 @@ void test_heap(void)
         TEST_ASSERT("1MB alloc non-null", big != NULL);
         TEST_ASSERT("1MB aligned", ((unsigned long)big & 0xF) == 0);
         // Touch first, middle, last
-        *(volatile unsigned char*)big = 0xAB;
-        *((volatile unsigned char*)big + 512 * 1024) = 0xCD;
+        *(volatile unsigned char*)big                     = 0xAB;
+        *((volatile unsigned char*)big + 512 * 1024)      = 0xCD;
         *((volatile unsigned char*)big + 1024 * 1024 - 1) = 0xEF;
         TEST_ASSERT("1MB first", *(volatile unsigned char*)big == 0xAB);
         TEST_ASSERT("1MB middle", *((volatile unsigned char*)big + 512 * 1024) == 0xCD);
@@ -389,7 +389,7 @@ void test_heap(void)
         TEST_ASSERT("page-size alloc ok", page != NULL);
         memset(page, 0xFF, 4096);
         unsigned char* cp = (unsigned char*)page;
-        int ok = 1;
+        int ok            = 1;
         for (int i = 0; i < 4096; i++)
             if (cp[i] != 0xFF)
             {
@@ -426,7 +426,7 @@ void test_heap(void)
     //    corrupt the header of the next block.
     {
         unsigned long sizes[] = {1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64};
-        int nsizes = sizeof(sizes) / sizeof(sizes[0]);
+        int nsizes            = sizeof(sizes) / sizeof(sizes[0]);
         for (int s = 0; s < nsizes; s++)
         {
             unsigned char* p = (unsigned char*)heap_malloc(sizes[s]);
@@ -475,7 +475,7 @@ void test_heap(void)
 
     // unsigned long pattern (word-aligned writes)
     {
-        int nwords = 128;
+        int nwords         = 128;
         unsigned long* arr = (unsigned long*)heap_malloc(nwords * sizeof(unsigned long));
         TEST_ASSERT("word alloc", arr != NULL);
         for (int i = 0; i < nwords; i++)
@@ -614,8 +614,8 @@ void test_heap(void)
         void* ptrs[9];
         for (int i = 0; i < 9; i++)
         {
-            unsigned long sz = 16UL << i; // 16,32,64,...,4096
-            ptrs[i] = heap_malloc(sz);
+            unsigned long sz = 16UL << i;  // 16,32,64,...,4096
+            ptrs[i]          = heap_malloc(sz);
             TEST_ASSERT("growing alloc", ptrs[i] != NULL);
         }
         for (int i = 8; i >= 0; i--)
@@ -628,8 +628,8 @@ void test_heap(void)
         void* ptrs[9];
         for (int i = 0; i < 9; i++)
         {
-            unsigned long sz = 4096UL >> i; // 4096,2048,...,16
-            ptrs[i] = heap_malloc(sz);
+            unsigned long sz = 4096UL >> i;  // 4096,2048,...,16
+            ptrs[i]          = heap_malloc(sz);
             TEST_ASSERT("shrinking alloc", ptrs[i] != NULL);
         }
         for (int i = 0; i < 9; i++)
@@ -640,14 +640,14 @@ void test_heap(void)
     // power-of-2 allocations with canary
     {
         unsigned long po2_sizes[] = {16, 32, 64, 128, 256, 512, 1024, 2048, 4096};
-        int n = sizeof(po2_sizes) / sizeof(po2_sizes[0]);
+        int n                     = sizeof(po2_sizes) / sizeof(po2_sizes[0]);
         for (int i = 0; i < n; i++)
         {
             void* ptr = heap_malloc(po2_sizes[i]);
             TEST_ASSERT("po2 alloc", ptr != NULL);
             TEST_ASSERT("po2 aligned", ((unsigned long)ptr & 0xF) == 0);
             memset(ptr, 0xCC, po2_sizes[i]);
-            int ok = 1;
+            int ok            = 1;
             unsigned char* cp = (unsigned char*)ptr;
             for (unsigned long j = 0; j < po2_sizes[i]; j++)
                 if (cp[j] != 0xCC)
@@ -838,8 +838,8 @@ void test_heap(void)
         heap_free(blk);
 
         // Alloc LARGE: remaining = 4096-2048 = 2048 >= 48 → SHOULD split
-        void* a = heap_malloc(LARGE);
-        void* split_part = heap_malloc(LARGE); // should come from split remainder
+        void* a          = heap_malloc(LARGE);
+        void* split_part = heap_malloc(LARGE);  // should come from split remainder
         TEST_ASSERT("threshold: split exists", split_part != NULL);
         heap_free(a);
         heap_free(split_part);

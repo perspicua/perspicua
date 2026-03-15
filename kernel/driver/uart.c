@@ -22,22 +22,22 @@
 extern struct tty console_tty;
 
 /* UART State and Synchronization */
-static spinlock_t uart_lock = SPINLOCK_INIT;
+static spinlock_t uart_lock         = SPINLOCK_INIT;
 static unsigned int cached_uart_irq = 0;
 
 /* Public Register Pointers */
-volatile uint32_t* uart_dr = (void*)0;
-volatile uint32_t* uart_fr = (void*)0;
-volatile uint32_t* uart_mis = (void*)0;
+volatile uint32_t* uart_dr   = (void*)0;
+volatile uint32_t* uart_fr   = (void*)0;
+volatile uint32_t* uart_mis  = (void*)0;
 volatile uint32_t* uart_imsc = (void*)0;
 
 /* Private Register Pointers (Static) */
 static volatile uint32_t* uart_ibrd = (void*)0;
 static volatile uint32_t* uart_fbrd = (void*)0;
 static volatile uint32_t* uart_lcrh = (void*)0;
-static volatile uint32_t* uart_cr = (void*)0;
+static volatile uint32_t* uart_cr   = (void*)0;
 static volatile uint32_t* uart_ifls = (void*)0;
-static volatile uint32_t* uart_icr = (void*)0;
+static volatile uint32_t* uart_icr  = (void*)0;
 
 /*
  * uart_init - Configures the UART for standard serial communication.
@@ -53,16 +53,16 @@ void uart_init(void)
     uintptr_t vbase = P2V(uart_node->address[0]);
 
     // Map hardware offsets to pointers
-    uart_dr = (uint32_t*)(vbase + 0x00);
-    uart_fr = (uint32_t*)(vbase + 0x18);
+    uart_dr   = (uint32_t*)(vbase + 0x00);
+    uart_fr   = (uint32_t*)(vbase + 0x18);
     uart_ibrd = (uint32_t*)(vbase + 0x24);
     uart_fbrd = (uint32_t*)(vbase + 0x28);
     uart_lcrh = (uint32_t*)(vbase + 0x2C);
-    uart_cr = (uint32_t*)(vbase + 0x30);
+    uart_cr   = (uint32_t*)(vbase + 0x30);
     uart_ifls = (uint32_t*)(vbase + 0x34);
     uart_imsc = (uint32_t*)(vbase + 0x38);
-    uart_mis = (uint32_t*)(vbase + 0x40);
-    uart_icr = (uint32_t*)(vbase + 0x44);
+    uart_mis  = (uint32_t*)(vbase + 0x40);
+    uart_icr  = (uint32_t*)(vbase + 0x44);
 
     // Disable UART for safe configuration
     mmio_write(uart_cr, 0);

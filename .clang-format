@@ -1,13 +1,21 @@
 BasedOnStyle: LLVM
-
 Language: Cpp
-Standard: c++17
+Standard: c++11
 
+# --- Indentation ---
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
 ColumnLimit: 120
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+IndentCaseLabels: false
+IndentGotoLabels: false
+IndentPPDirectives: BeforeHash
+IndentWrappedFunctionNames: false
+NamespaceIndentation: None
 
+# --- Braces ---
 BreakBeforeBraces: Allman
 BraceWrapping:
   AfterClass: true
@@ -17,89 +25,87 @@ BraceWrapping:
   AfterNamespace: false
   AfterStruct: true
   AfterUnion: true
-  BeforeCatch: true
+  BeforeCatch: false
   BeforeElse: true
   BeforeLambdaBody: false
   SplitEmptyFunction: false
   SplitEmptyRecord: false
 
+# --- Short constructs ---
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLambdasOnASingleLine: All
+AllowShortLoopsOnASingleLine: false
+
+# --- Line breaking ---
+AlwaysBreakAfterReturnType: None
+AlwaysBreakBeforeMultilineStrings: false
+AlwaysBreakTemplateDeclarations: No
+BreakBeforeBinaryOperators: NonAssignment
+BreakBeforeTernaryOperators: true
+BreakConstructorInitializers: BeforeColon
+BreakInheritanceList: BeforeColon
+BreakStringLiterals: true
+
+# --- Alignment ---
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: None
+AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveMacros: Consecutive
 AlignConsecutiveDeclarations: None
 AlignOperands: Align
 AlignTrailingComments: true
 AlignEscapedNewlines: Left
 
+# --- Pointer & reference ---
 PointerAlignment: Left
 ReferenceAlignment: Left
 DerivePointerAlignment: false
 
+# --- Spacing ---
 SpaceAfterCStyleCast: false
 SpaceAfterLogicalNot: false
-SpaceAfterTemplateKeyword: true
+SpaceAfterTemplateKeyword: false
 SpaceBeforeAssignmentOperators: true
 SpaceBeforeCpp11BracedList: false
-SpaceBeforeCtorInitializerColon: true
-SpaceBeforeInheritanceColon: true
+SpaceBeforeCtorInitializerColon: false
+SpaceBeforeInheritanceColon: false
 SpaceBeforeParens: ControlStatements
-SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeRangeBasedForLoopColon: false
 SpaceInEmptyParentheses: false
-SpacesBeforeTrailingComments: 1
+SpacesBeforeTrailingComments: 2
 SpacesInAngles: Never
 SpacesInCStyleCastParentheses: false
 SpacesInContainerLiterals: false
 SpacesInParentheses: false
 SpacesInSquareBrackets: false
 
-AllowShortBlocksOnASingleLine: Never
-AllowShortCaseLabelsOnASingleLine: false
-AllowShortEnumsOnASingleLine: false
-AllowShortFunctionsOnASingleLine: None
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLambdasOnASingleLine: All
-AllowShortLoopsOnASingleLine: false
-AlwaysBreakAfterReturnType: None
-AlwaysBreakBeforeMultilineStrings: false
-AlwaysBreakTemplateDeclarations: Yes
-BreakBeforeBinaryOperators: None
-BreakBeforeTernaryOperators: true
-BreakConstructorInitializers: BeforeColon
-BreakInheritanceList: BeforeColon
-BreakStringLiterals: true
-
+# --- Includes ---
 IncludeBlocks: Regroup
+SortIncludes: false
 IncludeCategories:
-  - Regex: '^"matrix.*\.hpp"'
+  - Regex: '^".*\.h"'
     Priority: 1
   - Regex: '^<.*\.h>'
-    Priority: 3
-  - Regex: "^<.*>"
     Priority: 2
-  - Regex: ".*"
-    Priority: 4
-SortIncludes: false
+  - Regex: '.*'
+    Priority: 3
 
-AccessModifierOffset: -4
-ConstructorInitializerIndentWidth: 4
-ContinuationIndentWidth: 4
-IndentCaseLabels: false
-IndentGotoLabels: false
-IndentPPDirectives: None
-IndentWrappedFunctionNames: false
-NamespaceIndentation: None
+# --- Packing ---
+BinPackArguments: false
+BinPackParameters: false
+CompactNamespaces: false
 
+# --- Misc ---
 ReflowComments: true
 FixNamespaceComments: true
-
-BinPackArguments: true
-BinPackParameters: true
-CompactNamespaces: false
-ConstructorInitializerAllOnOneLineOrOnePerLine: false
-Cpp11BracedListStyle: true
 KeepEmptyLinesAtTheStartOfBlocks: false
 MaxEmptyLinesToKeep: 1
-SortUsingDeclarations: true
+SortUsingDeclarations: false
 
+# --- Penalties ---
 PenaltyBreakAssignment: 2
 PenaltyBreakBeforeFirstCallParameter: 19
 PenaltyBreakComment: 300
