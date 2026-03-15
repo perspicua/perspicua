@@ -20,7 +20,8 @@ ARCH_FLAGS := -mcpu=cortex-a72+nosimd -mgeneral-regs-only
 
 COMMON_CFLAGS := -Wall -Wextra -ffreestanding -nostdlib $(ARCH_FLAGS) \
                  -std=gnu11 -MMD -MP \
-                 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables
+                 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables \
+                 -mno-outline-atomics
 
 ifeq ($(COLOR),0)
   COL_DEFAULT :=

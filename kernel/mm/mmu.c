@@ -539,11 +539,15 @@ void mmu_switch_user(unsigned long* pgd, unsigned long asid)
 {
     unsigned long ttbr0 = V2P(pgd) | (asid << 48);
     asm volatile("msr ttbr0_el1, %0" : : "r"(ttbr0));
+    asm volatile("dsb sy");
     asm volatile("isb");
 }
 
 int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
 {
+    if (!pgd)
+        return 0;
+
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
     unsigned long l1_idx = L1_INDEX(vaddr);

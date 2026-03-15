@@ -32,7 +32,6 @@ switch_context:
 
 .global task_wrapper_asm
 task_wrapper_asm:
-    bl  post_switch_hook
     mov x0, x19         // x19 holds the entry point
     bl  enable_interrupts
     blr x0              // call entry point
