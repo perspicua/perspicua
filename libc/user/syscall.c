@@ -191,3 +191,20 @@ int sys_pipe(int pipefd[2])
                  : "x0", "x8", "memory");
     return (int)res;
 }
+
+/*
+ * sys_dup2 - Duplicates a file descriptor to a specific new descriptor.
+ */
+int sys_dup2(int oldfd, int newfd)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)oldfd), "r"((long)newfd), "i"(SYS_DUP2)
+                 : "x0", "x1", "x8", "memory");
+    return (int)res;
+}

@@ -327,6 +327,14 @@ void syscall_handle(struct exception_trap_frame* tf)
         break;
     }
 
+    case SYS_DUP2:
+    { /* sys_dup2(int oldfd, int newfd) */
+        int oldfd = (int)tf->x[0];
+        int newfd = (int)tf->x[1];
+        tf->x[0] = (uint64_t)vfs_dup2(oldfd, newfd);
+        break;
+    }
+
     default:
     {
         printf("Unknown syscall: %lu\n", syscall_nr);

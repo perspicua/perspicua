@@ -141,6 +141,11 @@ int vfs_read(int fd, void* buffer, size_t count);
 int vfs_write(int fd, const void* buffer, size_t count);
 
 /*
+ * vfs_dup2 - Duplicates a file descriptor.
+ */
+int vfs_dup2(int oldfd, int newfd);
+
+/*
  * vfs_mount - Attaches a filesystem root vnode to the global namespace
  * at the specified path.
  */
