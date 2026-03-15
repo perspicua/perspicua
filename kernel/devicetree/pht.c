@@ -7,8 +7,6 @@
 
 #include "devicetree/pht.h"
 
-#include <stddef.h>
-
 #include "string.h"
 
 /* The main system hardware tree. */

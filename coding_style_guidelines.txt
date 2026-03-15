@@ -50,9 +50,6 @@ Group includes separated by a blank line:
 
 #include "own_header.h"
 
-#include <stddef.h>        // If using a standard lib
-#include <stdint.h>
-
 #include "uapi/syscall.h"  // Shared user/kernel headers
 
 #include "arch/mmu.h"      // Architecture specifics
