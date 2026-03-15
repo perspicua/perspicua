@@ -17,11 +17,11 @@
 /*
  * V2P - Converts a kernel virtual address to a physical address.
  */
-#define V2P(v) ((unsigned long)(v) - KERNEL_VMA)
+#define V2P(v) ((uint64_t)(uintptr_t)(v) - KERNEL_VMA)
 
 /*
  * P2V - Converts a physical address to a kernel virtual address.
  */
-#define P2V(p) ((unsigned long)(p) + KERNEL_VMA)
+#define P2V(p) (KERNEL_VMA + (uint64_t)(uintptr_t)(p))
 
 #endif /* PERSPICUA_KERNEL_ADDR_H */

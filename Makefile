@@ -42,8 +42,8 @@ clean:
 # QEMU helper targets
 QEMU = qemu-system-aarch64
 IMAGE = $(PI4_BOOT_DIR)/kernel8.img
-QEMU_FLAGS = -M raspi4b -serial stdio -display none -kernel $(IMAGE)
-QEMU_FLAGS_GUI = -M raspi4b -serial vc -kernel $(IMAGE)
+QEMU_FLAGS = -M raspi4b -serial stdio -display none -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
+QEMU_FLAGS_GUI = -M raspi4b -serial vc -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
 
 run: kernel
 	$(QEMU) $(QEMU_FLAGS)

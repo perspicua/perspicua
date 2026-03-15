@@ -10,7 +10,7 @@
 #include "panic.h"
 #include "addr.h"
 
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 
 /* Mailbox Register Pointers (Static) */
 static volatile unsigned int* mbox_read = (void*)0;
@@ -26,13 +26,24 @@ static volatile unsigned int* mbox_write = (void*)0;
  */
 void mbox_init(void)
 {
-    struct pht_node* mbox_node = pht_find_device("mailbox");
-    if (mbox_node == (void*)0)
+    const uint32_t *mbox_node = fdt_find_node_by_compatible("brcm,bcm2835-mbox");
+    if (!mbox_node)
     {
-        PANIC("[ MBOX ] Device node not found in hardware tree!\n");
+        PANIC("[ MBOX ] Device node not found in DTB!\n");
     }
 
-    uintptr_t vbase = P2V(mbox_node->address[0]);
+    struct fdt_property reg_prop;
+    if (fdt_get_property(mbox_node, "reg", &reg_prop) != 0) {
+        PANIC("[ MBOX ] Missing 'reg' property in DTB!\n");
+    }
+
+    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
+    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
+    if (phys_base < 0xFC000000) { 
+        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+    }
+
+    uintptr_t vbase = P2V(phys_base);
 
     // BCM2711 Mailbox register offsets
     mbox_read = (unsigned int*)(vbase + 0x00);

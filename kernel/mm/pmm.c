@@ -16,7 +16,7 @@
 #include "panic.h"
 #include "addr.h"
 
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 
 /* The end of the PMM metadata area, used by the MMU during initialization. */
 unsigned long pmm_metadata_end = 0;
@@ -257,11 +257,25 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
  */
 void pmm_init(void)
 {
-    struct pht_node* mem_node = pht_find_device("memory");
+    const uint32_t *mem_node = fdt_find_node_by_path("/memory@0");
     if (mem_node)
     {
-        pmm_phys_mem_size = mem_node->size[0];
+        struct fdt_property reg_prop;
+        if (fdt_get_property(mem_node, "reg", &reg_prop) == 0) {
+            const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
+            
+            // In a standard RPi4 DTB, #address-cells = 2 and #size-cells = 1.
+            // So the 'reg' array layout is: [address_hi, address_lo, size]
+            // We read the size from the third cell.
+            uint32_t mem_size = fdt32_to_cpu(reg_data[2]);
+            printf("[  PMM ] Detected physical memory size from DTB: %lu MB\n", mem_size / (1024 * 1024));
+            pmm_phys_mem_size = mem_size;
+        }
     }
+    else {
+        PANIC("PMM: Could not find /memory@0 node in DTB!");
+    }
+    
     pmm_num_pages = pmm_phys_mem_size / PAGE_SIZE;
 
     /* The page structure array follows the kernel image in memory */

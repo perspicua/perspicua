@@ -14,7 +14,7 @@
 #include "panic.h"
 #include "addr.h"
 
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 
 #include "driver/gpio.h"
 
@@ -44,13 +44,28 @@ static volatile uint32_t* uart_icr = (void*)0;
  */
 void uart_init(void)
 {
-    struct pht_node* uart_node = pht_find_device("uart");
-    if (uart_node == (void*)0)
+    const uint32_t *uart_node = fdt_find_node_by_compatible("arm,pl011-axi");
+    if (!uart_node)
     {
-        PANIC("[ UART ] Device node not found in hardware tree!\n");
+        PANIC("[ UART ] Device node not found in DTB!\n");
     }
 
-    uintptr_t vbase = P2V(uart_node->address[0]);
+    struct fdt_property reg_prop;
+    if (fdt_get_property(uart_node, "reg", &reg_prop) != 0) {
+        PANIC("[ UART ] Missing 'reg' property in DTB!\n");
+    }
+
+    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
+    // Assuming 32-bit address cells (skip #address-cells logic for simplicity if it fits)
+    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
+    if (phys_base < 0xFC000000) { 
+        // Broadcom uses legacy 0x7E... addresses in DTB for compatibility, we must map them 
+        // to RPi4's actual 0xFE... bus addresses. Usually DTBs have a `ranges` under /soc,
+        // but as a hardcoded workaround to ease migration for now:
+        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+    }
+    
+    uintptr_t vbase = P2V(phys_base);
 
     // Map hardware offsets to pointers
     uart_dr = (uint32_t*)(vbase + 0x00);
@@ -95,7 +110,22 @@ void uart_init(void)
     // Enable UART, TX, and RX
     mmio_write(uart_cr, UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
 
-    cached_uart_irq = uart_node->irq;
+    struct fdt_property irq_prop;
+    if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0) {
+        const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
+        // GIC interrupts in DTB often have 3 cells [type, number, flags]. 
+        // For SPIs (type 0), we usually add 32 to get the actual IRQ number.
+        uint32_t type = fdt32_to_cpu(irq_data[0]);
+        uint32_t num = fdt32_to_cpu(irq_data[1]);
+        if (type == 0) { // SPI
+            cached_uart_irq = num + 32;
+        } else {
+            cached_uart_irq = num;
+        }
+    } else {
+        // Fallback for RPi4 PL011 if interrupts property missing or different
+        cached_uart_irq = 153; // 121 SPI + 32
+    }
 }
 
 /*
