@@ -87,6 +87,17 @@ static const char* fsc_to_string(uint32_t fsc)
     }
 }
 
+static void dump_regs(struct exception_trap_frame* tf)
+{
+    printf("Register Dump:\n");
+    for (int i = 0; i < 30; i += 2)
+    {
+        printf("  x%d: %p  x%d: %p\n", i, (void*)tf->x[i], i + 1, (void*)tf->x[i + 1]);
+    }
+    printf("  x30: %p  sp_el0: %p\n", (void*)tf->x30, (void*)tf->sp_el0);
+    printf("  elr_el1: %p  spsr_el1: %p\n", (void*)tf->elr_el1, (void*)tf->spsr_el1);
+}
+
 static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t esr)
 {
     unsigned long far;
@@ -125,11 +136,13 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         printf("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data", pid);
         if (far < 0x1000)
             printf("  Type     : NULL Pointer Dereference\n");
-        printf("  FAR_EL1  : 0x%lx\n", far);
-        printf("  ELR_EL1  : 0x%lx\n", tf->elr_el1);
-        printf("  ESR_EL1  : 0x%lx\n", (unsigned long)esr);
+        printf("  FAR_EL1  : %p\n", (void*)far);
+        printf("  ELR_EL1  : %p\n", (void*)tf->elr_el1);
+        printf("  ESR_EL1  : %lx\n", (unsigned long)esr);
         printf("  Fault    : %s\n", fsc_to_string(fsc));
         printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
+
+        dump_regs(tf);
 
         if (pid >= 0)
         {
@@ -155,14 +168,20 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     }
     else
     {
-        printf("\n[KERNEL PANIC] %s abort in kernel!\n", is_inst ? "Instruction" : "Data");
+        struct task* curr = sched_get_current();
+        int pid = curr ? (int)curr->pid : -1;
+        unsigned long tid = curr ? curr->id : 0;
+
+        printf("\n[KERNEL PANIC] %s abort in kernel! (PID %d, TID %lu)\n", is_inst ? "Instruction" : "Data", pid, tid);
         if (far < 0x1000)
             printf("  Type     : NULL Pointer Dereference\n");
-        printf("  FAR_EL1  : 0x%lx\n", far);
-        printf("  ELR_EL1  : 0x%lx\n", tf->elr_el1);
-        printf("  ESR_EL1  : 0x%lx\n", (unsigned long)esr);
+        printf("  FAR_EL1  : %p\n", (void*)far);
+        printf("  ELR_EL1  : %p\n", (void*)tf->elr_el1);
+        printf("  ESR_EL1  : %lx\n", (unsigned long)esr);
         printf("  Fault    : %s\n", fsc_to_string(fsc));
         printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
+
+        dump_regs(tf);
         PANIC("Unrecoverable kernel abort");
     }
 }

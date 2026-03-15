@@ -56,6 +56,22 @@ static int sched_core_pids[4] = {-1, -1, -1, -1};
 static int sched_next_id = 0;
 static spinlock_t sched_next_id_lock = SPINLOCK_INIT;
 
+/* Corruption detection canaries */
+static uint64_t sched_canary_before = 0xAAAAAAAAAAAAAAAAULL;
+static struct task sched_init_tasks[4];
+static uint64_t sched_canary_after = 0xBBBBBBBBBBBBBBBBULL;
+
+void sched_check_corruption(void)
+{
+    if (sched_canary_before != 0xAAAAAAAAAAAAAAAAULL || sched_canary_after != 0xBBBBBBBBBBBBBBBBULL)
+    {
+        printf("SCHED: Memory corruption detected around sched_init_tasks!\n");
+        printf("  Before: %p (expected 0xAAAAAAAAAAAAAAAA)\n", (void*)sched_canary_before);
+        printf("  After:  %p (expected 0xBBBBBBBBBBBBBBBB)\n", (void*)sched_canary_after);
+        PANIC("Memory corruption");
+    }
+}
+
 /*
  * get_core_id - Returns the index of the current CPU core (0-3).
  */
@@ -94,27 +110,44 @@ static void enqueue_ready(int cpu, struct task* t)
 
 /*
  * dequeue_ready - Removes and returns the first task from a CPU's ready queue.
+ * If 'allow_pid0' is 0, it skips tasks with PID 0 (system/boot tasks).
  */
-static struct task* dequeue_ready(int cpu)
+static struct task* dequeue_ready_filtered(int cpu, int allow_pid0)
 {
     unsigned long flags = spin_lock_irqsave(&sched_ready_locks[cpu]);
 
-    if (!sched_ready_heads[cpu])
+    struct task* prev = (void*)0;
+    struct task* curr = sched_ready_heads[cpu];
+
+    while (curr)
     {
-        spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
-        return (void*)0;
+        if (allow_pid0 || curr->pid != 0)
+        {
+            if (prev)
+                prev->next = curr->next;
+            else
+                sched_ready_heads[cpu] = curr->next;
+
+            if (!sched_ready_heads[cpu])
+                sched_ready_tails[cpu] = (void*)0;
+            else if (curr == sched_ready_tails[cpu])
+                sched_ready_tails[cpu] = prev;
+
+            curr->next = (void*)0;
+            spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
+            return curr;
+        }
+        prev = curr;
+        curr = curr->next;
     }
 
-    struct task* t = sched_ready_heads[cpu];
-    sched_ready_heads[cpu] = t->next;
-    if (!sched_ready_heads[cpu])
-    {
-        sched_ready_tails[cpu] = (void*)0;
-    }
-
-    t->next = (void*)0;
     spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
-    return t;
+    return (void*)0;
+}
+
+static struct task* dequeue_ready(int cpu)
+{
+    return dequeue_ready_filtered(cpu, 1);
 }
 
 /*
@@ -367,6 +400,8 @@ void schedule(void)
     unsigned long flags = irq_save();
     int cpu = get_core_id();
 
+    sched_check_corruption();
+
     /* 1. Cleanup tasks marked for deletion on this core */
     struct task* dead = sched_cleanup_tasks[cpu];
     if (dead)
@@ -442,7 +477,8 @@ void schedule(void)
         {
             if (i == cpu)
                 continue;
-            next = dequeue_ready(i);
+            /* Do NOT steal PID 0 (boot/system) tasks from other cores */
+            next = dequeue_ready_filtered(i, 0);
             if (next)
                 break;
         }
@@ -464,6 +500,13 @@ void schedule(void)
 
     if (prev != next)
     {
+        /* Safety check for corrupted task context before switching */
+        if (next->context.lr == 0 || next->context.sp == 0)
+        {
+            printf("SCHED: Fatal error - Task %lu (PID %d) has corrupted context (LR=0x%lx, SP=0x%lx)!\n", next->id,
+                   (int)next->pid, next->context.lr, next->context.sp);
+            PANIC("Scheduler context corruption");
+        }
         switch_context(&prev->context, &next->context);
     }
 
