@@ -262,7 +262,7 @@ void exception_sync_handler(struct exception_trap_frame* tf)
     {
     case EC_SVC:
     {
-        handle_syscall(tf);
+        syscall_handle(tf);
         break;
     }
     case EC_INST_ABORT_LOWER:

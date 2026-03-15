@@ -1,19 +1,37 @@
+/*
+ * syscall.c - Implementation of the system call dispatcher.
+ *
+ * This file handles the validation of user-provided buffers and dispatches
+ * system calls to their respective kernel implementations such as filesystem,
+ * process management, and scheduling operations.
+ */
+
 #include "syscall.h"
+
+#include "uapi/syscalls.h"
+#include "uapi/errors.h"
+
+#include "arch/uaccess.h"
+
 #include "driver/uart.h"
 #include "process.h"
 #include "mmu.h"
 #include "addr.h"
 #include "heap.h"
 #include "stdio.h"
-#include "arch/uaccess.h"
-#include "uapi/errors.h"
-#include <uapi/syscalls.h>
+#include "string.h"
+#include "panic.h"
 
+/*
+ * validate_user_buffer - Verifies that a memory range provided by a user
+ * process is valid, belongs to user-space, and has appropriate permissions.
+ */
 static int validate_user_buffer(const void* ptr, size_t len, int writable)
 {
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
 
+    /* Ensure the range does not wrap around or intrude into kernel space */
     if (end < start || end > KERNEL_VMA)
     {
         return 0;
@@ -33,23 +51,26 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
         return 0;
     }
 
+    /* Iterate through every page in the buffer range to check permissions */
     uintptr_t curr = start & ~0xFFFUL;
     while (curr < end)
     {
         unsigned long current_flags;
-        if (!mmu_user_query(pgd, curr, NULL, &current_flags))
+        if (!mmu_user_query(pgd, curr, (void*)0, &current_flags))
         {
             spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
 
+        /* Must be a user-accessible page */
         if (!(current_flags & MMU_AP_USER))
         {
             spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
 
-        if (writable && (current_flags & (1ULL << 7))) // AP[2] bit 7 is RO
+        /* Check for write permission if requested (AP[2] bit 7 is Read-Only) */
+        if (writable && (current_flags & (1ULL << 7)))
         {
             spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
@@ -62,7 +83,10 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
     return 1;
 }
 
-void handle_syscall(struct exception_trap_frame* tf)
+/*
+ * syscall_handle - The primary entry point for all synchronous exceptions from EL0.
+ */
+void syscall_handle(struct exception_trap_frame* tf)
 {
     uint64_t syscall_nr = tf->x[8];
     struct task* curr = sched_get_current();
@@ -70,15 +94,14 @@ void handle_syscall(struct exception_trap_frame* tf)
 
     switch (syscall_nr)
     {
-    case SYS_WRITE: // sys_write(int fd, const char* buf, size_t len)
-    {
+    case SYS_WRITE:
+    { /* sys_write(int fd, const char* buf, size_t len) */
         int fd = (int)(tf->x[0]);
         const char* buf = (const char*)(tf->x[1]);
         size_t len = (size_t)(tf->x[2]);
 
         if (!validate_user_buffer(buf, len, 0))
         {
-            // TODO: maybe put better error codes here
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
@@ -93,8 +116,6 @@ void handle_syscall(struct exception_trap_frame* tf)
         if (copy_from_user(kbuf, buf, len) != 0)
         {
             heap_free(kbuf);
-
-            // TODO: maybe put better error codes here
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
@@ -104,32 +125,37 @@ void handle_syscall(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)bytes;
         break;
     }
-    case SYS_EXIT: // sys_exit(int status)
-    {
+
+    case SYS_EXIT:
+    { /* sys_exit(int status) */
         int status = (int)tf->x[0];
         process_exit(pid, status);
         curr->state = SCHED_TASK_DEAD;
         schedule();
         break;
     }
-    case SYS_GETPID: // sys_getpid()
-    {
+
+    case SYS_GETPID:
+    { /* sys_getpid() */
         tf->x[0] = (uint64_t)pid;
         break;
     }
-    case SYS_YIELD: // sys_yield()
-    {
+
+    case SYS_YIELD:
+    { /* sys_yield() */
         schedule();
         break;
     }
-    case SYS_SLEEP: // sys_sleep(ms)
-    {
+
+    case SYS_SLEEP:
+    { /* sys_sleep(ms) */
         unsigned long ms = tf->x[0];
         sched_sleep_ms(ms);
         break;
     }
-    case SYS_OPEN: // sys_open(const char* path, int flags)
-    {
+
+    case SYS_OPEN:
+    { /* sys_open(const char* path, int flags) */
         const char* path = (const char*)(tf->x[0]);
         int flags = (int)(tf->x[1]);
 
@@ -140,16 +166,16 @@ void handle_syscall(struct exception_trap_frame* tf)
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
             {
-                // TODO: maybe put better error codes here
                 path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
                 break;
             }
             if (c == '\0')
+            {
                 break;
+            }
             path_len++;
         }
 
-        // TODO: maybe put better error codes here
         if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
@@ -169,15 +195,15 @@ void handle_syscall(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)fd;
         break;
     }
-    case SYS_READ: // sys_read(int fd, char* buf, size_t len)
-    {
+
+    case SYS_READ:
+    { /* sys_read(int fd, char* buf, size_t len) */
         int fd = (int)(tf->x[0]);
         char* buf = (char*)(tf->x[1]);
         size_t len = (size_t)(tf->x[2]);
 
         if (!validate_user_buffer(buf, len, 1))
         {
-            // TODO: maybe put better error codes here
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
@@ -195,14 +221,16 @@ void handle_syscall(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)bytes;
         break;
     }
-    case SYS_CLOSE: // sys_close(int fd)
-    {
+
+    case SYS_CLOSE:
+    { /* sys_close(int fd) */
         int fd = (int)(tf->x[0]);
         tf->x[0] = (uint64_t)vfs_close(fd);
         break;
     }
-    case SYS_EXEC: // sys_exec(const char* path)
-    {
+
+    case SYS_EXEC:
+    { /* sys_exec(const char* path) */
         const char* path = (const char*)(tf->x[0]);
 
         size_t path_len = 0;
@@ -212,16 +240,16 @@ void handle_syscall(struct exception_trap_frame* tf)
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
             {
-                // TODO: maybe put better error codes here
                 path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
                 break;
             }
             if (c == '\0')
+            {
                 break;
+            }
             path_len++;
         }
 
-        // TODO: maybe put better error codes here
         if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
@@ -245,13 +273,15 @@ void handle_syscall(struct exception_trap_frame* tf)
         }
         break;
     }
-    case SYS_FORK: // sys_fork()
-    {
+
+    case SYS_FORK:
+    { /* sys_fork() */
         tf->x[0] = (uint64_t)process_fork(tf);
         break;
     }
-    case SYS_WAITPID: // sys_waitpid(int pid, int* status)
-    {
+
+    case SYS_WAITPID:
+    { /* sys_waitpid(int pid, int* status) */
         int wait_pid = (int)tf->x[0];
         int* ustatus = (int*)tf->x[1];
         int kstatus = 0;
@@ -271,6 +301,7 @@ void handle_syscall(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)res;
         break;
     }
+
     default:
     {
         printf("Unknown syscall: %lu\n", syscall_nr);
