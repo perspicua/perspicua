@@ -118,7 +118,7 @@ static void idle_task_entry(void)
 
 static struct task* create_idle_task(int id)
 {
-    struct task* idle = (struct task*)kmalloc(sizeof(struct task));
+    struct task* idle = (struct task*)heap_malloc(sizeof(struct task));
     memset(idle, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(STACK_PAGES);
     mmu_unmap_page((unsigned long)stack);
@@ -174,7 +174,7 @@ void sched_secondary_init(void)
 
 void sched_create_task(void (*entry)(void))
 {
-    struct task* t = (struct task*)kmalloc(sizeof(struct task));
+    struct task* t = (struct task*)heap_malloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(STACK_PAGES);
     mmu_unmap_page((unsigned long)stack);
@@ -218,7 +218,7 @@ void sched_sleep_ms(unsigned long ms)
 
 void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
 {
-    struct task* t = (struct task*)kmalloc(sizeof(struct task));
+    struct task* t = (struct task*)heap_malloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
 
     t->state = TASK_READY;
@@ -304,7 +304,7 @@ void schedule(void)
             pmm_free_pages(dead->stack, STACK_PAGES);
         }
         if (dead < &init_tasks[0] || dead > &init_tasks[3])
-            kfree(dead);
+            heap_free(dead);
     }
 
     // 2. wake up sleeping tasks

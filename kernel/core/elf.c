@@ -90,7 +90,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     *entry_point = ehdr.entry;
 
     size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
-    struct elf64_program_header* phdrs = kmalloc(phdr_table_size);
+    struct elf64_program_header* phdrs = heap_malloc(phdr_table_size);
     if (!phdrs)
     {
         printf("[  ELF ] Error: could not allocate memory for program headers\n");
@@ -102,7 +102,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size)
     {
         printf("[  ELF ] Error: could not read program headers\n");
-        kfree(phdrs);
+        heap_free(phdrs);
         vfs_close(fd);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
@@ -181,7 +181,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                     (int)bytes_to_read)
                 {
                     printf("[  ELF ] Error: failed to read segment data\n");
-                    kfree(phdrs);
+                    heap_free(phdrs);
                     vfs_close(fd);
                     return -PERS_ERR_IO_ERROR;
                 }
@@ -194,7 +194,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         }
     }
 
-    kfree(phdrs);
+    heap_free(phdrs);
     vfs_close(fd);
     return PERS_SUCCESS;
 }

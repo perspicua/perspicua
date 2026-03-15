@@ -83,7 +83,7 @@ void handle_syscall(struct exception_trap_frame* tf)
             break;
         }
 
-        char* kbuf = kmalloc(len);
+        char* kbuf = heap_malloc(len);
         if (!kbuf)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
@@ -92,7 +92,7 @@ void handle_syscall(struct exception_trap_frame* tf)
 
         if (copy_from_user(kbuf, buf, len) != 0)
         {
-            kfree(kbuf);
+            heap_free(kbuf);
 
             // TODO: maybe put better error codes here
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
@@ -100,7 +100,7 @@ void handle_syscall(struct exception_trap_frame* tf)
         }
 
         int bytes = vfs_write(fd, kbuf, len);
-        kfree(kbuf);
+        heap_free(kbuf);
         tf->x[0] = (uint64_t)bytes;
         break;
     }
@@ -156,16 +156,16 @@ void handle_syscall(struct exception_trap_frame* tf)
             break;
         }
 
-        char* kpath = kmalloc(path_len + 1);
+        char* kpath = heap_malloc(path_len + 1);
         if (copy_from_user(kpath, path, path_len + 1) != 0)
         {
-            kfree(kpath);
+            heap_free(kpath);
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
         int fd = vfs_open(kpath, flags);
-        kfree(kpath);
+        heap_free(kpath);
         tf->x[0] = (uint64_t)fd;
         break;
     }
@@ -182,7 +182,7 @@ void handle_syscall(struct exception_trap_frame* tf)
             break;
         }
 
-        char* kbuf = kmalloc(len);
+        char* kbuf = heap_malloc(len);
         int bytes = vfs_read(fd, kbuf, len);
         if (bytes > 0)
         {
@@ -191,7 +191,7 @@ void handle_syscall(struct exception_trap_frame* tf)
                 bytes = -PERS_ERR_INVALID_ARGUMENT;
             }
         }
-        kfree(kbuf);
+        heap_free(kbuf);
         tf->x[0] = (uint64_t)bytes;
         break;
     }
@@ -228,16 +228,16 @@ void handle_syscall(struct exception_trap_frame* tf)
             break;
         }
 
-        char* kpath = kmalloc(path_len + 1);
+        char* kpath = heap_malloc(path_len + 1);
         if (copy_from_user(kpath, path, path_len + 1) != 0)
         {
-            kfree(kpath);
+            heap_free(kpath);
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
         int res = process_exec(kpath);
-        kfree(kpath);
+        heap_free(kpath);
 
         if (res < 0)
         {

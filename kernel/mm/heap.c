@@ -1,4 +1,13 @@
+/*
+ * heap.c - Implementation of the kernel heap allocator.
+ *
+ * This file manages dynamic memory allocation using a hybrid approach
+ * with a fast slab layer for small objects and a first-fit buddy fallback
+ * for larger requests.
+ */
+
 #include "heap.h"
+
 #include "slab.h"
 #include "lock.h"
 #include "pmm.h"
@@ -6,174 +15,196 @@
 #include "panic.h"
 #include "timer.h"
 
-#define SLAB_MAX 1024 // allocations <= this go through the slab layer
+/* Allocations <= this value are handled by the slab allocator */
+#define HEAP_SLAB_MAX 1024
 
-// each allocation is preceded by a block header
-struct block_header
+/* Block header preceding every allocation in the first-fit pool */
+struct heap_block_header
 {
-    unsigned long size;        // usable size (excluding header)
-    struct block_header* next; // next block in free list (only valid when free)
-    unsigned char free;        // 1 = free, 0 = allocated
+    unsigned long size;             /* Usable size excluding the header */
+    struct heap_block_header* next; /* Next block in the free list */
+    unsigned char is_free;          /* Flag indicating if block is free */
 } __attribute__((aligned(16)));
 
-#define HEADER_SIZE sizeof(struct block_header)
-#define ALIGN(x) (((x) + 15) & ~15UL) // 16-byte alignment
+#define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
+#define HEAP_ALIGN(x) (((x) + 15) & ~15UL)
 
-static struct block_header* free_list;
+/* Heap state and synchronization */
+static struct heap_block_header* heap_free_list = (void*)0;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
 static unsigned long heap_used_size = 0;
 
-// request enough contiguous pages from PMM to satisfy at least 'min_size' bytes
-static struct block_header* expand_heap(unsigned long min_size)
+/*
+ * heap_expand - Requests contiguous pages from the PMM to grow the heap.
+ */
+static struct heap_block_header* heap_expand(unsigned long min_size)
 {
-    unsigned long total = min_size + HEADER_SIZE;
+    unsigned long total = min_size + HEAP_HEADER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
     void* region = pmm_alloc_pages(pages);
     if (!region)
-        return NULL;
+    {
+        return (void*)0;
+    }
 
-    struct block_header* block = (struct block_header*)region;
-    block->size = pages * PAGE_SIZE - HEADER_SIZE;
-    block->next = 0;
-    block->free = 1;
+    struct heap_block_header* block = (struct heap_block_header*)region;
+    block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
+    block->next = (void*)0;
+    block->is_free = 1;
 
     heap_total_size += pages * PAGE_SIZE;
 
     return block;
 }
 
+/*
+ * heap_init - Boot-time initialization of all heap layers.
+ */
 void heap_init(void)
 {
     slab_init();
 
-    free_list = expand_heap(PAGE_SIZE);
-    if (!free_list)
+    heap_free_list = heap_expand(PAGE_SIZE);
+    if (!heap_free_list)
     {
-        PANIC("HEAP: Failed to initialize.\n");
-        return;
+        PANIC("HEAP: Failed to initialize pool.");
     }
 
-    printf("[ HEAP ] First-fit fallback: %lu bytes initial pool\n", free_list->size);
-    printf("[ HEAP ] Header: %lu bytes, payload alignment: 16 bytes\n", (unsigned long)HEADER_SIZE);
+    printf("[ HEAP ] First-fit pool: %lu bytes\n", heap_free_list->size);
+    printf("[ HEAP ] Alignment: 16 bytes\n");
 }
 
-void* kmalloc(unsigned long size)
+/*
+ * heap_malloc - Allocates a memory block from the appropriate layer.
+ */
+void* heap_malloc(unsigned long size)
 {
     if (size == 0)
-        return 0;
-    // small allocations: O(1) slab path
-    if (size <= SLAB_MAX)
+    {
+        return (void*)0;
+    }
+
+    /* Use the O(1) slab path for small objects */
+    if (size <= HEAP_SLAB_MAX)
+    {
         return slab_alloc(size);
+    }
 
-    // large allocations: first-fit fallback
-    unsigned long int flags = spin_lock_irqsave(&heap_lock);
+    /* Fall back to first-fit search for large objects */
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
+    size = HEAP_ALIGN(size);
 
-    size = ALIGN(size);
-
-    // first-fit search
-    struct block_header* curr = free_list;
-
+    struct heap_block_header* curr = heap_free_list;
     while (curr)
     {
-        if (curr->free && curr->size >= size)
+        if (curr->is_free && curr->size >= size)
         {
-            // split if remaining space can hold another block
-            unsigned long remaining = curr->size - size - HEADER_SIZE;
-            if (curr->size >= size + HEADER_SIZE + 16)
+            /* Split the block if there is enough remaining space */
+            if (curr->size >= size + HEAP_HEADER_SIZE + 16)
             {
-                struct block_header* new_block = (struct block_header*)((unsigned char*)curr + HEADER_SIZE + size);
-                new_block->size = remaining;
+                struct heap_block_header* new_block =
+                    (struct heap_block_header*)((unsigned char*)curr + HEAP_HEADER_SIZE + size);
+                new_block->size = curr->size - size - HEAP_HEADER_SIZE;
                 new_block->next = curr->next;
-                new_block->free = 1;
+                new_block->is_free = 1;
 
                 curr->size = size;
                 curr->next = new_block;
             }
 
-            curr->free = 0;
-            heap_used_size += curr->size + HEADER_SIZE;
+            curr->is_free = 0;
+            heap_used_size += curr->size + HEAP_HEADER_SIZE;
             spin_unlock_irqrestore(&heap_lock, flags);
-            return (void*)((unsigned char*)curr + HEADER_SIZE);
+            return (void*)((unsigned char*)curr + HEAP_HEADER_SIZE);
         }
-
         curr = curr->next;
     }
 
-    // no block found, expand heap with enough space for this allocation
-    struct block_header* new_page = expand_heap(size);
+    /* No suitable block found; expand the heap */
+    struct heap_block_header* new_page = heap_expand(size);
     if (!new_page)
-        PANIC("HEAP: Out of memory.\n");
-    // insert in address order so coalescing works across regions
-    if (!free_list || (unsigned long)new_page < (unsigned long)free_list)
     {
-        new_page->next = free_list;
-        free_list = new_page;
+        PANIC("HEAP: Out of memory expansion.");
+    }
+
+    /* Re-insert in address order to maintain address space consistency */
+    if (!heap_free_list || (unsigned long)new_page < (unsigned long)heap_free_list)
+    {
+        new_page->next = heap_free_list;
+        heap_free_list = new_page;
     }
     else
     {
-        struct block_header* scan = free_list;
+        struct heap_block_header* scan = heap_free_list;
         while (scan->next && (unsigned long)scan->next < (unsigned long)new_page)
+        {
             scan = scan->next;
+        }
         new_page->next = scan->next;
         scan->next = new_page;
     }
 
-    // allocate directly from the new block while still holding the lock
-    // (avoids race where another CPU steals the block between unlock and re-lock)
-    if (new_page->size >= size + HEADER_SIZE + 16)
+    /* Allocate directly from the newly added space */
+    if (new_page->size >= size + HEAP_HEADER_SIZE + 16)
     {
-        struct block_header* split = (struct block_header*)((unsigned char*)new_page + HEADER_SIZE + size);
-        split->size = new_page->size - size - HEADER_SIZE;
+        struct heap_block_header* split =
+            (struct heap_block_header*)((unsigned char*)new_page + HEAP_HEADER_SIZE + size);
+        split->size = new_page->size - size - HEAP_HEADER_SIZE;
         split->next = new_page->next;
-        split->free = 1;
+        split->is_free = 1;
 
         new_page->size = size;
         new_page->next = split;
     }
 
-    new_page->free = 0;
-    heap_used_size += new_page->size + HEADER_SIZE;
+    new_page->is_free = 0;
+    heap_used_size += new_page->size + HEAP_HEADER_SIZE;
     spin_unlock_irqrestore(&heap_lock, flags);
-    return (void*)((unsigned char*)new_page + HEADER_SIZE);
+    return (void*)((unsigned char*)new_page + HEAP_HEADER_SIZE);
 }
 
-void kfree(void* ptr)
+/*
+ * heap_free - Returns memory to the pool.
+ */
+void heap_free(void* ptr)
 {
     if (!ptr)
+    {
         return;
+    }
 
-    // if the slab allocator owns this pointer, free through slab
+    /* Redirect to slab if it owns this pointer */
     if (slab_owns(ptr))
     {
         slab_free(ptr);
         return;
     }
 
-    // large-allocation free: first-fit path
     unsigned long flags = spin_lock_irqsave(&heap_lock);
-    struct block_header* block = (struct block_header*)((unsigned char*)ptr - HEADER_SIZE);
+    struct heap_block_header* block = (struct heap_block_header*)((unsigned char*)ptr - HEAP_HEADER_SIZE);
 
-    if (block->free)
-        PANIC("HEAP: Double free detected.\n");
+    if (block->is_free)
+    {
+        PANIC("HEAP: Double free detected.");
+    }
 
-    block->free = 1;
-    heap_used_size -= block->size + HEADER_SIZE;
+    block->is_free = 1;
+    heap_used_size -= block->size + HEAP_HEADER_SIZE;
 
-    // coalesce physically adjacent free blocks
-    struct block_header* curr = free_list;
+    /* Attempt to coalesce physically adjacent free blocks */
+    struct heap_block_header* curr = heap_free_list;
     while (curr)
     {
-        if (curr->free && curr->next && curr->next->free)
+        if (curr->is_free && curr->next && curr->next->is_free)
         {
-            // only merge if blocks are physically contiguous in memory
-            unsigned char* curr_end = (unsigned char*)curr + HEADER_SIZE + curr->size;
+            unsigned char* curr_end = (unsigned char*)curr + HEAP_HEADER_SIZE + curr->size;
             if (curr_end == (unsigned char*)curr->next)
             {
-                curr->size += HEADER_SIZE + curr->next->size;
+                curr->size += HEAP_HEADER_SIZE + curr->next->size;
                 curr->next = curr->next->next;
-                continue; // check again
+                continue;
             }
         }
         curr = curr->next;
@@ -181,11 +212,17 @@ void kfree(void* ptr)
     spin_unlock_irqrestore(&heap_lock, flags);
 }
 
+/*
+ * heap_get_used - Combined used memory count.
+ */
 unsigned long heap_get_used(void)
 {
     return heap_used_size + slab_get_used();
 }
 
+/*
+ * heap_get_total - Combined total memory count.
+ */
 unsigned long heap_get_total(void)
 {
     return heap_total_size + slab_get_total();
