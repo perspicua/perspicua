@@ -1,8 +1,16 @@
+/*
+ * fdt.h - Public API for the Flattened Device Tree (FDT) parser.
+ *
+ * This header defines the structures and functions used to interact with
+ * the device tree blob (DTB) provided by the bootloader.
+ */
+
 #ifndef PERSPICUA_DEVICETREE_FDT_H
 #define PERSPICUA_DEVICETREE_FDT_H
 
 #include "types.h"
 
+/* FDT Magic Number */
 #define FDT_MAGIC 0xd00dfeed
 
 /* FDT Tokens */
@@ -12,7 +20,13 @@
 #define FDT_NOP        0x00000004
 #define FDT_END        0x00000009
 
-/* The FDT header structure. All fields are big-endian. */
+/* Alignment macro for DTB strings and data. */
+#define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
+
+/*
+ * The FDT header structure as it appears in the blob.
+ * All fields are big-endian.
+ */
 struct fdt_header
 {
     uint32_t magic;             /* magic word FDT_MAGIC */
@@ -41,16 +55,13 @@ struct fdt_prop_header
     uint32_t nameoff;
 };
 
-/* Parsed property structure for ease of use. */
+/* Parsed property structure for ease of use in the public API. */
 struct fdt_property
 {
     const char* name;
     uint32_t size;
     const void* value;
 };
-
-/* Alignment macro for DTB strings and data. */
-#define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 /* Endianness swapping utilities (Big-Endian to Little-Endian) */
 static inline uint32_t fdt32_to_cpu(uint32_t val)
@@ -64,16 +75,34 @@ static inline uint64_t fdt64_to_cpu(uint64_t val)
     return ((uint64_t)fdt32_to_cpu((uint32_t)val) << 32) | fdt32_to_cpu((uint32_t)(val >> 32));
 }
 
-/* Initialization */
+/*
+ * Initialization and Re-basing
+ */
+
+/* Initializes the FDT parser with the physical address of the DTB. */
 void fdt_init(uintptr_t global_dtb_ptr);
+
+/* Updates the FDT internal pointers to a new base address (e.g., post-MMU). */
 void fdt_rebase(uintptr_t new_base);
 
-/* Query API */
+/*
+ * Query API
+ */
+
+/* Retrieves a property by name from a given FDT node. */
 int fdt_get_property(const uint32_t* node, const char* prop_name, struct fdt_property* out_prop);
+
+/* Finds a node by its absolute path in the device tree. */
 const uint32_t* fdt_find_node_by_path(const char* path);
+
+/* Finds the first node that matches a specific compatible string. */
 const uint32_t* fdt_find_node_by_compatible(const char* compatible);
 
-/* Memory Reservation API */
+/*
+ * Memory Reservation API
+ */
+
+/* Parses the memory reservation map and registers ranges with the PMM. */
 void fdt_parse_memory_reservations(void);
 
 #endif /* PERSPICUA_DEVICETREE_FDT_H */

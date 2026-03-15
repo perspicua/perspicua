@@ -1,18 +1,24 @@
-#include "../include/devicetree/fdt.h"
+/*
+ * fdt.c - Implementation of the Flattened Device Tree (FDT) parser.
+ *
+ * This file provides the logic for traversing and querying the device
+ * tree blob (DTB) provided by the bootloader. It handles token parsing,
+ * property retrieval, and memory reservation map processing.
+ */
+
+#include "devicetree/fdt.h"
+
 #include "panic.h"
 #include "addr.h"
-#include "../../libc/include/string.h"  // For strlen (assuming libc is available)
+#include "stdio.h"
 
-// Global pointers for the structure and strings blocks.
-// They are marked static because they only need to be accessed within this file.
+#include "string.h"
+
 static const uint32_t* fdt_struct_block;
 static const char* fdt_strings_block;
 static uintptr_t fdt_base_address;
 
-/*
- * Helper to get the next 32-bit token and advance the pointer.
- * The pointer p must be aligned to 4 bytes.
- */
+/* Helper to get the next 32-bit token and advance the pointer. */
 static inline uint32_t fdt_next_tag(const uint32_t** p)
 {
     uint32_t tag = fdt32_to_cpu(**p);
@@ -20,121 +26,45 @@ static inline uint32_t fdt_next_tag(const uint32_t** p)
     return tag;
 }
 
-/*
- * Step 4 Primitive: A generic parser function that iterates through a single node's
- * properties and child nodes, given a starting pointer.
- * This function handles exactly one node (from BEGIN_NODE to its matching END_NODE).
- * For now, this just traverses it, but later it can execute search callbacks.
- */
-static void fdt_parse_node(const uint32_t** p)
+/* Internal routine to update pointers when the DTB is moved or re-mapped. */
+static void fdt_update_pointers(uintptr_t base)
 {
-    uint32_t tag;
-
-    // The current pointer must be pointing right after a BEGIN_NODE token.
-    // The node name immediately follows the BEGIN_NODE token.
-    const char* node_name = (const char*)*p;
-
-    // Advance pointer past the name string. All strings in FDT are null-terminated
-    // and padded to a 4-byte boundary.
-    size_t name_len = 0;
-    while (node_name[name_len] != '\0')
+    struct fdt_header* fdt = (struct fdt_header*)base;
+    if (fdt32_to_cpu(fdt->magic) != FDT_MAGIC)
     {
-        name_len++;
+        PANIC("Invalid FDT: magic number mismatch");
     }
 
-    // Align address to next 4-byte boundary correctly
-    uintptr_t align_addr = FDT_ALIGN((uintptr_t)(node_name + name_len + 1), 4);
-    *p = (const uint32_t*)align_addr;
-
-    // Loop through the body of the node
-    while ((tag = fdt_next_tag(p)) != FDT_END)
-    {
-        if (tag == FDT_BEGIN_NODE)
-        {
-            // Found a child node, recursively parse it
-            fdt_parse_node(p);
-        }
-        else if (tag == FDT_END_NODE)
-        {
-            // End of the current node, resume checking at the parent level
-            break;
-        }
-        else if (tag == FDT_PROP)
-        {
-            // Found a property string. It starts with the prop header.
-            const struct fdt_prop_header* prop_hdr = (const struct fdt_prop_header*)*p;
-            uint32_t len = fdt32_to_cpu(prop_hdr->len);
-            uint32_t nameoff = fdt32_to_cpu(prop_hdr->nameoff);
-
-            // Reconstruct the actual property wrapper
-            struct fdt_property prop;
-            prop.name = fdt_strings_block + nameoff;
-            prop.size = len;
-            prop.value = (const void*)(prop_hdr + 1);  // Value starts right after the header
-
-            // Advance the pointer past the header and the property value, aligned to 4 bytes.
-            uintptr_t next_addr = FDT_ALIGN((uintptr_t)prop.value + prop.size, 4);
-            *p = (const uint32_t*)next_addr;
-
-            // (In future steps, we can check prop.name here and extract values like "reg")
-        }
-        else if (tag == FDT_NOP)
-        {
-            // Ignore NOPs and continue
-            continue;
-        }
-    }
+    fdt_base_address = base;
+    fdt_struct_block = (const uint32_t*)(base + fdt32_to_cpu(fdt->off_dt_struct));
+    fdt_strings_block = (const char*)(base + fdt32_to_cpu(fdt->off_dt_strings));
 }
+
+/*
+ * Public API Implementations
+ */
 
 void fdt_init(uintptr_t global_dtb_ptr)
 {
-    // For this simple implementation, we just store the pointer to the DTB
-    // in a global variable for later use by other subsystems.
-    // fdt_global_dtb_ptr = global_dtb_ptr;
-    struct fdt_header* fdt = (struct fdt_header*)global_dtb_ptr;
-    if (fdt32_to_cpu(fdt->magic) != FDT_MAGIC)
-    {
-        // Invalid DTB, handle error (e.g., panic or fallback)
-        PANIC("Invalid FDT: magic number mismatch");
-    }
-    uint32_t structure_offset = fdt32_to_cpu(fdt->off_dt_struct);
-    uint32_t strings_offset = fdt32_to_cpu(fdt->off_dt_strings);
-    // Store these offsets in global variables if needed for later parsing
-    fdt_base_address = global_dtb_ptr;
-    fdt_struct_block = (const uint32_t*)(fdt_base_address + structure_offset);
-    fdt_strings_block = (const char*)(fdt_base_address + strings_offset);
+    fdt_update_pointers(global_dtb_ptr);
 }
 
 void fdt_rebase(uintptr_t new_base)
 {
-    struct fdt_header* fdt = (struct fdt_header*)new_base;
-    uint32_t structure_offset = fdt32_to_cpu(fdt->off_dt_struct);
-    uint32_t strings_offset = fdt32_to_cpu(fdt->off_dt_strings);
-
-    fdt_base_address = new_base;
-    fdt_struct_block = (const uint32_t*)(new_base + structure_offset);
-    fdt_strings_block = (const char*)(new_base + strings_offset);
+    fdt_update_pointers(new_base);
 }
 
-/*
- * Reads the memory reservation block from the FDT header and
- * informs the PMM to avoid allocating these physical regions.
- * Also reserves the physical memory occupied by the DTB itself.
- */
 void fdt_parse_memory_reservations(void)
 {
     struct fdt_header* fdt = (struct fdt_header*)fdt_base_address;
-
-    // 1. Reserve the DTB itself so PMM doesn't overwrite our tree
     uint32_t totalsize = fdt32_to_cpu(fdt->totalsize);
+
     extern void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char* tag);
+
+    // Always reserve the DTB itself to prevent overwriting.
     pmm_reserve_range((unsigned long)fdt_base_address, totalsize, "dtb");
 
-    // 2. Parse the official memory reservation map
     uint32_t rsv_offset = fdt32_to_cpu(fdt->off_mem_rsvmap);
-    extern void printf(const char* fmt, ...);
-
-    // Bounds check: rsvmap must be within the DTB
     if (rsv_offset >= totalsize)
     {
         printf("[  DTB ] WARNING: rsvmap offset out of bounds!\n");
@@ -142,142 +72,105 @@ void fdt_parse_memory_reservations(void)
     }
 
     const struct fdt_reserve_entry* rsvmap = (const struct fdt_reserve_entry*)(fdt_base_address + rsv_offset);
-
     int count = 0;
-    while (count++ < 64)
+
+    // Parse entries until we hit the null terminator (both address and size are 0).
+    while (rsvmap->address != 0 || rsvmap->size != 0)
     {
         uint64_t addr = fdt64_to_cpu(rsvmap->address);
         uint64_t size = fdt64_to_cpu(rsvmap->size);
 
-        printf("[  DTB ] rsvmap[%d]: base=0x%lx size=0x%lx\n", count - 1, addr, size);
-
-        if (size == 0 && addr == 0)
+        if (size > 0)
         {
-            break;
-        }
-
-        if (addr < 0x40000000UL)
-        {
+            printf("[  DTB ] rsvmap[%d]: base=0x%lx size=0x%lx\n", count++, addr, size);
             pmm_reserve_range((unsigned long)addr, (unsigned long)size, "dtb-reserved");
         }
-        else
-        {
-            printf("[  DTB ] WARNING: skipping out-of-range reservation!\n");
-        }
-
         rsvmap++;
+
+        // Safety limit to prevent infinite loops in malformed blobs.
+        if (count > 64)
+            break;
     }
 }
 
-/*
- * Scans the properties of a given node token to find a property by name.
- * `node` must point to the FDT_BEGIN_NODE token of the target node.
- */
 int fdt_get_property(const uint32_t* node, const char* prop_name, struct fdt_property* out_prop)
 {
     if (fdt32_to_cpu(*node) != FDT_BEGIN_NODE)
-    {
         return -1;
-    }
 
-    // Skip the BEGIN_NODE token
     const uint32_t* p = node + 1;
-
-    // Skip the node name
-    const char* node_name = (const char*)p;
-    size_t name_len = strlen(node_name);
-    p = (const uint32_t*)FDT_ALIGN((uintptr_t)(node_name + name_len + 1), 4);
+    const char* name = (const char*)p;
+    p = (const uint32_t*)FDT_ALIGN((uintptr_t)(name + strlen(name) + 1), 4);
 
     uint32_t tag;
-    int depth = 0;  // Depth relative to the target node
-
+    int depth = 0;
     while ((tag = fdt_next_tag(&p)) != FDT_END)
     {
         if (tag == FDT_BEGIN_NODE)
         {
             depth++;
-            // Skip inner node name
-            const char* inner_name = (const char*)p;
-            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(inner_name + strlen(inner_name) + 1), 4);
+            const char* n = (const char*)p;
+            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(n + strlen(n) + 1), 4);
         }
         else if (tag == FDT_END_NODE)
         {
             if (depth == 0)
-            {
-                break;  // End of our target node
-            }
+                break;
             depth--;
         }
         else if (tag == FDT_PROP)
         {
-            const struct fdt_prop_header* prop_hdr = (const struct fdt_prop_header*)p;
-            uint32_t len = fdt32_to_cpu(prop_hdr->len);
-            uint32_t nameoff = fdt32_to_cpu(prop_hdr->nameoff);
-            const char* current_prop_name = fdt_strings_block + nameoff;
-            const void* prop_value = (const void*)(prop_hdr + 1);
+            const struct fdt_prop_header* hdr = (const struct fdt_prop_header*)p;
+            uint32_t len = fdt32_to_cpu(hdr->len);
+            const char* cur_name = fdt_strings_block + fdt32_to_cpu(hdr->nameoff);
+            const void* value = (const void*)(hdr + 1);
+            p = (const uint32_t*)FDT_ALIGN((uintptr_t)value + len, 4);
 
-            // Advance pointer past property data
-            p = (const uint32_t*)FDT_ALIGN((uintptr_t)prop_value + len, 4);
-
-            // We only care about properties that belong directly to our node (depth == 0)
-            if (depth == 0 && strcmp(current_prop_name, prop_name) == 0)
+            if (depth == 0 && strcmp(cur_name, prop_name) == 0)
             {
                 if (out_prop)
                 {
-                    out_prop->name = current_prop_name;
+                    out_prop->name = cur_name;
                     out_prop->size = len;
-                    out_prop->value = prop_value;
+                    out_prop->value = value;
                 }
-                return 0;  // Found
+                return 0;
             }
         }
     }
-    return -1;  // Property not found
+    return -1;
 }
 
-/*
- * Linearly iterates through all nodes in the DTB to find one with a matching compatible string.
- * Returns a pointer to the FDT_BEGIN_NODE token.
- */
 const uint32_t* fdt_find_node_by_compatible(const char* compatible)
 {
     const uint32_t* p = fdt_struct_block;
     uint32_t tag;
-    const uint32_t* current_node_token = NULL;
+    const uint32_t* current_node = NULL;
 
     while ((tag = fdt_next_tag(&p)) != FDT_END)
     {
         if (tag == FDT_BEGIN_NODE)
         {
-            current_node_token = p - 1;  // Save pointer to the token
-
-            const char* node_name = (const char*)p;
-            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(node_name + strlen(node_name) + 1), 4);
+            current_node = p - 1;
+            const char* name = (const char*)p;
+            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(name + strlen(name) + 1), 4);
         }
         else if (tag == FDT_PROP)
         {
-            const struct fdt_prop_header* prop_hdr = (const struct fdt_prop_header*)p;
-            uint32_t len = fdt32_to_cpu(prop_hdr->len);
-            uint32_t nameoff = fdt32_to_cpu(prop_hdr->nameoff);
-            const char* prop_name = fdt_strings_block + nameoff;
-            const char* prop_value = (const char*)(prop_hdr + 1);
+            const struct fdt_prop_header* hdr = (const struct fdt_prop_header*)p;
+            uint32_t len = fdt32_to_cpu(hdr->len);
+            const char* cur_name = fdt_strings_block + fdt32_to_cpu(hdr->nameoff);
+            const char* value = (const char*)(hdr + 1);
+            p = (const uint32_t*)FDT_ALIGN((uintptr_t)value + len, 4);
 
-            p = (const uint32_t*)FDT_ALIGN((uintptr_t)prop_value + len, 4);
-
-            if (strcmp(prop_name, "compatible") == 0)
+            if (strcmp(cur_name, "compatible") == 0)
             {
-                // compatible is a list of null-terminated strings
-                const char* list_ptr = prop_value;
-                size_t chars_read = 0;
-                while (chars_read < len)
+                const char* s = value;
+                // compatible is a list of null-terminated strings.
+                for (size_t read = 0; read < len; read += strlen(s) + 1, s += strlen(s) + 1)
                 {
-                    if (strcmp(list_ptr, compatible) == 0)
-                    {
-                        return current_node_token;  // Match found
-                    }
-                    size_t str_len = strlen(list_ptr) + 1;
-                    list_ptr += str_len;
-                    chars_read += str_len;
+                    if (strcmp(s, compatible) == 0)
+                        return current_node;
                 }
             }
         }
@@ -285,75 +178,118 @@ const uint32_t* fdt_find_node_by_compatible(const char* compatible)
     return NULL;
 }
 
-/*
- * A simplified path matching utility.
- * Iterates through the tree linearly, tracking the names at each depth.
- */
 const uint32_t* fdt_find_node_by_path(const char* path)
 {
+    if (!path || path[0] != '/')
+        return NULL;
+
     const uint32_t* p = fdt_struct_block;
     uint32_t tag;
 
-    // We maintain a stack of node names to track our current absolute path.
-    const char* path_stack[16];
-    int depth = -1;  // -1 means before the root node
+    // Handle root path specially
+    if (path[1] == '\0')
+        return p;
+
+    const char* current_comp = path + 1;
+    int current_depth = 0;
+    int search_depth = 1;
 
     while ((tag = fdt_next_tag(&p)) != FDT_END)
     {
         if (tag == FDT_BEGIN_NODE)
         {
-            const uint32_t* current_token = p - 1;
+            const uint32_t* node_start = p - 1;
             const char* node_name = (const char*)p;
             p = (const uint32_t*)FDT_ALIGN((uintptr_t)(node_name + strlen(node_name) + 1), 4);
 
-            depth++;
-            if (depth < 16)
-            {
-                // Root node has an empty name, but its path prefix is implicitly /
-                path_stack[depth] = (depth == 0) ? "" : node_name;
+            current_depth++;
 
-                // Reconstruct current absolute path
-                char current_path[256];
-                current_path[0] = '\0';
-                for (int i = 0; i <= depth; i++)
+            if (current_depth == 1)
+            {
+                if (node_name[0] == '\0')
                 {
-                    if (i == 0)
+                    search_depth = 2;
+                    continue;
+                }
+                else
+                {
+                    return NULL;
+                }
+            }
+
+            if (current_depth == search_depth)
+            {
+                const char* next_slash = strchr(current_comp, '/');
+                size_t comp_len = next_slash ? (size_t)(next_slash - current_comp) : strlen(current_comp);
+
+                size_t node_name_len = 0;
+                while (node_name[node_name_len] != '\0' && node_name[node_name_len] != '@')
+                    node_name_len++;
+
+                size_t comp_name_len = 0;
+                while (current_comp[comp_name_len] != '\0' && current_comp[comp_name_len] != '@'
+                       && current_comp[comp_name_len] != '/')
+                    comp_name_len++;
+
+                int match = 0;
+                if (comp_name_len == node_name_len && strncmp(current_comp, node_name, comp_name_len) == 0)
+                {
+                    const char* comp_unit = strchr(current_comp, '@');
+                    if (comp_unit && comp_unit < current_comp + comp_len)
                     {
-                        strcat(current_path, "/");
+                        if (strncmp(current_comp, node_name, comp_len) == 0 && node_name[comp_len] == '\0')
+                        {
+                            match = 1;
+                        }
                     }
                     else
                     {
-                        strcat(current_path, path_stack[i]);
-                        // Only add trailing slash if it is not the last component
-                        if (i != depth)
-                        {
-                            strcat(current_path, "/");
-                        }
+                        match = 1;
                     }
                 }
 
-                // Deal with double slashes if root node name was empty
-                if (current_path[1] == '\0' && strcmp(path, "/") == 0)
+                if (match)
                 {
-                    return current_token;
-                }
-
-                if (strcmp(current_path, path) == 0)
-                {
-                    return current_token;
+                    if (!next_slash || next_slash[1] == '\0')
+                    {
+                        return node_start;
+                    }
+                    current_comp = next_slash + 1;
+                    search_depth++;
+                    continue;
                 }
             }
+
+            // Skip this subtree
+            int skip_depth = 1;
+            while (skip_depth > 0 && (tag = fdt_next_tag(&p)) != FDT_END)
+            {
+                if (tag == FDT_BEGIN_NODE)
+                {
+                    skip_depth++;
+                    const char* n = (const char*)p;
+                    p = (const uint32_t*)FDT_ALIGN((uintptr_t)(n + strlen(n) + 1), 4);
+                }
+                else if (tag == FDT_END_NODE)
+                    skip_depth--;
+                else if (tag == FDT_PROP)
+                {
+                    const struct fdt_prop_header* hdr = (const struct fdt_prop_header*)p;
+                    p = (const uint32_t*)FDT_ALIGN((uintptr_t)(hdr + 1) + fdt32_to_cpu(hdr->len), 4);
+                }
+            }
+            current_depth--;
         }
         else if (tag == FDT_END_NODE)
         {
-            depth--;
+            current_depth--;
         }
         else if (tag == FDT_PROP)
         {
-            const struct fdt_prop_header* prop_hdr = (const struct fdt_prop_header*)p;
-            uint32_t len = fdt32_to_cpu(prop_hdr->len);
-            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(prop_hdr + 1) + len, 4);
+            const struct fdt_prop_header* hdr = (const struct fdt_prop_header*)p;
+            p = (const uint32_t*)FDT_ALIGN((uintptr_t)(hdr + 1) + fdt32_to_cpu(hdr->len), 4);
         }
     }
+
     return NULL;
 }
