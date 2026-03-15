@@ -1,3 +1,32 @@
+/*
+ * main.c - The kernel entry point and system initialization sequence.
+ *
+ * This file contains the primary 'main' function which orchestrates the
+ * sequential bring-up of all kernel subsystems, memory management,
+ * drivers, and the multi-core scheduler.
+ */
+
+#include "types.h"
+#include "addr.h"
+#include "lock.h"
+#include "panic.h"
+#include "stdio.h"
+#include "string.h"
+
+#include "pmm.h"
+#include "mmu.h"
+#include "heap.h"
+#include "slab.h"
+#include "timer.h"
+#include "sched.h"
+#include "process.h"
+#include "vfs.h"
+#include "tty.h"
+
+#include "initrd.h"
+#include "ramfs.h"
+#include "devfs.h"
+
 #include "driver/gpio.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
@@ -6,35 +35,24 @@
 #include "driver/fb_console.h"
 #include "driver/dashboard.h"
 
-#include "pmm.h"
-#include "mmu.h"
-#include "heap.h"
-#include "sched.h"
-#include "timer.h"
-#include "lock.h"
-#include "process.h"
-#include "vfs.h"
-#include "initrd.h"
-#include "ramfs.h"
-#include "devfs.h"
-
-#include "panic.h"
-#include "stdio.h"
-#include "string.h"
-
 #include "test.h"
-#include "addr.h"
 
-extern void _entry(void);
-
-static spinlock_t console_lock = SPINLOCK_INIT;
-
+/* Kernel metadata and versioning */
 #define KERNEL_VERSION "0.1"
 
-// Symbols from user_programs.S
+/* Symbols defined in the linker script and assembly files */
+extern void _entry(void);
 extern char initrd_start[];
 extern char initrd_end[];
+extern struct tty console_tty;
 
+/* Global synchronization for early boot messages */
+static spinlock_t console_lock = SPINLOCK_INIT;
+
+/*
+ * smp_init - Brings up the secondary CPU cores by writing the kernel
+ * entry point to their respective spin tables.
+ */
 static void smp_init(void)
 {
     printf("\n");
@@ -42,6 +60,7 @@ static void smp_init(void)
 
     unsigned long entry_phys = V2P((unsigned long)_entry);
 
+    /* BCM2711 ARM spin table addresses */
     volatile unsigned long* spin_cpu1 = (unsigned long*)P2V(0xE0);
     volatile unsigned long* spin_cpu2 = (unsigned long*)P2V(0xE8);
     volatile unsigned long* spin_cpu3 = (unsigned long*)P2V(0xF0);
@@ -50,19 +69,24 @@ static void smp_init(void)
     *spin_cpu2 = entry_phys;
     *spin_cpu3 = entry_phys;
 
+    /* Ensure memory writes are visible before signaling event */
     asm volatile("dc cvac, %0" : : "r"(spin_cpu1));
     asm volatile("dc cvac, %0" : : "r"(spin_cpu2));
     asm volatile("dc cvac, %0" : : "r"(spin_cpu3));
     asm volatile("dsb sy");
 
-    // wake up parked cores
+    /* Send event to wake up parked cores */
     asm volatile("sev");
 
-    // wait for secondary cores to finish init before main continues
+    /* Allow time for secondary cores to reach secondary_main */
     sleep_ms(200);
 }
-__attribute__((used)) void secondary_main(void);
-void secondary_main(void)
+
+/*
+ * secondary_main - Entry point for non-primary CPU cores.
+ * Initializes per-core MMU, interrupt controller, and local timers.
+ */
+__attribute__((used)) void secondary_main(void)
 {
     unsigned long core_id;
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
@@ -78,11 +102,16 @@ void secondary_main(void)
 
     sched_secondary_init();
 
-    // should never be reached
+    /* Fallback loop: secondary cores should enter the scheduler */
     for (;;)
+    {
         asm volatile("wfe");
+    }
 }
 
+/*
+ * print_banner - Displays the kernel ASCII logo and version string.
+ */
 static void print_banner(void)
 {
     printf("\n");
@@ -94,9 +123,10 @@ static void print_banner(void)
     printf("\n");
 }
 
-#include "tty.h"
-extern struct tty console_tty;
-
+/*
+ * dashboard_task - Background task responsible for refreshing the
+ * system status display.
+ */
 static void dashboard_task(void)
 {
     while (1)
@@ -106,57 +136,60 @@ static void dashboard_task(void)
     }
 }
 
-__attribute__((used)) int main(void);
-int main()
+/*
+ * main - The primary kernel initialization routine.
+ */
+__attribute__((used)) int main(void)
 {
+    /* Stage 1: Basic hardware and console bring-up */
     gpio_init();
     uart_init();
     mbox_init();
     fb_init();
     fb_console_init();
     tty_init(&console_tty);
+
     print_banner();
-    printf("[  0.000] BOOT: perspicua kernel, built " __DATE__ " " __TIME__ " version %s\n", KERNEL_VERSION);
-    printf("[  0.000] BOOT: EL1 entry at 0x%lx (higher-half VMA 0x%lx)\n", V2P((unsigned long)main),
-           (unsigned long)main);
+    printf("[  0.000] BOOT: perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
     printf("[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)\n");
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
-    printf("[  0.000] BOOT: Kernel VMA base: 0x%lx\n", KERNEL_VMA);
 
+    /* Stage 2: Memory management initialization */
     pmm_reserve_range(V2P((unsigned long)initrd_start), (unsigned long)(initrd_end - initrd_start), "initrd");
 
     pmm_init();
     mmu_init();
     remap_framebuffer_pages();
     heap_init();
+
+    /* Stage 3: Interrupts and scheduling */
     gic_init();
-
     uart_enable_interrupts();
-    printf("[  0.000] UART: PL011 @ 0xFE201000, 115200 8N1, FIFO enabled\n");
-
     timer_interrupt_init();
     sched_init();
+
+    /* Start the graphical dashboard update task */
     sched_create_task(dashboard_task);
 
+    /* Stage 4: Multi-processing and testing */
     smp_init();
-
-    printf("\n");
-    printf(" BOOT COMPLETE - all subsystems operational\n");
+    printf("\n BOOT COMPLETE - all subsystems operational\n");
 
     run_all_tests();
-
     enable_interrupts();
     run_scheduler_tests();
 
+    /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
     ramfs_init();
     devfs_init();
     vfs_mount("/dev", devfs_get_root());
 
-    // mount initrd
+    /* Mount the initial RAM disk archive */
     initrd_init(initrd_start);
 
+    /* Demonstration of VFS functionality */
     int fd = vfs_open("/hello.txt", VFS_O_RDONLY);
     if (fd >= 0)
     {
@@ -178,13 +211,17 @@ int main()
         printf("[  VFS ] Error: could not open /hello.txt\n");
     }
 
+    /* Load and execute the primary user-space application */
     if (process_create_from_file("/init.elf", 1) != 0)
     {
         printf("[  ELF ] Error: failed to load /init.elf\n");
     }
 
+    /* The main thread remains parked while the scheduler handles execution */
     while (1)
+    {
         asm volatile("wfe");
+    }
 
     return 0;
 }
