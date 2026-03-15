@@ -57,10 +57,10 @@ static void tty_pump_tx(struct tty* tty)
     size_t initial_tail = tty->tx_tail;
     while (tty->tx_head != tty->tx_tail)
     {
-        if (mmio_read(UART0_FR) & UART_FR_TXFF)
+        if (mmio_read(uart_fr) & UART_FR_TXFF)
             break;
 
-        mmio_write(UART0_DR, (unsigned char)tty->tx_buf[tty->tx_tail]);
+        mmio_write(uart_dr, (unsigned char)tty->tx_buf[tty->tx_tail]);
         tty->tx_tail = (tty->tx_tail + 1) % TTY_BUF_SIZE;
     }
 
@@ -72,9 +72,9 @@ static void tty_pump_tx(struct tty* tty)
     }
 
     if (tty->tx_head != tty->tx_tail)
-        mmio_write(UART0_IMSC, mmio_read(UART0_IMSC) | UART_IMSC_TXIM);
+        mmio_write(uart_imsc, mmio_read(uart_imsc) | UART_IMSC_TXIM);
     else
-        mmio_write(UART0_IMSC, mmio_read(UART0_IMSC) & ~UART_IMSC_TXIM);
+        mmio_write(uart_imsc, mmio_read(uart_imsc) & ~UART_IMSC_TXIM);
 }
 
 static void tty_put_tx_char(struct tty* tty, char c)

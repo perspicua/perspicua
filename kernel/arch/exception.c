@@ -227,14 +227,14 @@ void exception_irq_handler(void)
     }
     else if (irq_id == uart_irq_cached)
     {
-        uint32_t mis = mmio_read(UART0_MIS);
+        uint32_t mis = mmio_read(uart_mis);
 
         // Handle RX and RX Timeout
         if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS))
         {
-            while (!(mmio_read(UART0_FR) & UART_FR_RXFE))
+            while (!(mmio_read(uart_fr) & UART_FR_RXFE))
             {
-                char c = (char)(mmio_read(UART0_DR) & 0xFF);
+                char c = (char)(mmio_read(uart_dr) & 0xFF);
                 tty_handle_rx(&console_tty, c);
             }
         }
