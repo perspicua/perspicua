@@ -123,7 +123,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         uint64_t start_vpage = vaddr & ~0xFFFULL;
         uint64_t end_vpage = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
 
-        unsigned long mmu_flags = (flags & ELF_PROG_FLAG_X) ? PAGE_USER_CODE : PAGE_USER_DATA;
+        unsigned long mmu_flags = (flags & ELF_PROG_FLAG_X) ? MMU_PAGE_USER_CODE : MMU_PAGE_USER_DATA;
 
         for (uint64_t page = start_vpage; page < end_vpage; page += PAGE_SIZE)
         {
@@ -136,7 +136,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
             {
                 kernel_vaddr = (void*)P2V(current_paddr);
                 // Adjust permissions if needed when mapping memory for data
-                if ((mmu_flags & PAGE_USER_DATA) && !(current_flags & MMU_UXN))
+                if ((mmu_flags & MMU_PAGE_USER_DATA) && !(current_flags & MMU_UXN))
                 {
                     mmu_user_unmap_page(pgd, page);
                     mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);

@@ -210,9 +210,9 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].asid = pid;
     process_table[pid].ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
 
-    mmu_user_map_page(user_pgd, process_table[pid].vaddr_code, process_table[pid].paddr_code, PAGE_USER_CODE);
+    mmu_user_map_page(user_pgd, process_table[pid].vaddr_code, process_table[pid].paddr_code, MMU_PAGE_USER_CODE);
     mmu_user_map_page(user_pgd, process_table[pid].vaddr_user_stack, process_table[pid].paddr_user_stack,
-                      PAGE_USER_DATA);
+                      MMU_PAGE_USER_DATA);
 
     void* kstack = alloc_kernel_stack();
     process_table[pid].vaddr_kernel_stack = (uintptr_t)kstack;
@@ -297,7 +297,7 @@ int process_create_from_file(const char* path, uint32_t pid)
         void* page = pmm_alloc_page();
         if (!page)
             PANIC("Out of memory for user stack");
-        mmu_user_map_page(user_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), PAGE_USER_DATA);
+        mmu_user_map_page(user_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA);
     }
 
     void* kstack = alloc_kernel_stack();
@@ -378,7 +378,7 @@ int process_exec(const char* path)
         void* page = pmm_alloc_page();
         if (!page)
             PANIC("Out of memory for exec stack");
-        mmu_user_map_page(new_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), PAGE_USER_DATA);
+        mmu_user_map_page(new_pgd, vaddr_stack + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA);
     }
 
     unsigned long* old_pgd = p->user_pgd;

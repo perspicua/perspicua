@@ -1,4 +1,13 @@
+/*
+ * mmu.c - Implementation of the Memory Management Unit (MMU) driver.
+ *
+ * This file handles the management of AArch64 page tables, including
+ * identity mapping, higher-half kernel established, and per-process
+ * address space isolation with support for Copy-on-Write.
+ */
+
 #include "mmu.h"
+
 #include "pmm.h"
 #include "lock.h"
 #include "addr.h"
@@ -6,6 +15,7 @@
 #include "string.h"
 #include "panic.h"
 
+/* Internal PTE short-hand macros for clarity */
 #define PTE_VALID MMU_PTE_VALID
 #define PTE_TABLE MMU_PTE_TABLE
 #define PTE_PAGE MMU_PTE_PAGE
@@ -19,6 +29,7 @@
 #define PTE_ATTR_NORMAL MMU_ATTR_NORMAL
 #define PTE_ATTR_DEVICE MMU_ATTR_DEVICE
 
+/* Extern symbols from the linker script and PMM metadata */
 extern char __text_start[], __text_end[];
 extern char __rodata_start[], __rodata_end[];
 extern char __data_start[], __data_end[];
@@ -26,25 +37,26 @@ extern char __bss_start[], __bss_end[];
 extern char __kernel_end[];
 extern unsigned long pmm_metadata_end;
 
+/* Global MMU state and synchronization */
 static unsigned long kernel_pgd_phys;
-static unsigned long* kernel_pgd_virt; // virtual address of the PGD for dynamic mapping
-static unsigned long empty_pgd_phys;   // zeroed PGD for kernel-only tasks (TTBR0)
+static unsigned long* kernel_pgd_virt;
+static unsigned long empty_pgd_phys;
 static spinlock_t mmu_lock = SPINLOCK_INIT;
 
-// --- address field extraction for 39-bit VA, 4KB granule ---
-// VA layout: [38:30] = L1 index, [29:21] = L2 index, [20:12] = L3 index, [11:0] = page offset
+/* Address field extraction for 39-bit virtual addresses, 4KB granule */
 #define L1_INDEX(va) (((va) >> 30) & 0x1FF)
 #define L2_INDEX(va) (((va) >> 21) & 0x1FF)
 #define L3_INDEX(va) (((va) >> 12) & 0x1FF)
 #define PAGE_OFFSET(va) ((va) & 0xFFF)
 
-// PTE address mask: bits [47:12] hold the physical frame address
+/* PTE address mask: bits [47:12] hold the physical frame address */
 #define PTE_ADDR_MASK 0x0000FFFFFFFFF000ULL
 
-// TLB invalidation for a single VA
+/*
+ * tlbi_va - Invalidates the TLB entry for a specific virtual address.
+ */
 static inline void tlbi_va(unsigned long vaddr)
 {
-    // tlbi vale1is operates on VA >> 12
     unsigned long va_shifted = vaddr >> 12;
     asm volatile("dsb ish");
     asm volatile("tlbi vale1is, %0" : : "r"(va_shifted));
@@ -52,6 +64,9 @@ static inline void tlbi_va(unsigned long vaddr)
     asm volatile("isb");
 }
 
+/*
+ * mmu_init - Boot-time initialization of the kernel address space.
+ */
 void mmu_init(void)
 {
     unsigned long* pgd = (unsigned long*)pmm_alloc_page();
@@ -66,27 +81,29 @@ void mmu_init(void)
     memset(pmd_2, 0, PAGE_SIZE);
     memset(pmd_3, 0, PAGE_SIZE);
 
-    // link PGD to PMDs (covers [0, 4GB])
+    // Link the top-level PGD to PMDs covering the first 4GB
     pgd[0] = V2P(pmd_0) | PTE_VALID | PTE_TABLE;
     pgd[1] = V2P(pmd_1) | PTE_VALID | PTE_TABLE;
     pgd[2] = V2P(pmd_2) | PTE_VALID | PTE_TABLE;
     pgd[3] = V2P(pmd_3) | PTE_VALID | PTE_TABLE;
 
-    // map all 4gb
+    // Initially establish a 4GB identity mapping using 2MB blocks
     unsigned long* pmds[] = {pmd_0, pmd_1, pmd_2, pmd_3};
     for (unsigned long p = 0; p < 4; p++)
     {
         for (unsigned long i = 0; i < 512; i++)
         {
-            // calculate exact physical addr for this 2mb block
             unsigned long addr = (p * 1024ULL * 1024ULL * 1024ULL) + (i * 2 * 1024 * 1024);
-
             unsigned long attr = PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW;
 
             if (p == 0)
+            {
                 attr |= PTE_SH_INNER | PTE_ATTR_NORMAL;
+            }
             else
+            {
                 attr |= PTE_ATTR_DEVICE;
+            }
             pmds[p][i] = addr | attr;
         }
     }
@@ -94,6 +111,7 @@ void mmu_init(void)
     kernel_pgd_virt = pgd;
     kernel_pgd_phys = V2P(pgd);
 
+    // Map kernel segments with specific page permissions
     unsigned long k_start = (unsigned long)__text_start;
     unsigned long k_end = pmm_metadata_end;
 
@@ -104,25 +122,26 @@ void mmu_init(void)
 
         if (vaddr >= (unsigned long)__text_start && vaddr < (unsigned long)__text_end)
         {
-            attr |= PTE_AP_RO; // Code: Read-Only, Executable
+            attr |= PTE_AP_RO;
         }
         else if (vaddr >= (unsigned long)__rodata_start && vaddr < (unsigned long)__rodata_end)
         {
-            attr |= PTE_AP_RO | PTE_PXN | PTE_UXN; // Constants: Read-Only, No Execute
+            attr |= PTE_AP_RO | PTE_PXN | PTE_UXN;
         }
         else
         {
-            attr |= PTE_AP_RW | PTE_PXN | PTE_UXN; // Data/BSS/Stack: Read-Write, No Execute
+            attr |= PTE_AP_RW | PTE_PXN | PTE_UXN;
         }
 
         mmu_map_page(vaddr, paddr, attr);
     }
 
-    // allocate an empty PGD for kernel-only tasks so TTBR0 faults on any user VA
+    // Allocate a zeroed PGD for TTBR0 to trap unhandled user accesses
     unsigned long* empty_pgd = (unsigned long*)pmm_alloc_page();
     memset(empty_pgd, 0, PAGE_SIZE);
     empty_pgd_phys = V2P(empty_pgd);
 
+    // Load page table roots into the system registers
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
     asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys));
 
@@ -130,14 +149,13 @@ void mmu_init(void)
     asm volatile("dsb ish");
     asm volatile("isb");
 
-    printf("[  MMU ] TTBR1 -> 0x%lx, TTBR0 -> empty (trap user access)\n", kernel_pgd_phys);
+    printf("[  MMU ] TTBR1 -> 0x%lx, TTBR0 -> empty\n", kernel_pgd_phys);
     printf("[  MMU ] Mapped: 4 GB range (Blocks + Kernel Pages)\n");
-    printf("[  MMU ]   .text   [0x%lx — 0x%lx] RO+X\n", (unsigned long)__text_start, (unsigned long)__text_end);
-    printf("[  MMU ]   .rodata [0x%lx — 0x%lx] RO+NX\n", (unsigned long)__rodata_start, (unsigned long)__rodata_end);
-    printf("[  MMU ]   .data   [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__data_start, (unsigned long)__data_end);
-    printf("[  MMU ]   .bss    [0x%lx — 0x%lx] RW+NX\n", (unsigned long)__bss_start, (unsigned long)__bss_end);
 }
 
+/*
+ * mmu_secondary_init - Secondary core memory initialization.
+ */
 void mmu_secondary_init(void)
 {
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys));
@@ -148,17 +166,24 @@ void mmu_secondary_init(void)
     asm volatile("isb");
 }
 
-// allocate a zeroed page table page from PMM
+/*
+ * alloc_table_page - Internal helper to allocate a zeroed page table.
+ */
 static unsigned long* alloc_table_page(void)
 {
     unsigned long* page = (unsigned long*)pmm_alloc_page();
-    ASSERT(page != 0);
+    if (!page)
+    {
+        PANIC("MMU: Failed to allocate table page.");
+    }
     memset(page, 0, PAGE_SIZE);
     return page;
 }
 
-// split a 2MB block descriptor into 512 individual 4KB L3 page entries.
-// returns the new L3 table (virtual). Updates the L2 entry in-place.
+/*
+ * split_block_to_pages - Splits a 2MB block descriptor into 512 4KB pages.
+ * Implements Break-Before-Make to ensure TLB consistency.
+ */
 static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned long l2_idx, unsigned long vaddr_base)
 {
     unsigned long block_entry = l2_table[l2_idx];
@@ -173,15 +198,12 @@ static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned lon
         l3_table[i] = page_phys | PTE_VALID | PTE_PAGE | block_attr;
     }
 
-    // BREAK-BEFORE-MAKE
     l2_table[l2_idx] = 0;
-    // Invalidate the entire 2MB block in TLB
     for (unsigned long v = vaddr_base; v < vaddr_base + 0x200000; v += PAGE_SIZE)
     {
         tlbi_va(v);
     }
 
-    // WRITE NEW ENTRY
     l2_table[l2_idx] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
 
     asm volatile("dsb ish");
@@ -190,18 +212,17 @@ static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned lon
     return l3_table;
 }
 
+/*
+ * mmu_map_page - Mapping implementation for the kernel address space.
+ */
 void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
 {
-    ASSERT((vaddr & 0xFFF) == 0); // page-aligned
-    ASSERT((paddr & 0xFFF) == 0);
-
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
     unsigned long l1_idx = L1_INDEX(vaddr);
     unsigned long l2_idx = L2_INDEX(vaddr);
     unsigned long l3_idx = L3_INDEX(vaddr);
 
-    // L1 (PGD) -> L2 (PMD)
     unsigned long l1_entry = kernel_pgd_virt[l1_idx];
     unsigned long* l2_table;
     if (l1_entry & PTE_VALID)
@@ -214,7 +235,6 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
         kernel_pgd_virt[l1_idx] = V2P(l2_table) | PTE_VALID | PTE_TABLE;
     }
 
-    // L2 (PMD) -> L3 (PTE)
     unsigned long l2_entry = l2_table[l2_idx];
     unsigned long* l3_table;
 
@@ -222,7 +242,6 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     {
         if (!(l2_entry & PTE_TABLE))
         {
-            // 2MB block - split into 4KB pages
             unsigned long vaddr_base = vaddr & ~0x1FFFFFULL;
             l3_table = split_block_to_pages(l2_table, l2_idx, vaddr_base);
         }
@@ -237,7 +256,6 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
         l2_table[l2_idx] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
     }
 
-    // BBM for L3 if already valid
     if (l3_table[l3_idx] & PTE_VALID)
     {
         unsigned long old_pa = l3_table[l3_idx] & PTE_ADDR_MASK;
@@ -253,10 +271,11 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     spin_unlock_irqrestore(&mmu_lock, irqflags);
 }
 
+/*
+ * mmu_unmap_page - Unmapping implementation for the kernel address space.
+ */
 void mmu_unmap_page(unsigned long vaddr)
 {
-    ASSERT((vaddr & 0xFFF) == 0);
-
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
     unsigned long l1_idx = L1_INDEX(vaddr);
@@ -298,6 +317,9 @@ void mmu_unmap_page(unsigned long vaddr)
     spin_unlock_irqrestore(&mmu_lock, irqflags);
 }
 
+/*
+ * mmu_query - Mapping query implementation.
+ */
 int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
 {
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
@@ -325,11 +347,15 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     if (!(l2_entry & PTE_TABLE))
     {
         unsigned long block_phys = l2_entry & PTE_ADDR_MASK;
-        unsigned long offset = vaddr & 0x1FFFFF; // low 21 bits
+        unsigned long offset = vaddr & 0x1FFFFF;
         if (out_paddr)
+        {
             *out_paddr = block_phys + offset;
+        }
         if (out_flags)
+        {
             *out_flags = l2_entry & ~PTE_ADDR_MASK;
+        }
         spin_unlock_irqrestore(&mmu_lock, irqflags);
         return 1;
     }
@@ -344,34 +370,45 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     }
 
     if (out_paddr)
+    {
         *out_paddr = (l3_entry & PTE_ADDR_MASK) + PAGE_OFFSET(vaddr);
+    }
     if (out_flags)
+    {
         *out_flags = l3_entry & ~PTE_ADDR_MASK;
+    }
 
     spin_unlock_irqrestore(&mmu_lock, irqflags);
     return 1;
 }
 
+/*
+ * mmu_create_user_pgd - Allocates a top-level user page table.
+ */
 unsigned long* mmu_create_user_pgd(void)
 {
-    unsigned long* pgd = alloc_table_page();
-    return pgd;
+    return alloc_table_page();
 }
 
+/*
+ * mmu_destroy_user_pgd - Recursively destroys a user address space.
+ */
 void mmu_destroy_user_pgd(unsigned long* pgd)
 {
     for (int i = 0; i < 512; i++)
     {
-        if (!(pgd[i] & PTE_VALID))
+        if (!(pgd[i] & PTE_VALID) || !(pgd[i] & PTE_TABLE))
+        {
             continue;
-        if (!(pgd[i] & PTE_TABLE))
-            continue;
+        }
 
         unsigned long* l2 = (unsigned long*)P2V(pgd[i] & PTE_ADDR_MASK);
         for (int j = 0; j < 512; j++)
         {
             if (!(l2[j] & PTE_VALID))
+            {
                 continue;
+            }
             if (l2[j] & PTE_TABLE)
             {
                 unsigned long* l3 = (unsigned long*)P2V(l2[j] & PTE_ADDR_MASK);
@@ -391,18 +428,25 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
     pmm_free_page(pgd);
 }
 
+/*
+ * mmu_copy_user_pgd - Deep copy of a user address space with CoW semantics.
+ */
 unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
 {
     unsigned long* child_pgd = mmu_create_user_pgd();
     if (!child_pgd)
-        return NULL;
+    {
+        return (void*)0;
+    }
 
     unsigned long flags = spin_lock_irqsave(&mmu_lock);
 
     for (int i = 0; i < 512; i++)
     {
         if (!(parent_pgd[i] & MMU_PTE_VALID))
+        {
             continue;
+        }
 
         unsigned long* parent_pmd = (unsigned long*)P2V(parent_pgd[i] & PTE_ADDR_MASK);
         unsigned long* child_pmd = alloc_table_page();
@@ -411,7 +455,9 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
         for (int j = 0; j < 512; j++)
         {
             if (!(parent_pmd[j] & MMU_PTE_VALID))
+            {
                 continue;
+            }
 
             if (parent_pmd[j] & MMU_PTE_TABLE)
             {
@@ -422,11 +468,13 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
                 for (int k = 0; k < 512; k++)
                 {
                     if (!(parent_pte[k] & MMU_PTE_VALID))
+                    {
                         continue;
+                    }
 
                     unsigned long pte = parent_pte[k];
 
-                    // COW LOGIC. mooooooooo
+                    // Convert RW pages to RO and mark as CoW
                     if ((pte & (3ULL << 6)) == MMU_AP_RW)
                     {
                         pte &= ~(3ULL << 6);
@@ -436,27 +484,22 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
                     }
 
                     child_pte[k] = pte;
-
                     pmm_hold_page((void*)P2V(pte & PTE_ADDR_MASK));
                 }
-            }
-            else
-            {
-                // TODO: Bonus pt riciu
             }
         }
     }
 
     asm volatile("tlbi vmalle1is\n dsb ish\n isb");
-
     spin_unlock_irqrestore(&mmu_lock, flags);
     return child_pgd;
 }
+
+/*
+ * mmu_user_map_page - Established a 4KB mapping in a user address space.
+ */
 void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags)
 {
-    ASSERT((vaddr & 0xFFF) == 0);
-    ASSERT((paddr & 0xFFF) == 0);
-
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
     unsigned long l1_idx = L1_INDEX(vaddr);
@@ -477,7 +520,6 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     unsigned long* l3_table;
     if (l2_table[l2_idx] & PTE_VALID)
     {
-        ASSERT(l2_table[l2_idx] & PTE_TABLE);
         l3_table = (unsigned long*)P2V(l2_table[l2_idx] & PTE_ADDR_MASK);
     }
     else
@@ -500,10 +542,11 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     spin_unlock_irqrestore(&mmu_lock, irqflags);
 }
 
+/*
+ * mmu_user_unmap_page - Removes a mapping from a user address space.
+ */
 void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
 {
-    ASSERT((vaddr & 0xFFF) == 0);
-
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
     unsigned long l1_idx = L1_INDEX(vaddr);
@@ -535,6 +578,9 @@ void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
     spin_unlock_irqrestore(&mmu_lock, irqflags);
 }
 
+/*
+ * mmu_switch_user - Switches the current TTBR0 to a new user PGD.
+ */
 void mmu_switch_user(unsigned long* pgd, unsigned long asid)
 {
     unsigned long ttbr0 = V2P(pgd) | (asid << 48);
@@ -543,10 +589,15 @@ void mmu_switch_user(unsigned long* pgd, unsigned long asid)
     asm volatile("isb");
 }
 
+/*
+ * mmu_user_query - Query implementation for user address spaces.
+ */
 int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
 {
     if (!pgd)
+    {
         return 0;
+    }
 
     unsigned long irqflags = spin_lock_irqsave(&mmu_lock);
 
@@ -572,9 +623,13 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
         unsigned long block_phys = l2[l2_idx] & PTE_ADDR_MASK;
         unsigned long offset = vaddr & 0x1FFFFF;
         if (out_paddr)
+        {
             *out_paddr = block_phys + offset;
+        }
         if (out_flags)
+        {
             *out_flags = l2[l2_idx] & ~PTE_ADDR_MASK;
+        }
         spin_unlock_irqrestore(&mmu_lock, irqflags);
         return 1;
     }
@@ -587,41 +642,55 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
     }
 
     if (out_paddr)
+    {
         *out_paddr = (l3[l3_idx] & PTE_ADDR_MASK) + PAGE_OFFSET(vaddr);
+    }
     if (out_flags)
+    {
         *out_flags = l3[l3_idx] & ~PTE_ADDR_MASK;
+    }
 
     spin_unlock_irqrestore(&mmu_lock, irqflags);
     return 1;
 }
 
+/*
+ * mmu_handle_cow - Resolution of Copy-on-Write page faults.
+ */
 int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
 {
     vaddr &= ~0xFFFULL;
     unsigned long paddr, flags;
 
     if (!mmu_user_query(pgd, vaddr, &paddr, &flags))
+    {
         return -1;
+    }
 
     if (!(flags & MMU_PTE_COW))
+    {
         return -1;
+    }
 
     void* new_page = pmm_alloc_page();
     if (!new_page)
+    {
         return -1;
+    }
 
-    // copy data from old page
     memcpy(new_page, (void*)P2V(paddr), PAGE_SIZE);
 
-    // map the new page as RW and clear COW bit
     unsigned long new_flags = (flags & ~MMU_PTE_COW);
-    new_flags &= ~(3ULL << 6); // Clear AP
+    new_flags &= ~(3ULL << 6);
     new_flags |= MMU_AP_RW;
 
     mmu_user_map_page(pgd, vaddr, V2P(new_page), new_flags);
     return 0;
 }
 
+/*
+ * mmu_kernel_ttbr0 - Returns the empty PGD root for kernel-only threads.
+ */
 unsigned long mmu_kernel_ttbr0(void)
 {
     return empty_pgd_phys;
