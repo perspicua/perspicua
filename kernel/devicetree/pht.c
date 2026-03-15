@@ -12,7 +12,7 @@
 /* The main system hardware tree. */
 static struct pht_header system_pht = {
     .magic = PHT_MAGIC,
-    .nr_devices = 5,
+    .nr_devices = 8,
     .nodes = {
         // memory
         {.name = "memory", .address[0] = 0x00000000, .size[0] = 1024 * 1024 * 1024 * 2LU, .reg_count = 1, .irq = 0},
@@ -29,7 +29,13 @@ static struct pht_header system_pht = {
         // gpio
         {.name = "gpio", .address[0] = 0xFE200000, .size[0] = 0x1000, .reg_count = 1, .irq = 0},
         // mailbox
-        {.name = "mailbox", .address[0] = 0xFE00B880, .size[0] = 0x100, .reg_count = 1, .irq = 0}}};
+        {.name = "mailbox", .address[0] = 0xFE00B880, .size[0] = 0x100, .reg_count = 1, .irq = 0},
+        // emmc2
+        {.name = "emmc2", .address[0] = 0xFE340000, .size[0] = 0x100, .reg_count = 1, .irq = 158},
+        // emmc2_qemu (sometimes used in different QEMU versions)
+        {.name = "emmc2_qemu", .address[0] = 0xFE300000, .size[0] = 0x100, .reg_count = 1, .irq = 158},
+        // emmc (legacy)
+        {.name = "emmc", .address[0] = 0xFE202000, .size[0] = 0x100, .reg_count = 1, .irq = 150}}};
 
 /*
  * pht_find_device - Searches the hardware tree for a device by its name.

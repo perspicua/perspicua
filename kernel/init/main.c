@@ -34,6 +34,7 @@
 #include "driver/fb.h"
 #include "driver/fb_console.h"
 #include "driver/dashboard.h"
+#include "driver/sd.h"
 
 #include "test.h"
 
@@ -175,19 +176,20 @@ __attribute__((used)) int main(void)
     smp_init();
     printf("\n BOOT COMPLETE - all subsystems operational\n");
 
-    run_all_tests();
-    enable_interrupts();
-    run_scheduler_tests();
-
     /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
     ramfs_init();
     devfs_init();
     vfs_mount("/dev", devfs_get_root());
+    sd_init();
 
     /* Mount the initial RAM disk archive */
     initrd_init(initrd_start);
+
+    run_all_tests();
+    enable_interrupts();
+    run_scheduler_tests();
 
     /* Demonstration of VFS functionality */
     int fd = vfs_open("/hello.txt", VFS_O_RDONLY);

@@ -22,6 +22,7 @@ void run_all_tests(void)
     test_slab();
     test_heap();
     test_timer();
+    test_sd();
     test_mmu();
     test_mmu_user();
 
