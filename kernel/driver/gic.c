@@ -14,7 +14,7 @@
 #include "panic.h"
 #include "addr.h"
 
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 
 #include "driver/uart.h"
 
@@ -47,14 +47,48 @@ void gic_send_panic_ipi(void)
  */
 void gic_init(void)
 {
-    struct pht_node* gic_node = pht_find_device("gic");
-    if (gic_node == (void*)0)
+    const uint32_t* gic_node = fdt_find_node_by_compatible("arm,gic-400");
+    if (!gic_node)
     {
-        PANIC("[  GIC ] Device node not found in hardware tree!\n");
+        // Try alternate compatible string used on some RPi4 DTBs
+        gic_node = fdt_find_node_by_compatible("arm,cortex-a15-gic");
+        if (!gic_node)
+        {
+            PANIC("[  GIC ] Device node not found in DTB!\n");
+        }
     }
 
-    uintptr_t gicd_vbase = P2V(gic_node->address[0]);
-    uintptr_t gicc_vbase = P2V(gic_node->address[1]);
+    struct fdt_property reg_prop;
+    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0)
+    {
+        PANIC("[  GIC ] Missing 'reg' property in DTB!\n");
+    }
+
+    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+
+    // GIC usually has two memory regions defined in `reg`:
+    // reg = <gicd_base size gicc_base size> or similar depending on #address-cells = 2 or 1
+    // We assume 32-bit address cells for simplicity here (or legacy mappings).
+    uint32_t gicd_phys = fdt32_to_cpu(reg_data[0]);
+    // Usually size is in reg_data[1] if 4-word array, so gicc is at index 2
+    uint32_t gicc_phys = fdt32_to_cpu(reg_data[2]);
+
+    // Some RPi4 firmware DTB maps it correctly. Usually GICD is 0xff841000 and GICC is 0xff842000
+    // But since the Broadcom legacy map uses 0x40000000 in DTB, handle it:
+    if (gicd_phys == 0x40041000)
+    {
+        gicd_phys = 0xFF841000;
+        gicc_phys = 0xFF842000;
+    }
+    // Workaround for BCM legacy address translation for GIC (ARM local peripherals)
+    else if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000)
+    {
+        gicd_phys = (gicd_phys & 0x01FFFFFF) | 0xFF800000;
+        gicc_phys = (gicc_phys & 0x01FFFFFF) | 0xFF800000;
+    }
+
+    uintptr_t gicd_vbase = P2V(gicd_phys);
+    uintptr_t gicc_vbase = P2V(gicc_phys);
 
     // Map register addresses to the global pointers
     gic_d_ctlr = (volatile unsigned int*)(gicd_vbase + 0x000);
