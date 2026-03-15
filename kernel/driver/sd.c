@@ -15,7 +15,7 @@
 #include "stdio.h"
 #include "addr.h"
 #include "string.h"
-#include "devicetree/pht.h"
+#include "devicetree/fdt.h"
 #include "uapi/errors.h"
 
 typedef struct
@@ -79,6 +79,7 @@ typedef struct
 static sdhci_regs_t* regs = NULL;
 static struct block_device sd_block_dev;
 static uint32_t sd_rca = 0;
+static int sd_is_sdhc = 0;
 
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
@@ -98,7 +99,7 @@ static int sd_wait_interrupt(uint32_t mask)
     }
 
     uint32_t status = regs->interrupt;
-    regs->interrupt = status;  // Acknowledge
+    regs->interrupt = status & (mask | INT_ERROR_MASK);  // Acknowledge ONLY what we waited for or errors
 
     if (timeout_ms < 0)
     {
@@ -119,6 +120,13 @@ static int sd_send_cmd(uint32_t cmd, uint32_t arg)
         return res;
     }
 
+    if (cmd & CMD_HAS_DATA)
+    {
+        res = sd_wait_status(STATUS_DAT_INHIBIT, 0, 100);
+        if (res != PERS_SUCCESS)
+            return res;
+    }
+
     regs->arg1 = arg;
     regs->xfer_mode_cmd = cmd;
 
@@ -135,14 +143,26 @@ int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, s
 
     for (size_t i = 0; i < num_blocks; i++)
     {
+        uint32_t addr = (uint32_t)(start_block + i);
+        if (!sd_is_sdhc)
+        {
+            addr *= 512;
+        }
+
         regs->blk_size_cnt = (1 << 16) | 512;  // 1 block of 512 bytes
-        int res = sd_send_cmd(CMD17, (uint32_t)(start_block + i));
+        int res = sd_send_cmd(CMD17, addr);
         if (res != PERS_SUCCESS)
+        {
+            printf("[ SD ] Read CMD17 failed at block %lu\n", start_block + i);
             return res;
+        }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
         if (res != PERS_SUCCESS)
+        {
+            printf("[ SD ] Read Ready timeout at block %lu\n", start_block + i);
             return res;
+        }
 
         for (int j = 0; j < 128; j++)  // 512 / 4
         {
@@ -151,7 +171,10 @@ int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, s
 
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != PERS_SUCCESS)
+        {
+            printf("[ SD ] Data Done timeout at block %lu\n", start_block + i);
             return res;
+        }
     }
 
     return PERS_SUCCESS;
@@ -243,7 +266,10 @@ static int sd_init_card(void)
         sd_send_cmd(CMD55, 0);
         sd_send_cmd(ACMD41, 0x40FF8000);
         if (regs->resp[0] & 0x80000000)
+        {
+            sd_is_sdhc = (regs->resp[0] & 0x40000000) ? 1 : 0;
             break;
+        }
         sleep_ms(1);
     }
     if (timeout <= 0)
@@ -271,33 +297,72 @@ static int sd_init_card(void)
 
 void sd_init(void)
 {
-    const char* probe_targets[] = {"emmc2", "emmc2_qemu", "emmc", NULL};
-    struct pht_node* node = NULL;
+    const char* compatibles[] = {"brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci", NULL};
+    const uint32_t* node = NULL;
+    const char* matched_compatible = NULL;
 
-    for (int i = 0; probe_targets[i]; i++)
+    for (int i = 0; compatibles[i]; i++)
     {
-        struct pht_node* n = pht_find_device(probe_targets[i]);
+        const uint32_t* n = fdt_find_node_by_compatible(compatibles[i]);
         if (!n)
             continue;
 
-        sdhci_regs_t* r = (sdhci_regs_t*)P2V(n->address[0]);
+        struct fdt_property reg_prop;
+        if (fdt_get_property(n, "reg", &reg_prop) != 0)
+            continue;
+
+        const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+        uint32_t phys_base;
+
+        if (reg_prop.size >= 12)
+        {
+            phys_base = fdt32_to_cpu(reg_data[1]);
+        }
+        else
+        {
+            phys_base = fdt32_to_cpu(reg_data[0]);
+        }
+
+        if (phys_base < 0xFC000000)
+        {
+            phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+        }
+
+        sdhci_regs_t* r = (sdhci_regs_t*)P2V(phys_base);
         if (r->status & STATUS_CARD_INSERT)
         {
             node = n;
             regs = r;
+            matched_compatible = compatibles[i];
             break;
         }
     }
 
     if (!node)
     {
-        for (int i = 0; probe_targets[i]; i++)
+        for (int i = 0; compatibles[i]; i++)
         {
-            node = pht_find_device(probe_targets[i]);
-            if (node)
+            const uint32_t* n = fdt_find_node_by_compatible(compatibles[i]);
+            if (n)
             {
-                regs = (sdhci_regs_t*)P2V(node->address[0]);
-                break;
+                struct fdt_property reg_prop;
+                if (fdt_get_property(n, "reg", &reg_prop) == 0)
+                {
+                    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+                    uint32_t phys_base;
+                    if (reg_prop.size >= 12)
+                        phys_base = fdt32_to_cpu(reg_data[1]);
+                    else
+                        phys_base = fdt32_to_cpu(reg_data[0]);
+
+                    if (phys_base < 0xFC000000)
+                        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+
+                    node = n;
+                    regs = (sdhci_regs_t*)P2V(phys_base);
+                    matched_compatible = compatibles[i];
+                    break;
+                }
             }
         }
     }
@@ -305,7 +370,8 @@ void sd_init(void)
     if (!node)
         return;
 
-    printf("[ SD ] Initializing controller at %s... ", node->name);
+    const char* node_name = (const char*)(node + 1);
+    printf("[ SD ] Initializing controller %s (%s)... ", node_name, matched_compatible);
 
     if (sd_set_clock(100000000) < 0)
     {
@@ -324,7 +390,7 @@ void sd_init(void)
         block_device_register(&sd_block_dev);
 
         size_t mb = (sd_block_dev.block_count * 512) / (1024 * 1024);
-        printf("OK (%lu MB)\n", mb);
+        printf("OK (%lu MB, %s)\n", mb, sd_is_sdhc ? "SDHC" : "SDSC");
     }
     else
     {

@@ -43,23 +43,20 @@ clean:
 QEMU = qemu-system-aarch64
 IMAGE = $(PI4_BOOT_DIR)/kernel8.img
 SD_IMAGE = sdcard.img
-QEMU_FLAGS = -M raspi4b -serial stdio -display none -kernel $(IMAGE)
-QEMU_FLAGS_GUI = -M raspi4b -serial vc -kernel $(IMAGE)
+QEMU_FLAGS = -M raspi4b -serial stdio -display none -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
+QEMU_FLAGS_GUI = -M raspi4b -serial vc -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
 QEMU_SD_FLAGS = -drive file=$(SD_IMAGE),format=raw,if=sd
 
-$(SD_IMAGE):
+$(SD_IMAGE): $(INITRD)
 	@printf "  $(COL_CYAN)GEN$(COL_DEFAULT)      $(SD_IMAGE)\n"
-	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=512 status=none
-	$(Q)echo "PERSPICUA SD TEST DATA" | dd of=$(SD_IMAGE) conv=notrunc status=none
+	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=32 status=none
+	$(Q)dd if=$(INITRD) of=$(SD_IMAGE) conv=notrunc status=none
 
-run: kernel
-	$(QEMU) $(QEMU_FLAGS)
-
-run-gui: kernel
-	$(QEMU) $(QEMU_FLAGS_GUI)
-
-run-sd: kernel $(SD_IMAGE)
+run: kernel $(SD_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS)
+
+run-gui: kernel $(SD_IMAGE)
+	$(QEMU) $(QEMU_FLAGS_GUI) $(QEMU_SD_FLAGS)
 
 debug: kernel $(SD_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS) -s -S

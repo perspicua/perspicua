@@ -26,20 +26,22 @@ static volatile unsigned int* mbox_write = (void*)0;
  */
 void mbox_init(void)
 {
-    const uint32_t *mbox_node = fdt_find_node_by_compatible("brcm,bcm2835-mbox");
+    const uint32_t* mbox_node = fdt_find_node_by_compatible("brcm,bcm2835-mbox");
     if (!mbox_node)
     {
         PANIC("[ MBOX ] Device node not found in DTB!\n");
     }
 
     struct fdt_property reg_prop;
-    if (fdt_get_property(mbox_node, "reg", &reg_prop) != 0) {
+    if (fdt_get_property(mbox_node, "reg", &reg_prop) != 0)
+    {
         PANIC("[ MBOX ] Missing 'reg' property in DTB!\n");
     }
 
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
+    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
     uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
-    if (phys_base < 0xFC000000) { 
+    if (phys_base < 0xFC000000)
+    {
         phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
     }
 
