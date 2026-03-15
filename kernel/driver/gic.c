@@ -47,41 +47,44 @@ void gic_send_panic_ipi(void)
  */
 void gic_init(void)
 {
-    const uint32_t *gic_node = fdt_find_node_by_compatible("arm,gic-400");
+    const uint32_t* gic_node = fdt_find_node_by_compatible("arm,gic-400");
     if (!gic_node)
     {
         // Try alternate compatible string used on some RPi4 DTBs
         gic_node = fdt_find_node_by_compatible("arm,cortex-a15-gic");
-        if (!gic_node) {
+        if (!gic_node)
+        {
             PANIC("[  GIC ] Device node not found in DTB!\n");
         }
     }
 
     struct fdt_property reg_prop;
-    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0) {
+    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0)
+    {
         PANIC("[  GIC ] Missing 'reg' property in DTB!\n");
     }
 
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    
+    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+
     // GIC usually has two memory regions defined in `reg`:
     // reg = <gicd_base size gicc_base size> or similar depending on #address-cells = 2 or 1
     // We assume 32-bit address cells for simplicity here (or legacy mappings).
     uint32_t gicd_phys = fdt32_to_cpu(reg_data[0]);
     // Usually size is in reg_data[1] if 4-word array, so gicc is at index 2
-    uint32_t gicc_phys = fdt32_to_cpu(reg_data[2]); 
-    
-    // Workaround for BCM legacy address translation for GIC
-    if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000) {
-        gicd_phys = (gicd_phys & 0x01FFFFFF) | 0xFF000000;
-        gicc_phys = (gicc_phys & 0x01FFFFFF) | 0xFF000000;
-    }
-    
+    uint32_t gicc_phys = fdt32_to_cpu(reg_data[2]);
+
     // Some RPi4 firmware DTB maps it correctly. Usually GICD is 0xff841000 and GICC is 0xff842000
     // But since the Broadcom legacy map uses 0x40000000 in DTB, handle it:
-    if (gicd_phys == 0x40041000) {
+    if (gicd_phys == 0x40041000)
+    {
         gicd_phys = 0xFF841000;
         gicc_phys = 0xFF842000;
+    }
+    // Workaround for BCM legacy address translation for GIC (ARM local peripherals)
+    else if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000)
+    {
+        gicd_phys = (gicd_phys & 0x01FFFFFF) | 0xFF800000;
+        gicc_phys = (gicc_phys & 0x01FFFFFF) | 0xFF800000;
     }
 
     uintptr_t gicd_vbase = P2V(gicd_phys);

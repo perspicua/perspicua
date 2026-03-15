@@ -65,6 +65,20 @@ static inline void tlbi_va(unsigned long vaddr)
 }
 
 /*
+ * alloc_table_page - Internal helper to allocate a zeroed page table.
+ */
+static unsigned long* alloc_table_page(void)
+{
+    unsigned long* page = (unsigned long*)pmm_alloc_page();
+    if (!page)
+    {
+        PANIC("MMU: Failed to allocate table page.");
+    }
+    memset(page, 0, PAGE_SIZE);
+    return page;
+}
+
+/*
  * mmu_init - Boot-time initialization of the kernel address space.
  */
 void mmu_init(void)
@@ -87,24 +101,25 @@ void mmu_init(void)
     pgd[2] = V2P(pmd_2) | PTE_VALID | PTE_TABLE;
     pgd[3] = V2P(pmd_3) | PTE_VALID | PTE_TABLE;
 
-    // Initially establish a 4GB identity mapping using 2MB blocks
-    unsigned long* pmds[] = {pmd_0, pmd_1, pmd_2, pmd_3};
-    for (unsigned long p = 0; p < 4; p++)
+    for (unsigned long i = 0; i < 512; i++)
+    {
+        unsigned long* l3_table = alloc_table_page();
+        pmd_0[i] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
+
+        for (unsigned long j = 0; j < 512; j++)
+        {
+            unsigned long addr = (i * 2 * 1024 * 1024ULL) + (j * 4096ULL);
+            l3_table[j] = addr | PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL | PTE_AP_RW;
+        }
+    }
+
+    unsigned long* pmd_others[] = {pmd_1, pmd_2, pmd_3};
+    for (unsigned long p = 0; p < 3; p++)
     {
         for (unsigned long i = 0; i < 512; i++)
         {
-            unsigned long addr = (p * 1024ULL * 1024ULL * 1024ULL) + (i * 2 * 1024 * 1024);
-            unsigned long attr = PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW;
-
-            if (p == 0)
-            {
-                attr |= PTE_SH_INNER | PTE_ATTR_NORMAL;
-            }
-            else
-            {
-                attr |= PTE_ATTR_DEVICE;
-            }
-            pmds[p][i] = addr | attr;
+            unsigned long addr = ((p + 1) * 1024ULL * 1024ULL * 1024ULL) + (i * 2 * 1024 * 1024ULL);
+            pmd_others[p][i] = addr | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | PTE_ATTR_DEVICE;
         }
     }
 
@@ -167,20 +182,6 @@ void mmu_secondary_init(void)
 }
 
 /*
- * alloc_table_page - Internal helper to allocate a zeroed page table.
- */
-static unsigned long* alloc_table_page(void)
-{
-    unsigned long* page = (unsigned long*)pmm_alloc_page();
-    if (!page)
-    {
-        PANIC("MMU: Failed to allocate table page.");
-    }
-    memset(page, 0, PAGE_SIZE);
-    return page;
-}
-
-/*
  * split_block_to_pages - Splits a 2MB block descriptor into 512 4KB pages.
  * Implements Break-Before-Make to ensure TLB consistency.
  */
@@ -199,7 +200,7 @@ static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned lon
     }
 
     l2_table[l2_idx] = 0;
-    for (unsigned long v = vaddr_base; v < vaddr_base + 0x200000; v += PAGE_SIZE)
+    for (unsigned long v = vaddr_base; v < vaddr_base + 0x200000ULL; v += PAGE_SIZE)
     {
         tlbi_va(v);
     }
@@ -347,7 +348,7 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     if (!(l2_entry & PTE_TABLE))
     {
         unsigned long block_phys = l2_entry & PTE_ADDR_MASK;
-        unsigned long offset = vaddr & 0x1FFFFF;
+        unsigned long offset = vaddr & 0x1FFFFFULL;
         if (out_paddr)
         {
             *out_paddr = block_phys + offset;
@@ -621,7 +622,7 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
     if (!(l2[l2_idx] & PTE_TABLE))
     {
         unsigned long block_phys = l2[l2_idx] & PTE_ADDR_MASK;
-        unsigned long offset = vaddr & 0x1FFFFF;
+        unsigned long offset = vaddr & 0x1FFFFFULL;
         if (out_paddr)
         {
             *out_paddr = block_phys + offset;

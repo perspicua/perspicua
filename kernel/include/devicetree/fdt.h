@@ -13,7 +13,8 @@
 #define FDT_END        0x00000009
 
 /* The FDT header structure. All fields are big-endian. */
-struct fdt_header {
+struct fdt_header
+{
     uint32_t magic;             /* magic word FDT_MAGIC */
     uint32_t totalsize;         /* total size of DT block */
     uint32_t off_dt_struct;     /* offset to structure */
@@ -27,38 +28,40 @@ struct fdt_header {
 };
 
 /* Memory reservation block entry. */
-struct fdt_reserve_entry {
+struct fdt_reserve_entry
+{
     uint64_t address;
     uint64_t size;
 };
 
 /* Internal FDT property header as it appears in the blob. */
-struct fdt_prop_header {
+struct fdt_prop_header
+{
     uint32_t len;
     uint32_t nameoff;
 };
 
 /* Parsed property structure for ease of use. */
-struct fdt_property {
-    const char *name;
+struct fdt_property
+{
+    const char* name;
     uint32_t size;
-    const void *value;
+    const void* value;
 };
 
 /* Alignment macro for DTB strings and data. */
 #define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 /* Endianness swapping utilities (Big-Endian to Little-Endian) */
-static inline uint32_t fdt32_to_cpu(uint32_t val) {
-    return ((val & 0x000000ff) << 24) |
-           ((val & 0x0000ff00) << 8) |
-           ((val & 0x00ff0000) >> 8) |
-           ((val & 0xff000000) >> 24);
+static inline uint32_t fdt32_to_cpu(uint32_t val)
+{
+    return ((val & 0x000000ff) << 24) | ((val & 0x0000ff00) << 8) | ((val & 0x00ff0000) >> 8)
+           | ((val & 0xff000000) >> 24);
 }
 
-static inline uint64_t fdt64_to_cpu(uint64_t val) {
-    return ((uint64_t)fdt32_to_cpu((uint32_t)val) << 32) |
-           fdt32_to_cpu((uint32_t)(val >> 32));
+static inline uint64_t fdt64_to_cpu(uint64_t val)
+{
+    return ((uint64_t)fdt32_to_cpu((uint32_t)val) << 32) | fdt32_to_cpu((uint32_t)(val >> 32));
 }
 
 /* Initialization */
@@ -66,9 +69,9 @@ void fdt_init(uintptr_t global_dtb_ptr);
 void fdt_rebase(uintptr_t new_base);
 
 /* Query API */
-int fdt_get_property(const uint32_t *node, const char *prop_name, struct fdt_property *out_prop);
-const uint32_t *fdt_find_node_by_path(const char *path);
-const uint32_t *fdt_find_node_by_compatible(const char *compatible);
+int fdt_get_property(const uint32_t* node, const char* prop_name, struct fdt_property* out_prop);
+const uint32_t* fdt_find_node_by_path(const char* path);
+const uint32_t* fdt_find_node_by_compatible(const char* compatible);
 
 /* Memory Reservation API */
 void fdt_parse_memory_reservations(void);
