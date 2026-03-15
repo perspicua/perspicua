@@ -32,5 +32,6 @@ int sys_close(int fd);
 int sys_exec(const char* path);
 int sys_fork(void);
 int sys_waitpid(int pid, int* status);
+int sys_pipe(int pipefd[2]);
 
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

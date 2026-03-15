@@ -60,6 +60,7 @@ struct vfs_vnode_ops
     int (*read)(struct vfs_file* file, void* buffer, size_t size);
     int (*write)(struct vfs_file* file, const void* buffer, size_t size);
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
+    int (*close)(struct vfs_file* file);
 };
 
 /*

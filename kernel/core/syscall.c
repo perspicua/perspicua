@@ -18,6 +18,7 @@
 #include "mmu.h"
 #include "addr.h"
 #include "heap.h"
+#include "pipe.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -296,6 +297,30 @@ void syscall_handle(struct exception_trap_frame* tf)
                     tf->x[0] = -PERS_ERR_UNKNOWN;
                     break;
                 }
+            }
+        }
+        tf->x[0] = (uint64_t)res;
+        break;
+    }
+
+    case SYS_PIPE:
+    { /* sys_pipe(int pipefd[2]) */
+        int* upipefd = (int*)tf->x[0];
+        int kpipefd[2];
+
+        if (!validate_user_buffer(upipefd, sizeof(int) * 2, 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        int res = kernel_pipe(kpipefd);
+        if (res == PERS_SUCCESS)
+        {
+            if (copy_to_user(upipefd, kpipefd, sizeof(int) * 2) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
             }
         }
         tf->x[0] = (uint64_t)res;

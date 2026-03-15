@@ -434,6 +434,12 @@ int vfs_close(int fd)
 
     if (atomic_dec_and_test(&f->refcount))
     {
+        /* Perform filesystem-specific cleanup before freeing the file object */
+        if (f->node->ops && f->node->ops->close)
+        {
+            f->node->ops->close(f);
+        }
+
         vfs_vnode_put(f->node);
         slab_free(f);
     }
