@@ -157,7 +157,7 @@ int main()
     // mount initrd
     initrd_init(initrd_start);
 
-    int fd = vfs_open("/hello.txt", O_RDONLY);
+    int fd = vfs_open("/hello.txt", VFS_O_RDONLY);
     if (fd >= 0)
     {
         char buf[100];

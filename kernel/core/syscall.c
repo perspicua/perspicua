@@ -161,7 +161,7 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         size_t path_len = 0;
         const char* p = path;
-        while (path_len < MAX_PATH_LEN)
+        while (path_len < VFS_MAX_PATH_LEN)
         {
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
@@ -176,7 +176,7 @@ void syscall_handle(struct exception_trap_frame* tf)
             path_len++;
         }
 
-        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
+        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
@@ -235,7 +235,7 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         size_t path_len = 0;
         const char* p = path;
-        while (path_len < MAX_PATH_LEN)
+        while (path_len < VFS_MAX_PATH_LEN)
         {
             unsigned char c;
             if (copy_from_user(&c, p++, 1) != 0)
@@ -250,7 +250,7 @@ void syscall_handle(struct exception_trap_frame* tf)
             path_len++;
         }
 
-        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= MAX_PATH_LEN)
+        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;

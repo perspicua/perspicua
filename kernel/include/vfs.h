@@ -1,99 +1,153 @@
-#ifndef _VFS_H_
-#define _VFS_H_
+/*
+ * vfs.h - Public API for the Virtual Filesystem (VFS) layer.
+ *
+ * This file defines the core filesystem abstractions, including vnodes,
+ * file descriptors, mount points, and the standard filesystem operations.
+ */
+
+#ifndef PERSPICUA_KERNEL_VFS_H
+#define PERSPICUA_KERNEL_VFS_H
 
 #include "types.h"
-struct vnode;
-struct file;
 
-#define MAX_PATH_LEN 4096
-#define MAX_FDS 32
-#define MAX_MOUNTS 8
+/* Forward declarations for core VFS structures */
+struct vfs_vnode;
+struct vfs_file;
 
-typedef enum
+/* VFS Limits */
+#define VFS_MAX_PATH_LEN 4096
+#define VFS_MAX_FDS 32
+#define VFS_MAX_MOUNTS 8
+
+/*
+ * vfs_vnode_type - Enumeration of supported vnode types.
+ */
+enum vfs_vnode_type
 {
-    VNODE_TYPE_REGULAR,
-    VNODE_TYPE_DIR,
-    VNODE_TYPE_DEVICE
-} vnode_type_t;
-
-#define O_RDONLY 0x0000
-#define O_WRONLY 0x0001
-#define O_RDWR 0x0002
-#define O_ACCMODE 0x0003
-
-#define O_CREAT 0x0100
-#define O_TRUNC 0x0200
-#define O_APPEND 0x0400
-#define O_CLOEXEC 0x0800
-
-struct mount_entry
-{
-    char path[MAX_PATH_LEN];
-    struct vnode* root;
+    VFS_VNODE_TYPE_REGULAR,
+    VFS_VNODE_TYPE_DIR,
+    VFS_VNODE_TYPE_DEVICE
 };
 
-typedef int64_t off_t;
+/* Standard file open flags */
+#define VFS_O_RDONLY 0x0000
+#define VFS_O_WRONLY 0x0001
+#define VFS_O_RDWR 0x0002
+#define VFS_O_ACCMODE 0x0003
 
-struct vnode
+#define VFS_O_CREAT 0x0100
+#define VFS_O_TRUNC 0x0200
+#define VFS_O_APPEND 0x0400
+#define VFS_O_CLOEXEC 0x0800
+
+/*
+ * vfs_mount_entry - Represents a mounted filesystem instance.
+ */
+struct vfs_mount_entry
 {
-    vnode_type_t type;
-    off_t filesize;
-    struct vnode* parent;
-    struct vnode_ops* ops;
+    char path[VFS_MAX_PATH_LEN];
+    struct vfs_vnode* root;
+};
+
+/* Type definition for file offsets and sizes */
+typedef int64_t vfs_off_t;
+
+/*
+ * vfs_vnode_ops - Functional interface for filesystem-specific operations.
+ */
+struct vfs_vnode_ops
+{
+    int (*read)(struct vfs_file* file, void* buffer, size_t size);
+    int (*write)(struct vfs_file* file, const void* buffer, size_t size);
+    struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
+};
+
+/*
+ * vfs_vnode - The primary VFS abstraction representing an inode/file.
+ */
+struct vfs_vnode
+{
+    enum vfs_vnode_type type;
+    vfs_off_t file_size;
+    struct vfs_vnode* parent;
+    struct vfs_vnode_ops* ops;
     void* internal_info;
     atomic_t refcount;
 };
 
-struct vnode_ops
+/*
+ * vfs_file - Represents an open file instance (file descriptor).
+ */
+struct vfs_file
 {
-    int (*read)(struct file* file, void* buffer, size_t size);
-    int (*write)(struct file* file, const void* buffer, size_t size);
-    struct vnode* (*lookup)(struct vnode* dir, const char* filename);
-};
-
-struct file
-{
-    struct vnode* node;
-    off_t offset;
+    struct vfs_vnode* node;
+    vfs_off_t offset;
     int flags;
     atomic_t refcount;
 };
 
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
+/* Seek mode constants */
+#define VFS_SEEK_SET 0
+#define VFS_SEEK_CUR 1
+#define VFS_SEEK_END 2
 
-// intialize vfs system
+/*
+ * vfs_init - Initializes the virtual filesystem structures and mount table.
+ */
 void vfs_init(void);
 
-// walks a path and resolves the target vnode, or NULL if not found
-struct vnode* vfs_resolve_path(const char* path, struct vnode* cwd, int* error);
+/*
+ * vfs_resolve_path - Traverses the directory tree to find the vnode
+ * corresponding to the given path.
+ */
+struct vfs_vnode* vfs_resolve_path(const char* path, struct vfs_vnode* cwd, int* error);
 
-// Put a vnode, decrement refcount and free if 0
-void vfs_vnode_put(struct vnode* node);
+/*
+ * vfs_vnode_put - Decrements the reference count of a vnode and frees it
+ * if the count reaches zero.
+ */
+void vfs_vnode_put(struct vfs_vnode* node);
 
-// open a file, returns file descriptor if succesfull, negative error code otherwise
+/*
+ * vfs_open - Opens a file for the current process. Returns a file descriptor
+ * on success or a negative error code.
+ */
 int vfs_open(const char* path, int flags);
 
-// open a file for a specific process by pid
+/*
+ * vfs_open_pid - Opens a file on behalf of a specific process.
+ */
 int vfs_open_pid(const char* path, int flags, uint32_t pid);
 
-// close a file, return PERS_SUCCESS on succes
+/*
+ * vfs_close - Closes an open file descriptor.
+ */
 int vfs_close(int fd);
 
-// seek in a file. returns the new offset
-off_t vfs_lseek(int fd, off_t offset, int whence);
+/*
+ * vfs_lseek - Repositions the read/write offset of a file descriptor.
+ */
+vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
 
-// reads from a file. returns the bytes read from the file
+/*
+ * vfs_read - Reads data from a file descriptor into a buffer.
+ */
 int vfs_read(int fd, void* buffer, size_t count);
 
-// wrties to a file. returns the bytes written to the file
+/*
+ * vfs_write - Writes data from a buffer to a file descriptor.
+ */
 int vfs_write(int fd, const void* buffer, size_t count);
 
-// mount a filesystem's root vnode at given path. returns PERS_SUCCESS on success, negative error code on error
-int vfs_mount(const char* path, struct vnode* root);
+/*
+ * vfs_mount - Attaches a filesystem root vnode to the global namespace
+ * at the specified path.
+ */
+int vfs_mount(const char* path, struct vfs_vnode* root);
 
-// unmont the filesystem at a given path. return PERS_SUCCESS on success, negative error code on error
+/*
+ * vfs_unmount - Detaches a filesystem from the global namespace.
+ */
 int vfs_unmount(const char* path);
 
-#endif // _VFS_H_
+#endif /* PERSPICUA_KERNEL_VFS_H */

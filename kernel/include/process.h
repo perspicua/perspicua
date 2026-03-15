@@ -78,9 +78,9 @@ struct process
     struct va_allocator va; /* per-process user VA allocator */
 
     /* File System Context */
-    struct file* fd_table[MAX_FDS];
+    struct vfs_file* fd_table[VFS_MAX_FDS];
     spinlock_t fd_lock;
-    struct vnode* cwd;
+    struct vfs_vnode* cwd;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

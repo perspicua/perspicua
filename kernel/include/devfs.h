@@ -20,13 +20,13 @@ void devfs_init(void);
 /*
  * devfs_get_root - Returns the root vnode of the device filesystem.
  */
-struct vnode* devfs_get_root(void);
+struct vfs_vnode* devfs_get_root(void);
 
 /*
  * devfs_register_device - Registers a new device node in devfs with the
  * given name and vnode operations. Returns PERS_SUCCESS on success or
  * a negative error code on failure.
  */
-int devfs_register_device(const char* name, struct vnode_ops* ops, void* internal_info);
+int devfs_register_device(const char* name, struct vfs_vnode_ops* ops, void* internal_info);
 
 #endif /* PERSPICUA_KERNEL_DEVFS_H */

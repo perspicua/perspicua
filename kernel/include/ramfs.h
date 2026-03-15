@@ -26,11 +26,11 @@ void ramfs_register_file(const char* name, const void* data, size_t size);
 /*
  * ramfs_read - VFS operation to read data from a file in the RAM filesystem.
  */
-int ramfs_read(struct file* file, void* buffer, size_t size);
+int ramfs_read(struct vfs_file* file, void* buffer, size_t size);
 
 /*
  * ramfs_lookup - VFS operation to find a vnode by name within a RAMFS directory.
  */
-struct vnode* ramfs_lookup(struct vnode* dir, const char* filename);
+struct vfs_vnode* ramfs_lookup(struct vfs_vnode* dir, const char* filename);
 
 #endif /* PERSPICUA_KERNEL_RAMFS_H */

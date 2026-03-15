@@ -63,7 +63,7 @@ static int elf_check_header(struct elf64_header* hdr)
  */
 int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
 {
-    int fd = vfs_open(path, O_RDONLY);
+    int fd = vfs_open(path, VFS_O_RDONLY);
     if (fd < 0)
     {
         printf("[  ELF ] Error: could not open %s\n", path);
@@ -98,7 +98,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    vfs_lseek(fd, ehdr.ph_offset, SEEK_SET);
+    vfs_lseek(fd, ehdr.ph_offset, VFS_SEEK_SET);
     if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size)
     {
         printf("[  ELF ] Error: could not read program headers\n");
@@ -176,7 +176,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                 uint64_t bytes_to_read = copy_end_in_page - copy_start_in_page;
                 uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
 
-                vfs_lseek(fd, file_offset, SEEK_SET);
+                vfs_lseek(fd, file_offset, VFS_SEEK_SET);
                 if (vfs_read(fd, (void*)((uintptr_t)kernel_vaddr + copy_start_in_page), bytes_to_read) !=
                     (int)bytes_to_read)
                 {

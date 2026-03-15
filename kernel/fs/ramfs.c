@@ -24,7 +24,7 @@ struct ramfs_file_data
     const char* name;
     const void* data;
     size_t size;
-    struct vnode* node;
+    struct vfs_vnode* node;
 };
 
 /* Internal filesystem state and maximum file limit */
@@ -33,14 +33,14 @@ static struct ramfs_file_data ramfs_files[RAMFS_MAX_FILES];
 static int ramfs_file_count = 0;
 
 /* VFS nodes and operation tables for RAMFS */
-static struct vnode* ramfs_root_vnode = (void*)0;
-static struct vnode_ops ramfs_dir_ops;
-static struct vnode_ops ramfs_file_ops;
+static struct vfs_vnode* ramfs_root_vnode = (void*)0;
+static struct vfs_vnode_ops ramfs_dir_ops;
+static struct vfs_vnode_ops ramfs_file_ops;
 
 /*
  * ramfs_read - Reads data from a RAMFS file into the provided buffer.
  */
-int ramfs_read(struct file* file, void* buffer, size_t size)
+int ramfs_read(struct vfs_file* file, void* buffer, size_t size)
 {
     struct ramfs_file_data* data = (struct ramfs_file_data*)file->node->internal_info;
     if (!data)
@@ -48,13 +48,13 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    if (file->offset >= (off_t)data->size)
+    if (file->offset >= (vfs_off_t)data->size)
     {
         return 0; // End of file reached
     }
 
     size_t bytes_to_read = size;
-    if (file->offset + (off_t)bytes_to_read > (off_t)data->size)
+    if (file->offset + (vfs_off_t)bytes_to_read > (vfs_off_t)data->size)
     {
         bytes_to_read = data->size - (size_t)file->offset;
     }
@@ -67,9 +67,9 @@ int ramfs_read(struct file* file, void* buffer, size_t size)
 /*
  * ramfs_lookup - Searches the static file array for a matching filename.
  */
-struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
+struct vfs_vnode* ramfs_lookup(struct vfs_vnode* dir, const char* filename)
 {
-    if (dir->type != VNODE_TYPE_DIR)
+    if (dir->type != VFS_VNODE_TYPE_DIR)
     {
         return (void*)0;
     }
@@ -100,15 +100,15 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
     ramfs_files[ramfs_file_count].data = data;
     ramfs_files[ramfs_file_count].size = size;
 
-    struct vnode* vn = (struct vnode*)slab_alloc(sizeof(struct vnode));
+    struct vfs_vnode* vn = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
     if (!vn)
     {
         return;
     }
 
-    vn->type = VNODE_TYPE_REGULAR;
+    vn->type = VFS_VNODE_TYPE_REGULAR;
     vn->ops = &ramfs_file_ops;
-    vn->filesize = (off_t)size;
+    vn->file_size = (vfs_off_t)size;
     vn->parent = ramfs_root_vnode;
     vn->internal_info = &ramfs_files[ramfs_file_count];
     vn->refcount.counter = 1;
@@ -127,7 +127,7 @@ static const char* ramfs_hello_txt = "Hello from the Raspberry Pi 4 RAMFS!\n";
  */
 void ramfs_init(void)
 {
-    ramfs_root_vnode = (struct vnode*)slab_alloc(sizeof(struct vnode));
+    ramfs_root_vnode = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
     if (!ramfs_root_vnode)
     {
         return;
@@ -144,11 +144,11 @@ void ramfs_init(void)
     ramfs_file_ops.write = (void*)0;
 
     // Set up the root directory vnode
-    ramfs_root_vnode->type = VNODE_TYPE_DIR;
+    ramfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
     ramfs_root_vnode->ops = &ramfs_dir_ops;
     ramfs_root_vnode->internal_info = (void*)0;
     ramfs_root_vnode->parent = (void*)0;
-    ramfs_root_vnode->filesize = 0;
+    ramfs_root_vnode->file_size = 0;
     ramfs_root_vnode->refcount.counter = 1;
 
     // Mount RAMFS as the system root
