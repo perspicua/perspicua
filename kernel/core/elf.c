@@ -1,8 +1,17 @@
+/*
+ * elf.c - Implementation of the ELF executable loader.
+ *
+ * This file handles parsing of the ELF header, program headers, and
+ * loading segments into the user's virtual address space.
+ */
+
 #include "elf.h"
+
 #include "uapi/errors.h"
-#include "vfs.h"
+
 #include "pmm.h"
 #include "mmu.h"
+#include "vfs.h"
 #include "addr.h"
 #include "heap.h"
 #include "process.h"
@@ -10,28 +19,48 @@
 #include "stdio.h"
 #include "panic.h"
 
-#define PF_X 0x1
-#define PF_W 0x2
-#define PF_R 0x4
+/* Program header flag constants */
+#define ELF_PROG_FLAG_X 0x1
+#define ELF_PROG_FLAG_W 0x2
+#define ELF_PROG_FLAG_R 0x4
 
-static int elf_check_header(Elf64_Ehdr* hdr)
+/*
+ * elf_check_header - Validates the ELF file identity and machine type.
+ */
+static int elf_check_header(struct elf64_header* hdr)
 {
-    if (hdr->e_ident[EI_MAG0] != ELFMAG0 || hdr->e_ident[EI_MAG1] != ELFMAG1 || hdr->e_ident[EI_MAG2] != ELFMAG2 ||
-        hdr->e_ident[EI_MAG3] != ELFMAG3)
+    if (hdr->identity[ELF_IDENT_MAG0] != ELF_MAG0 || hdr->identity[ELF_IDENT_MAG1] != ELF_MAG1 ||
+        hdr->identity[ELF_IDENT_MAG2] != ELF_MAG2 || hdr->identity[ELF_IDENT_MAG3] != ELF_MAG3)
     {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
-    if (hdr->e_ident[EI_CLASS] != ELFCLASS64)
+
+    if (hdr->identity[ELF_IDENT_CLASS] != ELF_CLASS_64)
+    {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
-    if (hdr->e_ident[EI_DATA] != ELFDATA2LSB)
+    }
+
+    if (hdr->identity[ELF_IDENT_DATA] != ELF_DATA_2LSB)
+    {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
-    if (hdr->e_type != ET_EXEC)
+    }
+
+    if (hdr->type != ELF_TYPE_EXEC)
+    {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
-    if (hdr->e_machine != EM_AARCH64)
+    }
+
+    if (hdr->machine != ELF_MACHINE_AARCH64)
+    {
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+    }
+
     return PERS_SUCCESS;
 }
 
+/*
+ * elf_load - Implementation of the ELF loading process.
+ */
 int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
 {
     int fd = vfs_open(path, O_RDONLY);
@@ -41,9 +70,9 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         return fd;
     }
 
-    Elf64_Ehdr ehdr;
-    int rc = vfs_read(fd, &ehdr, sizeof(Elf64_Ehdr));
-    if (rc != sizeof(Elf64_Ehdr))
+    struct elf64_header ehdr;
+    int rc = vfs_read(fd, &ehdr, sizeof(struct elf64_header));
+    if (rc != sizeof(struct elf64_header))
     {
         printf("[  ELF ] Error: could not read ELF header\n");
         vfs_close(fd);
@@ -58,19 +87,18 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         return rc;
     }
 
-    *entry_point = ehdr.e_entry;
+    *entry_point = ehdr.entry;
 
-    size_t phdr_table_size = ehdr.e_phnum * sizeof(Elf64_Phdr);
-    Elf64_Phdr* phdrs = kmalloc(phdr_table_size);
+    size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
+    struct elf64_program_header* phdrs = kmalloc(phdr_table_size);
     if (!phdrs)
     {
         printf("[  ELF ] Error: could not allocate memory for program headers\n");
         vfs_close(fd);
         return -PERS_ERR_OUT_OF_MEMORY;
-        ;
     }
 
-    vfs_lseek(fd, ehdr.e_phoff, SEEK_SET);
+    vfs_lseek(fd, ehdr.ph_offset, SEEK_SET);
     if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size)
     {
         printf("[  ELF ] Error: could not read program headers\n");
@@ -79,21 +107,23 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
-    for (int i = 0; i < ehdr.e_phnum; i++)
+    for (int i = 0; i < ehdr.ph_num; i++)
     {
-        if (phdrs[i].p_type != PT_LOAD)
+        if (phdrs[i].type != ELF_PROG_LOAD)
+        {
             continue;
+        }
 
-        uint64_t vaddr = phdrs[i].p_vaddr;
-        uint64_t memsz = phdrs[i].p_memsz;
-        uint64_t filesz = phdrs[i].p_filesz;
-        uint64_t offset = phdrs[i].p_offset;
-        uint32_t flags = phdrs[i].p_flags;
+        uint64_t vaddr = phdrs[i].vaddr;
+        uint64_t memsz = phdrs[i].mem_size;
+        uint64_t filesz = phdrs[i].file_size;
+        uint64_t offset = phdrs[i].offset;
+        uint32_t flags = phdrs[i].flags;
 
         uint64_t start_vpage = vaddr & ~0xFFFULL;
         uint64_t end_vpage = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;
 
-        unsigned long mmu_flags = (flags & PF_X) ? PAGE_USER_CODE : PAGE_USER_DATA;
+        unsigned long mmu_flags = (flags & ELF_PROG_FLAG_X) ? PAGE_USER_CODE : PAGE_USER_DATA;
 
         for (uint64_t page = start_vpage; page < end_vpage; page += PAGE_SIZE)
         {
@@ -105,10 +135,9 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
             if (is_mapped)
             {
                 kernel_vaddr = (void*)P2V(current_paddr);
-                // upgrade permissions if needed (e.g. add write bit)
+                // Adjust permissions if needed when mapping memory for data
                 if ((mmu_flags & PAGE_USER_DATA) && !(current_flags & MMU_UXN))
                 {
-                    // this is a simplified permission merge
                     mmu_user_unmap_page(pgd, page);
                     mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);
                 }
@@ -158,7 +187,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                 }
             }
 
-            if (flags & PF_X)
+            if (flags & ELF_PROG_FLAG_X)
             {
                 process_flush_icache_range(kernel_vaddr, PAGE_SIZE);
             }

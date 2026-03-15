@@ -1,72 +1,95 @@
-#ifndef _ELF_H_
-#define _ELF_H_
+/*
+ * elf.h - Public API for the Executable and Linkable Format (ELF) parser.
+ *
+ * This file defines the structures and constants for the 64-bit ELF format
+ * as used by the kernel to load and execute user applications.
+ */
+
+#ifndef PERSPICUA_KERNEL_ELF_H
+#define PERSPICUA_KERNEL_ELF_H
 
 #include "types.h"
 
-#define EI_MAG0 0
-#define EI_MAG1 1
-#define EI_MAG2 2
-#define EI_MAG3 3
-#define EI_CLASS 4
-#define EI_DATA 5
-#define EI_VERSION 6
-#define EI_OSABI 7
-#define EI_ABIVERSION 8
-#define EI_PAD 9
-#define EI_NIDENT 16
+/* ELF Identification indexes */
+#define ELF_IDENT_MAG0 0
+#define ELF_IDENT_MAG1 1
+#define ELF_IDENT_MAG2 2
+#define ELF_IDENT_MAG3 3
+#define ELF_IDENT_CLASS 4
+#define ELF_IDENT_DATA 5
+#define ELF_IDENT_VERSION 6
+#define ELF_IDENT_OSABI 7
+#define ELF_IDENT_ABIVERSION 8
+#define ELF_IDENT_PAD 9
+#define ELF_IDENT_NIDENT 16
 
-#define ELFMAG0 0x7f
-#define ELFMAG1 'E'
-#define ELFMAG2 'L'
-#define ELFMAG3 'F'
+/* ELF Magic numbers */
+#define ELF_MAG0 0x7f
+#define ELF_MAG1 'E'
+#define ELF_MAG2 'L'
+#define ELF_MAG3 'F'
 
-#define ELFCLASS64 2
-#define ELFDATA2LSB 1
+/* ELF Class and Data constants */
+#define ELF_CLASS_64 2
+#define ELF_DATA_2LSB 1
 
-#define ET_EXEC 2
+/* ELF Type and Machine constants */
+#define ELF_TYPE_EXEC 2
+#define ELF_MACHINE_AARCH64 183
 
-#define PT_LOAD 1
+/* Program Header Type constants */
+#define ELF_PROG_LOAD 1
 
-#define EM_AARCH64 183
+/* Standard ELF 64-bit types */
+typedef uint64_t elf64_addr;
+typedef uint64_t elf64_off;
+typedef uint16_t elf64_half;
+typedef uint32_t elf64_word;
+typedef int32_t elf64_sword;
+typedef uint64_t elf64_xword;
+typedef int64_t elf64_sxword;
 
-typedef uint64_t Elf64_Addr;
-typedef uint64_t Elf64_Off;
-typedef uint16_t Elf64_Half;
-typedef uint32_t Elf64_Word;
-typedef int32_t Elf64_Sword;
-typedef uint64_t Elf64_Xword;
-typedef int64_t Elf64_Sxword;
-
-typedef struct
+/*
+ * elf64_header - The main ELF file header structure.
+ */
+struct elf64_header
 {
-    unsigned char e_ident[EI_NIDENT];
-    Elf64_Half e_type;
-    Elf64_Half e_machine;
-    Elf64_Word e_version;
-    Elf64_Addr e_entry;
-    Elf64_Off e_phoff;
-    Elf64_Off e_shoff;
-    Elf64_Word e_flags;
-    Elf64_Half e_ehsize;
-    Elf64_Half e_phentsize;
-    Elf64_Half e_phnum;
-    Elf64_Half e_shentsize;
-    Elf64_Half e_shnum;
-    Elf64_Half e_shstrndx;
-} Elf64_Ehdr;
+    unsigned char identity[ELF_IDENT_NIDENT];
+    elf64_half type;
+    elf64_half machine;
+    elf64_word version;
+    elf64_addr entry;
+    elf64_off ph_offset;
+    elf64_off sh_offset;
+    elf64_word flags;
+    elf64_half eh_size;
+    elf64_half ph_entry_size;
+    elf64_half ph_num;
+    elf64_half sh_entry_size;
+    elf64_half sh_num;
+    elf64_half sh_str_ndx;
+};
 
-typedef struct
+/*
+ * elf64_program_header - Represents a segment in the ELF file.
+ */
+struct elf64_program_header
 {
-    Elf64_Word p_type;
-    Elf64_Word p_flags;
-    Elf64_Off p_offset;
-    Elf64_Addr p_vaddr;
-    Elf64_Addr p_paddr;
-    Elf64_Xword p_filesz;
-    Elf64_Xword p_memsz;
-    Elf64_Xword p_align;
-} Elf64_Phdr;
+    elf64_word type;
+    elf64_word flags;
+    elf64_off offset;
+    elf64_addr vaddr;
+    elf64_addr paddr;
+    elf64_xword file_size;
+    elf64_xword mem_size;
+    elf64_xword align;
+};
 
+/*
+ * elf_load - Parses and loads an ELF executable from the filesystem into
+ * the provided page directory. It returns PERS_SUCCESS on success or an
+ * error code on failure, and populates the entry_point with the start address.
+ */
 int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point);
 
-#endif // _ELF_H_
+#endif /* PERSPICUA_KERNEL_ELF_H */
