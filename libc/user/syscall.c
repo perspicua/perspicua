@@ -1,6 +1,17 @@
-#include "syscall.h"
-#include <uapi/syscalls.h>
+/*
+ * syscall.c - Userspace system call wrapper implementations.
+ *
+ * This file contains the AArch64 assembly wrappers for the system calls
+ * defined in the libc API, using the SVC instruction to transition to EL1.
+ */
 
+#include "syscall.h"
+
+#include "uapi/syscalls.h"
+
+/*
+ * sys_exit - Terminates the current process with an exit status.
+ */
 void sys_exit(int status)
 {
     asm volatile("mov x0, %0\n"
@@ -11,6 +22,9 @@ void sys_exit(int status)
                  : "x0", "x8", "memory");
 }
 
+/*
+ * sys_write - Writes data to a file descriptor.
+ */
 void sys_write(int fd, const char* buf, size_t len)
 {
     asm volatile("mov x0, %0\n"
@@ -23,6 +37,9 @@ void sys_write(int fd, const char* buf, size_t len)
                  : "x0", "x1", "x2", "x8", "memory");
 }
 
+/*
+ * sys_getpid - Retrieves the current process identifier.
+ */
 int sys_getpid(void)
 {
     long pid;
@@ -35,6 +52,9 @@ int sys_getpid(void)
     return (int)pid;
 }
 
+/*
+ * sys_yield - Voluntarily yields the CPU to the scheduler.
+ */
 void sys_yield(void)
 {
     asm volatile("mov x8, %0\n"
@@ -44,6 +64,9 @@ void sys_yield(void)
                  : "x8", "memory");
 }
 
+/*
+ * sys_sleep - Puts the current process to sleep for a number of milliseconds.
+ */
 void sys_sleep(unsigned long ms)
 {
     asm volatile("mov x0, %0\n"
@@ -54,6 +77,9 @@ void sys_sleep(unsigned long ms)
                  : "x0", "x8", "memory");
 }
 
+/*
+ * sys_open - Opens a file and returns a file descriptor.
+ */
 int sys_open(const char* path, int flags)
 {
     long fd;
@@ -68,6 +94,9 @@ int sys_open(const char* path, int flags)
     return (int)fd;
 }
 
+/*
+ * sys_read - Reads data from a file descriptor.
+ */
 int sys_read(int fd, void* buf, size_t len)
 {
     long bytes;
@@ -83,6 +112,9 @@ int sys_read(int fd, void* buf, size_t len)
     return (int)bytes;
 }
 
+/*
+ * sys_close - Closes an open file descriptor.
+ */
 int sys_close(int fd)
 {
     long res;
@@ -96,6 +128,9 @@ int sys_close(int fd)
     return (int)res;
 }
 
+/*
+ * sys_exec - Replaces the current process image with a new executable.
+ */
 int sys_exec(const char* path)
 {
     long res;
@@ -109,6 +144,9 @@ int sys_exec(const char* path)
     return (int)res;
 }
 
+/*
+ * sys_fork - Creates a duplicate of the current process.
+ */
 int sys_fork(void)
 {
     long res;
@@ -121,6 +159,9 @@ int sys_fork(void)
     return (int)res;
 }
 
+/*
+ * sys_waitpid - Waits for a specific child process to terminate.
+ */
 int sys_waitpid(int pid, int* status)
 {
     long res;

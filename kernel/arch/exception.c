@@ -16,7 +16,7 @@ extern struct tty console_tty;
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 
-int fixup_exception(struct trap_frame* tf)
+int exception_fixup(struct exception_trap_frame* tf)
 {
     unsigned long* p;
     for (p = __ex_table_start; p < __ex_table_end; p += 2)
@@ -87,12 +87,12 @@ static const char* fsc_to_string(uint32_t fsc)
     }
 }
 
-static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
+static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t esr)
 {
     unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
-    if (fixup_exception(tf))
+    if (exception_fixup(tf))
     {
         return;
     }
@@ -137,7 +137,7 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
             struct task* curr = sched_get_current();
             if (curr && curr->pid == (uint32_t)pid)
             {
-                curr->state = TASK_DEAD;
+                curr->state = SCHED_TASK_DEAD;
                 schedule();
             }
             else
@@ -167,7 +167,7 @@ static void handle_abort(struct trap_frame* tf, uint32_t ec, uintptr_t esr)
     }
 }
 
-void c_unhandled_vector(void)
+void exception_unhandled_vector(void)
 {
     unsigned int esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
@@ -192,7 +192,7 @@ void c_unhandled_vector(void)
 
 static unsigned int uart_irq_cached = 0;
 
-void c_irq_handler(void)
+void exception_irq_handler(void)
 {
     // check before even reading IAR — a panic IPI may have woken us
     if (kernel_panicked)
@@ -205,7 +205,7 @@ void c_irq_handler(void)
     if (uart_irq_cached == 0)
         uart_irq_cached = uart_get_irq();
 
-    unsigned int iar = mmio_read(GICC_IAR);
+    unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
     if (irq_id >= 1020) // spurious interrupt — do NOT write EOIR
@@ -213,28 +213,28 @@ void c_irq_handler(void)
 
     if (irq_id == 0) // SGI 0: panic IPI from another core
     {
-        mmio_write(GICC_EOIR, iar);
+        mmio_write(gic_c_eoir, iar);
         disable_interrupts();
         for (;;)
             asm volatile("wfe");
     }
-    else if (irq_id == TIMER_IRQ)
+    else if (irq_id == GIC_TIMER_IRQ)
     {
         timer_interrupt_reset();
-        mmio_write(GICC_EOIR, iar);
+        mmio_write(gic_c_eoir, iar);
         schedule();
         return;
     }
     else if (irq_id == uart_irq_cached)
     {
-        uint32_t mis = mmio_read(UART0_MIS);
+        uint32_t mis = mmio_read(uart_mis);
 
         // Handle RX and RX Timeout
         if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS))
         {
-            while (!(mmio_read(UART0_FR) & UART_FR_RXFE))
+            while (!(mmio_read(uart_fr) & UART_FR_RXFE))
             {
-                char c = (char)(mmio_read(UART0_DR) & 0xFF);
+                char c = (char)(mmio_read(uart_dr) & 0xFF);
                 tty_handle_rx(&console_tty, c);
             }
         }
@@ -248,10 +248,10 @@ void c_irq_handler(void)
         uart_clear_interrupt(mis);
     }
 
-    mmio_write(GICC_EOIR, iar);
+    mmio_write(gic_c_eoir, iar);
 }
 
-void c_sync_handler(struct trap_frame* tf)
+void exception_sync_handler(struct exception_trap_frame* tf)
 {
     uintptr_t esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
@@ -262,7 +262,7 @@ void c_sync_handler(struct trap_frame* tf)
     {
     case EC_SVC:
     {
-        handle_syscall(tf);
+        syscall_handle(tf);
         break;
     }
     case EC_INST_ABORT_LOWER:

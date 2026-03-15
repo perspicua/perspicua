@@ -2,7 +2,7 @@
 
 int main(void)
 {
-    int fd = sys_open("/hello.txt", O_RDONLY);
+    int fd = sys_open("/hello.txt", VFS_O_RDONLY);
     if (fd < 0)
     {
         char err[] = "Error: could not open /hello.txt\n";
@@ -11,10 +11,10 @@ int main(void)
     }
 
     char buf[64];
-    int n;
-    while ((n = sys_read(fd, buf, sizeof(buf))) > 0)
+    int bytes_read;
+    while ((bytes_read = sys_read(fd, buf, sizeof(buf))) > 0)
     {
-        sys_write(1, buf, (size_t)n);
+        sys_write(1, buf, (size_t)bytes_read);
     }
 
     sys_close(fd);

@@ -1,8 +1,19 @@
-#ifndef _FB_H_
-#define _FB_H_
+/*
+ * fb.h - Public API for the framebuffer driver.
+ *
+ * This file defines the structures and functions used to manage the
+ * system's framebuffer, providing access to pixel data and display metrics.
+ */
+
+#ifndef PERSPICUA_DRIVER_FB_H
+#define PERSPICUA_DRIVER_FB_H
 
 #include "mmu.h"
-struct framebuffer
+
+/*
+ * fb_info_struct - Structure containing the hardware framebuffer state.
+ */
+struct fb_info_struct
 {
     unsigned int width;
     unsigned int height;
@@ -10,8 +21,20 @@ struct framebuffer
     unsigned int size;
     unsigned char* ptr;
 };
-extern struct framebuffer fb_info;
 
+/* The global framebuffer device information. */
+extern struct fb_info_struct fb_info;
+
+/*
+ * fb_init - Initializes the Raspberry Pi 4 framebuffer via mailbox.
+ * This sets up the resolution, depth, and allocates the display buffer.
+ */
 void fb_init(void);
+
+/*
+ * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.
+ * Ensures the framebuffer memory is mapped with device-specific attributes.
+ */
 void remap_framebuffer_pages(void);
-#endif // _FB_H_
+
+#endif /* PERSPICUA_DRIVER_FB_H */

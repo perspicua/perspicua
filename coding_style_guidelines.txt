@@ -1,0 +1,59 @@
+--------------------------------------------------------------------------------
+1. GENERAL GUIDELINES (Applies to all files)
+--------------------------------------------------------------------------------
+- File Header: Start every file with a brief block comment stating the file's 
+  name and its purpose/responsibilities.
+- Naming Convention: Use snake_case for all variables, functions, and structs.
+- Prefixing: Prefix global structs, enums, and public functions with the 
+  subsystem name (e.g., `process_init`, `PROCESS_STATE_RUNNING`).
+- Documentation: 
+  - Use block comments `/* ... */` to explain *why* a struct or function exists. 
+  - Use line comments `//` for explaining tricky internal logic inside functions.
+
+--------------------------------------------------------------------------------
+2. HEADER FILES (.h) - The Public API
+--------------------------------------------------------------------------------
+Header files should strictly contain what other files need to know to interact 
+with the module. Do not expose internal workings.
+
+Structure Order:
+1. Header Guards: Format as `PERSPICUA_SUBSYSTEM_FILENAME_H`. Do not start 
+   with an underscore followed by a capital letter.
+2. Includes: Group logically (Standard Lib -> Shared/UAPI -> Arch -> Kernel).
+3. Constants and Macros: Use #define for public constants.
+4. Enums: Use typedef enum for state variables and flags.
+5. Data Structures: Define structs used in the public API.
+6. Global Variables: Keep these to an absolute minimum using `extern`.
+7. Function Prototypes: Group logically by functionality.
+
+--------------------------------------------------------------------------------
+3. SOURCE FILES (.c) - The Implementation
+--------------------------------------------------------------------------------
+Source files should hide their internal state. Anything not explicitly needed 
+by another file MUST be marked `static`.
+
+Structure Order:
+1. Includes: Always include the file's own `.h` header FIRST to catch 
+   prototype mismatches. Then include other necessary headers.
+2. Private Macros and Constants: Only used within this file.
+3. Private Data Structures: Structs that only this specific file needs to know.
+4. Global Variables: Define the actual variables declared `extern` in the header.
+5. Private/Static Variables: Internal state hidden from the rest of the OS.
+6. Private Helper Functions: Marked `static`. (e.g., `static void clear_state()`)
+7. Public API Implementations: The implementations of the functions declared 
+   in the header file.
+
+--------------------------------------------------------------------------------
+4. INCLUDE ORDER CHEAT SHEET
+--------------------------------------------------------------------------------
+Group includes separated by a blank line:
+
+#include "own_header.h"
+
+#include "uapi/syscall.h"  // Shared user/kernel headers
+
+#include "arch/mmu.h"      // Architecture specifics
+
+#include "kernel/pmm.h"    // Other kernel subsystems
+#include "kernel/vfs.h"
+================================================================================

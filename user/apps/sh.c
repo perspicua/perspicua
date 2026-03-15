@@ -1,20 +1,21 @@
+
 #include "syscall.h"
 #include "string.h"
 
-static void print(const char* s)
+static void print_string(const char* s)
 {
     sys_write(1, s, strlen(s));
 }
 
 int main(void)
 {
-    char welcome[] = "Perspicua TEsting Shell v0.1\n";
-    print(welcome);
+    char welcome[] = "Perspicua Testing Shell v0.1\n";
+    print_string(welcome);
 
-    char cmd_buf[128];
-    int cmd_len = 0;
+    char cmd_buffer[128];
+    int cmd_length = 0;
 
-    print("$ ");
+    print_string("$ ");
 
     while (1)
     {
@@ -23,69 +24,74 @@ int main(void)
         {
             if (c == '\n')
             {
-                cmd_buf[cmd_len] = '\0';
-                print("\n");
+                /* Process the command when newline is received */
+                cmd_buffer[cmd_length] = '\0';
+                print_string("\n");
 
-                if (cmd_len > 0)
+                if (cmd_length > 0)
                 {
-                    if (strcmp(cmd_buf, "help") == 0)
+                    if (strcmp(cmd_buffer, "help") == 0)
                     {
-                        print("Available commands: help, cat, hello\n");
-                        print("Type the name of an ELF file to exec it (e.g. /cat.elf)\n");
+                        print_string("Available commands: help, cat, hello\n");
+                        print_string("Type the name of an ELF file to exec it (e.g. /cat.elf)\n");
                     }
                     else
                     {
                         char path[128];
-                        if (cmd_buf[0] == '/')
+                        if (cmd_buffer[0] == '/')
                         {
-                            strcpy(path, cmd_buf);
+                            strcpy(path, cmd_buffer);
                         }
                         else
                         {
                             strcpy(path, "/");
-                            strcat(path, cmd_buf);
+                            strcat(path, cmd_buffer);
                             strcat(path, ".elf");
                         }
 
                         int pid = sys_fork();
                         if (pid < 0)
                         {
-                            print("Error: fork failed\n");
+                            print_string("Error: fork failed\n");
                         }
                         else if (pid == 0)
                         {
+                            /* Child process: execute the requested program */
                             if (sys_exec(path) < 0)
                             {
-                                print("Error: command not found: ");
-                                print(path);
-                                print("\n");
+                                print_string("Error: command not found: ");
+                                print_string(path);
+                                print_string("\n");
                                 sys_exit(1);
                             }
                         }
                         else
                         {
+                            /* Parent process: wait for the program to exit */
                             int status = 0;
                             sys_waitpid(pid, &status);
                         }
                     }
                 }
 
-                cmd_len = 0;
-                print("$ ");
+                cmd_length = 0;
+                print_string("$ ");
             }
             else if (c == '\b' || c == 127)
             {
-                if (cmd_len > 0)
+                /* Handle backspace by erasing the last character */
+                if (cmd_length > 0)
                 {
-                    cmd_len--;
-                    print("\b \b");
+                    cmd_length--;
+                    print_string("\b \b");
                 }
             }
             else
             {
-                if (cmd_len < 127)
+                /* Buffer the character and echo it back to the user */
+                if (cmd_length < 127)
                 {
-                    cmd_buf[cmd_len++] = c;
+                    cmd_buffer[cmd_length++] = c;
                     sys_write(1, &c, 1);
                 }
             }

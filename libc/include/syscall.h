@@ -1,17 +1,26 @@
-#ifndef _LIBUSER_SYSCALL_H_
-#define _LIBUSER_SYSCALL_H_
+/*
+ * syscall.h - Userspace system call wrapper definitions.
+ *
+ * This file provides the public C interface for system calls available
+ * to user-mode applications.
+ */
 
-#include <types.h>
+#ifndef PERSPICUA_LIBC_SYSCALL_H
+#define PERSPICUA_LIBC_SYSCALL_H
 
-#define O_RDONLY 0x0000
-#define O_WRONLY 0x0001
-#define O_RDWR 0x0002
-#define O_ACCMODE 0x0003
+#include "types.h"
 
-#define O_CREAT 0x0100
-#define O_TRUNC 0x0200
-#define O_APPEND 0x0400
+/* Filesystem access mode and control flags */
+#define VFS_O_RDONLY 0x0000
+#define VFS_O_WRONLY 0x0001
+#define VFS_O_RDWR 0x0002
+#define VFS_O_ACCMODE 0x0003
 
+#define VFS_O_CREAT 0x0100
+#define VFS_O_TRUNC 0x0200
+#define VFS_O_APPEND 0x0400
+
+/* System call wrapper prototypes */
 void sys_write(int fd, const char* buf, size_t len);
 void sys_exit(int status);
 int sys_getpid(void);
@@ -24,4 +33,4 @@ int sys_exec(const char* path);
 int sys_fork(void);
 int sys_waitpid(int pid, int* status);
 
-#endif // _LIBUSER_SYSCALL_H_
+#endif /* PERSPICUA_LIBC_SYSCALL_H */

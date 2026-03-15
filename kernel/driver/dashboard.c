@@ -1,30 +1,46 @@
+/*
+ * dashboard.c - Implementation of the system dashboard driver.
+ *
+ * This file handles the rendering of real-time system metrics such as
+ * uptime, memory utilization, and CPU core activity.
+ */
+
 #include "driver/dashboard.h"
-#include "driver/graphics.h"
-#include "driver/fb.h"
-#include "timer.h"
+
+#include "string.h"
+
 #include "pmm.h"
 #include "heap.h"
 #include "slab.h"
+#include "timer.h"
 #include "sched.h"
 #include "process.h"
-#include "string.h"
 
+#include "driver/graphics.h"
+#include "driver/fb.h"
+
+/*
+ * uint_to_str - Converts an unsigned long to a string representation.
+ */
 static void uint_to_str(unsigned long n, char* buf)
 {
     int i = 0;
+
     if (n == 0)
     {
         buf[i++] = '0';
         buf[i] = '\0';
         return;
     }
+
     while (n > 0)
     {
         buf[i++] = (n % 10) + '0';
         n /= 10;
     }
     buf[i] = '\0';
-    // reverse
+
+    // Reverse the string in-place
     for (int j = 0; j < i / 2; j++)
     {
         char tmp = buf[j];
@@ -33,6 +49,9 @@ static void uint_to_str(unsigned long n, char* buf)
     }
 }
 
+/*
+ * dashboard_update - Renders the system dashboard.
+ */
 void dashboard_update(void)
 {
     graphics_draw_rect(0, 0, fb_info.width, 20, 0x00333333, 1); // Dark grey

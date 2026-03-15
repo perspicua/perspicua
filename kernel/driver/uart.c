@@ -1,89 +1,114 @@
+/*
+ * uart.c - Implementation of the PL011 UART driver.
+ *
+ * This file handles register-level UART configuration, discovery from
+ * the hardware tree, and synchronous transmit/receive operations.
+ */
+
 #include "driver/uart.h"
-#include "driver/gpio.h"
-#include "timer.h"
-#include "addr.h"
-#include "lock.h"
+
+#include "types.h"
 #include "tty.h"
+#include "lock.h"
+#include "timer.h"
 #include "panic.h"
+#include "addr.h"
+
 #include "devicetree/pht.h"
 
+#include "driver/gpio.h"
+
+/* Extern console TTY from the TTY subsystem */
 extern struct tty console_tty;
 
+/* UART State and Synchronization */
 static spinlock_t uart_lock = SPINLOCK_INIT;
 static unsigned int cached_uart_irq = 0;
 
-volatile unsigned int* UART0_DR;
-volatile unsigned int* UART0_FR;
-volatile unsigned int* UART0_IBRD;
-volatile unsigned int* UART0_FBRD;
-volatile unsigned int* UART0_LCRH;
-volatile unsigned int* UART0_CR;
-volatile unsigned int* UART0_IFLS;
-volatile unsigned int* UART0_IMSC;
-volatile unsigned int* UART0_MIS;
-volatile unsigned int* UART0_ICR;
+/* Public Register Pointers */
+volatile uint32_t* uart_dr = (void*)0;
+volatile uint32_t* uart_fr = (void*)0;
+volatile uint32_t* uart_mis = (void*)0;
+volatile uint32_t* uart_imsc = (void*)0;
 
+/* Private Register Pointers (Static) */
+static volatile uint32_t* uart_ibrd = (void*)0;
+static volatile uint32_t* uart_fbrd = (void*)0;
+static volatile uint32_t* uart_lcrh = (void*)0;
+static volatile uint32_t* uart_cr = (void*)0;
+static volatile uint32_t* uart_ifls = (void*)0;
+static volatile uint32_t* uart_icr = (void*)0;
+
+/*
+ * uart_init - Configures the UART for standard serial communication.
+ */
 void uart_init(void)
 {
     struct pht_node* uart_node = pht_find_device("uart");
-    if (uart_node == NULL)
+    if (uart_node == (void*)0)
     {
         PANIC("[ UART ] Device node not found in hardware tree!\n");
     }
 
     uintptr_t vbase = P2V(uart_node->address[0]);
 
-    UART0_FR = (unsigned int*)(vbase + 0x18);
-    UART0_IBRD = (unsigned int*)(vbase + 0x24);
-    UART0_FBRD = (unsigned int*)(vbase + 0x28);
-    UART0_LCRH = (unsigned int*)(vbase + 0x2C);
-    UART0_CR = (unsigned int*)(vbase + 0x30);
-    UART0_IFLS = (unsigned int*)(vbase + 0x34);
-    UART0_IMSC = (unsigned int*)(vbase + 0x38);
-    UART0_MIS = (unsigned int*)(vbase + 0x40);
-    UART0_ICR = (unsigned int*)(vbase + 0x44);
-    UART0_DR = (unsigned int*)(vbase + 0x00);
+    // Map hardware offsets to pointers
+    uart_dr = (uint32_t*)(vbase + 0x00);
+    uart_fr = (uint32_t*)(vbase + 0x18);
+    uart_ibrd = (uint32_t*)(vbase + 0x24);
+    uart_fbrd = (uint32_t*)(vbase + 0x28);
+    uart_lcrh = (uint32_t*)(vbase + 0x2C);
+    uart_cr = (uint32_t*)(vbase + 0x30);
+    uart_ifls = (uint32_t*)(vbase + 0x34);
+    uart_imsc = (uint32_t*)(vbase + 0x38);
+    uart_mis = (uint32_t*)(vbase + 0x40);
+    uart_icr = (uint32_t*)(vbase + 0x44);
 
-    // clear control register, disables uart0
-    mmio_write(UART0_CR, 0);
+    // Disable UART for safe configuration
+    mmio_write(uart_cr, 0);
 
-    // set pin 14 15
+    // Configure GPIO pins 14 and 15 for ALT0 function (UART)
     gpio_set_pin_function(14, GPIO_FUNC_ALT0);
     gpio_set_pin_function(15, GPIO_FUNC_ALT0);
 
-    // disable pull resistors
+    // Disable pull-up/down resistors for cleaner signal
     gpio_set_pull(14, GPIO_PUPDN_NONE);
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
-    // TODO: i am not sure if this is needed, needs testing
+    // Small delay for hardware stability
     sleep_ms(10);
 
-    mmio_write(UART0_ICR, 0x7FF);
+    // Clear all pending interrupts
+    mmio_write(uart_icr, 0x7FF);
 
-    // set baud rate to 115200
-    // UART clock default = 48MHz
-    // 48,000,000 / (16 * 115200) = 26.04166666666666666666 etc.
-    // Integer part = 26. Fractional part = int((0.0416666 * 64) + 0.5) = 3.
-    mmio_write(UART0_IBRD, 26);
-    mmio_write(UART0_FBRD, 3);
+    // Set baud rate to 115200 for 48MHz clock.
+    // 48,000,000 / (16 * 115200) = 26.04166
+    mmio_write(uart_ibrd, 26);
+    mmio_write(uart_fbrd, 3);
 
-    // enable FIFOs (bit 4) and 8-bit word length (bits 5 and 6)
-    mmio_write(UART0_LCRH, UART_LCRH_FEN | UART_LCRH_WLEN_8);
+    // Enable FIFOs and set 8-bit word length
+    mmio_write(uart_lcrh, UART_LCRH_FEN | UART_LCRH_WLEN_8);
 
-    // Interrupt FIFO level: RX 1/8, TX 1/8 (0b000 << 3 | 0b000) -> 0
-    mmio_write(UART0_IFLS, 0);
+    // Set FIFO interrupt levels to 1/8 to trigger early
+    mmio_write(uart_ifls, 0);
 
-    // UARTEN (bit 0) | TXE (bit 8) | RXE (bit 9)
-    mmio_write(UART0_CR, UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
+    // Enable UART, TX, and RX
+    mmio_write(uart_cr, UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
 
     cached_uart_irq = uart_node->irq;
 }
 
+/*
+ * uart_write - Proxies write calls to the console TTY.
+ */
 void uart_write(const char* buf, size_t len)
 {
     tty_write(&console_tty, buf, len);
 }
 
+/*
+ * uart_puts_locked - Atomically transmits a string with IRQs disabled.
+ */
 void uart_puts_locked(const char* str)
 {
     unsigned long flags = spin_lock_irqsave(&uart_lock);
@@ -94,26 +119,36 @@ void uart_puts_locked(const char* str)
     spin_unlock_irqrestore(&uart_lock, flags);
 }
 
+/*
+ * uart_send - Transmits a single byte when space is available.
+ */
 void uart_send(char c)
 {
-    // wait for TXFF = 0
-    // if it is 1, the buffer is full and we have to wait before sending another char
-    while (mmio_read(UART0_FR) & UART_FR_TXFF)
-        ;
-    mmio_write(UART0_DR, (unsigned int)c);
+    // Wait for the transmit FIFO to have room
+    while (mmio_read(uart_fr) & UART_FR_TXFF)
+    {
+        asm volatile("nop");
+    }
+    mmio_write(uart_dr, (unsigned int)c);
 }
 
+/*
+ * uart_getc - Receives a single byte, blocking until available.
+ */
 char uart_getc(void)
 {
-    char r;
-    // wait for RXFE = 0
-    while (mmio_read(UART0_FR) & UART_FR_RXFE)
-        ;
+    // Wait for the receive FIFO to be non-empty
+    while (mmio_read(uart_fr) & UART_FR_RXFE)
+    {
+        asm volatile("nop");
+    }
 
-    r = (char)(mmio_read(UART0_DR) & 0xFF);
-    return r;
+    return (char)(mmio_read(uart_dr) & 0xFF);
 }
 
+/*
+ * uart_puts - Transmits a null-terminated string.
+ */
 void uart_puts(const char* str)
 {
     while (*str)
@@ -122,21 +157,33 @@ void uart_puts(const char* str)
     }
 }
 
+/*
+ * uart_data_ready - Checks if any characters are waiting in the RX buffer.
+ */
 int uart_data_ready(void)
 {
-    return !(mmio_read(UART0_FR) & UART_FR_RXFE);
+    return !(mmio_read(uart_fr) & UART_FR_RXFE);
 }
 
+/*
+ * uart_enable_interrupts - Enables hardware interrupts for RX and RX Timeout.
+ */
 void uart_enable_interrupts(void)
 {
-    mmio_write(UART0_IMSC, UART_IMSC_RXIM | UART_IMSC_RTIM);
+    mmio_write(uart_imsc, UART_IMSC_RXIM | UART_IMSC_RTIM);
 }
 
+/*
+ * uart_clear_interrupt - Clears UART interrupts by their bitmask.
+ */
 void uart_clear_interrupt(uint32_t mask)
 {
-    mmio_write(UART0_ICR, mask);
+    mmio_write(uart_icr, mask);
 }
 
+/*
+ * uart_get_irq - Returns the interrupt line assigned to the UART.
+ */
 unsigned int uart_get_irq(void)
 {
     return cached_uart_irq;
