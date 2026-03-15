@@ -1,6 +1,18 @@
+/*
+ * lock.c - Implementation of synchronization and atomic primitives.
+ *
+ * This file contains the low-level AArch64 assembly implementations
+ * for spinlocks and atomic operations using load-acquire and
+ * store-release semantics.
+ */
+
 #include "lock.h"
+
 #include "timer.h"
 
+/*
+ * spin_lock - Implementation of the spinlock acquisition.
+ */
 void spin_lock(spinlock_t* lock)
 {
     unsigned int tmp;
@@ -17,6 +29,9 @@ void spin_lock(spinlock_t* lock)
                  : "memory");
 }
 
+/*
+ * spin_unlock - Implementation of the spinlock release.
+ */
 void spin_unlock(spinlock_t* lock)
 {
     asm volatile("   stlr    %w0, [%1]\n" // store-release (0 -> unlocked)
@@ -26,6 +41,9 @@ void spin_unlock(spinlock_t* lock)
                  : "memory");
 }
 
+/*
+ * spin_lock_irqsave - Local core IRQ disable followed by spinlock acquire.
+ */
 unsigned long spin_lock_irqsave(spinlock_t* lock)
 {
     unsigned long flags = irq_save();
@@ -33,12 +51,18 @@ unsigned long spin_lock_irqsave(spinlock_t* lock)
     return flags;
 }
 
+/*
+ * spin_unlock_irqrestore - Spinlock release followed by local core IRQ restore.
+ */
 void spin_unlock_irqrestore(spinlock_t* lock, unsigned long flags)
 {
     spin_unlock(lock);
     irq_restore(flags);
 }
 
+/*
+ * atomic_inc - Implementation of atomic increment using exclusive access.
+ */
 void atomic_inc(atomic_t* a)
 {
     int val, tmp;
@@ -51,6 +75,9 @@ void atomic_inc(atomic_t* a)
                  : "memory");
 }
 
+/*
+ * atomic_dec_and_test - Atomic decrement followed by zero-test.
+ */
 int atomic_dec_and_test(atomic_t* a)
 {
     int val, tmp, result;
