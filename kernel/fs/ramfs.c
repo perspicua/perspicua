@@ -1,12 +1,24 @@
+/*
+ * ramfs.c - Implementation of the RAM-based filesystem (ramfs).
+ *
+ * This file implements a simple, read-only in-memory filesystem used for
+ * the initial system root and static system files.
+ */
+
 #include "ramfs.h"
-#include "heap.h"
-#include "lock.h"
-#include "vfs.h"
-#include "slab.h"
-#include "string.h"
-#include "stdio.h"
+
 #include "uapi/errors.h"
 
+#include "vfs.h"
+#include "slab.h"
+#include "heap.h"
+#include "lock.h"
+#include "string.h"
+#include "stdio.h"
+
+/*
+ * ramfs_file_data - Internal representation of a file in the RAM filesystem.
+ */
 struct ramfs_file_data
 {
     const char* name;
@@ -15,36 +27,52 @@ struct ramfs_file_data
     struct vnode* node;
 };
 
-#define MAX_RAMFS_FILES 16
-static struct ramfs_file_data ramfs_files[MAX_RAMFS_FILES];
+/* Internal filesystem state and maximum file limit */
+#define RAMFS_MAX_FILES 16
+static struct ramfs_file_data ramfs_files[RAMFS_MAX_FILES];
 static int ramfs_file_count = 0;
 
-struct vnode* ramfs_root_vnode;
-struct vnode_ops ramfs_dir_ops;
-struct vnode_ops ramfs_file_ops;
+/* VFS nodes and operation tables for RAMFS */
+static struct vnode* ramfs_root_vnode = (void*)0;
+static struct vnode_ops ramfs_dir_ops;
+static struct vnode_ops ramfs_file_ops;
 
+/*
+ * ramfs_read - Reads data from a RAMFS file into the provided buffer.
+ */
 int ramfs_read(struct file* file, void* buffer, size_t size)
 {
     struct ramfs_file_data* data = (struct ramfs_file_data*)file->node->internal_info;
     if (!data)
+    {
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
 
     if (file->offset >= (off_t)data->size)
-        return 0; // eof
+    {
+        return 0; // End of file reached
+    }
 
     size_t bytes_to_read = size;
     if (file->offset + (off_t)bytes_to_read > (off_t)data->size)
+    {
         bytes_to_read = data->size - (size_t)file->offset;
+    }
 
     memcpy(buffer, (const char*)data->data + file->offset, bytes_to_read);
 
     return (int)bytes_to_read;
 }
 
+/*
+ * ramfs_lookup - Searches the static file array for a matching filename.
+ */
 struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
 {
     if (dir->type != VNODE_TYPE_DIR)
-        return NULL;
+    {
+        return (void*)0;
+    }
 
     for (int i = 0; i < ramfs_file_count; i++)
     {
@@ -55,13 +83,18 @@ struct vnode* ramfs_lookup(struct vnode* dir, const char* filename)
         }
     }
 
-    return NULL;
+    return (void*)0;
 }
 
+/*
+ * ramfs_register_file - Creates a vnode and adds a file to the RAMFS registry.
+ */
 void ramfs_register_file(const char* name, const void* data, size_t size)
 {
-    if (ramfs_file_count >= MAX_RAMFS_FILES)
+    if (ramfs_file_count >= RAMFS_MAX_FILES)
+    {
         return;
+    }
 
     ramfs_files[ramfs_file_count].name = name;
     ramfs_files[ramfs_file_count].data = data;
@@ -77,39 +110,50 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
     vn->ops = &ramfs_file_ops;
     vn->filesize = (off_t)size;
     vn->parent = ramfs_root_vnode;
-
     vn->internal_info = &ramfs_files[ramfs_file_count];
-
     vn->refcount.counter = 1;
 
     ramfs_files[ramfs_file_count].node = vn;
-
     ramfs_file_count++;
-    printf("[RAMFS ] Registered file: %s (%u bytes)\n", name, size);
+
+    printf("[ RAMFS ] Registered file: %s (%u bytes)\n", name, (unsigned int)size);
 }
 
-const char* hello_txt = "Hello from the Raspberry Pi 4 RAMFS!\n";
+/* Hardcoded greeting message for the initial root filesystem */
+static const char* ramfs_hello_txt = "Hello from the Raspberry Pi 4 RAMFS!\n";
 
+/*
+ * ramfs_init - Boot-time initialization of the RAM filesystem.
+ */
 void ramfs_init(void)
 {
     ramfs_root_vnode = (struct vnode*)slab_alloc(sizeof(struct vnode));
+    if (!ramfs_root_vnode)
+    {
+        return;
+    }
 
+    // Initialize directory operations table
     ramfs_dir_ops.lookup = ramfs_lookup;
-    ramfs_dir_ops.read = NULL;
-    ramfs_dir_ops.write = NULL;
+    ramfs_dir_ops.read = (void*)0;
+    ramfs_dir_ops.write = (void*)0;
 
-    ramfs_file_ops.lookup = NULL;
+    // Initialize file operations table
+    ramfs_file_ops.lookup = (void*)0;
     ramfs_file_ops.read = ramfs_read;
-    ramfs_file_ops.write = NULL;
+    ramfs_file_ops.write = (void*)0;
 
+    // Set up the root directory vnode
     ramfs_root_vnode->type = VNODE_TYPE_DIR;
     ramfs_root_vnode->ops = &ramfs_dir_ops;
-    ramfs_root_vnode->internal_info = NULL;
-    ramfs_root_vnode->parent = NULL;
+    ramfs_root_vnode->internal_info = (void*)0;
+    ramfs_root_vnode->parent = (void*)0;
     ramfs_root_vnode->filesize = 0;
     ramfs_root_vnode->refcount.counter = 1;
 
+    // Mount RAMFS as the system root
     vfs_mount("/", ramfs_root_vnode);
 
-    ramfs_register_file("hello.txt", hello_txt, strlen(hello_txt));
+    // Register initial files
+    ramfs_register_file("hello.txt", ramfs_hello_txt, strlen(ramfs_hello_txt));
 }
