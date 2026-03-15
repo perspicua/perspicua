@@ -1,14 +1,17 @@
-#ifndef _TYPES_H_
-#define _TYPES_H_
+/*
+ * types.h - Standard fixed-width integer and fundamental types.
+ *
+ * This file defines the platform-specific integer types, pointer-width
+ * types, and common limits used throughout the kernel and userspace.
+ */
 
-// ---------------------------------------------------------------------------
-// NULL
-// ---------------------------------------------------------------------------
+#ifndef PERSPICUA_LIBC_TYPES_H
+#define PERSPICUA_LIBC_TYPES_H
+
+/* NULL pointer definition */
 #define NULL ((void*)0)
 
-// ---------------------------------------------------------------------------
-// Fixed-width integer types
-// ---------------------------------------------------------------------------
+/* Fixed-width integer types */
 typedef signed char int8_t;
 typedef unsigned char uint8_t;
 typedef signed short int16_t;
@@ -18,18 +21,14 @@ typedef unsigned int uint32_t;
 typedef signed long int64_t;
 typedef unsigned long uint64_t;
 
-// ---------------------------------------------------------------------------
-// Pointer-width types  (AArch64: 64-bit)
-// ---------------------------------------------------------------------------
+/* Pointer-width types (AArch64 is 64-bit) */
 typedef unsigned long size_t;
 typedef signed long ssize_t;
 typedef signed long ptrdiff_t;
 typedef unsigned long uintptr_t;
 typedef signed long intptr_t;
 
-// ---------------------------------------------------------------------------
-// Limits
-// ---------------------------------------------------------------------------
+/* Integer type limits */
 #define INT8_MIN (-128)
 #define INT8_MAX (127)
 #define UINT8_MAX (255U)
@@ -48,12 +47,12 @@ typedef signed long intptr_t;
 
 #define SIZE_MAX UINT64_MAX
 
-// ---------------------------------------------------------------------------
-// Atomic types
-// ---------------------------------------------------------------------------
+/*
+ * atomic_t - Structure for atomic integer operations.
+ */
 typedef struct
 {
     volatile int counter;
 } atomic_t;
 
-#endif // _TYPES_H_
+#endif /* PERSPICUA_LIBC_TYPES_H */
