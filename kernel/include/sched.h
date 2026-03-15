@@ -1,12 +1,23 @@
-#ifndef _SCHED_H_
-#define _SCHED_H_
+/*
+ * sched.h - Public API for the kernel task scheduler.
+ *
+ * This file defines the task structures, scheduler states, and functions
+ * responsible for multi-core preemptive multitasking and context switching.
+ */
+
+#ifndef PERSPICUA_KERNEL_SCHED_H
+#define PERSPICUA_KERNEL_SCHED_H
 
 #include "types.h"
 #include "pmm.h"
 
-#define MAX_TASKS 16
+/* Maximum number of concurrent tasks supported by the system */
+#define SCHED_MAX_TASKS 16
 
-// callee-saved registers + sp + pc
+/*
+ * cpu_context - Saved processor state for context switching.
+ * Contains all callee-saved registers, the stack pointer, and return address.
+ */
 struct cpu_context
 {
     unsigned long x19;
@@ -19,47 +30,96 @@ struct cpu_context
     unsigned long x26;
     unsigned long x27;
     unsigned long x28;
-    unsigned long fp; // x29
-    unsigned long lr; // x30
+    unsigned long fp; /* x29 */
+    unsigned long lr; /* x30 */
     unsigned long sp;
 };
 
-typedef enum
+/*
+ * sched_task_state - Possible execution states for a task.
+ */
+enum sched_task_state
 {
-    TASK_RUNNING,
-    TASK_READY,
-    TASK_BLOCKED,
-    TASK_DEAD
-} task_state_t;
+    SCHED_TASK_RUNNING,
+    SCHED_TASK_READY,
+    SCHED_TASK_BLOCKED,
+    SCHED_TASK_DEAD
+};
 
+/*
+ * task - The primary structure representing an execution thread.
+ */
 struct task
 {
     struct cpu_context context;
-    unsigned long ttbr0; // TTBR0 value (phys PGD | ASID<<48), 0 = kernel-only
-    task_state_t state;
-    unsigned long wake_time;
-    unsigned long id;
-    uint32_t pid;
-    unsigned char* stack;
-
-    struct task* next;
+    unsigned long ttbr0;         /* TTBR0 value containing user page table and ASID */
+    enum sched_task_state state; /* Current execution state */
+    unsigned long wake_time;     /* System time when a sleeping task should wake */
+    unsigned long id;            /* Unique numeric task identifier */
+    uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
+    unsigned char* stack;        /* Pointer to the allocated stack region */
+    struct task* next;           /* Link for ready and sleep queues */
 };
 
+/*
+ * sched_init - Initializes the scheduler on the primary CPU core.
+ * Sets up the initial main task and the idle task.
+ */
 void sched_init(void);
-void sched_create_task(void (*entry)(void));
-void sched_sleep_ms(unsigned long ms);
-void schedule(void);
+
+/*
+ * sched_secondary_init - Initializes the scheduler on a secondary CPU core.
+ */
 void sched_secondary_init(void);
 
+/*
+ * sched_create_task - Spawns a new kernel-mode task starting at the entry function.
+ */
+void sched_create_task(void (*entry)(void));
+
+/*
+ * sched_create_user_task - Initializes a task structure for a user-mode process.
+ */
+void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
+
+/*
+ * sched_sleep_ms - Puts the current task to sleep for a minimum number of milliseconds.
+ */
+void sched_sleep_ms(unsigned long ms);
+
+/*
+ * schedule - The core scheduling algorithm. Selects the next task to run and
+ * performs a context switch if necessary.
+ */
+void schedule(void);
+
+/*
+ * sched_block - Transitions the current task to the blocked state and
+ * yields the processor.
+ */
 void sched_block(void);
+
+/*
+ * sched_unblock - Transitions a specific task from blocked to ready state.
+ */
 void sched_unblock(struct task* t);
 
+/*
+ * sched_get_current - Returns a pointer to the task currently running on
+ * the calling CPU core.
+ */
 struct task* sched_get_current(void);
 
+/*
+ * sched_get_core_pid - Returns the PID of the process currently occupying
+ * the specified CPU core.
+ */
 int sched_get_core_pid(int cpu);
 
-void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
-// defined in switch.S
+/*
+ * switch_context - Low-level assembly function to swap processor state.
+ * Defined in switch.S.
+ */
 extern void switch_context(struct cpu_context* prev, struct cpu_context* next);
 
-#endif // _SCHED_H_
+#endif /* PERSPICUA_KERNEL_SCHED_H */

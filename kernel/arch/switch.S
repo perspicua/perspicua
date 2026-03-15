@@ -38,7 +38,7 @@ task_wrapper_asm:
     bl  disable_interrupts
     bl  sched_get_current
     cbz x0, 1f
-    mov x1, #3          // TASK_DEAD
+    mov x1, #3          // SCHED_TASK_DEAD
     str x1, [x0, #112]  // offset of 'state' in struct task
     bl  schedule
 1:  wfe

@@ -631,7 +631,7 @@ int process_waitpid(int pid, int* status)
         unsigned long flags = irq_save();
         struct task* curr = sched_get_current();
         if (curr)
-            curr->state = TASK_BLOCKED;
+            curr->state = SCHED_TASK_BLOCKED;
 
         spin_unlock(&process_table_lock);
 

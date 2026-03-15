@@ -108,7 +108,7 @@ void handle_syscall(struct exception_trap_frame* tf)
     {
         int status = (int)tf->x[0];
         process_exit(pid, status);
-        curr->state = TASK_DEAD;
+        curr->state = SCHED_TASK_DEAD;
         schedule();
         break;
     }
