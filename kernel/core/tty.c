@@ -30,13 +30,13 @@ void tty_init(struct tty* tty)
     tty->tx_head = 0;
     tty->tx_tail = 0;
 
-    tty->wait_queue_head    = (void*)0;
-    tty->wait_queue_tail    = (void*)0;
+    tty->wait_queue_head = (void*)0;
+    tty->wait_queue_tail = (void*)0;
     tty->tx_wait_queue_head = (void*)0;
     tty->tx_wait_queue_tail = (void*)0;
-    tty->lock               = (spinlock_t)SPINLOCK_INIT;
-    tty->echo_enabled       = 0;
-    tty->canon_enabled      = 0;
+    tty->lock = (spinlock_t)SPINLOCK_INIT;
+    tty->echo_enabled = 0;
+    tty->canon_enabled = 0;
 }
 
 /*
@@ -48,7 +48,7 @@ static void wait_queue_add(struct task** head, struct task** tail, struct task* 
     if (*tail)
     {
         (*tail)->next = t;
-        *tail         = t;
+        *tail = t;
     }
     else
     {
@@ -122,7 +122,7 @@ static void tty_put_tx_char(struct tty* tty, char c)
     if (next_tx_head != tty->tx_tail)
     {
         tty->tx_buffer[tty->tx_head] = c;
-        tty->tx_head                 = next_tx_head;
+        tty->tx_head = next_tx_head;
     }
 }
 
@@ -196,7 +196,7 @@ void tty_handle_rx(struct tty* tty, char c)
     if (next_rx_head != tty->rx_tail)
     {
         tty->rx_buffer[tty->rx_head] = c;
-        tty->rx_head                 = next_rx_head;
+        tty->rx_head = next_rx_head;
     }
 
     /* Signal waiting readers if a full line is ready or if in raw mode */
@@ -258,9 +258,9 @@ int tty_read(struct tty* tty, char* buf, size_t count)
         /* Extract characters from the receive buffer */
         while (tty->rx_head != tty->rx_tail && n < count)
         {
-            char c       = tty->rx_buffer[tty->rx_tail];
+            char c = tty->rx_buffer[tty->rx_tail];
             tty->rx_tail = (tty->rx_tail + 1) % TTY_BUFFER_SIZE;
-            buf[n++]     = c;
+            buf[n++] = c;
             if (tty->canon_enabled && c == '\n')
             {
                 spin_unlock_irqrestore(&tty->lock, flags);

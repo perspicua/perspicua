@@ -28,7 +28,7 @@ int main(void)
         int n = sys_read(pipefd[0], buf, sizeof(buf) - 1);
         if (n > 0)
         {
-            buf[n]     = '\0';
+            buf[n] = '\0';
             char msg[] = "Child received: ";
             sys_write(1, msg, sizeof(msg) - 1);
             sys_write(1, buf, n);

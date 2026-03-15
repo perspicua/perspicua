@@ -69,7 +69,7 @@ static inline void tlbi_va(unsigned long vaddr)
  */
 void mmu_init(void)
 {
-    unsigned long* pgd   = (unsigned long*)pmm_alloc_page();
+    unsigned long* pgd = (unsigned long*)pmm_alloc_page();
     unsigned long* pmd_0 = (unsigned long*)pmm_alloc_page();
     unsigned long* pmd_1 = (unsigned long*)pmm_alloc_page();
     unsigned long* pmd_2 = (unsigned long*)pmm_alloc_page();
@@ -113,12 +113,12 @@ void mmu_init(void)
 
     // Map kernel segments with specific page permissions
     unsigned long k_start = (unsigned long)__text_start;
-    unsigned long k_end   = pmm_metadata_end;
+    unsigned long k_end = pmm_metadata_end;
 
     for (unsigned long vaddr = k_start; vaddr < k_end; vaddr += PAGE_SIZE)
     {
         unsigned long paddr = V2P(vaddr);
-        unsigned long attr  = PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL;
+        unsigned long attr = PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_NORMAL;
 
         if (vaddr >= (unsigned long)__text_start && vaddr < (unsigned long)__text_end)
         {
@@ -187,15 +187,15 @@ static unsigned long* alloc_table_page(void)
 static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned long l2_idx, unsigned long vaddr_base)
 {
     unsigned long block_entry = l2_table[l2_idx];
-    unsigned long block_phys  = block_entry & PTE_ADDR_MASK;
-    unsigned long block_attr  = block_entry & ~PTE_ADDR_MASK & ~PTE_TABLE;
+    unsigned long block_phys = block_entry & PTE_ADDR_MASK;
+    unsigned long block_attr = block_entry & ~PTE_ADDR_MASK & ~PTE_TABLE;
 
     unsigned long* l3_table = alloc_table_page();
 
     for (unsigned long i = 0; i < 512; i++)
     {
         unsigned long page_phys = block_phys + i * PAGE_SIZE;
-        l3_table[i]             = page_phys | PTE_VALID | PTE_PAGE | block_attr;
+        l3_table[i] = page_phys | PTE_VALID | PTE_PAGE | block_attr;
     }
 
     l2_table[l2_idx] = 0;
@@ -231,7 +231,7 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     }
     else
     {
-        l2_table                = alloc_table_page();
+        l2_table = alloc_table_page();
         kernel_pgd_virt[l1_idx] = V2P(l2_table) | PTE_VALID | PTE_TABLE;
     }
 
@@ -243,7 +243,7 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
         if (!(l2_entry & PTE_TABLE))
         {
             unsigned long vaddr_base = vaddr & ~0x1FFFFFULL;
-            l3_table                 = split_block_to_pages(l2_table, l2_idx, vaddr_base);
+            l3_table = split_block_to_pages(l2_table, l2_idx, vaddr_base);
         }
         else
         {
@@ -252,14 +252,14 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     }
     else
     {
-        l3_table         = alloc_table_page();
+        l3_table = alloc_table_page();
         l2_table[l2_idx] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
     }
 
     if (l3_table[l3_idx] & PTE_VALID)
     {
         unsigned long old_pa = l3_table[l3_idx] & PTE_ADDR_MASK;
-        l3_table[l3_idx]     = 0;
+        l3_table[l3_idx] = 0;
         tlbi_va(vaddr);
         pmm_free_page((void*)P2V(old_pa));
     }
@@ -301,7 +301,7 @@ void mmu_unmap_page(unsigned long vaddr)
     if (!(l2_entry & PTE_TABLE))
     {
         unsigned long vaddr_base = vaddr & ~0x1FFFFFULL;
-        l3_table                 = split_block_to_pages(l2_table, l2_idx, vaddr_base);
+        l3_table = split_block_to_pages(l2_table, l2_idx, vaddr_base);
     }
     else
     {
@@ -336,7 +336,7 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     }
 
     unsigned long* l2_table = (unsigned long*)P2V(l1_entry & PTE_ADDR_MASK);
-    unsigned long l2_entry  = l2_table[l2_idx];
+    unsigned long l2_entry = l2_table[l2_idx];
 
     if (!(l2_entry & PTE_VALID))
     {
@@ -347,7 +347,7 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     if (!(l2_entry & PTE_TABLE))
     {
         unsigned long block_phys = l2_entry & PTE_ADDR_MASK;
-        unsigned long offset     = vaddr & 0x1FFFFF;
+        unsigned long offset = vaddr & 0x1FFFFF;
         if (out_paddr)
         {
             *out_paddr = block_phys + offset;
@@ -361,7 +361,7 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     }
 
     unsigned long* l3_table = (unsigned long*)P2V(l2_entry & PTE_ADDR_MASK);
-    unsigned long l3_entry  = l3_table[l3_idx];
+    unsigned long l3_entry = l3_table[l3_idx];
 
     if (!(l3_entry & PTE_VALID))
     {
@@ -449,8 +449,8 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
         }
 
         unsigned long* parent_pmd = (unsigned long*)P2V(parent_pgd[i] & PTE_ADDR_MASK);
-        unsigned long* child_pmd  = alloc_table_page();
-        child_pgd[i]              = V2P(child_pmd) | MMU_PTE_VALID | MMU_PTE_TABLE;
+        unsigned long* child_pmd = alloc_table_page();
+        child_pgd[i] = V2P(child_pmd) | MMU_PTE_VALID | MMU_PTE_TABLE;
 
         for (int j = 0; j < 512; j++)
         {
@@ -462,8 +462,8 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
             if (parent_pmd[j] & MMU_PTE_TABLE)
             {
                 unsigned long* parent_pte = (unsigned long*)P2V(parent_pmd[j] & PTE_ADDR_MASK);
-                unsigned long* child_pte  = alloc_table_page();
-                child_pmd[j]              = V2P(child_pte) | MMU_PTE_VALID | MMU_PTE_TABLE;
+                unsigned long* child_pte = alloc_table_page();
+                child_pmd[j] = V2P(child_pte) | MMU_PTE_VALID | MMU_PTE_TABLE;
 
                 for (int k = 0; k < 512; k++)
                 {
@@ -513,7 +513,7 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     }
     else
     {
-        l2_table    = alloc_table_page();
+        l2_table = alloc_table_page();
         pgd[l1_idx] = V2P(l2_table) | PTE_VALID | PTE_TABLE;
     }
 
@@ -524,14 +524,14 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     }
     else
     {
-        l3_table         = alloc_table_page();
+        l3_table = alloc_table_page();
         l2_table[l2_idx] = V2P(l3_table) | PTE_VALID | PTE_TABLE;
     }
 
     if (l3_table[l3_idx] & PTE_VALID)
     {
         unsigned long old_pa = l3_table[l3_idx] & PTE_ADDR_MASK;
-        l3_table[l3_idx]     = 0;
+        l3_table[l3_idx] = 0;
         tlbi_va(vaddr);
         pmm_free_page((void*)P2V(old_pa));
     }
@@ -570,7 +570,7 @@ void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
     if (l3[l3_idx] & PTE_VALID)
     {
         unsigned long old_pa = l3[l3_idx] & PTE_ADDR_MASK;
-        l3[l3_idx]           = 0;
+        l3[l3_idx] = 0;
         tlbi_va(vaddr);
         pmm_free_page((void*)P2V(old_pa));
     }
@@ -621,7 +621,7 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
     if (!(l2[l2_idx] & PTE_TABLE))
     {
         unsigned long block_phys = l2[l2_idx] & PTE_ADDR_MASK;
-        unsigned long offset     = vaddr & 0x1FFFFF;
+        unsigned long offset = vaddr & 0x1FFFFF;
         if (out_paddr)
         {
             *out_paddr = block_phys + offset;

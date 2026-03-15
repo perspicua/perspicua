@@ -61,7 +61,7 @@ void initrd_init(void* initrd_start)
 
         uint32_t name_size = hex8_to_u32(hdr->name_size);
         uint32_t file_size = hex8_to_u32(hdr->file_size);
-        uint32_t mode      = hex8_to_u32(hdr->mode);
+        uint32_t mode = hex8_to_u32(hdr->mode);
 
         char* filename = ptr + sizeof(struct cpio_newc_header);
 
@@ -73,7 +73,7 @@ void initrd_init(void* initrd_start)
 
         /* Calculate data offset, accounting for 4-byte padding after the filename */
         char* data = ptr + sizeof(struct cpio_newc_header) + name_size;
-        data       = (char*)(((uintptr_t)data + 3) & ~3UL);
+        data = (char*)(((uintptr_t)data + 3) & ~3UL);
 
         /* Only register regular files into the RAMFS */
         if ((mode & 0xF000) == 0x8000)

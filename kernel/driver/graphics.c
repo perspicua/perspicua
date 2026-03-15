@@ -23,7 +23,7 @@ void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
         return;
     }
 
-    uint32_t* fb                     = (uint32_t*)fb_info.ptr;
+    uint32_t* fb = (uint32_t*)fb_info.ptr;
     fb[y * (fb_info.pitch >> 2) + x] = color;
 }
 
@@ -54,7 +54,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    uint32_t* fb    = (uint32_t*)fb_info.ptr;
+    uint32_t* fb = (uint32_t*)fb_info.ptr;
     uint32_t stride = fb_info.pitch >> 2;
 
     if (!fill)
@@ -62,12 +62,12 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         // Render hollow rectangle outline
         for (unsigned int i = 0; i < w; i++)
         {
-            fb[y * stride + (x + i)]           = color;
+            fb[y * stride + (x + i)] = color;
             fb[(y + h - 1) * stride + (x + i)] = color;
         }
         for (unsigned int j = 0; j < h; j++)
         {
-            fb[(y + j) * stride + x]           = color;
+            fb[(y + j) * stride + x] = color;
             fb[(y + j) * stride + (x + w - 1)] = color;
         }
         return;
@@ -103,9 +103,9 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
         return;
     }
 
-    uint32_t* fb    = (uint32_t*)fb_info.ptr;
+    uint32_t* fb = (uint32_t*)fb_info.ptr;
     uint32_t stride = fb_info.pitch >> 2;
-    uint32_t* dest  = &fb[y * stride + x];
+    uint32_t* dest = &fb[y * stride + x];
 
     for (int row = 0; row < 8; row++)
     {
@@ -146,7 +146,7 @@ void graphics_draw_string(unsigned int x, unsigned int y, const char* s, uint32_
  */
 void graphics_clear(uint32_t color)
 {
-    uint32_t* fb   = (uint32_t*)fb_info.ptr;
+    uint32_t* fb = (uint32_t*)fb_info.ptr;
     uint32_t count = fb_info.size >> 2;
 
     for (uint32_t i = 0; i < count; i++)

@@ -11,7 +11,7 @@ void test_slab(void)
     // basic alloc / free for each size class
     {
         unsigned long sizes[] = {1, 16, 32, 64, 128, 256, 512, 1024};
-        int n                 = sizeof(sizes) / sizeof(sizes[0]);
+        int n = sizeof(sizes) / sizeof(sizes[0]);
         for (int i = 0; i < n; i++)
         {
             void* p = heap_malloc(sizes[i]);
@@ -86,9 +86,9 @@ void test_slab(void)
 
     // cross-class allocations don't interfere
     {
-        unsigned char* p16   = (unsigned char*)heap_malloc(16);
-        unsigned char* p64   = (unsigned char*)heap_malloc(64);
-        unsigned char* p256  = (unsigned char*)heap_malloc(256);
+        unsigned char* p16 = (unsigned char*)heap_malloc(16);
+        unsigned char* p64 = (unsigned char*)heap_malloc(64);
+        unsigned char* p256 = (unsigned char*)heap_malloc(256);
         unsigned char* p1024 = (unsigned char*)heap_malloc(1024);
         memset(p16, 0x11, 16);
         memset(p64, 0x22, 64);
@@ -186,7 +186,7 @@ void test_slab(void)
     // boundary: size exactly at each class boundary
     {
         unsigned long exact[] = {16, 32, 64, 128, 256, 512, 1024};
-        int n                 = sizeof(exact) / sizeof(exact[0]);
+        int n = sizeof(exact) / sizeof(exact[0]);
         void* ptrs[7];
         for (int i = 0; i < n; i++)
         {
@@ -211,7 +211,7 @@ void test_slab(void)
     // boundary: size one byte above each class → promoted to next class
     {
         unsigned long above[] = {17, 33, 65, 129, 257, 513};
-        int n                 = sizeof(above) / sizeof(above[0]);
+        int n = sizeof(above) / sizeof(above[0]);
         void* ptrs[6];
         for (int i = 0; i < n; i++)
         {

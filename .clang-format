@@ -52,7 +52,7 @@ BreakStringLiterals: true
 
 # --- Alignment ---
 AlignAfterOpenBracket: Align
-AlignConsecutiveAssignments: Consecutive
+AlignConsecutiveAssignments: None
 AlignConsecutiveMacros: Consecutive
 AlignConsecutiveDeclarations: None
 AlignOperands: Align

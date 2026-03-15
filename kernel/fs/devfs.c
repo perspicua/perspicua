@@ -29,8 +29,8 @@ struct devfs_node
 
 /* Internal filesystem state and synchronization */
 static struct vfs_vnode* devfs_root_vnode = (void*)0;
-static struct devfs_node* devfs_devices   = (void*)0;
-static spinlock_t devfs_lock              = SPINLOCK_INIT;
+static struct devfs_node* devfs_devices = (void*)0;
+static spinlock_t devfs_lock = SPINLOCK_INIT;
 
 /* Extern console TTY from the TTY subsystem */
 extern struct tty console_tty;
@@ -79,11 +79,11 @@ int devfs_register_device(const char* name, struct vfs_vnode_ops* ops, void* int
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    node->type             = VFS_VNODE_TYPE_DEVICE;
-    node->ops              = ops;
-    node->internal_info    = internal_info;
-    node->file_size        = 0;
-    node->parent           = devfs_root_vnode;
+    node->type = VFS_VNODE_TYPE_DEVICE;
+    node->ops = ops;
+    node->internal_info = internal_info;
+    node->file_size = 0;
+    node->parent = devfs_root_vnode;
     node->refcount.counter = 1;
 
     struct devfs_node* dev_node = (struct devfs_node*)slab_alloc(sizeof(struct devfs_node));
@@ -95,11 +95,11 @@ int devfs_register_device(const char* name, struct vfs_vnode_ops* ops, void* int
 
     strncpy(dev_node->name, name, 31);
     dev_node->name[31] = '\0';
-    dev_node->vnode    = node;
+    dev_node->vnode = node;
 
     spin_lock(&devfs_lock);
     dev_node->next = devfs_devices;
-    devfs_devices  = dev_node;
+    devfs_devices = dev_node;
     spin_unlock(&devfs_lock);
 
     return PERS_SUCCESS;
@@ -145,11 +145,11 @@ void devfs_init(void)
         PANIC("Failed to allocate devfs root");
     }
 
-    devfs_root_vnode->type             = VFS_VNODE_TYPE_DIR;
-    devfs_root_vnode->ops              = &devfs_root_ops;
-    devfs_root_vnode->internal_info    = (void*)0;
-    devfs_root_vnode->parent           = (void*)0;
-    devfs_root_vnode->file_size        = 0;
+    devfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
+    devfs_root_vnode->ops = &devfs_root_ops;
+    devfs_root_vnode->internal_info = (void*)0;
+    devfs_root_vnode->parent = (void*)0;
+    devfs_root_vnode->file_size = 0;
     devfs_root_vnode->refcount.counter = 1;
 
     // Register UART console as the first device in /dev

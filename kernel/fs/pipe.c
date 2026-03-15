@@ -11,12 +11,12 @@
 /* Helper to block the current task on a pipe queue */
 static void pipe_wait(struct task** queue, spinlock_t* lock)
 {
-    struct task* self   = sched_get_current();
+    struct task* self = sched_get_current();
     unsigned long flags = irq_save();
 
     /* Add self to the wait queue (simple linked list) */
     self->next = *queue;
-    *queue     = self;
+    *queue = self;
 
     /* Set state to BLOCKED while holding the pipe lock */
     self->state = SCHED_TASK_BLOCKED;
@@ -48,9 +48,9 @@ static void pipe_wake(struct task** queue)
 static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
 {
     struct vfs_vnode* node = file->node;
-    struct pipe* pipe      = (struct pipe*)node->internal_info;
-    char* buf              = (char*)buffer;
-    size_t read            = 0;
+    struct pipe* pipe = (struct pipe*)node->internal_info;
+    char* buf = (char*)buffer;
+    size_t read = 0;
 
     if (!pipe)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
@@ -63,7 +63,7 @@ static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
         {
             /* Copy data from circular buffer */
             buf[read++] = pipe->buffer[pipe->tail];
-            pipe->tail  = (pipe->tail + 1) % PIPE_BUF_SIZE;
+            pipe->tail = (pipe->tail + 1) % PIPE_BUF_SIZE;
             pipe->count--;
         }
         else
@@ -99,9 +99,9 @@ static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
 static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
 {
     struct vfs_vnode* node = file->node;
-    struct pipe* pipe      = (struct pipe*)node->internal_info;
-    const char* buf        = (const char*)buffer;
-    size_t written         = 0;
+    struct pipe* pipe = (struct pipe*)node->internal_info;
+    const char* buf = (const char*)buffer;
+    size_t written = 0;
 
     if (!pipe)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
@@ -121,7 +121,7 @@ static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
         {
             /* Copy data to circular buffer */
             pipe->buffer[pipe->head] = buf[written++];
-            pipe->head               = (pipe->head + 1) % PIPE_BUF_SIZE;
+            pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
         }
         else
@@ -144,7 +144,7 @@ static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
 static int pipe_close(struct vfs_file* file)
 {
     struct vfs_vnode* node = file->node;
-    struct pipe* pipe      = (struct pipe*)node->internal_info;
+    struct pipe* pipe = (struct pipe*)node->internal_info;
     if (!pipe)
         return PERS_SUCCESS;
 
@@ -192,8 +192,8 @@ int kernel_pipe(int pipefd[2])
         return -PERS_ERR_OUT_OF_MEMORY;
 
     memset(pipe, 0, sizeof(struct pipe));
-    pipe->readers     = 1;
-    pipe->writers     = 1;
+    pipe->readers = 1;
+    pipe->writers = 1;
     pipe->lock.locked = 0;
 
     /* 2. Allocate the vnode that represents this pipe */
@@ -205,13 +205,13 @@ int kernel_pipe(int pipefd[2])
     }
 
     memset(node, 0, sizeof(struct vfs_vnode));
-    node->type             = VFS_VNODE_TYPE_REGULAR; /* Pipes are "files" */
-    node->ops              = &pipe_ops;
-    node->internal_info    = pipe;
+    node->type = VFS_VNODE_TYPE_REGULAR; /* Pipes are "files" */
+    node->ops = &pipe_ops;
+    node->internal_info = pipe;
     node->refcount.counter = 2; /* One for each file descriptor */
 
     /* 3. Create the two file objects */
-    struct vfs_file* f_read  = (struct vfs_file*)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file* f_read = (struct vfs_file*)slab_alloc(sizeof(struct vfs_file));
     struct vfs_file* f_write = (struct vfs_file*)slab_alloc(sizeof(struct vfs_file));
 
     if (!f_read || !f_write)
@@ -225,14 +225,14 @@ int kernel_pipe(int pipefd[2])
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    f_read->node             = node;
-    f_read->flags            = VFS_O_RDONLY;
-    f_read->offset           = 0;
+    f_read->node = node;
+    f_read->flags = VFS_O_RDONLY;
+    f_read->offset = 0;
     f_read->refcount.counter = 1;
 
-    f_write->node             = node;
-    f_write->flags            = VFS_O_WRONLY;
-    f_write->offset           = 0;
+    f_write->node = node;
+    f_write->flags = VFS_O_WRONLY;
+    f_write->offset = 0;
     f_write->refcount.counter = 1;
 
     /* 4. Assign file descriptors in the process table */

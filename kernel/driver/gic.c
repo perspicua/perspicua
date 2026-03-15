@@ -19,16 +19,16 @@
 #include "driver/uart.h"
 
 /* Distributor registers */
-volatile unsigned int* gic_d_ctlr        = (void*)0;
-volatile unsigned int* gic_d_isenablern  = (void*)0;
+volatile unsigned int* gic_d_ctlr = (void*)0;
+volatile unsigned int* gic_d_isenablern = (void*)0;
 volatile unsigned char* gic_d_ipriorityr = (void*)0;
-volatile unsigned char* gic_d_itargetsr  = (void*)0;
-volatile unsigned int* gic_d_sgir        = (void*)0;
+volatile unsigned char* gic_d_itargetsr = (void*)0;
+volatile unsigned int* gic_d_sgir = (void*)0;
 
 /* CPU Interface registers */
 volatile unsigned int* gic_c_ctlr = (void*)0;
-volatile unsigned int* gic_c_pmr  = (void*)0;
-volatile unsigned int* gic_c_iar  = (void*)0;
+volatile unsigned int* gic_c_pmr = (void*)0;
+volatile unsigned int* gic_c_iar = (void*)0;
 volatile unsigned int* gic_c_eoir = (void*)0;
 
 static unsigned int cached_uart_irq = 0;
@@ -57,15 +57,15 @@ void gic_init(void)
     uintptr_t gicc_vbase = P2V(gic_node->address[1]);
 
     // Map register addresses to the global pointers
-    gic_d_ctlr       = (volatile unsigned int*)(gicd_vbase + 0x000);
+    gic_d_ctlr = (volatile unsigned int*)(gicd_vbase + 0x000);
     gic_d_isenablern = (volatile unsigned int*)(gicd_vbase + 0x100);
     gic_d_ipriorityr = (volatile unsigned char*)(gicd_vbase + 0x400);
-    gic_d_itargetsr  = (volatile unsigned char*)(gicd_vbase + 0x800);
-    gic_d_sgir       = (volatile unsigned int*)(gicd_vbase + 0xF00);
+    gic_d_itargetsr = (volatile unsigned char*)(gicd_vbase + 0x800);
+    gic_d_sgir = (volatile unsigned int*)(gicd_vbase + 0xF00);
 
     gic_c_ctlr = (volatile unsigned int*)(gicc_vbase + 0x000);
-    gic_c_pmr  = (volatile unsigned int*)(gicc_vbase + 0x004);
-    gic_c_iar  = (volatile unsigned int*)(gicc_vbase + 0x00C);
+    gic_c_pmr = (volatile unsigned int*)(gicc_vbase + 0x004);
+    gic_c_iar = (volatile unsigned int*)(gicc_vbase + 0x00C);
     gic_c_eoir = (volatile unsigned int*)(gicc_vbase + 0x010);
 
     // Enable Distributor

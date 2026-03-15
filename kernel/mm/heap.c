@@ -31,9 +31,9 @@ struct heap_block_header
 
 /* Heap state and synchronization */
 static struct heap_block_header* heap_free_list = (void*)0;
-static spinlock_t heap_lock                     = SPINLOCK_INIT;
-static unsigned long heap_total_size            = 0;
-static unsigned long heap_used_size             = 0;
+static spinlock_t heap_lock = SPINLOCK_INIT;
+static unsigned long heap_total_size = 0;
+static unsigned long heap_used_size = 0;
 
 /*
  * heap_expand - Requests contiguous pages from the PMM to grow the heap.
@@ -50,9 +50,9 @@ static struct heap_block_header* heap_expand(unsigned long min_size)
     }
 
     struct heap_block_header* block = (struct heap_block_header*)region;
-    block->size                     = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
-    block->next                     = (void*)0;
-    block->is_free                  = 1;
+    block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
+    block->next = (void*)0;
+    block->is_free = 1;
 
     heap_total_size += pages * PAGE_SIZE;
 
@@ -94,7 +94,7 @@ void* heap_malloc(unsigned long size)
 
     /* Fall back to first-fit search for large objects */
     unsigned long flags = spin_lock_irqsave(&heap_lock);
-    size                = HEAP_ALIGN(size);
+    size = HEAP_ALIGN(size);
 
     struct heap_block_header* curr = heap_free_list;
     while (curr)
@@ -106,8 +106,8 @@ void* heap_malloc(unsigned long size)
             {
                 struct heap_block_header* new_block =
                     (struct heap_block_header*)((unsigned char*)curr + HEAP_HEADER_SIZE + size);
-                new_block->size    = curr->size - size - HEAP_HEADER_SIZE;
-                new_block->next    = curr->next;
+                new_block->size = curr->size - size - HEAP_HEADER_SIZE;
+                new_block->next = curr->next;
                 new_block->is_free = 1;
 
                 curr->size = size;
@@ -143,7 +143,7 @@ void* heap_malloc(unsigned long size)
             scan = scan->next;
         }
         new_page->next = scan->next;
-        scan->next     = new_page;
+        scan->next = new_page;
     }
 
     /* Allocate directly from the newly added space */
@@ -151,8 +151,8 @@ void* heap_malloc(unsigned long size)
     {
         struct heap_block_header* split =
             (struct heap_block_header*)((unsigned char*)new_page + HEAP_HEADER_SIZE + size);
-        split->size    = new_page->size - size - HEAP_HEADER_SIZE;
-        split->next    = new_page->next;
+        split->size = new_page->size - size - HEAP_HEADER_SIZE;
+        split->next = new_page->next;
         split->is_free = 1;
 
         new_page->size = size;
@@ -182,7 +182,7 @@ void heap_free(void* ptr)
         return;
     }
 
-    unsigned long flags             = spin_lock_irqsave(&heap_lock);
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
     struct heap_block_header* block = (struct heap_block_header*)((unsigned char*)ptr - HEAP_HEADER_SIZE);
 
     if (block->is_free)

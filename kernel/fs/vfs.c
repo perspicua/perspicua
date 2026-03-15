@@ -31,7 +31,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
 void vfs_init(void)
 {
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
-    vfs_mount_count     = 0;
+    vfs_mount_count = 0;
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
     {
         memset(vfs_mount_table[i].path, 0, VFS_MAX_PATH_LEN);
@@ -171,7 +171,7 @@ int vfs_unmount(const char* path)
  */
 static struct vfs_mount_entry* find_mount(const char* path, int* error)
 {
-    int longest_match_index  = -1;
+    int longest_match_index = -1;
     size_t longest_match_len = 0;
 
     for (int i = 0; i < vfs_mount_count; i++)
@@ -188,7 +188,7 @@ static struct vfs_mount_entry* find_mount(const char* path, int* error)
 
             if (len >= longest_match_len)
             {
-                longest_match_len   = len;
+                longest_match_len = len;
                 longest_match_index = i;
             }
         }
@@ -303,7 +303,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
         }
 
         vfs_vnode_put(curr);
-        curr  = next;
+        curr = next;
         token = strtok_r((void*)0, "/", &saveptr);
     }
 
@@ -316,7 +316,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
  */
 struct vfs_vnode* vfs_resolve_path(const char* path, struct vfs_vnode* cwd, int* error)
 {
-    unsigned long flags   = spin_lock_irqsave(&vfs_lock);
+    unsigned long flags = spin_lock_irqsave(&vfs_lock);
     struct vfs_vnode* res = vfs_resolve_path_locked(path, cwd, error);
     spin_unlock_irqrestore(&vfs_lock, flags);
     return res;
@@ -363,9 +363,9 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    new_file->node             = node;
-    new_file->offset           = 0;
-    new_file->flags            = flags;
+    new_file->node = node;
+    new_file->offset = 0;
+    new_file->flags = flags;
     new_file->refcount.counter = 1;
 
     int slot = -1;
@@ -375,7 +375,7 @@ int vfs_open_pid(const char* path, int flags, uint32_t pid)
         if (!process_table[pid].fd_table[i])
         {
             process_table[pid].fd_table[i] = new_file;
-            slot                           = (int)i;
+            slot = (int)i;
             break;
         }
     }
@@ -615,7 +615,7 @@ int vfs_dup2(int oldfd, int newfd)
         return pid;
     }
 
-    struct process* p        = &process_table[pid];
+    struct process* p = &process_table[pid];
     struct vfs_file* to_free = (void*)0;
 
     spin_lock(&p->fd_lock);

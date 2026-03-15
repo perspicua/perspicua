@@ -60,8 +60,8 @@ static void execute_line(char* line)
     char* pipe_ptr = strchr(line, '|');
     if (pipe_ptr)
     {
-        *pipe_ptr   = '\0';
-        char* left  = trim(line);
+        *pipe_ptr = '\0';
+        char* left = trim(line);
         char* right = trim(pipe_ptr + 1);
 
         int pipefd[2];

@@ -26,16 +26,16 @@ struct fb_info_struct fb_info;
  */
 void fb_init(void)
 {
-    mbox[0]  = 26 * 4;   // Total size of this message (26 elements * 4 bytes)
-    mbox[1]  = 0;        // Request
-    mbox[2]  = 0x48003;  // Set Physical Width/Height
-    mbox[3]  = 8;
-    mbox[4]  = 8;
-    mbox[5]  = 1024;
-    mbox[6]  = 768;
-    mbox[7]  = 0x48004;  // Set Virtual Width/Height
-    mbox[8]  = 8;
-    mbox[9]  = 8;
+    mbox[0] = 26 * 4;   // Total size of this message (26 elements * 4 bytes)
+    mbox[1] = 0;        // Request
+    mbox[2] = 0x48003;  // Set Physical Width/Height
+    mbox[3] = 8;
+    mbox[4] = 8;
+    mbox[5] = 1024;
+    mbox[6] = 768;
+    mbox[7] = 0x48004;  // Set Virtual Width/Height
+    mbox[8] = 8;
+    mbox[9] = 8;
     mbox[10] = 1024;
     mbox[11] = 768;
     mbox[12] = 0x48005;  // Set Depth (32-bit)
@@ -64,10 +64,10 @@ void fb_init(void)
             return;
         }
 
-        fb_info.width  = mbox[5];
+        fb_info.width = mbox[5];
         fb_info.height = mbox[6];
 
-        fb_info.size  = mbox[20];
+        fb_info.size = mbox[20];
         fb_info.pitch = mbox[24];
 
         fb_info.ptr = (unsigned char*)P2V(phys_addr);
@@ -100,7 +100,7 @@ void remap_framebuffer_pages(void)
     }
 
     unsigned long fb_start = (unsigned long)fb_info.ptr;
-    unsigned long fb_end   = fb_start + fb_info.size;
+    unsigned long fb_end = fb_start + fb_info.size;
 
     fb_start &= ~(PAGE_SIZE - 1);
     fb_end = (fb_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);

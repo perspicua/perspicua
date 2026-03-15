@@ -36,8 +36,8 @@ void signal_handle_pending(struct exception_trap_frame* tf)
     if (curr_process->pending_signals == 0)
         return;
 
-    int trailing_zeros       = __builtin_ctz(curr_process->pending_signals);
-    int sig                  = trailing_zeros + 1;
+    int trailing_zeros = __builtin_ctz(curr_process->pending_signals);
+    int sig = trailing_zeros + 1;
     signal_handler_t handler = curr_process->signal_handlers[trailing_zeros];
 
     if (sig == SIGNAL_KILL)
@@ -77,8 +77,8 @@ void signal_handle_pending(struct exception_trap_frame* tf)
         }
 
         tf->elr_el1 = (uintptr_t)handler;
-        tf->sp_el0  = new_sp;
-        tf->x[0]    = sig;
+        tf->sp_el0 = new_sp;
+        tf->x[0] = sig;
 
         if (curr_process->sig_restorer)
         {

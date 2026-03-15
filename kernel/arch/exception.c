@@ -108,10 +108,10 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         return;
     }
 
-    uint32_t fsc       = esr & FSC_MASK;
-    int is_write       = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
-    int is_user        = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
-    int is_inst        = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
+    uint32_t fsc = esr & FSC_MASK;
+    int is_write = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
+    int is_user = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
+    int is_inst = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
     int is_translation = (fsc >= FSC_TRANSLATION_L0 && fsc <= FSC_TRANSLATION_L3);
 
     if (is_user && is_write && (fsc == FSC_PERMISSION_L3))
@@ -169,7 +169,7 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     else
     {
         struct task* curr = sched_get_current();
-        int pid           = curr ? (int)curr->pid : -1;
+        int pid = curr ? (int)curr->pid : -1;
         unsigned long tid = curr ? curr->id : 0;
 
         printf("\n[KERNEL PANIC] %s abort in kernel! (PID %d, TID %lu)\n", is_inst ? "Instruction" : "Data", pid, tid);
@@ -224,7 +224,7 @@ void exception_irq_handler(void)
     if (uart_irq_cached == 0)
         uart_irq_cached = uart_get_irq();
 
-    unsigned int iar    = mmio_read(gic_c_iar);
+    unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
     if (irq_id >= 1020)  // spurious interrupt — do NOT write EOIR

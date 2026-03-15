@@ -13,9 +13,9 @@
 #include "devicetree/pht.h"
 
 /* Mailbox Register Pointers (Static) */
-static volatile unsigned int* mbox_read   = (void*)0;
+static volatile unsigned int* mbox_read = (void*)0;
 static volatile unsigned int* mbox_status = (void*)0;
-static volatile unsigned int* mbox_write  = (void*)0;
+static volatile unsigned int* mbox_write = (void*)0;
 
 /* Mailbox Status Flags */
 #define MBOX_STATUS_FULL  0x80000000
@@ -35,9 +35,9 @@ void mbox_init(void)
     uintptr_t vbase = P2V(mbox_node->address[0]);
 
     // BCM2711 Mailbox register offsets
-    mbox_read   = (unsigned int*)(vbase + 0x00);
+    mbox_read = (unsigned int*)(vbase + 0x00);
     mbox_status = (unsigned int*)(vbase + 0x18);
-    mbox_write  = (unsigned int*)(vbase + 0x20);
+    mbox_write = (unsigned int*)(vbase + 0x20);
 }
 
 /*

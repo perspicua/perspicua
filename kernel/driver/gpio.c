@@ -13,7 +13,7 @@
 #include "devicetree/pht.h"
 
 /* GPIO Register Pointers (Static) */
-static volatile unsigned int* gpio_gpfsel0  = (void*)0;
+static volatile unsigned int* gpio_gpfsel0 = (void*)0;
 static volatile unsigned int* gpio_gppupdn0 = (void*)0;
 
 /*
@@ -30,7 +30,7 @@ void gpio_init(void)
     uintptr_t vbase = P2V(gpio_node->address[0]);
 
     // BCM2711 GPIO register offsets
-    gpio_gpfsel0  = (unsigned int*)(vbase + 0x00);
+    gpio_gpfsel0 = (unsigned int*)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int*)(vbase + 0xE4);
 }
 
@@ -44,8 +44,8 @@ void gpio_set_pin_function(unsigned int pin, unsigned int function)
         return;
     }
 
-    unsigned int reg_index   = pin / 10;
-    unsigned int bit_offset  = (pin % 10) * 3;
+    unsigned int reg_index = pin / 10;
+    unsigned int bit_offset = (pin % 10) * 3;
     unsigned int current_val = gpio_gpfsel0[reg_index];
 
     // Each pin function is represented by 3 bits
@@ -64,8 +64,8 @@ void gpio_set_pull(unsigned int pin, unsigned int pull)
         return;
     }
 
-    unsigned int reg_index   = pin / 16;
-    unsigned int bit_offset  = (pin % 16) * 2;
+    unsigned int reg_index = pin / 16;
+    unsigned int bit_offset = (pin % 16) * 2;
     unsigned int current_val = gpio_gppupdn0[reg_index];
 
     // Each pin pull state is represented by 2 bits; clear then set

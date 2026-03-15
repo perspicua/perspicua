@@ -42,18 +42,18 @@ static struct task sched_init_tasks[4];
 /* Per-CPU ready queues and locks */
 static struct task* sched_ready_heads[4] = {(void*)0};
 static struct task* sched_ready_tails[4] = {(void*)0};
-static spinlock_t sched_ready_locks[4]   = {SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT};
+static spinlock_t sched_ready_locks[4] = {SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT};
 
 /* Global sleep queue for tasks blocked on time */
 static struct task* sched_sleep_head = (void*)0;
-static spinlock_t sched_sleep_lock   = SPINLOCK_INIT;
+static spinlock_t sched_sleep_lock = SPINLOCK_INIT;
 
 /* Housekeeping state for task cleanup */
 static struct task* sched_cleanup_tasks[4] = {(void*)0};
-static int sched_core_pids[4]              = {-1, -1, -1, -1};
+static int sched_core_pids[4] = {-1, -1, -1, -1};
 
 /* Global task ID generation */
-static int sched_next_id             = 0;
+static int sched_next_id = 0;
 static spinlock_t sched_next_id_lock = SPINLOCK_INIT;
 
 /* Corruption detection canaries */
@@ -92,7 +92,7 @@ static void enqueue_ready(int cpu, struct task* t)
     unsigned long flags = spin_lock_irqsave(&sched_ready_locks[cpu]);
 
     t->state = SCHED_TASK_READY;
-    t->next  = (void*)0;
+    t->next = (void*)0;
 
     if (!sched_ready_heads[cpu])
     {
@@ -102,7 +102,7 @@ static void enqueue_ready(int cpu, struct task* t)
     else
     {
         sched_ready_tails[cpu]->next = t;
-        sched_ready_tails[cpu]       = t;
+        sched_ready_tails[cpu] = t;
     }
 
     spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
@@ -159,7 +159,7 @@ static void insert_sleep(struct task* t)
 
     if (!sched_sleep_head || t->wake_time < sched_sleep_head->wake_time)
     {
-        t->next          = sched_sleep_head;
+        t->next = sched_sleep_head;
         sched_sleep_head = t;
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
         return;
@@ -171,7 +171,7 @@ static void insert_sleep(struct task* t)
         curr = curr->next;
     }
 
-    t->next    = curr->next;
+    t->next = curr->next;
     curr->next = t;
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
@@ -202,15 +202,15 @@ static struct task* create_idle_task(int id)
     mmu_unmap_page((unsigned long)stack); /* Guard page */
 
     unsigned char* usable = stack + PAGE_SIZE;
-    unsigned long sp      = ((unsigned long)usable + SCHED_TASK_STACK_SIZE) & ~15UL;
+    unsigned long sp = ((unsigned long)usable + SCHED_TASK_STACK_SIZE) & ~15UL;
 
-    idle->state       = SCHED_TASK_READY;
-    idle->id          = 900 + id;
-    idle->pid         = 0;
-    idle->stack       = stack;
-    idle->ttbr0       = mmu_kernel_ttbr0();
-    idle->context.sp  = sp;
-    idle->context.lr  = (unsigned long)task_wrapper_asm;
+    idle->state = SCHED_TASK_READY;
+    idle->id = 900 + id;
+    idle->pid = 0;
+    idle->stack = stack;
+    idle->ttbr0 = mmu_kernel_ttbr0();
+    idle->context.sp = sp;
+    idle->context.lr = (unsigned long)task_wrapper_asm;
     idle->context.x19 = (unsigned long)idle_task_entry;
 
     *SCHED_TASK_CANARY_PTR(idle) = SCHED_STACK_CANARY;
@@ -227,8 +227,8 @@ void sched_init(void)
     memset(main_task, 0, sizeof(struct task));
 
     main_task->state = SCHED_TASK_RUNNING;
-    main_task->id    = sched_next_id++;
-    main_task->pid   = 0;
+    main_task->id = sched_next_id++;
+    main_task->pid = 0;
     main_task->stack = (void*)0;
     main_task->ttbr0 = mmu_kernel_ttbr0();
 
@@ -250,8 +250,8 @@ void sched_secondary_init(void)
     memset(boot_task, 0, sizeof(struct task));
 
     boot_task->state = SCHED_TASK_DEAD;
-    boot_task->id    = 800 + core_id;
-    boot_task->pid   = 0;
+    boot_task->id = 800 + core_id;
+    boot_task->pid = 0;
     boot_task->ttbr0 = mmu_kernel_ttbr0();
 
     asm volatile("msr tpidr_el1, %0" : : "r"(boot_task));
@@ -272,20 +272,20 @@ void sched_create_task(void (*entry)(void))
     mmu_unmap_page((unsigned long)stack);
 
     unsigned char* usable = stack + PAGE_SIZE;
-    unsigned long sp      = ((unsigned long)usable + SCHED_TASK_STACK_SIZE) & ~15UL;
+    unsigned long sp = ((unsigned long)usable + SCHED_TASK_STACK_SIZE) & ~15UL;
 
-    t->state       = SCHED_TASK_READY;
-    t->context.sp  = sp;
-    t->context.lr  = (unsigned long)task_wrapper_asm;
+    t->state = SCHED_TASK_READY;
+    t->context.sp = sp;
+    t->context.lr = (unsigned long)task_wrapper_asm;
     t->context.x19 = (unsigned long)entry;
-    t->ttbr0       = mmu_kernel_ttbr0();
-    t->pid         = 0;
-    t->stack       = stack;
+    t->ttbr0 = mmu_kernel_ttbr0();
+    t->pid = 0;
+    t->stack = stack;
 
     *SCHED_TASK_CANARY_PTR(t) = SCHED_STACK_CANARY;
 
     unsigned long flags = spin_lock_irqsave(&sched_next_id_lock);
-    t->id               = sched_next_id++;
+    t->id = sched_next_id++;
     spin_unlock_irqrestore(&sched_next_id_lock, flags);
 
     enqueue_ready(get_core_id(), t);
@@ -297,8 +297,8 @@ void sched_create_task(void (*entry)(void))
 void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
-    struct task* curr   = sched_get_current();
-    int cpu             = get_core_id();
+    struct task* curr = sched_get_current();
+    int cpu = get_core_id();
 
     if (!curr || curr == sched_idle_tasks[cpu])
     {
@@ -306,7 +306,7 @@ void sched_sleep_ms(unsigned long ms)
         return;
     }
 
-    curr->state     = SCHED_TASK_BLOCKED;
+    curr->state = SCHED_TASK_BLOCKED;
     curr->wake_time = get_system_time() + ms;
     insert_sleep(curr);
 
@@ -322,15 +322,15 @@ void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, ui
     struct task* t = (struct task*)heap_malloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
 
-    t->state      = SCHED_TASK_READY;
+    t->state = SCHED_TASK_READY;
     t->context.sp = forged_sp;
     t->context.lr = forged_lr;
-    t->stack      = (unsigned char*)(process_table[pid].vaddr_kernel_stack - PAGE_SIZE);
-    t->ttbr0      = process_get_ttbr0(pid);
-    t->pid        = pid;
+    t->stack = (unsigned char*)(process_table[pid].vaddr_kernel_stack - PAGE_SIZE);
+    t->ttbr0 = process_get_ttbr0(pid);
+    t->pid = pid;
 
     unsigned long flags = spin_lock_irqsave(&sched_next_id_lock);
-    t->id               = sched_next_id++;
+    t->id = sched_next_id++;
     spin_unlock_irqrestore(&sched_next_id_lock, flags);
 
     enqueue_ready(get_core_id(), t);
@@ -342,7 +342,7 @@ void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, ui
 void sched_block(void)
 {
     unsigned long flags = irq_save();
-    struct task* curr   = sched_get_current();
+    struct task* curr = sched_get_current();
 
     if (!curr || curr == sched_idle_tasks[get_core_id()])
     {
@@ -398,7 +398,7 @@ int sched_get_core_pid(int cpu)
 void schedule(void)
 {
     unsigned long flags = irq_save();
-    int cpu             = get_core_id();
+    int cpu = get_core_id();
 
     sched_check_corruption();
 
@@ -433,13 +433,13 @@ void schedule(void)
     }
 
     /* 2. Wake up tasks from the sleep queue */
-    unsigned long now     = get_system_time();
+    unsigned long now = get_system_time();
     unsigned long s_flags = spin_lock_irqsave(&sched_sleep_lock);
     while (sched_sleep_head && sched_sleep_head->wake_time <= now)
     {
-        struct task* w   = sched_sleep_head;
+        struct task* w = sched_sleep_head;
         sched_sleep_head = w->next;
-        w->state         = SCHED_TASK_READY;
+        w->state = SCHED_TASK_READY;
         enqueue_ready(cpu, w);
     }
     spin_unlock_irqrestore(&sched_sleep_lock, s_flags);
@@ -490,7 +490,7 @@ void schedule(void)
     }
 
     /* 6. Perform the hardware context switch */
-    next->state          = SCHED_TASK_RUNNING;
+    next->state = SCHED_TASK_RUNNING;
     sched_core_pids[cpu] = (int)next->pid;
 
     asm volatile("msr tpidr_el1, %0" : : "r"(next));

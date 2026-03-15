@@ -16,7 +16,7 @@
 static volatile int counter_a = 0;
 static volatile int counter_b = 0;
 static volatile int counter_c = 0;
-static spinlock_t test_lock   = SPINLOCK_INIT;
+static spinlock_t test_lock = SPINLOCK_INIT;
 
 // task functions
 
@@ -166,7 +166,7 @@ static void task_multi_sleep(void)
 
 // timestamp recording task
 static volatile unsigned long ts_short_done = 0;
-static volatile unsigned long ts_long_done  = 0;
+static volatile unsigned long ts_long_done = 0;
 
 static void task_short_sleep_ts(void)
 {
@@ -261,7 +261,7 @@ void test_scheduler(void)
     {
         unsigned long before = get_system_time();
         sched_sleep_ms(50);
-        unsigned long after   = get_system_time();
+        unsigned long after = get_system_time();
         unsigned long elapsed = after - before;
         // Timer has 100Hz tick (10ms granularity), allow generous bounds
         TEST_ASSERT("sleep >= 30ms", elapsed >= 30);
@@ -284,7 +284,7 @@ void test_scheduler(void)
         sched_sleep_ms(30);
         sched_sleep_ms(30);
         sched_sleep_ms(30);
-        unsigned long after   = get_system_time();
+        unsigned long after = get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("3x30ms >= 60", elapsed >= 60);
     }
@@ -293,7 +293,7 @@ void test_scheduler(void)
     // sleep ordering: short sleeper wakes before long sleeper
     {
         ts_short_done = 0;
-        ts_long_done  = 0;
+        ts_long_done = 0;
         sched_create_task(task_long_sleep_ts);   // sleeps 40ms
         sched_create_task(task_short_sleep_ts);  // sleeps 20ms
         sched_sleep_ms(80);

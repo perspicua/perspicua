@@ -106,11 +106,11 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
         return;
     }
 
-    vn->type             = VFS_VNODE_TYPE_REGULAR;
-    vn->ops              = &ramfs_file_ops;
-    vn->file_size        = (vfs_off_t)size;
-    vn->parent           = ramfs_root_vnode;
-    vn->internal_info    = &ramfs_files[ramfs_file_count];
+    vn->type = VFS_VNODE_TYPE_REGULAR;
+    vn->ops = &ramfs_file_ops;
+    vn->file_size = (vfs_off_t)size;
+    vn->parent = ramfs_root_vnode;
+    vn->internal_info = &ramfs_files[ramfs_file_count];
     vn->refcount.counter = 1;
 
     ramfs_files[ramfs_file_count].node = vn;
@@ -135,20 +135,20 @@ void ramfs_init(void)
 
     // Initialize directory operations table
     ramfs_dir_ops.lookup = ramfs_lookup;
-    ramfs_dir_ops.read   = (void*)0;
-    ramfs_dir_ops.write  = (void*)0;
+    ramfs_dir_ops.read = (void*)0;
+    ramfs_dir_ops.write = (void*)0;
 
     // Initialize file operations table
     ramfs_file_ops.lookup = (void*)0;
-    ramfs_file_ops.read   = ramfs_read;
-    ramfs_file_ops.write  = (void*)0;
+    ramfs_file_ops.read = ramfs_read;
+    ramfs_file_ops.write = (void*)0;
 
     // Set up the root directory vnode
-    ramfs_root_vnode->type             = VFS_VNODE_TYPE_DIR;
-    ramfs_root_vnode->ops              = &ramfs_dir_ops;
-    ramfs_root_vnode->internal_info    = (void*)0;
-    ramfs_root_vnode->parent           = (void*)0;
-    ramfs_root_vnode->file_size        = 0;
+    ramfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
+    ramfs_root_vnode->ops = &ramfs_dir_ops;
+    ramfs_root_vnode->internal_info = (void*)0;
+    ramfs_root_vnode->parent = (void*)0;
+    ramfs_root_vnode->file_size = 0;
     ramfs_root_vnode->refcount.counter = 1;
 
     // Mount RAMFS as the system root

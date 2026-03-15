@@ -19,8 +19,8 @@
 #define CHAR_HEIGHT      12
 
 /* Cursor state and access protection. */
-static unsigned int cursor_x      = 0;
-static unsigned int cursor_y      = CONSOLE_Y_OFFSET;
+static unsigned int cursor_x = 0;
+static unsigned int cursor_y = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
 
 /*
