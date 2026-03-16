@@ -40,7 +40,7 @@
 #include "uapi/errors.h"
 
 #include "devicetree/fdt.h"
-
+#include "fat32.h"
 #include "test.h"
 
 /* Kernel metadata and versioning */
@@ -163,7 +163,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
 
     /* Stage 2: Memory management initialization */
-    // fdt_parse_memory_reservations(); // already called if needed
     fdt_parse_memory_reservations();
 
     pmm_init();
@@ -191,45 +190,34 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
-    ramfs_init();
     devfs_init();
-    vfs_mount("/dev", devfs_get_root());
     sd_init();
 
-    /* Load the Initial RAM Disk from the SD card */
-    struct block_device* sd_dev = block_device_lookup("sd0");
-    if (sd_dev)
+    /* Initialize and mount FAT32 as the root filesystem */
+    if (fat32_init("sd0") == PERS_SUCCESS)
     {
-        // Allocate a 2MB buffer for the initrd
-        size_t initrd_max_size = 2 * 1024 * 1024;
-        void* initrd_buf = heap_malloc(initrd_max_size);
-        if (initrd_buf)
-        {
-            size_t blocks_to_read = initrd_max_size / sd_dev->block_size;
-            if (sd_dev->read_blocks(sd_dev, initrd_buf, 0, blocks_to_read) == PERS_SUCCESS)
-            {
-                initrd_init(initrd_buf);
-            }
-            else
-            {
-                printf("[  BOOT ] Error: Failed to read initrd from SD card\n");
-            }
-        }
-        else
-        {
-            printf("[  BOOT ] Error: Failed to allocate memory for initrd\n");
-        }
+        vfs_mount("/", fat32_get_root_node());
+        printf("[ BOOT ] FAT32 mounted as root (/)\n");
+
+        printf("[ BOOT ] Listing Root Directory:\n");
+        fat32_ls();
+
+        printf("[ BOOT ] Testing fat32_cat(\"big.txt\"):\n");
+        fat32_cat("big.txt");
     }
     else
     {
-        printf("[  BOOT ] Error: SD card device not found\n");
+        printf("[ BOOT ] Warning: Failed to initialize FAT32 root filesystem\n");
     }
+
+    /* Mount devfs over the FAT32 root */
+    vfs_mount("/dev", devfs_get_root());
 
     run_all_tests();
     enable_interrupts();
     run_scheduler_tests();
 
-    /* Demonstration of VFS functionality */
+    /* Demonstration of VFS functionality - now reading from SD card root! */
     int fd = vfs_open("/hello.txt", VFS_O_RDONLY);
     if (fd >= 0)
     {
@@ -238,23 +226,15 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
         if (bytes >= 0)
         {
             buf[bytes] = '\0';
-            printf("Read from VFS: %s", buf);
-        }
-        else
-        {
-            printf("[  VFS ] Error: failed to read /hello.txt\n");
+            printf("Read from SD card (/hello.txt): %s", buf);
         }
         vfs_close(fd);
     }
-    else
-    {
-        printf("[  VFS ] Error: could not open /hello.txt\n");
-    }
 
-    /* Load and execute the primary user-space application */
+    /* Load and execute the primary user-space application from the SD card */
     if (process_create_from_file("/init.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /init.elf\n");
+        printf("[  ELF ] Error: failed to load /init.elf from SD card\n");
     }
 
     /* The main thread remains parked while the scheduler handles execution */
