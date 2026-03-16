@@ -34,6 +34,10 @@
 #include "driver/fb.h"
 #include "driver/fb_console.h"
 #include "driver/dashboard.h"
+#include "driver/sd.h"
+#include "driver/block.h"
+#include "heap.h"
+#include "uapi/errors.h"
 
 #include "devicetree/fdt.h"
 
@@ -44,8 +48,6 @@
 
 /* Symbols defined in the linker script and assembly files */
 extern void _entry(void);
-extern char initrd_start[];
-extern char initrd_end[];
 extern struct tty console_tty;
 
 /* Global synchronization for early boot messages */
@@ -143,7 +145,6 @@ static void dashboard_task(void)
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
-    
     /* Stage 0: initialize devicetree parser*/
     printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
     fdt_init(global_dtb_ptr);
@@ -162,9 +163,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
 
     /* Stage 2: Memory management initialization */
-    pmm_reserve_range(V2P((unsigned long)initrd_start), (unsigned long)(initrd_end - initrd_start), "initrd");
-    
-    // Parse DTB memory reservations right before initializing the PMM
+    // fdt_parse_memory_reservations(); // already called if needed
     fdt_parse_memory_reservations();
 
     pmm_init();
@@ -189,19 +188,46 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     smp_init();
     printf("\n BOOT COMPLETE - all subsystems operational\n");
 
-    run_all_tests();
-    enable_interrupts();
-    run_scheduler_tests();
-
     /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
     ramfs_init();
     devfs_init();
     vfs_mount("/dev", devfs_get_root());
+    sd_init();
 
-    /* Mount the initial RAM disk archive */
-    initrd_init(initrd_start);
+    /* Load the Initial RAM Disk from the SD card */
+    struct block_device* sd_dev = block_device_lookup("sd0");
+    if (sd_dev)
+    {
+        // Allocate a 2MB buffer for the initrd
+        size_t initrd_max_size = 2 * 1024 * 1024;
+        void* initrd_buf = heap_malloc(initrd_max_size);
+        if (initrd_buf)
+        {
+            size_t blocks_to_read = initrd_max_size / sd_dev->block_size;
+            if (sd_dev->read_blocks(sd_dev, initrd_buf, 0, blocks_to_read) == PERS_SUCCESS)
+            {
+                initrd_init(initrd_buf);
+            }
+            else
+            {
+                printf("[  BOOT ] Error: Failed to read initrd from SD card\n");
+            }
+        }
+        else
+        {
+            printf("[  BOOT ] Error: Failed to allocate memory for initrd\n");
+        }
+    }
+    else
+    {
+        printf("[  BOOT ] Error: SD card device not found\n");
+    }
+
+    run_all_tests();
+    enable_interrupts();
+    run_scheduler_tests();
 
     /* Demonstration of VFS functionality */
     int fd = vfs_open("/hello.txt", VFS_O_RDONLY);

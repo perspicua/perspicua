@@ -5,5 +5,6 @@
 .global initrd_end
 
 initrd_start:
-    .incbin "../build/initrd.cpio"
+    .quad 0
 initrd_end:
+    .quad 0

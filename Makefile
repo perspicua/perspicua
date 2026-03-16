@@ -10,7 +10,7 @@ INITRD = $(BUILD_DIR)/initrd.cpio
 
 all: kernel
 
-.PHONY: libc user kernel clean run run-gui debug gdb disasm size symbols compile_commands format check-format
+.PHONY: libc user kernel clean run run-gui run-sd debug gdb disasm size symbols compile_commands format check-format
 
 libc:
 	@printf "  $(COL_YELLOW)MAKE$(COL_DEFAULT)    libc\n"
@@ -37,22 +37,29 @@ clean:
 	$(Q)$(MAKE) $(S) -C $(LIBC_DIR) BUILD_DIR=build clean COLOR=$(COLOR)
 	$(Q)$(MAKE) $(S) -C $(USER_DIR) BUILD_DIR=build clean COLOR=$(COLOR)
 	$(Q)$(MAKE) $(S) -C $(KERNEL_DIR) BUILD_DIR=build clean COLOR=$(COLOR)
-	$(Q)rm -rf $(BUILD_DIR)
+	$(Q)rm -rf $(BUILD_DIR) $(SD_IMAGE)
 
 # QEMU helper targets
 QEMU = qemu-system-aarch64
 IMAGE = $(PI4_BOOT_DIR)/kernel8.img
+SD_IMAGE = sdcard.img
 QEMU_FLAGS = -M raspi4b -serial stdio -display none -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
 QEMU_FLAGS_GUI = -M raspi4b -serial vc -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
+QEMU_SD_FLAGS = -drive file=$(SD_IMAGE),format=raw,if=sd
 
-run: kernel
-	$(QEMU) $(QEMU_FLAGS)
+$(SD_IMAGE): $(INITRD)
+	@printf "  $(COL_CYAN)GEN$(COL_DEFAULT)      $(SD_IMAGE)\n"
+	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=32 status=none
+	$(Q)dd if=$(INITRD) of=$(SD_IMAGE) conv=notrunc status=none
 
-run-gui: kernel
-	$(QEMU) $(QEMU_FLAGS_GUI)
+run: kernel $(SD_IMAGE)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS)
 
-debug: kernel
-	$(QEMU) $(QEMU_FLAGS) -s -S
+run-gui: kernel $(SD_IMAGE)
+	$(QEMU) $(QEMU_FLAGS_GUI) $(QEMU_SD_FLAGS)
+
+debug: kernel $(SD_IMAGE)
+	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS) -s -S
 
 gdb:
 	$(CROSS_COMPILE)gdb -ex 'target remote :1234' -ex 'layout split' $(KERNEL_DIR)/build/kernel8.elf

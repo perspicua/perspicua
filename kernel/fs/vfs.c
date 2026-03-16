@@ -536,13 +536,6 @@ int vfs_read(int fd, void* buffer, size_t count)
     }
 
     int bytes = f->node->ops->read(f, buffer, count);
-    if (bytes > 0)
-    {
-        spin_lock(&p->fd_lock);
-        f->offset += bytes;
-        spin_unlock(&p->fd_lock);
-    }
-
     atomic_dec_and_test(&f->refcount);
     return bytes;
 }
@@ -588,13 +581,6 @@ int vfs_write(int fd, const void* buffer, size_t count)
     }
 
     int bytes = f->node->ops->write(f, buffer, count);
-    if (bytes > 0)
-    {
-        spin_lock(&p->fd_lock);
-        f->offset += bytes;
-        spin_unlock(&p->fd_lock);
-    }
-
     atomic_dec_and_test(&f->refcount);
     return bytes;
 }

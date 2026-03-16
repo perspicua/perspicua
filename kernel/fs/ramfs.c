@@ -28,7 +28,7 @@ struct ramfs_file_data
 };
 
 /* Internal filesystem state and maximum file limit */
-#define RAMFS_MAX_FILES 16
+#define RAMFS_MAX_FILES 32
 static struct ramfs_file_data ramfs_files[RAMFS_MAX_FILES];
 static int ramfs_file_count = 0;
 

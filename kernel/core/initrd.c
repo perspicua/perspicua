@@ -48,6 +48,7 @@ void initrd_init(void* initrd_start)
 {
     char* ptr = (char*)initrd_start;
 
+    int count = 0;
     while (1)
     {
         struct cpio_newc_header* hdr = (struct cpio_newc_header*)ptr;
@@ -55,7 +56,14 @@ void initrd_init(void* initrd_start)
         /* Validate the CPIO 'newc' magic number */
         if (memcmp(hdr->magic, "070701", 6) != 0)
         {
-            printf("[  BOOT ] Error: Invalid CPIO magic\n");
+            printf("[  BOOT ] Error: Invalid CPIO magic at %p (found %c%c%c%c%c%c)\n",
+                   ptr,
+                   hdr->magic[0],
+                   hdr->magic[1],
+                   hdr->magic[2],
+                   hdr->magic[3],
+                   hdr->magic[4],
+                   hdr->magic[5]);
             break;
         }
 
@@ -79,6 +87,7 @@ void initrd_init(void* initrd_start)
         if ((mode & 0xF000) == 0x8000)
         {
             ramfs_register_file(filename, data, file_size);
+            count++;
         }
 
         /* Move to the next header, accounting for 4-byte padding after the data */
@@ -86,5 +95,5 @@ void initrd_init(void* initrd_start)
         ptr = (char*)(((uintptr_t)ptr + 3) & ~3UL);
     }
 
-    printf("[  BOOT ] InitRD parsed and mounted to RAMFS\n");
+    printf("[  BOOT ] InitRD parsed: %d files registered\n", count);
 }

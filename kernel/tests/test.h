@@ -79,6 +79,7 @@ void test_pmm(void);
 void test_slab(void);
 void test_heap(void);
 void test_timer(void);
+void test_sd(void);
 void test_mmu(void);
 void test_mmu_user(void);
 void test_scheduler(void);
