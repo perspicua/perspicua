@@ -49,20 +49,23 @@ QEMU_SD_FLAGS = -drive file=$(SD_IMAGE),format=raw,if=sd
 
 $(SD_IMAGE): user
 	@printf "  $(COL_CYAN)GEN$(COL_DEFAULT)      $(SD_IMAGE) (FAT32)\n"
+ifeq ($(UNAME_S),Darwin)
+	@which $(MFORMAT) > /dev/null 2>&1 || (printf "$(COL_YELLOW)Error: mformat not found.$(COL_DEFAULT) Please install mtools: brew install mtools\n" && exit 1)
+endif
 	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=32 status=none
-	$(Q)mformat -i $(SD_IMAGE) -F ::
-	$(Q)mcopy -i $(SD_IMAGE) $(USER_DIR)/build/*.elf ::/
+	$(Q)$(MFORMAT) -i $(SD_IMAGE) -F ::
+	$(Q)$(MCOPY) -i $(SD_IMAGE) $(USER_DIR)/build/*.elf ::/
 	$(Q)echo "Hello from the real FAT32 filesystem!" > hello.txt
 	$(Q)echo "This is small.txt" > small.txt
 	$(Q)echo "Line 1: This is a very big file that should test our cluster chaining." > big.txt
 	$(Q)for i in {2..100}; do echo "Line $$i: FAT32 cluster chaining is super cool!" >> big.txt; done
-	$(Q)mcopy -i $(SD_IMAGE) hello.txt ::/
-	$(Q)mcopy -i $(SD_IMAGE) small.txt ::/
-	$(Q)mcopy -i $(SD_IMAGE) big.txt ::/
+	$(Q)$(MCOPY) -i $(SD_IMAGE) hello.txt ::/
+	$(Q)$(MCOPY) -i $(SD_IMAGE) small.txt ::/
+	$(Q)$(MCOPY) -i $(SD_IMAGE) big.txt ::/
 	# Create a subdirectory and a file inside it
-	$(Q)mmd -i $(SD_IMAGE) ::/SUBDIR
+	$(Q)$(MMD) -i $(SD_IMAGE) ::/SUBDIR
 	$(Q)echo "This file is inside a subdirectory!" > subfile.txt
-	$(Q)mcopy -i $(SD_IMAGE) subfile.txt ::/SUBDIR/SUBFILE.TXT
+	$(Q)$(MCOPY) -i $(SD_IMAGE) subfile.txt ::/SUBDIR/SUBFILE.TXT
 	$(Q)rm hello.txt small.txt big.txt subfile.txt
 
 run: kernel $(SD_IMAGE)

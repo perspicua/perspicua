@@ -4,9 +4,16 @@ ifeq ($(UNAME_S),Darwin)
     CROSS_COMPILE ?= aarch64-elf-
     LLVM_PATH     := $(shell brew --prefix llvm 2>/dev/null)
     OBJCOPY       ?= $(LLVM_PATH)/bin/llvm-objcopy
+    MTOOLS_PATH   := $(shell brew --prefix mtools 2>/dev/null)
+    MFORMAT       ?= $(if $(MTOOLS_PATH),$(MTOOLS_PATH)/bin/mformat,mformat)
+    MCOPY         ?= $(if $(MTOOLS_PATH),$(MTOOLS_PATH)/bin/mcopy,mcopy)
+    MMD           ?= $(if $(MTOOLS_PATH),$(MTOOLS_PATH)/bin/mmd,mmd)
 else
     CROSS_COMPILE ?= aarch64-linux-gnu-
     OBJCOPY       ?= llvm-objcopy
+    MFORMAT       ?= mformat
+    MCOPY         ?= mcopy
+    MMD           ?= mmd
 endif
 
 CC      := $(CROSS_COMPILE)gcc
