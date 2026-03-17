@@ -8,7 +8,7 @@
 #include "driver/fb_console.h"
 
 #include "string.h"
-#include "lock.h"
+#include "core/lock.h"
 
 #include "driver/graphics.h"
 #include "driver/fb.h"

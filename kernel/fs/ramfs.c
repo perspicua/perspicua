@@ -5,14 +5,14 @@
  * the initial system root and static system files.
  */
 
-#include "ramfs.h"
+#include "fs/ramfs.h"
 
 #include "uapi/errors.h"
 
-#include "vfs.h"
-#include "slab.h"
-#include "heap.h"
-#include "lock.h"
+#include "fs/vfs.h"
+#include "mm/slab.h"
+#include "mm/heap.h"
+#include "core/lock.h"
 #include "string.h"
 #include "stdio.h"
 

@@ -13,7 +13,7 @@
 #include "types.h"
 
 #ifdef __KERNEL__
-    #include "lock.h"
+    #include "core/lock.h"
 /* Global synchronization for kernel-mode console output */
 static spinlock_t printf_lock = SPINLOCK_INIT;
 #endif

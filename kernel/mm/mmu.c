@@ -6,11 +6,11 @@
  * address space isolation with support for Copy-on-Write.
  */
 
-#include "mmu.h"
+#include "mm/mmu.h"
 
-#include "pmm.h"
-#include "lock.h"
-#include "addr.h"
+#include "mm/pmm.h"
+#include "mm/addr.h"
+#include "core/lock.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"

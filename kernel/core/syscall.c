@@ -6,24 +6,24 @@
  * process management, and scheduling operations.
  */
 
-#include "syscall.h"
+#include "core/syscall.h"
 
-#include "signals.h"
+#include "core/signals.h"
 #include "uapi/syscalls.h"
 #include "uapi/errors.h"
 
 #include "arch/uaccess.h"
 
 #include "driver/uart.h"
-#include "process.h"
-#include "mmu.h"
-#include "addr.h"
-#include "heap.h"
-#include "pipe.h"
+#include "sched/process.h"
+#include "mm/mmu.h"
+#include "mm/addr.h"
+#include "mm/heap.h"
+#include "fs/pipe.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
-#include "signals.h"
+#include "core/signals.h"
 
 /*
  * validate_user_buffer - Verifies that a memory range provided by a user

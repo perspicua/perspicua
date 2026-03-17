@@ -9,12 +9,12 @@
 
 #include "string.h"
 
-#include "pmm.h"
-#include "heap.h"
-#include "slab.h"
-#include "timer.h"
-#include "sched.h"
-#include "process.h"
+#include "mm/pmm.h"
+#include "mm/heap.h"
+#include "mm/slab.h"
+#include "core/timer.h"
+#include "sched/sched.h"
+#include "sched/process.h"
 
 #include "driver/graphics.h"
 #include "driver/fb.h"

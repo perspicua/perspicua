@@ -1,7 +1,7 @@
 #include "test.h"
-#include "mmu.h"
-#include "pmm.h"
-#include "addr.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "mm/addr.h"
 #include "string.h"
 
 #define TEST_VA_BASE (KERNEL_VMA + 0x100000000ULL)  // PGD index 4

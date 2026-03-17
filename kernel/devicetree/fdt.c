@@ -9,7 +9,7 @@
 #include "devicetree/fdt.h"
 
 #include "panic.h"
-#include "addr.h"
+#include "mm/addr.h"
 #include "stdio.h"
 
 #include "string.h"

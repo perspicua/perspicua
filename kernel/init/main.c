@@ -7,25 +7,25 @@
  */
 
 #include "types.h"
-#include "addr.h"
-#include "lock.h"
+#include "mm/addr.h"
+#include "core/lock.h"
 #include "panic.h"
 #include "stdio.h"
 #include "string.h"
 
-#include "pmm.h"
-#include "mmu.h"
-#include "heap.h"
-#include "slab.h"
-#include "timer.h"
-#include "sched.h"
-#include "process.h"
-#include "vfs.h"
-#include "tty.h"
+#include "mm/pmm.h"
+#include "mm/mmu.h"
+#include "mm/heap.h"
+#include "mm/slab.h"
+#include "core/timer.h"
+#include "sched/sched.h"
+#include "sched/process.h"
+#include "fs/vfs.h"
+#include "core/tty.h"
 
-#include "initrd.h"
-#include "ramfs.h"
-#include "devfs.h"
+#include "core/initrd.h"
+#include "fs/ramfs.h"
+#include "fs/devfs.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -36,11 +36,11 @@
 #include "driver/dashboard.h"
 #include "driver/sd.h"
 #include "driver/block.h"
-#include "heap.h"
+#include "mm/heap.h"
 #include "uapi/errors.h"
 
 #include "devicetree/fdt.h"
-#include "fat32.h"
+#include "fs/fat32.h"
 #include "test.h"
 
 /* Kernel metadata and versioning */

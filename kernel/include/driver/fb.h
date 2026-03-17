@@ -8,7 +8,7 @@
 #ifndef PERSPICUA_DRIVER_FB_H
 #define PERSPICUA_DRIVER_FB_H
 
-#include "mmu.h"
+#include "mm/mmu.h"
 
 /*
  * fb_info_struct - Structure containing the hardware framebuffer state.

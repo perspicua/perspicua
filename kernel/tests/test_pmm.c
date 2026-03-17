@@ -1,5 +1,5 @@
 #include "test.h"
-#include "pmm.h"
+#include "mm/pmm.h"
 #include "string.h"
 
 void test_pmm(void)

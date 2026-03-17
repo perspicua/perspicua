@@ -3,7 +3,7 @@
 
 #include "types.h"
 #include "driver/block.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 struct partition_entry
 {

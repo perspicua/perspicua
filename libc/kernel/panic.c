@@ -9,7 +9,7 @@
 #include "panic.h"
 
 #include "stdio.h"
-#include "timer.h"
+#include "core/timer.h"
 
 #include "driver/gic.h"
 

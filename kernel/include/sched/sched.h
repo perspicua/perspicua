@@ -9,7 +9,7 @@
 #define PERSPICUA_KERNEL_SCHED_H
 
 #include "types.h"
-#include "pmm.h"
+#include "mm/pmm.h"
 
 /* Maximum number of concurrent tasks supported by the system */
 #define SCHED_MAX_TASKS 16

@@ -7,14 +7,14 @@
  * contiguous page blocks.
  */
 
-#include "pmm.h"
+#include "mm/pmm.h"
 
+#include "mm/addr.h"
 #include "types.h"
-#include "lock.h"
-#include "timer.h"
+#include "core/lock.h"
+#include "core/timer.h"
 #include "stdio.h"
 #include "panic.h"
-#include "addr.h"
 
 #include "devicetree/fdt.h"
 
