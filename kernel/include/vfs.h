@@ -53,6 +53,15 @@ struct vfs_mount_entry
 typedef int64_t vfs_off_t;
 
 /*
+ * vfs_dirent - Directory entry structure returned to userspace.
+ */
+struct vfs_dirent
+{
+    uint32_t ino;
+    char name[256];
+};
+
+/*
  * vfs_vnode_ops - Functional interface for filesystem-specific operations.
  */
 struct vfs_vnode_ops
@@ -60,6 +69,7 @@ struct vfs_vnode_ops
     int (*read)(struct vfs_file* file, void* buffer, size_t size);
     int (*write)(struct vfs_file* file, const void* buffer, size_t size);
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
+    int (*readdir)(struct vfs_file* file, void* buffer, size_t count);
     int (*close)(struct vfs_file* file);
 };
 
@@ -134,6 +144,11 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
  * vfs_read - Reads data from a file descriptor into a buffer.
  */
 int vfs_read(int fd, void* buffer, size_t count);
+
+/*
+ * vfs_readdir - Reads directory entries from a directory file descriptor.
+ */
+int vfs_readdir(int fd, void* buffer, size_t count);
 
 /*
  * vfs_write - Writes data from a buffer to a file descriptor.

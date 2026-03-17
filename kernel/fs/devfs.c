@@ -64,8 +64,43 @@ static struct vfs_vnode* devfs_root_lookup(struct vfs_vnode* dir, const char* fi
     return (void*)0;
 }
 
+/*
+ * devfs_root_readdir - Implementation of the readdir operation for the devfs root.
+ */
+static int devfs_root_readdir(struct vfs_file* file, void* buffer, size_t count)
+{
+    (void)count;
+    struct vfs_dirent* dirent = (struct vfs_dirent*)buffer;
+    uint32_t entries_skipped = 0;
+
+    spin_lock(&devfs_lock);
+    struct devfs_node* curr = devfs_devices;
+    while (curr)
+    {
+        if (entries_skipped == file->offset)
+        {
+            strncpy(dirent->name, curr->name, 255);
+            dirent->name[255] = '\0';
+            dirent->ino = 0;  // Device nodes don't have inodes in devfs
+            file->offset++;
+            spin_unlock(&devfs_lock);
+            return 1;
+        }
+        entries_skipped++;
+        curr = curr->next;
+    }
+    spin_unlock(&devfs_lock);
+
+    return 0;
+}
+
 /* Operation mapping for the devfs root directory */
-static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup, .read = (void*)0, .write = (void*)0};
+static struct vfs_vnode_ops devfs_root_ops = {
+    .lookup = devfs_root_lookup,
+    .readdir = devfs_root_readdir,
+    .read = (void*)0,
+    .write = (void*)0,
+};
 
 /*
  * devfs_register_device - Allocates a vnode and registers a new device

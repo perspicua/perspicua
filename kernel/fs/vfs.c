@@ -541,6 +541,45 @@ int vfs_read(int fd, void* buffer, size_t count)
 }
 
 /*
+ * vfs_readdir - Generic readdir dispatcher.
+ */
+int vfs_readdir(int fd, void* buffer, size_t count)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS)
+    {
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0)
+    {
+        return pid;
+    }
+
+    struct process* p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_file* f = p->fd_table[fd];
+    if (!f)
+    {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    atomic_inc(&f->refcount);
+    spin_unlock(&p->fd_lock);
+
+    /* Ensure it is a directory and the operation is supported */
+    if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir)
+    {
+        atomic_dec_and_test(&f->refcount);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    int res = f->node->ops->readdir(f, buffer, count);
+    atomic_dec_and_test(&f->refcount);
+    return res;
+}
+
+/*
  * vfs_write - Generic write dispatcher.
  */
 int vfs_write(int fd, const void* buffer, size_t count)

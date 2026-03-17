@@ -113,6 +113,24 @@ int sys_read(int fd, void* buf, size_t len)
 }
 
 /*
+ * sys_getdents - Reads directory entries from a directory file descriptor.
+ */
+int sys_getdents(int fd, void* buf, size_t count)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"(buf), "r"((long)count), "i"(SYS_GETDENTS)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return (int)res;
+}
+
+/*
  * sys_close - Closes an open file descriptor.
  */
 int sys_close(int fd)

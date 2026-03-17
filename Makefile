@@ -47,10 +47,23 @@ QEMU_FLAGS = -M raspi4b -serial stdio -display none -dtb pi4-boot/bcm2711-rpi-4-
 QEMU_FLAGS_GUI = -M raspi4b -serial vc -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel $(IMAGE)
 QEMU_SD_FLAGS = -drive file=$(SD_IMAGE),format=raw,if=sd
 
-$(SD_IMAGE): $(INITRD)
-	@printf "  $(COL_CYAN)GEN$(COL_DEFAULT)      $(SD_IMAGE)\n"
+$(SD_IMAGE): user
+	@printf "  $(COL_CYAN)GEN$(COL_DEFAULT)      $(SD_IMAGE) (FAT32)\n"
 	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=32 status=none
-	$(Q)dd if=$(INITRD) of=$(SD_IMAGE) conv=notrunc status=none
+	$(Q)mformat -i $(SD_IMAGE) -F ::
+	$(Q)mcopy -i $(SD_IMAGE) $(USER_DIR)/build/*.elf ::/
+	$(Q)echo "Hello from the real FAT32 filesystem!" > hello.txt
+	$(Q)echo "This is small.txt" > small.txt
+	$(Q)echo "Line 1: This is a very big file that should test our cluster chaining." > big.txt
+	$(Q)for i in {2..100}; do echo "Line $$i: FAT32 cluster chaining is super cool!" >> big.txt; done
+	$(Q)mcopy -i $(SD_IMAGE) hello.txt ::/
+	$(Q)mcopy -i $(SD_IMAGE) small.txt ::/
+	$(Q)mcopy -i $(SD_IMAGE) big.txt ::/
+	# Create a subdirectory and a file inside it
+	$(Q)mmd -i $(SD_IMAGE) ::/SUBDIR
+	$(Q)echo "This file is inside a subdirectory!" > subfile.txt
+	$(Q)mcopy -i $(SD_IMAGE) subfile.txt ::/SUBDIR/SUBFILE.TXT
+	$(Q)rm hello.txt small.txt big.txt subfile.txt
 
 run: kernel $(SD_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS)

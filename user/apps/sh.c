@@ -1,9 +1,17 @@
 #include "syscall.h"
 #include "string.h"
 
+#define MAX_ARGS    16
+#define CMD_MAX_LEN 256
+
 static void print_string(const char* s)
 {
     sys_write(1, s, strlen(s));
+}
+
+static void print_char(char c)
+{
+    sys_write(1, &c, 1);
 }
 
 static char* trim(char* str)
@@ -20,39 +28,143 @@ static char* trim(char* str)
     return str;
 }
 
-static void run_command(char* cmd)
+static void run_command(int argc, char** argv)
 {
-    cmd = trim(cmd);
-    if (strlen(cmd) == 0)
+    if (argc == 0 || !argv[0])
         return;
 
-    if (strcmp(cmd, "help") == 0)
+    if (strcmp(argv[0], "help") == 0)
     {
-        print_string("Available commands: help, cat, hello, sh, ls\n");
-        print_string("Type the name of an ELF file to exec it (e.g. /cat.elf)\n");
-        print_string("Pipe support: command1 | command2\n");
+        print_string("Commands: help, echo, clear, exit, pipes (|), programs in /\n");
         return;
     }
 
-    char path[128];
-    if (cmd[0] == '/')
+    if (strcmp(argv[0], "clear") == 0)
     {
-        strcpy(path, cmd);
+        print_string("\033[2J\033[H");
+        return;
+    }
+
+    if (strcmp(argv[0], "echo") == 0)
+    {
+        for (int i = 1; i < argc; i++)
+        {
+            print_string(argv[i]);
+            if (i < argc - 1)
+                print_string(" ");
+        }
+        print_string("\n");
+        return;
+    }
+
+    if (strcmp(argv[0], "exit") == 0)
+    {
+        sys_exit(0);
+    }
+
+    char path[128];
+    if (argv[0][0] == '/')
+    {
+        strcpy(path, argv[0]);
     }
     else
     {
         strcpy(path, "/");
-        strcat(path, cmd);
+        strcat(path, argv[0]);
         strcat(path, ".elf");
     }
 
+    /* Note: Currently, our kernel sys_exec only takes the path and no argv. */
     if (sys_exec(path) < 0)
     {
-        print_string("Error: command not found: ");
-        print_string(path);
-        print_string("\n");
-        sys_exit(1);
+        /* Try without .elf just in case */
+        if (argv[0][0] != '/')
+        {
+            strcpy(path, "/");
+            strcat(path, argv[0]);
+            if (sys_exec(path) < 0)
+            {
+                print_string("sh: command not found: ");
+                print_string(argv[0]);
+                print_string("\n");
+                sys_exit(1);
+            }
+        }
+        else
+        {
+            print_string("sh: command not found: ");
+            print_string(argv[0]);
+            print_string("\n");
+            sys_exit(1);
+        }
     }
+}
+
+static void execute_pipeline(char* left_str, char* right_str)
+{
+    int pipefd[2];
+    if (sys_pipe(pipefd) < 0)
+    {
+        print_string("sh: pipe failed\n");
+        return;
+    }
+
+    int pid1 = sys_fork();
+    if (pid1 == 0)
+    {
+        sys_dup2(pipefd[1], 1);
+        sys_close(pipefd[0]);
+        sys_close(pipefd[1]);
+
+        char* argv[MAX_ARGS];
+        int argc = 0;
+        char* p = left_str;
+        while (*p)
+        {
+            while (*p == ' ')
+                *p++ = '\0';
+            if (!*p)
+                break;
+            if (argc < MAX_ARGS - 1)
+                argv[argc++] = p;
+            while (*p && *p != ' ')
+                p++;
+        }
+        argv[argc] = NULL;
+        run_command(argc, argv);
+        sys_exit(0);
+    }
+
+    int pid2 = sys_fork();
+    if (pid2 == 0)
+    {
+        sys_dup2(pipefd[0], 0);
+        sys_close(pipefd[0]);
+        sys_close(pipefd[1]);
+
+        char* argv[MAX_ARGS];
+        int argc = 0;
+        char* p = right_str;
+        while (*p)
+        {
+            while (*p == ' ')
+                *p++ = '\0';
+            if (!*p)
+                break;
+            if (argc < MAX_ARGS - 1)
+                argv[argc++] = p;
+            while (*p && *p != ' ')
+                p++;
+        }
+        argv[argc] = NULL;
+        run_command(argc, argv);
+        sys_exit(0);
+    }
+
+    sys_close(pipefd[0]);
+    sys_close(pipefd[1]);
+    sys_waitpid(pid1, (void*)0);
+    sys_waitpid(pid2, (void*)0);
 }
 
 static void execute_line(char* line)
@@ -63,52 +175,46 @@ static void execute_line(char* line)
         *pipe_ptr = '\0';
         char* left = trim(line);
         char* right = trim(pipe_ptr + 1);
-
-        int pipefd[2];
-        if (sys_pipe(pipefd) < 0)
-        {
-            print_string("Error: pipe failed\n");
-            return;
-        }
-
-        int pid1 = sys_fork();
-        if (pid1 == 0)
-        {
-            /* Child 1: Write to pipe */
-            sys_dup2(pipefd[1], 1); /* Redirect stdout to write end */
-            sys_close(pipefd[0]);
-            sys_close(pipefd[1]);
-            run_command(left);
-            sys_exit(0);
-        }
-
-        int pid2 = sys_fork();
-        if (pid2 == 0)
-        {
-            /* Child 2: Read from pipe */
-            sys_dup2(pipefd[0], 0); /* Redirect stdin to read end */
-            sys_close(pipefd[0]);
-            sys_close(pipefd[1]);
-            run_command(right);
-            sys_exit(0);
-        }
-
-        /* Parent */
-        sys_close(pipefd[0]);
-        sys_close(pipefd[1]);
-        sys_waitpid(pid1, (void*)0);
-        sys_waitpid(pid2, (void*)0);
+        execute_pipeline(left, right);
     }
     else
     {
+        char* argv[MAX_ARGS];
+        int argc = 0;
+        char* p = line;
+
+        while (*p)
+        {
+            while (*p == ' ')
+                *p++ = '\0';
+            if (!*p)
+                break;
+            if (argc < MAX_ARGS - 1)
+                argv[argc++] = p;
+            while (*p && *p != ' ')
+                p++;
+        }
+        argv[argc] = NULL;
+
+        if (argc == 0)
+            return;
+
+        /* Built-ins that should run in the parent process (like exit, clear, echo, help) */
+        if (strcmp(argv[0], "exit") == 0 || strcmp(argv[0], "clear") == 0 || strcmp(argv[0], "echo") == 0
+            || strcmp(argv[0], "help") == 0)
+        {
+            run_command(argc, argv);
+            return;
+        }
+
         int pid = sys_fork();
         if (pid < 0)
         {
-            print_string("Error: fork failed\n");
+            print_string("sh: fork failed\n");
         }
         else if (pid == 0)
         {
-            run_command(line);
+            run_command(argc, argv);
             sys_exit(0);
         }
         else
@@ -119,22 +225,27 @@ static void execute_line(char* line)
     }
 }
 
+static void print_prompt(void)
+{
+    print_string("perspicua:/$ ");
+}
+
 int main(void)
 {
-    char welcome[] = "Perspicua Shell v0.2 (Pipe support enabled)\n";
-    print_string(welcome);
+    print_string("Perspicua OS Shell\n");
+    print_string("Type help to see available commands.\n\n");
 
-    char cmd_buffer[128];
+    char cmd_buffer[CMD_MAX_LEN];
     int cmd_length = 0;
 
-    print_string("$ ");
+    print_prompt();
 
     while (1)
     {
         char c;
         if (sys_read(0, &c, 1) > 0)
         {
-            if (c == '\n')
+            if (c == '\n' || c == '\r')
             {
                 cmd_buffer[cmd_length] = '\0';
                 print_string("\n");
@@ -145,7 +256,7 @@ int main(void)
                 }
 
                 cmd_length = 0;
-                print_string("$ ");
+                print_prompt();
             }
             else if (c == '\b' || c == 127)
             {
@@ -155,12 +266,12 @@ int main(void)
                     print_string("\b \b");
                 }
             }
-            else
+            else if (c >= 32 && c <= 126)
             {
-                if (cmd_length < 127)
+                if (cmd_length < CMD_MAX_LEN - 1)
                 {
                     cmd_buffer[cmd_length++] = c;
-                    sys_write(1, &c, 1);
+                    print_char(c);
                 }
             }
         }

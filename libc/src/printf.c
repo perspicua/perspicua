@@ -22,9 +22,9 @@ static spinlock_t printf_lock = SPINLOCK_INIT;
 extern void __libc_write(const char* buf, size_t len);
 
 /*
- * print_unsigned_long - Formats and outputs an unsigned 64-bit integer.
+ * print_unsigned - Formats and outputs an unsigned 64-bit integer.
  */
-static void print_unsigned_long(uint64_t n, int base)
+static void print_unsigned(uint64_t n, int base, int uppercase)
 {
     char buf[64];
     int i = 0;
@@ -44,7 +44,7 @@ static void print_unsigned_long(uint64_t n, int base)
         }
         else
         {
-            buf[i++] = (char)(remainder - 10) + 'a';
+            buf[i++] = (char)(remainder - 10) + (uppercase ? 'A' : 'a');
         }
         n /= base;
     }
@@ -65,56 +65,11 @@ static void print_long(int64_t num, int base)
     {
         __libc_write("-", 1);
         /* Handle minimum value overflow by working with absolute magnitude */
-        print_unsigned_long((uint64_t)(-(num + 1)) + 1, base);
+        print_unsigned((uint64_t)(-(num + 1)) + 1, base, 0);
     }
     else
     {
-        print_unsigned_long((uint64_t)num, base);
-    }
-}
-
-/*
- * print_number - Formats and outputs a signed 32-bit integer.
- */
-static void print_number(int32_t num, int base)
-{
-    char buf[32];
-    int i = 0;
-    uint32_t n;
-
-    if (num < 0 && base == 10)
-    {
-        __libc_write("-", 1);
-        n = (uint32_t)(-(num + 1)) + 1;
-    }
-    else
-    {
-        n = (uint32_t)num;
-    }
-
-    if (n == 0)
-    {
-        __libc_write("0", 1);
-        return;
-    }
-
-    while (n != 0)
-    {
-        int remainder = n % base;
-        if (remainder < 10)
-        {
-            buf[i++] = (char)remainder + '0';
-        }
-        else
-        {
-            buf[i++] = (char)(remainder - 10) + 'a';
-        }
-        n /= base;
-    }
-
-    while (i > 0)
-    {
-        __libc_write(&buf[--i], 1);
+        print_unsigned((uint64_t)num, base, 0);
     }
 }
 
@@ -137,23 +92,42 @@ void printf(const char* fmt, ...)
             p++;
             switch (*p)
             {
+            case 'i':
             case 'd':
             {
                 int i = va_arg(args, int);
-                print_number(i, 10);
+                print_long((int64_t)i, 10);
                 break;
             }
             case 'x':
             {
                 unsigned int i = va_arg(args, unsigned int);
-                print_unsigned_long(i, 16);
+                print_unsigned((uint64_t)i, 16, 0);
+                break;
+            }
+            case 'X':
+            {
+                unsigned int i = va_arg(args, unsigned int);
+                print_unsigned((uint64_t)i, 16, 1);
+                break;
+            }
+            case 'o':
+            {
+                unsigned int i = va_arg(args, unsigned int);
+                print_unsigned((uint64_t)i, 8, 0);
+                break;
+            }
+            case 'b':
+            {
+                unsigned int i = va_arg(args, unsigned int);
+                print_unsigned((uint64_t)i, 2, 0);
                 break;
             }
             case 'p':
             {
                 unsigned long i = va_arg(args, unsigned long);
                 __libc_write("0x", 2);
-                print_unsigned_long(i, 16);
+                print_unsigned((uint64_t)i, 16, 0);
                 break;
             }
             case 's':
@@ -178,7 +152,7 @@ void printf(const char* fmt, ...)
             case 'u':
             {
                 unsigned int i = va_arg(args, unsigned int);
-                print_unsigned_long(i, 10);
+                print_unsigned((uint64_t)i, 10, 0);
                 break;
             }
             case 'l':
@@ -186,22 +160,41 @@ void printf(const char* fmt, ...)
                 p++;
                 switch (*p)
                 {
+                case 'i':
                 case 'd':
                 {
                     long i = va_arg(args, long);
-                    print_long(i, 10);
+                    print_long((int64_t)i, 10);
                     break;
                 }
                 case 'u':
                 {
                     unsigned long i = va_arg(args, unsigned long);
-                    print_unsigned_long(i, 10);
+                    print_unsigned((uint64_t)i, 10, 0);
                     break;
                 }
                 case 'x':
                 {
                     unsigned long i = va_arg(args, unsigned long);
-                    print_unsigned_long(i, 16);
+                    print_unsigned((uint64_t)i, 16, 0);
+                    break;
+                }
+                case 'X':
+                {
+                    unsigned long i = va_arg(args, unsigned long);
+                    print_unsigned((uint64_t)i, 16, 1);
+                    break;
+                }
+                case 'o':
+                {
+                    unsigned long i = va_arg(args, unsigned long);
+                    print_unsigned((uint64_t)i, 8, 0);
+                    break;
+                }
+                case 'b':
+                {
+                    unsigned long i = va_arg(args, unsigned long);
+                    print_unsigned((uint64_t)i, 2, 0);
                     break;
                 }
                 }
