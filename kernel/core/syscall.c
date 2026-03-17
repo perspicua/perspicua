@@ -225,6 +225,39 @@ void syscall_handle(struct exception_trap_frame* tf)
         break;
     }
 
+    case SYS_GETDENTS:
+    { /* sys_getdents(int fd, void* buf, size_t count) */
+        int fd = (int)(tf->x[0]);
+        void* buf = (void*)(tf->x[1]);
+        size_t count = (size_t)(tf->x[2]);
+
+        if (!validate_user_buffer(buf, count, 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        /* count in this context is often sizeof(struct vfs_dirent) */
+        void* kbuf = heap_malloc(count);
+        if (!kbuf)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        int res = vfs_readdir(fd, kbuf, count);
+        if (res > 0)
+        {
+            if (copy_to_user(buf, kbuf, count) != 0)
+            {
+                res = -PERS_ERR_INVALID_ARGUMENT;
+            }
+        }
+        heap_free(kbuf);
+        tf->x[0] = (uint64_t)res;
+        break;
+    }
+
     case SYS_CLOSE:
     { /* sys_close(int fd) */
         int fd = (int)(tf->x[0]);

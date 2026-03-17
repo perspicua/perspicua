@@ -27,5 +27,6 @@
 #define SYS_SIGRETURN  15
 #define SYS_KILL       16
 #define SYS_SIGRESTORE 17
+#define SYS_GETDENTS   18
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

@@ -21,6 +21,20 @@
 #define VFS_O_TRUNC  0x0200
 #define VFS_O_APPEND 0x0400
 
+/* Seek mode constants */
+#define VFS_SEEK_SET 0
+#define VFS_SEEK_CUR 1
+#define VFS_SEEK_END 2
+
+/*
+ * vfs_dirent - Directory entry structure returned to userspace.
+ */
+struct vfs_dirent
+{
+    uint32_t ino;
+    char name[256];
+};
+
 /* System call wrapper prototypes */
 void sys_write(int fd, const char* buf, size_t len);
 void sys_exit(int status);
@@ -29,6 +43,7 @@ void sys_yield(void);
 void sys_sleep(unsigned long ms);
 int sys_open(const char* path, int flags);
 int sys_read(int fd, void* buf, size_t len);
+int sys_getdents(int fd, void* buf, size_t count);
 int sys_close(int fd);
 int sys_exec(const char* path);
 int sys_fork(void);

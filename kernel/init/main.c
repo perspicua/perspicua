@@ -231,6 +231,24 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
         vfs_close(fd);
     }
 
+    /* Test subdirectory reading */
+    fd = vfs_open("/SUBDIR/SUBFILE.TXT", VFS_O_RDONLY);
+    if (fd >= 0)
+    {
+        char buf[100];
+        int bytes = vfs_read(fd, buf, sizeof(buf) - 1);
+        if (bytes >= 0)
+        {
+            buf[bytes] = '\0';
+            printf("Read from subdirectory (/SUBDIR/SUBFILE.TXT): %s\n", buf);
+        }
+        vfs_close(fd);
+    }
+    else
+    {
+        printf("[  VFS ] Error: could not open /SUBDIR/SUBFILE.TXT\n");
+    }
+
     /* Load and execute the primary user-space application from the SD card */
     if (process_create_from_file("/init.elf", 1) != 0)
     {

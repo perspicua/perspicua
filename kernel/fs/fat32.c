@@ -2,6 +2,7 @@
 #include "uapi/errors.h"
 #include "stdio.h"
 #include "slab.h"
+#include "string.h"
 
 static struct fat32_fs current_fs;
 
@@ -145,50 +146,120 @@ int fat32_vfs_read(struct vfs_file* file, void* buffer, size_t size)
     return (int)bytes_read;
 }
 
-static struct vfs_vnode_ops fat32_vnode_ops = {
-    .read = fat32_vfs_read,
-    .lookup = fat32_vfs_lookup,
-};
+static struct vfs_vnode_ops fat32_vnode_ops;
 
 struct vfs_vnode* fat32_vfs_lookup(struct vfs_vnode* dir, const char* filename)
 {
-    uint32_t dir_cluster = (uint32_t)(uintptr_t)dir->internal_info;
-    uint32_t dir_lba = cluster_to_lba(dir_cluster);
+    uint32_t cluster = (uint32_t)(uintptr_t)dir->internal_info;
     struct fat32_dir_entry dirs[16];
 
-    if (current_fs.dev->read_blocks(current_fs.dev, &dirs, dir_lba, 1) != 0)
-        return NULL;
-
-    for (int i = 0; i < 16; i++)
+    while (cluster < 0x0FFFFFF8)
     {
-        if (dirs[i].name[0] == 0x00)
-            break;
-        if (name_match(filename, &dirs[i]))
+        uint32_t lba = cluster_to_lba(cluster);
+        for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++)
         {
-            struct vfs_vnode* node = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
-            if (!node)
+            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0)
                 return NULL;
-            node->type = (dirs[i].attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
-            node->ops = &fat32_vnode_ops;
-            node->internal_info = (void*)(uintptr_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
-            node->file_size = dirs[i].size;
-            return node;
+            for (int i = 0; i < 16; i++)
+            {
+                if (dirs[i].name[0] == 0x00)
+                    return NULL;
+                if (dirs[i].name[0] == 0xE5)
+                    continue;
+                if (name_match(filename, &dirs[i]))
+                {
+                    struct vfs_vnode* node = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
+                    if (!node)
+                        return NULL;
+                    node->type = (dirs[i].attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
+                    node->ops = &fat32_vnode_ops;
+                    node->internal_info = (void*)(uintptr_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
+                    node->file_size = dirs[i].size;
+                    return node;
+                }
+            }
         }
+        cluster = get_next_cluster(cluster);
     }
     return NULL;
 }
+
+int fat32_vfs_readdir(struct vfs_file* file, void* buffer, size_t count)
+{
+    (void)count;
+    if (file->node->type != VFS_VNODE_TYPE_DIR)
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    struct vfs_dirent* dirent = (struct vfs_dirent*)buffer;
+    uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
+    struct fat32_dir_entry dirs[16];
+    uint32_t entries_skipped = 0;
+
+    while (cluster < 0x0FFFFFF8)
+    {
+        uint32_t lba = cluster_to_lba(cluster);
+        for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++)
+        {
+            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0)
+                return -PERS_ERR_IO_ERROR;
+            for (int i = 0; i < 16; i++)
+            {
+                if (dirs[i].name[0] == 0x00)
+                    return 0;
+                if (dirs[i].name[0] == 0xE5 || dirs[i].attributes == 0x0F)
+                    continue;
+                if (entries_skipped == file->offset)
+                {
+                    int idx = 0;
+                    for (int k = 0; k < 8; k++)
+                    {
+                        uint8_t c = dirs[i].name[k];
+                        if (c == ' ' || c == 0)
+                            continue;
+                        if (c >= 'A' && c <= 'Z')
+                            c = c - 'A' + 'a';
+                        dirent->name[idx++] = c;
+                    }
+                    if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0)
+                    {
+                        dirent->name[idx++] = '.';
+                        for (int k = 0; k < 3; k++)
+                        {
+                            uint8_t c = dirs[i].ext[k];
+                            if (c == ' ' || c == 0)
+                                continue;
+                            if (c >= 'A' && c <= 'Z')
+                                c = c - 'A' + 'a';
+                            dirent->name[idx++] = c;
+                        }
+                    }
+                    dirent->name[idx] = '\0';
+                    dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
+                    file->offset++;
+                    return 1;
+                }
+                entries_skipped++;
+            }
+        }
+        cluster = get_next_cluster(cluster);
+    }
+    return 0;
+}
+
+static struct vfs_vnode_ops fat32_vnode_ops = {
+    .read = fat32_vfs_read,
+    .lookup = fat32_vfs_lookup,
+    .readdir = fat32_vfs_readdir,
+};
 
 struct vfs_vnode* fat32_get_root_node(void)
 {
     struct vfs_vnode* node = slab_alloc(sizeof(struct vfs_vnode));
     if (!node)
         return NULL;
-
     node->type = VFS_VNODE_TYPE_DIR;
     node->ops = &fat32_vnode_ops;
     node->internal_info = (void*)(uintptr_t)current_fs.root_cluster;
     node->file_size = 0;
-
     return node;
 }
 
@@ -198,7 +269,6 @@ void fat32_ls()
     struct fat32_dir_entry dirs[16];
     if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba, 1) != 0)
         return;
-
     for (size_t i = 0; i < 16; i++)
     {
         if (dirs[i].name[0] == 0x00)
@@ -215,10 +285,8 @@ void fat32_cat(const char* filename)
 {
     uint32_t lba = cluster_to_lba(current_fs.root_cluster);
     struct fat32_dir_entry dirs[16];
-
     if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba, 1) != 0)
         return;
-
     for (int i = 0; i < 16; i++)
     {
         if (dirs[i].name[0] == 0x00)
@@ -227,9 +295,7 @@ void fat32_cat(const char* filename)
         {
             uint32_t cluster = (dirs[i].cluster_high << 16) | dirs[i].cluster_low;
             uint32_t size = dirs[i].size;
-
             printf("[ FAT32 ]: Reading %s (%u bytes)...\n", filename, size);
-
             char buffer[512];
             while (cluster < 0x0FFFFFF8)
             {
@@ -255,18 +321,12 @@ int fat32_init(const char* device_name)
     struct block_device* dev = block_device_lookup(device_name);
     if (!dev)
         return -PERS_ERR_NOT_FOUND;
-
     uint8_t sector0[512];
     if (dev->read_blocks(dev, sector0, 0, 1) != 0)
         return -PERS_ERR_IO_ERROR;
-
     uint16_t sig = *(uint16_t*)(sector0 + 510);
     if (sig != 0xAA55)
-    {
-        printf("[ FAT32 ]: Error - Invalid signature: 0x%X (expected 0xAA55)\n", sig);
         return -PERS_ERR_INVALID_ARGUMENT;
-    }
-
     if (sector0[0] == 0xEB || sector0[0] == 0xE9)
     {
         current_fs.dev = dev;
@@ -288,11 +348,9 @@ int fat32_init(const char* device_name)
         if (!found)
             return -PERS_ERR_NOT_FOUND;
     }
-
     struct fat32_bpb bpb;
     if (dev->read_blocks(dev, &bpb, current_fs.partition_lba_start, 1) != 0)
         return -PERS_ERR_IO_ERROR;
-
     current_fs.bytes_per_sector = bpb.bytes_per_sector;
     current_fs.reserved_sectors = bpb.reserved_sectors;
     current_fs.sectors_per_cluster = bpb.sectors_per_cluster;
@@ -301,8 +359,6 @@ int fat32_init(const char* device_name)
     current_fs.num_fats = bpb.num_fats;
     current_fs.fat_lba_start = current_fs.partition_lba_start + current_fs.reserved_sectors;
     current_fs.data_lba_start = current_fs.fat_lba_start + (current_fs.num_fats * current_fs.sectors_per_fat);
-
     printf("[ FAT32 ]: Initialized partition at LBA %u\n", current_fs.partition_lba_start);
-
     return PERS_SUCCESS;
 }

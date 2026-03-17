@@ -55,11 +55,15 @@ $(SD_IMAGE): user
 	$(Q)echo "Hello from the real FAT32 filesystem!" > hello.txt
 	$(Q)echo "This is small.txt" > small.txt
 	$(Q)echo "Line 1: This is a very big file that should test our cluster chaining." > big.txt
-	$(Q)for i in {2..100}; do echo "Line $$i: FAT32 cluster chaining is super cool! I love riciu." >> big.txt; done
+	$(Q)for i in {2..100}; do echo "Line $$i: FAT32 cluster chaining is super cool!" >> big.txt; done
 	$(Q)mcopy -i $(SD_IMAGE) hello.txt ::/
 	$(Q)mcopy -i $(SD_IMAGE) small.txt ::/
 	$(Q)mcopy -i $(SD_IMAGE) big.txt ::/
-	$(Q)rm hello.txt small.txt big.txt
+	# Create a subdirectory and a file inside it
+	$(Q)mmd -i $(SD_IMAGE) ::/SUBDIR
+	$(Q)echo "This file is inside a subdirectory!" > subfile.txt
+	$(Q)mcopy -i $(SD_IMAGE) subfile.txt ::/SUBDIR/SUBFILE.TXT
+	$(Q)rm hello.txt small.txt big.txt subfile.txt
 
 run: kernel $(SD_IMAGE)
 	$(QEMU) $(QEMU_FLAGS) $(QEMU_SD_FLAGS)
