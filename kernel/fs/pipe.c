@@ -1,12 +1,12 @@
-#include "pipe.h"
-#include "lock.h"
-#include "process.h"
-#include "slab.h"
-#include "timer.h"
+#include "fs/pipe.h"
+#include "core/lock.h"
+#include "sched/process.h"
+#include "mm/slab.h"
+#include "core/timer.h"
 #include "uapi/errors.h"
 #include "stdio.h"
 #include "string.h"
-#include "heap.h"
+#include "mm/heap.h"
 
 /* Helper to block the current task on a pipe queue */
 static void pipe_wait(struct task** queue, spinlock_t* lock)

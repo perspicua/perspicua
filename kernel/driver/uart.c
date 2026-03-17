@@ -8,11 +8,11 @@
 #include "driver/uart.h"
 
 #include "types.h"
-#include "tty.h"
-#include "lock.h"
-#include "timer.h"
+#include "core/tty.h"
+#include "core/lock.h"
+#include "core/timer.h"
 #include "panic.h"
-#include "addr.h"
+#include "mm/addr.h"
 
 #include "devicetree/fdt.h"
 

@@ -12,7 +12,7 @@
 #include "io.h"
 #include "stdio.h"
 #include "panic.h"
-#include "addr.h"
+#include "mm/addr.h"
 
 #include "devicetree/fdt.h"
 

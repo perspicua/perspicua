@@ -8,11 +8,11 @@
 #ifndef PERSPICUA_KERNEL_PROCESS_H
 #define PERSPICUA_KERNEL_PROCESS_H
 
-#include "signals.h"
+#include "core/signals.h"
 #include "types.h"
-#include "vfs.h"
-#include "sched.h"
-#include "lock.h"
+#include "fs/vfs.h"
+#include "sched/sched.h"
+#include "core/lock.h"
 #include "arch/exception.h"
 
 /* --- Process Table Limits --- */

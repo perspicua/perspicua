@@ -7,10 +7,10 @@
  */
 
 #ifndef PERSPICUA_KERNEL_INITRD_H
-    #include "initrd.h"
+    #include "core/initrd.h"
 #endif
 
-#include "ramfs.h"
+#include "fs/ramfs.h"
 #include "string.h"
 #include "stdio.h"
 

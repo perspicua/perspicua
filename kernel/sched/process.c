@@ -5,24 +5,24 @@
  * Handles user-space execution, process tracking, and address spaces.
  */
 
-#include "process.h"
+#include "sched/process.h"
 
 #include "uapi/errors.h"
 
 #include "arch/exception.h"
 
-#include "addr.h"
-#include "elf.h"
-#include "mmu.h"
+#include "mm/addr.h"
+#include "core/elf.h"
+#include "mm/mmu.h"
 #include "panic.h"
-#include "pmm.h"
-#include "sched.h"
-#include "slab.h"
+#include "mm/pmm.h"
+#include "sched/sched.h"
+#include "mm/slab.h"
 #include "stdio.h"
 #include "string.h"
-#include "timer.h"
+#include "core/timer.h"
 #include "types.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 /* --- Global Variables --- */
 spinlock_t process_table_lock = SPINLOCK_INIT;

@@ -3,13 +3,13 @@
 #include "driver/gic.h"
 #include "stdio.h"
 #include "panic.h"
-#include "timer.h"
-#include "sched.h"
-#include "process.h"
-#include "syscall.h"
-#include "tty.h"
+#include "core/timer.h"
+#include "sched/sched.h"
+#include "sched/process.h"
+#include "core/syscall.h"
+#include "core/tty.h"
 #include "arch/uaccess.h"
-#include "mmu.h"
+#include "mm/mmu.h"
 
 extern struct tty console_tty;
 

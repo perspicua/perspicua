@@ -6,7 +6,7 @@
  * interrupt handlers.
  */
 
-#include "tty.h"
+#include "core/tty.h"
 
 #include "stdio.h"
 #include "string.h"

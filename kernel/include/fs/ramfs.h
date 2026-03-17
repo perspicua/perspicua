@@ -9,7 +9,7 @@
 #define PERSPICUA_KERNEL_RAMFS_H
 
 #include "types.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 /*
  * ramfs_init - Initializes the RAM filesystem, creating its root vnode

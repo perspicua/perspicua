@@ -1,6 +1,6 @@
 #include "test.h"
-#include "slab.h"
-#include "heap.h"
+#include "mm/slab.h"
+#include "mm/heap.h"
 #include "string.h"
 #include "types.h"
 

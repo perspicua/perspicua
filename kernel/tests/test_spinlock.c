@@ -1,6 +1,6 @@
 #include "test.h"
-#include "lock.h"
-#include "timer.h"
+#include "core/lock.h"
+#include "core/timer.h"
 #include "string.h"
 
 void test_spinlock(void)

@@ -6,17 +6,17 @@
  * It supports symmetric multiprocessing (SMP) with per-CPU ready queues.
  */
 
-#include "sched.h"
+#include "sched/sched.h"
 
 #include "uapi/errors.h"
 
-#include "mmu.h"
-#include "pmm.h"
-#include "heap.h"
-#include "addr.h"
-#include "timer.h"
-#include "lock.h"
-#include "process.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "mm/heap.h"
+#include "mm/addr.h"
+#include "core/timer.h"
+#include "core/lock.h"
+#include "sched/process.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"

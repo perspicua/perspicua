@@ -6,14 +6,15 @@
  * for larger requests.
  */
 
-#include "heap.h"
+#include "mm/heap.h"
 
-#include "slab.h"
-#include "lock.h"
-#include "pmm.h"
+#include "mm/slab.h"
+#include "mm/pmm.h"
+
+#include "core/lock.h"
 #include "stdio.h"
 #include "panic.h"
-#include "timer.h"
+#include "core/timer.h"
 
 /* Allocations <= this value are handled by the slab allocator */
 #define HEAP_SLAB_MAX 1024

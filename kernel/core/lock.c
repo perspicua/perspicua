@@ -6,9 +6,9 @@
  * store-release semantics.
  */
 
-#include "lock.h"
+#include "core/lock.h"
 
-#include "timer.h"
+#include "core/timer.h"
 
 /*
  * spin_lock - Implementation of the spinlock acquisition.

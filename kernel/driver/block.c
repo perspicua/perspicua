@@ -11,9 +11,9 @@
 #include "stdio.h"
 #include "string.h"
 
-#include "vfs.h"
-#include "devfs.h"
-#include "slab.h"
+#include "fs/vfs.h"
+#include "fs/devfs.h"
+#include "mm/slab.h"
 
 #define BLOCK_MAX_DEVICES 8
 

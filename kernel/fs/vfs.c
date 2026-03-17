@@ -5,16 +5,16 @@
  * management, path resolution, and the standard file operation dispatchers.
  */
 
-#include "vfs.h"
+#include "fs/vfs.h"
 
 #include "uapi/errors.h"
 
-#include "devfs.h"
-#include "heap.h"
-#include "slab.h"
-#include "lock.h"
+#include "fs/devfs.h"
+#include "mm/heap.h"
+#include "mm/slab.h"
+#include "core/lock.h"
 #include "string.h"
-#include "process.h"
+#include "sched/process.h"
 #include "stdio.h"
 
 /* The global mount table and its synchronization lock */

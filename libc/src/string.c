@@ -10,7 +10,7 @@
 #include "types.h"
 
 #ifdef __KERNEL__
-    #include "lock.h"
+    #include "core/lock.h"
 /* Global synchronization for thread-unsafe string tokenization */
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 #endif

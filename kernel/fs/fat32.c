@@ -1,7 +1,7 @@
-#include "fat32.h"
+#include "fs/fat32.h"
 #include "uapi/errors.h"
 #include "stdio.h"
-#include "slab.h"
+#include "mm/slab.h"
 #include "string.h"
 #include "lock.h"
 static struct fat32_fs current_fs;

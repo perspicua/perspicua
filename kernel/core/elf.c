@@ -5,16 +5,16 @@
  * loading segments into the user's virtual address space.
  */
 
-#include "elf.h"
+#include "core/elf.h"
 
 #include "uapi/errors.h"
 
-#include "pmm.h"
-#include "mmu.h"
-#include "vfs.h"
-#include "addr.h"
-#include "heap.h"
-#include "process.h"
+#include "mm/pmm.h"
+#include "mm/mmu.h"
+#include "fs/vfs.h"
+#include "mm/addr.h"
+#include "mm/heap.h"
+#include "sched/process.h"
 #include "string.h"
 #include "stdio.h"
 #include "panic.h"

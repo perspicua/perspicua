@@ -6,9 +6,9 @@
 #define PERSPICUA_KERNEL_PIPE_H
 
 #include "types.h"
-#include "vfs.h"
-#include "lock.h"
-#include "sched.h"
+#include "fs/vfs.h"
+#include "core/lock.h"
+#include "sched/sched.h"
 
 #define PIPE_BUF_SIZE 4096
 
