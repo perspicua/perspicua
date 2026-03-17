@@ -36,7 +36,6 @@
 #include "driver/dashboard.h"
 #include "driver/sd.h"
 #include "driver/block.h"
-#include "mm/heap.h"
 #include "uapi/errors.h"
 
 #include "devicetree/fdt.h"
