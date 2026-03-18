@@ -9,8 +9,8 @@
 #define PERSPICUA_KERNEL_TTY_H
 
 #include "types.h"
-#include "lock.h"
-#include "sched.h"
+#include "core/lock.h"
+#include "sched/sched.h"
 
 /* Size of the internal circular buffers for receive and transmit */
 #define TTY_BUFFER_SIZE 256

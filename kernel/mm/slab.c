@@ -6,10 +6,10 @@
  * per-class spinlocks to minimize contention.
  */
 
-#include "slab.h"
+#include "mm/slab.h"
 
-#include "pmm.h"
-#include "lock.h"
+#include "mm/pmm.h"
+#include "core/lock.h"
 #include "stdio.h"
 #include "panic.h"
 

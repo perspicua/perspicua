@@ -1,7 +1,7 @@
 #include "test.h"
-#include "mmu.h"
-#include "pmm.h"
-#include "addr.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "mm/addr.h"
 #include "string.h"
 
 // user VA range for tests — low addresses (TTBR0 space, below kernel VMA)

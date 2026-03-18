@@ -1,8 +1,8 @@
 #include "test.h"
-#include "sched.h"
-#include "heap.h"
-#include "lock.h"
-#include "timer.h"
+#include "sched/sched.h"
+#include "mm/heap.h"
+#include "core/lock.h"
+#include "core/timer.h"
 #include "string.h"
 
 // test constraints:

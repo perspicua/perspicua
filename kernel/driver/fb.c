@@ -9,9 +9,9 @@
 
 #include "types.h"
 #include "stdio.h"
-#include "addr.h"
+#include "mm/addr.h"
 
-#include "pmm.h"
+#include "mm/pmm.h"
 
 #include "driver/mailbox.h"
 

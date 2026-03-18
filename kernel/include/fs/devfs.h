@@ -9,7 +9,7 @@
 #define PERSPICUA_KERNEL_DEVFS_H
 
 #include "types.h"
-#include "vfs.h"
+#include "fs/vfs.h"
 
 /*
  * devfs_init - Initializes the device filesystem, creating the root vnode

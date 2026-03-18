@@ -5,12 +5,12 @@
  * including context saving/restoring and default action execution.
  */
 
-#include "signals.h"
+#include "core/signals.h"
 
 #include "arch/exception.h"
 #include "arch/uaccess.h"
 
-#include "process.h"
+#include "sched/process.h"
 #include "string.h"
 
 /*

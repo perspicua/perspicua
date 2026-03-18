@@ -5,15 +5,15 @@
  * the virtual filesystem, providing a standardized path for device access.
  */
 
-#include "devfs.h"
+#include "fs/devfs.h"
 
 #include "uapi/errors.h"
 
-#include "vfs.h"
-#include "tty.h"
-#include "slab.h"
-#include "heap.h"
-#include "lock.h"
+#include "fs/vfs.h"
+#include "core/tty.h"
+#include "mm/slab.h"
+#include "mm/heap.h"
+#include "core/lock.h"
 #include "string.h"
 #include "panic.h"
 
