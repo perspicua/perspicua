@@ -171,4 +171,6 @@ int vfs_mount(const char* path, struct vfs_vnode* root);
  */
 int vfs_unmount(const char* path);
 
+int vfs_chdir(const char* path);
+int vfs_getcwd(char* buf, size_t size);
 #endif /* PERSPICUA_KERNEL_VFS_H */

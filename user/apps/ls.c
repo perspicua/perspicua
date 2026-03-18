@@ -7,9 +7,12 @@ static void print_string(const char* s)
     sys_write(1, s, strlen(s));
 }
 
-int main(void)
+int main(int argc, char** argv)
 {
-    const char* path = "/";
+    const char* path = ".";
+    if (argc > 1) {
+        path = argv[1];
+    }
 
     int fd = sys_open(path, VFS_O_RDONLY);
     if (fd < 0)

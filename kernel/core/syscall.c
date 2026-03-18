@@ -446,6 +446,52 @@ void syscall_handle(struct exception_trap_frame* tf)
         break;
     }
 
+    case SYS_CHDIR:
+    {
+        const char* path = (const char*)(tf->x[0]);
+
+        size_t path_len = 0;
+        const char* p = path;
+        while (path_len < VFS_MAX_PATH_LEN)
+        {
+            unsigned char c;
+            if (copy_from_user(&c, p++, 1) != 0)
+            {
+                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            if (c == '\0')
+            {
+                break;
+            }
+            path_len++;
+        }
+
+        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        char* kpath = heap_malloc(path_len + 1);
+        if (!kpath)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+        if (copy_from_user(kpath, path, path_len + 1) != 0)
+        {
+            heap_free(kpath);
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        int res = vfs_chdir(kpath);
+        heap_free(kpath);
+        tf->x[0] = (uint64_t)res;
+        break;
+    }
+
     default:
     {
         printf("Unknown syscall: %lu\n", syscall_nr);
