@@ -33,26 +33,39 @@ static void fb_console_scroll(void)
 
     if (next_y_offset + fb_info.height <= fb_info.v_height)
     {
-        fb_set_offset(0, next_y_offset);
+        /* Update y_offset without calling hardware yet. */
+        fb_info.y_offset = next_y_offset;
 
+        /* Clear the new bottom line (at the NEW top position). */
         graphics_draw_rect(
             0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+
+        /* Draw dashboard at the NEW top position. */
+        dashboard_update();
+
+        /* Finally, switch the display to the new offset. */
+        fb_set_hardware_offset(0, fb_info.y_offset);
     }
     else
     {
+        /* Wrap-around: move current view to top of virtual buffer. */
         void* dst = (void*)((uintptr_t)fb_info.ptr);
         void* src = (void*)((uintptr_t)fb_info.ptr + (fb_info.y_offset * fb_info.pitch));
         unsigned int size = fb_info.height * fb_info.pitch;
 
         memmove(dst, src, size);
 
-        fb_set_offset(0, 0);
+        /* Reset offset and scroll by one line. */
+        fb_info.y_offset = CHAR_HEIGHT;
+
+        /* Clear bottom and update dashboard. */
+        graphics_draw_rect(
+            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
 
         dashboard_update();
 
-        fb_set_offset(0, CHAR_HEIGHT);
-        graphics_draw_rect(
-            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+        /* Finally, switch the hardware. */
+        fb_set_hardware_offset(0, fb_info.y_offset);
     }
 
     cursor_y = fb_info.y_offset + fb_info.height - CHAR_HEIGHT;
@@ -67,7 +80,6 @@ void fb_console_init(void)
     fb_set_offset(0, 0);
     cursor_x = 0;
     cursor_y = CONSOLE_Y_OFFSET;
-    graphics_clear(0x00000000);  // black
     dashboard_update();
     spin_unlock(&fb_console_lock);
 }

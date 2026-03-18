@@ -37,14 +37,14 @@ void fb_init(void)
     mbox[7] = 0;
     mbox_call(mbox);
 
-    /* 2. Set Virtual Width/Height (1024x1536 for hardware scrolling) */
+    /* 2. Set Virtual Width/Height (1024x4096 for hardware scrolling) */
     mbox[0] = 8 * 4;
     mbox[1] = 0;
     mbox[2] = 0x48004;
     mbox[3] = 8;
     mbox[4] = 8;
     mbox[5] = 1024;
-    mbox[6] = 1536;
+    mbox[6] = 4096;
     mbox[7] = 0;
     mbox_call(mbox);
 
@@ -87,7 +87,7 @@ void fb_init(void)
         fb_info.width = 1024;
         fb_info.height = 768;
         fb_info.v_width = 1024;
-        fb_info.v_height = 1536;
+        fb_info.v_height = 4096;
         fb_info.pitch = mbox[5];
         fb_info.size = fb_size;
         fb_info.x_offset = 0;
@@ -95,15 +95,6 @@ void fb_init(void)
         fb_info.ptr = (unsigned char*)P2V(phys_addr);
 
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
-
-        printf("[   FB ] Framebuffer: %dx%d (virt %dx%d) @ %p (phys 0x%lx, size %d)\n",
-               fb_info.width,
-               fb_info.height,
-               fb_info.v_width,
-               fb_info.v_height,
-               fb_info.ptr,
-               (unsigned long)phys_addr,
-               fb_info.size);
     }
     else
     {
@@ -112,9 +103,9 @@ void fb_init(void)
 }
 
 /*
- * fb_set_offset - Sets the virtual offset of the framebuffer.
+ * fb_set_hardware_offset - Sets the virtual offset of the framebuffer.
  */
-void fb_set_offset(unsigned int x, unsigned int y)
+void fb_set_hardware_offset(unsigned int x, unsigned int y)
 {
     __attribute__((aligned(16))) unsigned int mbox_off[8];
 
@@ -128,9 +119,16 @@ void fb_set_offset(unsigned int x, unsigned int y)
     mbox_off[7] = 0;
 
     mbox_call(mbox_off);
+}
 
-    fb_info.x_offset = mbox_off[5];
-    fb_info.y_offset = mbox_off[6];
+/*
+ * fb_set_offset - Updates the framebuffer info and then calls fb_set_hardware_offset.
+ */
+void fb_set_offset(unsigned int x, unsigned int y)
+{
+    fb_info.x_offset = x;
+    fb_info.y_offset = y;
+    fb_set_hardware_offset(x, y);
 }
 
 /*

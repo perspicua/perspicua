@@ -38,8 +38,14 @@ extern struct fb_info_struct fb_info;
 void fb_init(void);
 
 /*
- * fb_set_offset - Sets the virtual offset of the framebuffer.
+ * fb_set_hardware_offset - Sets the virtual offset of the framebuffer.
  * This is used for hardware scrolling by shifting the visible window.
+ * This function performs the mailbox call to the GPU.
+ */
+void fb_set_hardware_offset(unsigned int x, unsigned int y);
+
+/*
+ * fb_set_offset - Updates the framebuffer info and then calls fb_set_hardware_offset.
  */
 void fb_set_offset(unsigned int x, unsigned int y);
 

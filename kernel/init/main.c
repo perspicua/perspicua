@@ -163,7 +163,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fdt_rebase(P2V(global_dtb_ptr));
 
     remap_framebuffer_pages();
-    fb_console_init();  // Clears screen and resets cursor
     heap_init();
 
     /* Stage 3: Initial diagnostics (Visible on FB Console) */
