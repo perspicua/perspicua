@@ -20,12 +20,6 @@ struct fb_info_struct
     unsigned int pitch;
     unsigned int size;
     unsigned char* ptr;
-
-    /* Virtual dimensions and offsets for hardware scrolling. */
-    unsigned int v_width;
-    unsigned int v_height;
-    unsigned int x_offset;
-    unsigned int y_offset;
 };
 
 /* The global framebuffer device information. */
@@ -36,18 +30,6 @@ extern struct fb_info_struct fb_info;
  * This sets up the resolution, depth, and allocates the display buffer.
  */
 void fb_init(void);
-
-/*
- * fb_set_hardware_offset - Sets the virtual offset of the framebuffer.
- * This is used for hardware scrolling by shifting the visible window.
- * This function performs the mailbox call to the GPU.
- */
-void fb_set_hardware_offset(unsigned int x, unsigned int y);
-
-/*
- * fb_set_offset - Updates the framebuffer info and then calls fb_set_hardware_offset.
- */
-void fb_set_offset(unsigned int x, unsigned int y);
 
 /*
  * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.

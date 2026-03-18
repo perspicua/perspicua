@@ -10,8 +10,7 @@ static void print_string(const char* s)
 int main(int argc, char** argv)
 {
     const char* path = ".";
-    if (argc > 1)
-    {
+    if (argc > 1) {
         path = argv[1];
     }
 

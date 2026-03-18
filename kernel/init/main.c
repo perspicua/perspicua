@@ -144,18 +144,26 @@ static void dashboard_task(void)
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
-    /* Stage 0: Early bring-up (Diagnostic Output) */
+    /* Stage 0: initialize devicetree parser*/
+    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
     fdt_init(global_dtb_ptr);
+    printf("[  DTB ] DTB parsed successfully, root node: \n");
+    /* Stage 1: Basic hardware and console bring-up */
     gpio_init();
     uart_init();
-    tty_init(&console_tty);
-
-    /* Stage 1: Hardware initialization */
     mbox_init();
     fb_init();
+    fb_console_init();
+    tty_init(&console_tty);
+
+    print_banner();
+    printf("[  0.000] BOOT: perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
+    printf("[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)\n");
+    printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
 
     /* Stage 2: Memory management initialization */
     fdt_parse_memory_reservations();
+
     pmm_init();
     mmu_init();
 
@@ -165,14 +173,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     remap_framebuffer_pages();
     heap_init();
 
-    /* Stage 3: Initial diagnostics (Visible on FB Console) */
-    print_banner();
-    printf("[  0.000] BOOT: perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
-    printf("[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)\n");
-    printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
-    printf("[  DTB ] DTB parsed successfully at 0x%lx\n", (unsigned long)global_dtb_ptr);
-
-    /* Stage 4: Interrupts and scheduling */
+    /* Stage 3: Interrupts and scheduling */
     gic_init();
     uart_enable_interrupts();
     timer_interrupt_init();
@@ -181,11 +182,11 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Start the graphical dashboard update task */
     sched_create_task(dashboard_task);
 
-    /* Stage 5: Multi-processing and testing */
+    /* Stage 4: Multi-processing and testing */
     smp_init();
     printf("\n BOOT COMPLETE - all subsystems operational\n");
 
-    /* Stage 6: Filesystem and User-space bring-up */
+    /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
     devfs_init();

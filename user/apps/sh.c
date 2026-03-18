@@ -33,15 +33,11 @@ static char current_dir[CMD_MAX_LEN] = "/";
 static void set_current_dir(const char* path)
 {
     char temp[512];
-    if (path[0] == '/')
-    {
+    if (path[0] == '/') {
         strcpy(temp, path);
-    }
-    else
-    {
+    } else {
         strcpy(temp, current_dir);
-        if (strcmp(temp, "/") != 0)
-        {
+        if (strcmp(temp, "/") != 0) {
             strcat(temp, "/");
         }
         strcat(temp, path);
@@ -51,33 +47,22 @@ static void set_current_dir(const char* path)
     int count = 0;
     char* token = strtok(temp, "/");
 
-    while (token)
-    {
-        if (strcmp(token, ".") == 0)
-        {
+    while (token) {
+        if (strcmp(token, ".") == 0) {
             // ignore
-        }
-        else if (strcmp(token, "..") == 0)
-        {
-            if (count > 0)
-                count--;
-        }
-        else
-        {
+        } else if (strcmp(token, "..") == 0) {
+            if (count > 0) count--;
+        } else {
             parts[count++] = token;
         }
         token = strtok(NULL, "/");
     }
 
-    if (count == 0)
-    {
+    if (count == 0) {
         strcpy(current_dir, "/");
-    }
-    else
-    {
+    } else {
         current_dir[0] = '\0';
-        for (int i = 0; i < count; i++)
-        {
+        for (int i = 0; i < count; i++) {
             strcat(current_dir, "/");
             strcat(current_dir, parts[i]);
         }
@@ -121,26 +106,23 @@ static void run_command(int argc, char** argv)
     if (strcmp(argv[0], "cd") == 0)
     {
         int res = 0;
-        if (argc == 1)
-        {
+        if (argc == 1 ){
             sys_chdir("/");
             set_current_dir("/");
             // print_string("Changed directory to /\n");
             return;
         }
-        else
-        {
-            res = sys_chdir(argv[1]);
+        else {
+            res = sys_chdir(argv[1]); 
             if (res < 0)
             {
                 print_string("sh: cd : no such directory: ");
                 print_string(argv[1]);
                 print_string("\n");
             }
-            else
-            {
-                set_current_dir(argv[1]);
-            }
+                else {
+                    set_current_dir(argv[1]);
+                }
         }
         return;
     }

@@ -18,7 +18,7 @@
  */
 void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
 {
-    if (x >= fb_info.v_width || y >= fb_info.v_height)
+    if (x >= fb_info.width || y >= fb_info.height)
     {
         return;
     }
@@ -34,18 +34,19 @@ void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
  */
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h, uint32_t color, int fill)
 {
-    if (x >= fb_info.v_width || y >= fb_info.v_height)
+    if (x >= fb_info.width || y >= fb_info.height)
     {
         return;
     }
 
-    if (w > fb_info.v_width - x)
+    // Adjust width and height to fit within framebuffer bounds to prevent overflow
+    if (w > fb_info.width - x)
     {
-        w = fb_info.v_width - x;
+        w = fb_info.width - x;
     }
-    if (h > fb_info.v_height - y)
+    if (h > fb_info.height - y)
     {
-        h = fb_info.v_height - y;
+        h = fb_info.height - y;
     }
 
     if (w == 0 || h == 0)
@@ -97,7 +98,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
     }
 
     // Ensure the entire character glyph fits within the screen boundaries
-    if (x > fb_info.v_width - 8 || y > fb_info.v_height - 8 || fb_info.v_width < 8 || fb_info.v_height < 8)
+    if (x > fb_info.width - 8 || y > fb_info.height - 8 || fb_info.width < 8 || fb_info.height < 8)
     {
         return;
     }
@@ -146,8 +147,7 @@ void graphics_draw_string(unsigned int x, unsigned int y, const char* s, uint32_
 void graphics_clear(uint32_t color)
 {
     uint32_t* fb = (uint32_t*)fb_info.ptr;
-    uint32_t stride = fb_info.pitch >> 2;
-    uint32_t count = stride * fb_info.v_height;
+    uint32_t count = fb_info.size >> 2;
 
     for (uint32_t i = 0; i < count; i++)
     {

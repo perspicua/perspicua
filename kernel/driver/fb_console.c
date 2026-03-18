@@ -12,7 +12,6 @@
 
 #include "driver/graphics.h"
 #include "driver/fb.h"
-#include "driver/dashboard.h"
 
 /* Console dimensions and rendering offsets. */
 #define CONSOLE_Y_OFFSET 20
@@ -29,46 +28,17 @@ static spinlock_t fb_console_lock = SPINLOCK_INIT;
  */
 static void fb_console_scroll(void)
 {
-    unsigned int next_y_offset = fb_info.y_offset + CHAR_HEIGHT;
+    unsigned int bytes_to_move = (fb_info.height - CONSOLE_Y_OFFSET - CHAR_HEIGHT) * fb_info.pitch;
 
-    if (next_y_offset + fb_info.height <= fb_info.v_height)
-    {
-        /* Update y_offset without calling hardware yet. */
-        fb_info.y_offset = next_y_offset;
+    void* dst = (void*)((uintptr_t)fb_info.ptr + (CONSOLE_Y_OFFSET * fb_info.pitch));
+    void* src = (void*)((uintptr_t)fb_info.ptr + ((CONSOLE_Y_OFFSET + CHAR_HEIGHT) * fb_info.pitch));
 
-        /* Clear the new bottom line (at the NEW top position). */
-        graphics_draw_rect(
-            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+    memmove(dst, src, bytes_to_move);
 
-        /* Draw dashboard at the NEW top position. */
-        dashboard_update();
+    unsigned int bottom_y = fb_info.height - CHAR_HEIGHT;
+    graphics_draw_rect(0, bottom_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
 
-        /* Finally, switch the display to the new offset. */
-        fb_set_hardware_offset(0, fb_info.y_offset);
-    }
-    else
-    {
-        /* Wrap-around: move current view to top of virtual buffer. */
-        void* dst = (void*)((uintptr_t)fb_info.ptr);
-        void* src = (void*)((uintptr_t)fb_info.ptr + (fb_info.y_offset * fb_info.pitch));
-        unsigned int size = fb_info.height * fb_info.pitch;
-
-        memmove(dst, src, size);
-
-        /* Reset offset and scroll by one line. */
-        fb_info.y_offset = CHAR_HEIGHT;
-
-        /* Clear bottom and update dashboard. */
-        graphics_draw_rect(
-            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
-
-        dashboard_update();
-
-        /* Finally, switch the hardware. */
-        fb_set_hardware_offset(0, fb_info.y_offset);
-    }
-
-    cursor_y = fb_info.y_offset + fb_info.height - CHAR_HEIGHT;
+    cursor_y = bottom_y;
 }
 
 /*
@@ -77,10 +47,9 @@ static void fb_console_scroll(void)
 void fb_console_init(void)
 {
     spin_lock(&fb_console_lock);
-    fb_set_offset(0, 0);
     cursor_x = 0;
     cursor_y = CONSOLE_Y_OFFSET;
-    dashboard_update();
+    graphics_clear(0x00000000);  // black
     spin_unlock(&fb_console_lock);
 }
 
@@ -89,11 +58,6 @@ void fb_console_init(void)
  */
 void fb_console_putc(char c)
 {
-    if (!fb_info.ptr)
-    {
-        return;
-    }
-
     unsigned long flags = spin_lock_irqsave(&fb_console_lock);
 
     if (c == '\n')
@@ -125,7 +89,7 @@ void fb_console_putc(char c)
         }
     }
 
-    if (cursor_y + CHAR_HEIGHT > fb_info.y_offset + fb_info.height)
+    if (cursor_y + CHAR_HEIGHT > fb_info.height)
     {
         fb_console_scroll();
     }
