@@ -3,7 +3,7 @@
 #include "stdio.h"
 #include "mm/slab.h"
 #include "string.h"
-#include "lock.h"
+#include "core/lock.h"
 static struct fat32_fs current_fs;
 
 static uint32_t cluster_to_lba(uint32_t cluster)
