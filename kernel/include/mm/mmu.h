@@ -31,8 +31,9 @@
 #define MMU_PTE_COW (1ULL << 55) /* Copy-on-Write flag */
 
 /* Memory attribute indices (must match MAIR_EL1 configuration) */
-#define MMU_ATTR_NORMAL (0ULL << 2) /* MAIR index 0: Normal cacheable */
-#define MMU_ATTR_DEVICE (1ULL << 2) /* MAIR index 1: Device nGnRE */
+#define MMU_ATTR_NORMAL    (0ULL << 2) /* MAIR index 0: Normal cacheable */
+#define MMU_ATTR_DEVICE    (1ULL << 2) /* MAIR index 1: Device nGnRE */
+#define MMU_ATTR_NORMAL_NC (2ULL << 2) /* MAIR index 2: Normal Non-Cacheable (Write-Combining) */
 
 /* High-level page permission combinations for user processes */
 #define MMU_PAGE_USER_CODE \
@@ -42,10 +43,11 @@
     (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_PXN | MMU_UXN)
 
 /* Standard kernel memory mapping flags */
-#define MMU_FLAGS_KERNEL_RW (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RW | MMU_PXN | MMU_UXN)
-#define MMU_FLAGS_KERNEL_RO (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO | MMU_PXN | MMU_UXN)
-#define MMU_FLAGS_KERNEL_RX (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO)
-#define MMU_FLAGS_DEVICE_RW (MMU_PTE_AF | MMU_ATTR_DEVICE | MMU_AP_RW | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_KERNEL_RW   (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RW | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_KERNEL_RO   (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_KERNEL_RX   (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO)
+#define MMU_FLAGS_DEVICE_RW   (MMU_PTE_AF | MMU_ATTR_DEVICE | MMU_AP_RW | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_FRAMEBUFFER (MMU_PTE_AF | MMU_ATTR_NORMAL_NC | MMU_AP_RW | MMU_PXN | MMU_UXN)
 
 /*
  * mmu_init - Boot-time initialization of the kernel's virtual memory system.

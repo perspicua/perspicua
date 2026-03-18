@@ -83,7 +83,8 @@ map_periph_loop:
 enable_mmu:
     // Attr0 = 0xFF (Normal, Write-Back, Read/Write-Allocate)
     // Attr1 = 0x04 (Device-nGnRE — non-Gathering, non-Reordering, Early-ack)
-    ldr x0, =0x04FF
+    // Attr2 = 0x44 (Normal, Non-Cacheable -> Write-Combining)
+    ldr x0, =0x4404FF
     msr mair_el1, x0
     
     // tcr: 39-bit va for ttbr0 and ttbr1

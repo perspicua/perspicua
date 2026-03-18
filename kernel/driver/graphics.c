@@ -75,12 +75,35 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
 
     // Render solid filled rectangle row by row
     uint32_t* line = &fb[y * stride + x];
+    uint64_t c64 = ((uint64_t)color << 32) | color;
+
     for (unsigned int j = 0; j < h; j++)
     {
-        for (unsigned int i = 0; i < w; i++)
+        uint32_t* p32 = line;
+        unsigned int i = 0;
+
+        // Align to 8-byte boundary
+        if ((uintptr_t)p32 & 4)
         {
-            line[i] = color;
+            *p32++ = color;
+            i++;
         }
+
+        // Write 64-bit blocks
+        uint64_t* p64 = (uint64_t*)p32;
+        while (i + 1 < w)
+        {
+            *p64++ = c64;
+            i += 2;
+        }
+
+        // Handle trailing 32-bit pixel
+        if (i < w)
+        {
+            p32 = (uint32_t*)p64;
+            *p32 = color;
+        }
+
         line += stride;
     }
 }
@@ -110,16 +133,25 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
     for (int row = 0; row < 8; row++)
     {
         unsigned char row_data = font8x8_basic[(int)c][row];
-        for (int col = 0; col < 8; col++)
+
+        if (bg != 0xFFFFFFFF)
         {
-            if ((row_data >> col) & 1)
+            /* Optimized opaque background path: 64-bit writes */
+            uint64_t* d64 = (uint64_t*)dest;
+            d64[0] = ((uint64_t)((row_data & 0x02) ? fg : bg) << 32) | ((row_data & 0x01) ? fg : bg);
+            d64[1] = ((uint64_t)((row_data & 0x08) ? fg : bg) << 32) | ((row_data & 0x04) ? fg : bg);
+            d64[2] = ((uint64_t)((row_data & 0x20) ? fg : bg) << 32) | ((row_data & 0x10) ? fg : bg);
+            d64[3] = ((uint64_t)((row_data & 0x80) ? fg : bg) << 32) | ((row_data & 0x40) ? fg : bg);
+        }
+        else
+        {
+            /* Standard transparent path */
+            for (int col = 0; col < 8; col++)
             {
-                dest[col] = fg;
-            }
-            else if (bg != 0xFFFFFFFF)
-            {
-                // Background color transparency check
-                dest[col] = bg;
+                if ((row_data >> col) & 1)
+                {
+                    dest[col] = fg;
+                }
             }
         }
         dest += stride;
@@ -146,11 +178,19 @@ void graphics_draw_string(unsigned int x, unsigned int y, const char* s, uint32_
  */
 void graphics_clear(uint32_t color)
 {
-    uint32_t* fb = (uint32_t*)fb_info.ptr;
-    uint32_t count = fb_info.size >> 2;
+    uint64_t* fb64 = (uint64_t*)fb_info.ptr;
+    uint32_t count64 = fb_info.size >> 3;
+    uint64_t c64 = ((uint64_t)color << 32) | color;
 
-    for (uint32_t i = 0; i < count; i++)
+    for (uint32_t i = 0; i < count64; i++)
     {
-        fb[i] = color;
+        fb64[i] = c64;
+    }
+
+    /* Handle remainder if size is not a multiple of 8 */
+    if (fb_info.size & 4)
+    {
+        uint32_t* fb32 = (uint32_t*)fb_info.ptr;
+        fb32[fb_info.size / 4 - 1] = color;
     }
 }
