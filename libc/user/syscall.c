@@ -285,3 +285,16 @@ void sys_sigrestore(uintptr_t restorer)
                  : "r"(restorer), "i"(SYS_SIGRESTORE)
                  : "x0", "x8", "memory");
 }
+
+int sys_chdir(const char* path)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "i"(SYS_CHDIR)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}

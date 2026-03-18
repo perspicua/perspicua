@@ -682,3 +682,37 @@ int vfs_dup2(int oldfd, int newfd)
 
     return newfd;
 }
+
+int vfs_chdir(const char* kpath){
+    int pid = process_find_current();
+    if (pid < 0)
+    {
+        return pid;
+    }
+
+    struct process* p = &process_table[pid];
+    int error = 0;
+    
+    struct vfs_vnode* node = vfs_resolve_path(kpath, p->cwd, &error);
+    if (!node)
+    {
+        return error;
+    }
+
+    if (node->type != VFS_VNODE_TYPE_DIR)
+    {
+        vfs_vnode_put(node);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    spin_lock(&p->fd_lock);
+    if (p->cwd)
+    {
+        vfs_vnode_put(p->cwd);
+    }
+    p->cwd = node;
+    // atomic_inc(&node->refcount);
+    spin_unlock(&p->fd_lock);
+
+    return PERS_SUCCESS;
+}

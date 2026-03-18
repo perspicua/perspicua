@@ -3,7 +3,7 @@
 #include "stdio.h"
 #include "slab.h"
 #include "string.h"
-
+#include "lock.h"
 static struct fat32_fs current_fs;
 
 static uint32_t cluster_to_lba(uint32_t cluster)
@@ -171,10 +171,14 @@ struct vfs_vnode* fat32_vfs_lookup(struct vfs_vnode* dir, const char* filename)
                     struct vfs_vnode* node = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
                     if (!node)
                         return NULL;
+                    memset(node, 0, sizeof(struct vfs_vnode));
                     node->type = (dirs[i].attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
                     node->ops = &fat32_vnode_ops;
                     node->internal_info = (void*)(uintptr_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
                     node->file_size = dirs[i].size;
+                    node->parent = dir;
+                    atomic_inc(&dir->refcount);
+                    node->refcount.counter = 1;
                     return node;
                 }
             }

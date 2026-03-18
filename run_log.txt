@@ -1,0 +1,328 @@
+  [33mMAKE[0m    libc
+  [33mMAKE[0m    user
+  [32mCC[0m      apps/cat.c
+  [32mCC[0m      apps/hello.c
+  [32mCC[0m      apps/pipe_test.c
+  [32mCC[0m      apps/init.c
+  [32mCC[0m      apps/sh.c
+  [32mCC[0m      apps/sig_test.c
+  [33mLD[0m      build/cat.elf
+  [33mLD[0m      build/sig_test.elf
+  [33mLD[0m      build/init.elf
+  [33mLD[0m      build/hello.elf
+  [33mLD[0m      build/pipe_test.elf
+  [33mLD[0m      build/sh.elf
+  [34mIMG[0m     build/initrd.cpio
+  [33mMAKE[0m    kernel
+[32mBuild complete: pi4-boot/kernel8.img[0m
+qemu-system-aarch64 -M raspi4b -serial stdio -display none -dtb pi4-boot/bcm2711-rpi-4-b.dtb -kernel pi4-boot/kernel8.img
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-pcie has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-rng200 has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-thermal has been disabled!
+qemu-system-aarch64: warning: bcm2711 dtc: brcm,bcm2711-genet-v5 has been disabled!
+[   FB ] Framebuffer initialized: 1024x768 @ 0xffffff803c100000 (phys 0x3c100000, size 3145728, pitch 4096)
+
+  _ __   ___ _ __ ___ _ __ (_) ___ _   _  __ _
+ | '_ \ / _ \ '__/ __| '_ \| |/ __| | | |/ _` |
+ | |_) |  __/ |  \__ \ |_) | | (__| |_| | (_| |
+ | .__/ \___|_|  |___/ .__/|_|\___|\__,_|\__,_| v0.1
+ |_|                 |_|
+
+[  0.000] BOOT: perspicua kernel v0.1, built Mar 15 2026 21:06:20
+[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)
+[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule
+[  DTB ] rsvmap[0]: base=0x0 size=0x1000
+[  DTB ] rsvmap[1]: base=0x0 size=0x0
+[  PMM ] Detected physical memory size from DTB: 960 MB
+[  PMM ] Buddy system: 245760 pages total, 1832 reserved
+[  PMM ] Metadata: 5760 KB at 0xffffff8000167000
+[  PMM ] reserve: 0x3c100000..0x3c3fffff (framebuffer)
+[  PMM ] reserve: 0x0..0x706fff (initrd)
+[  PMM ] reserve: 0x8000000..0x8020591 (dtb)
+[  PMM ] reserve: 0x0..0xfff (dtb-reserved)
+[  PMM ] 952 MB free — buddy system ready
+[  MMU ] TTBR1 -> 0x8021000, TTBR0 -> empty
+[  MMU ] Mapped: 4 GB range (Blocks + Kernel Pages)
+[ SLAB ] Initialized 7 size classes from 16 to 1024 bytes
+[ HEAP ] First-fit pool: 8160 bytes
+[ HEAP ] Alignment: 16 bytes
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041000
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041000  x1: 0x1
+  x2: 0xffffff8000166f30  x3: 0xffffffff
+  x4: 0x0  x5: 0xd8
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000166f20
+  x30: 0xffffff800008c9b8  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0xa00003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xffffffff
+  x4: 0x0  x5: 0x190
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000166af0
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff80001666c0
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000166290
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000165e60
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000165a30
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000165600
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff80001651d0
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000164da0
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000164970
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050
+  Fault    : Synchronous external abort, not on walk
+  Access   : write
+Register Dump:
+  x0: 0xffffff80ff041f00  x1: 0x2000000
+  x2: 0xb9  x3: 0xc
+  x4: 0x0  x5: 0x1
+  x6: 0x1000  x7: 0x118000
+  x8: 0x0  x9: 0x0
+  x10: 0x0  x11: 0x0
+  x12: 0x0  x13: 0x0
+  x14: 0x0  x15: 0x0
+  x16: 0x0  x17: 0x0
+  x18: 0x0  x19: 0x0
+  x20: 0x8000000  x21: 0x0
+  x22: 0x0  x23: 0x0
+  x24: 0x0  x25: 0x0
+  x26: 0x0  x27: 0x0
+  x28: 0x0  x29: 0xffffff8000164540
+  x30: 0xffffff800008c788  sp_el0: 0x0
+  elr_el1: 0xffffff800008c6ec  spsr_el1: 0x600003c5
+
+[KERNEL PANIC] Data abort in kernel! (PID -1, TID 0)
+  FAR_EL1  : 0xffffff80ff041f00
+  ELR_EL1  : 0xffffff800008c6ec
+  ESR_EL1  : 96000050qemu-system-aarch64: terminating on signal 15 from pid 89695 (make)

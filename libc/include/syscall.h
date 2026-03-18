@@ -54,5 +54,6 @@ int sys_signal(int sig, signal_handler_t handler);
 int sys_kill(int pid, int sig);
 void sys_sigreturn(void);
 void sys_sigrestore(uintptr_t restorer);
-
+int sys_chdir(const char* path);
+int sys_getcwd(char* buf, size_t size);
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

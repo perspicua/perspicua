@@ -28,6 +28,47 @@ static char* trim(char* str)
     return str;
 }
 
+static char current_dir[CMD_MAX_LEN] = "/";
+
+static void set_current_dir(const char* path)
+{
+    char temp[512];
+    if (path[0] == '/') {
+        strcpy(temp, path);
+    } else {
+        strcpy(temp, current_dir);
+        if (strcmp(temp, "/") != 0) {
+            strcat(temp, "/");
+        }
+        strcat(temp, path);
+    }
+
+    char* parts[64];
+    int count = 0;
+    char* token = strtok(temp, "/");
+
+    while (token) {
+        if (strcmp(token, ".") == 0) {
+            // ignore
+        } else if (strcmp(token, "..") == 0) {
+            if (count > 0) count--;
+        } else {
+            parts[count++] = token;
+        }
+        token = strtok(NULL, "/");
+    }
+
+    if (count == 0) {
+        strcpy(current_dir, "/");
+    } else {
+        current_dir[0] = '\0';
+        for (int i = 0; i < count; i++) {
+            strcat(current_dir, "/");
+            strcat(current_dir, parts[i]);
+        }
+    }
+}
+
 static void run_command(int argc, char** argv)
 {
     if (argc == 0 || !argv[0])
@@ -60,6 +101,30 @@ static void run_command(int argc, char** argv)
     if (strcmp(argv[0], "exit") == 0)
     {
         sys_exit(0);
+    }
+
+    if (strcmp(argv[0], "cd") == 0)
+    {
+        int res = 0;
+        if (argc == 1 ){
+            sys_chdir("/");
+            set_current_dir("/");
+            // print_string("Changed directory to /\n");
+            return;
+        }
+        else {
+            res = sys_chdir(argv[1]); 
+            if (res < 0)
+            {
+                print_string("sh: cd : no such directory: ");
+                print_string(argv[1]);
+                print_string("\n");
+            }
+                else {
+                    set_current_dir(argv[1]);
+                }
+        }
+        return;
     }
 
     char path[128];
@@ -201,7 +266,7 @@ static void execute_line(char* line)
 
         /* Built-ins that should run in the parent process (like exit, clear, echo, help) */
         if (strcmp(argv[0], "exit") == 0 || strcmp(argv[0], "clear") == 0 || strcmp(argv[0], "echo") == 0
-            || strcmp(argv[0], "help") == 0)
+            || strcmp(argv[0], "help") == 0 || strcmp(argv[0], "cd") == 0)
         {
             run_command(argc, argv);
             return;
@@ -227,7 +292,9 @@ static void execute_line(char* line)
 
 static void print_prompt(void)
 {
-    print_string("perspicua:/$ ");
+    print_string("perspicua:");
+    print_string(current_dir);
+    print_string("$ ");
 }
 
 int main(void)
