@@ -12,6 +12,7 @@
 
 #include "driver/graphics.h"
 #include "driver/fb.h"
+#include "driver/dashboard.h"
 
 /* Console dimensions and rendering offsets. */
 #define CONSOLE_Y_OFFSET 20
@@ -28,17 +29,33 @@ static spinlock_t fb_console_lock = SPINLOCK_INIT;
  */
 static void fb_console_scroll(void)
 {
-    unsigned int bytes_to_move = (fb_info.height - CONSOLE_Y_OFFSET - CHAR_HEIGHT) * fb_info.pitch;
+    unsigned int next_y_offset = fb_info.y_offset + CHAR_HEIGHT;
 
-    void* dst = (void*)((uintptr_t)fb_info.ptr + (CONSOLE_Y_OFFSET * fb_info.pitch));
-    void* src = (void*)((uintptr_t)fb_info.ptr + ((CONSOLE_Y_OFFSET + CHAR_HEIGHT) * fb_info.pitch));
+    if (next_y_offset + fb_info.height <= fb_info.v_height)
+    {
+        fb_set_offset(0, next_y_offset);
 
-    memmove(dst, src, bytes_to_move);
+        graphics_draw_rect(
+            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+    }
+    else
+    {
+        void* dst = (void*)((uintptr_t)fb_info.ptr);
+        void* src = (void*)((uintptr_t)fb_info.ptr + (fb_info.y_offset * fb_info.pitch));
+        unsigned int size = fb_info.height * fb_info.pitch;
 
-    unsigned int bottom_y = fb_info.height - CHAR_HEIGHT;
-    graphics_draw_rect(0, bottom_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+        memmove(dst, src, size);
 
-    cursor_y = bottom_y;
+        fb_set_offset(0, 0);
+
+        dashboard_update();
+
+        fb_set_offset(0, CHAR_HEIGHT);
+        graphics_draw_rect(
+            0, fb_info.y_offset + fb_info.height - CHAR_HEIGHT, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+    }
+
+    cursor_y = fb_info.y_offset + fb_info.height - CHAR_HEIGHT;
 }
 
 /*
@@ -47,9 +64,11 @@ static void fb_console_scroll(void)
 void fb_console_init(void)
 {
     spin_lock(&fb_console_lock);
+    fb_set_offset(0, 0);
     cursor_x = 0;
     cursor_y = CONSOLE_Y_OFFSET;
     graphics_clear(0x00000000);  // black
+    dashboard_update();
     spin_unlock(&fb_console_lock);
 }
 
@@ -58,6 +77,11 @@ void fb_console_init(void)
  */
 void fb_console_putc(char c)
 {
+    if (!fb_info.ptr)
+    {
+        return;
+    }
+
     unsigned long flags = spin_lock_irqsave(&fb_console_lock);
 
     if (c == '\n')
@@ -89,7 +113,7 @@ void fb_console_putc(char c)
         }
     }
 
-    if (cursor_y + CHAR_HEIGHT > fb_info.height)
+    if (cursor_y + CHAR_HEIGHT > fb_info.y_offset + fb_info.height)
     {
         fb_console_scroll();
     }

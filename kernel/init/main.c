@@ -144,17 +144,16 @@ static void dashboard_task(void)
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
-    /* Stage 0: initialize devicetree parser*/
-    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
+    /* Stage 0: Early bring-up */
     fdt_init(global_dtb_ptr);
-    printf("[  DTB ] DTB parsed successfully, root node: \n");
-    /* Stage 1: Basic hardware and console bring-up */
     gpio_init();
     uart_init();
+    tty_init(&console_tty);
+
+    /* Stage 1: Initial prints */
+    printf("[  DTB ] DTB initialized at %p\n", global_dtb_ptr);
     mbox_init();
     fb_init();
-    fb_console_init();
-    tty_init(&console_tty);
 
     print_banner();
     printf("[  0.000] BOOT: perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
@@ -171,6 +170,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fdt_rebase(P2V(global_dtb_ptr));
 
     remap_framebuffer_pages();
+    fb_console_init();
     heap_init();
 
     /* Stage 3: Interrupts and scheduling */
