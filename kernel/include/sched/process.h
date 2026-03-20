@@ -16,7 +16,7 @@
 #include "arch/exception.h"
 
 /* --- Process Table Limits --- */
-#define PROCESS_TABLE_SIZE 16
+#define PROCESS_TABLE_SIZE 1024
 
 /* --- User Virtual Address Space --- */
 #define USER_VA_BASE        0x40000000ULL /* 1GB - leaves lower area for ELF loading */
@@ -56,7 +56,7 @@ struct process
     uint32_t pid;
     process_state_t state;
     uint32_t parent_pid;
-    struct task* parent_task;
+    struct task* main_task;
     int exit_status;
 
     /* Physical Memory Layout */

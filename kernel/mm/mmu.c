@@ -686,6 +686,7 @@ int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
     new_flags |= MMU_AP_RW;
 
     mmu_user_map_page(pgd, vaddr, V2P(new_page), new_flags);
+    pmm_free_page((void*)P2V(paddr));
     return 0;
 }
 

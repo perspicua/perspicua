@@ -53,7 +53,7 @@ static void va_init(struct va_allocator* va)
  */
 static void* alloc_kernel_stack(void)
 {
-    unsigned char* base = (unsigned char*)pmm_alloc_pages(3);
+    unsigned char* base = (unsigned char*)pmm_alloc_pages(SCHED_STACK_PAGES);
     if (!base)
     {
         return (void*)0;
@@ -61,7 +61,7 @@ static void* alloc_kernel_stack(void)
     mmu_unmap_page((unsigned long)base);
 
     asm volatile("dsb ish" ::: "memory");
-    *(unsigned long*)(base + PAGE_SIZE) = 0xDEADC0DEDEADC0DEULL;
+    *(unsigned long*)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
 
     return base + PAGE_SIZE;
 }
@@ -248,7 +248,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 
     asm volatile("ic ialluis\n dsb ish\n isb");
 
-    uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + 2 * PAGE_SIZE;
+    uintptr_t kernel_stack_top = process_table[pid].vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
     struct exception_trap_frame* tf =
         (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
     memset(tf, 0, sizeof(struct exception_trap_frame));
@@ -272,7 +272,8 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
 
-    sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
+    struct task* t = sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
+    process_table[pid].main_task = t;
 }
 
 /*
@@ -311,7 +312,7 @@ int process_create_from_file(const char* path, uint32_t pid)
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
-    size_t stack_pages = 4;
+    size_t stack_pages = 32;
     uintptr_t vaddr_stack = process_va_alloc(&process_table[pid].va, stack_pages);
     if (!vaddr_stack)
     {
@@ -348,7 +349,7 @@ int process_create_from_file(const char* path, uint32_t pid)
     int err;
     process_table[pid].cwd = vfs_resolve_path("/", (void*)0, &err);
 
-    uintptr_t kernel_stack_top = (uintptr_t)kstack + 2 * PAGE_SIZE;
+    uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
     struct exception_trap_frame* tf =
         (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
     memset(tf, 0, sizeof(struct exception_trap_frame));
@@ -368,7 +369,8 @@ int process_create_from_file(const char* path, uint32_t pid)
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
 
-    sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
+    struct task* t = sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
+    process_table[pid].main_task = t;
 
     printf("[PROCESS] Loaded ELF %s for PID %d, entry at 0x%lx\n", path, pid, entry_point);
     return PERS_SUCCESS;
@@ -402,7 +404,7 @@ int process_exec(const char* path)
 
     struct va_allocator new_va;
     va_init(&new_va);
-    size_t stack_pages = 4;
+    size_t stack_pages = 32;
 
     uintptr_t vaddr_stack = process_va_alloc(&new_va, stack_pages);
     if (!vaddr_stack)
@@ -451,7 +453,7 @@ int process_exec(const char* path)
         mmu_destroy_user_pgd(old_pgd);
     }
 
-    uintptr_t kernel_stack_top = p->vaddr_kernel_stack + 2 * PAGE_SIZE;
+    uintptr_t kernel_stack_top = p->vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
     struct exception_trap_frame* tf =
         (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
 
@@ -495,7 +497,6 @@ void process_exit(uint32_t pid, int exit_status)
         if (i != (int)pid && process_table[i].state != PROCESS_STATE_EMPTY && process_table[i].parent_pid == pid)
         {
             process_table[i].parent_pid = 1;
-            process_table[i].parent_task = (void*)0;
         }
     }
 
@@ -529,9 +530,10 @@ void process_exit(uint32_t pid, int exit_status)
     process_table[pid].exit_status = exit_status;
     process_table[pid].state = PROCESS_STATE_DEAD;
 
-    if (process_table[pid].parent_task)
+    uint32_t ppid = process_table[pid].parent_pid;
+    if (ppid != 0 && process_table[ppid].state != PROCESS_STATE_EMPTY)
     {
-        sched_unblock(process_table[pid].parent_task);
+        sched_unblock(process_table[ppid].main_task);
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
@@ -583,6 +585,9 @@ int process_fork(struct exception_trap_frame* parent_tf)
     unsigned long* child_pgd = mmu_copy_user_pgd(parent->user_pgd);
     if (!child_pgd)
     {
+        spin_lock_irqsave(&process_table_lock);
+        child->state = PROCESS_STATE_EMPTY;
+        spin_unlock_irqrestore(&process_table_lock, flags);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -594,7 +599,7 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->vaddr_user_stack = parent->vaddr_user_stack;
     child->va = parent->va;
     child->parent_pid = (uint32_t)parent_pid;
-    child->parent_task = sched_get_current();
+    child->main_task = (void*)0;
 
     /* Copy signal state */
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
@@ -634,7 +639,7 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->vaddr_kernel_stack = (uintptr_t)kstack;
     child->paddr_kernel_stack = V2P(kstack);
 
-    uintptr_t kernel_stack_top = (uintptr_t)kstack + 2 * PAGE_SIZE;
+    uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
     struct exception_trap_frame* child_tf =
         (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
     memcpy(child_tf, parent_tf, sizeof(struct exception_trap_frame));
@@ -645,7 +650,8 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->context.lr = (unsigned long)ret_to_user;
 
     child->state = PROCESS_STATE_RUNNING;
-    sched_create_user_task(child->context.sp, child->context.lr, (uint32_t)child_pid);
+    struct task* t = sched_create_user_task(child->context.sp, child->context.lr, (uint32_t)child_pid);
+    child->main_task = t;
 
     printf("[PROCESS] PID %d forked child PID %d\n", parent_pid, child_pid);
     return child_pid;
@@ -664,6 +670,7 @@ int process_waitpid(int pid, int* status)
 
     while (1)
     {
+        unsigned long irqf = irq_save();
         spin_lock(&process_table_lock);
         int has_children = 0;
         for (int i = 0; i < PROCESS_TABLE_SIZE; i++)
@@ -692,6 +699,7 @@ int process_waitpid(int pid, int* status)
                 int found_pid = (int)process_table[i].pid;
                 process_table[i].state = PROCESS_STATE_EMPTY;
                 spin_unlock(&process_table_lock);
+                irq_restore(irqf);
                 return found_pid;
             }
         }
@@ -699,10 +707,10 @@ int process_waitpid(int pid, int* status)
         if (!has_children)
         {
             spin_unlock(&process_table_lock);
+            irq_restore(irqf);
             return -PERS_ERR_NO_SUCH_PROCESS;
         }
 
-        unsigned long flags = irq_save();
         struct task* curr = sched_get_current();
         if (curr)
         {
@@ -712,7 +720,7 @@ int process_waitpid(int pid, int* status)
         spin_unlock(&process_table_lock);
 
         schedule();
-        irq_restore(flags);
+        irq_restore(irqf);
     }
 }
 
