@@ -393,7 +393,7 @@ void test_mmu_user(void)
     }
     TEST_PASS("stress: 4 PGDs isolated");
 
-    // --- map same physical page in two PGDs at same VA ---
+    // --- shared physical page in two PGDs ---
     {
         unsigned long* pgd_a = mmu_create_user_pgd();
         unsigned long* pgd_b = mmu_create_user_pgd();
@@ -417,6 +417,50 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd_b);
     }
     TEST_PASS("shared physical page in two PGDs");
+
+    // --- same physical page mapped to multiple VAs in same PGD ---
+    {
+        unsigned long* pgd = mmu_create_user_pgd();
+        void* shared_page = pmm_alloc_page();
+        unsigned long va1 = USER_VA_BASE + 0x8000;
+        unsigned long va2 = USER_VA_BASE + 0x9000;
+
+        pmm_hold_page(shared_page); // Hold due to multi-map
+        mmu_user_map_page(pgd, va1, V2P(shared_page), MMU_PAGE_USER_DATA);
+        mmu_user_map_page(pgd, va2, V2P(shared_page), MMU_PAGE_USER_DATA);
+
+        *(volatile unsigned long*)V2P(shared_page) = 0; // zero out physical memory directly not possible securely here if not in kernel window, but we are kernel tests
+
+        unsigned long pa1, pa2;
+        TEST_ASSERT("multi-va: map1", mmu_user_query(pgd, va1, &pa1, 0) && pa1 == V2P(shared_page));
+        TEST_ASSERT("multi-va: map2", mmu_user_query(pgd, va2, &pa2, 0) && pa2 == V2P(shared_page));
+
+        mmu_user_unmap_page(pgd, va1);
+        mmu_user_unmap_page(pgd, va2);
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("shared physical page multiple VAs in same PGD");
+
+    // --- map over existing mapping should replace or at least not leak (assuming implementation allows replace) ---
+    // Perspicua mmu_user_map_page actually doesn't specify if it replaces, but let's test if we can query it safely.
+    {
+        unsigned long* pgd = mmu_create_user_pgd();
+        void* p1 = pmm_alloc_page();
+        void* p2 = pmm_alloc_page();
+        unsigned long va = USER_VA_BASE + 0xA000;
+
+        mmu_user_map_page(pgd, va, V2P(p1), MMU_PAGE_USER_DATA);
+        mmu_user_map_page(pgd, va, V2P(p2), MMU_PAGE_USER_DATA); // Overwrite
+
+        unsigned long pa;
+        TEST_ASSERT("overwrite: queried map", mmu_user_query(pgd, va, &pa, 0));
+        TEST_ASSERT("overwrite: updated to p2", pa == V2P(p2));
+
+        mmu_user_unmap_page(pgd, va);
+        pmm_free_page(p1); // Since mmu_user_map_page overwrote, p1 might have leaked if not freed by map. We free manually to be safe or rely on map replacing logic.
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("map over existing mapping");
 
     // --- fill: 16 pages in user PGD ---
     {

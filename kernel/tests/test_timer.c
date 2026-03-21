@@ -46,6 +46,15 @@ void test_timer(void)
     }
     TEST_PASS("timer cumulative sleep");
 
+    // sleep 0 ms shouldn't hang and should return quickly
+    {
+        unsigned long before = get_system_time();
+        sleep_ms(0);
+        unsigned long after = get_system_time();
+        TEST_ASSERT("sleep 0ms returns", (after - before) < 50);
+    }
+    TEST_PASS("timer sleep 0ms");
+
     // irq_save / irq_restore
     {
         unsigned long flags_before;

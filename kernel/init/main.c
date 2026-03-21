@@ -195,9 +195,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Mount devfs over the FAT32 root */
     vfs_mount("/dev", devfs_get_root());
 
-    // run_all_tests();
+    run_all_tests();
     enable_interrupts();
-    // run_scheduler_tests();
+    run_scheduler_tests();
 
     /* Load and execute the primary user-space application from the SD card */
     if (process_create_from_file("/init.elf", 1) != 0)

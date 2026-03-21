@@ -180,6 +180,19 @@ static void task_long_sleep_ts(void)
     ts_long_done = get_system_time();
 }
 
+// task that yields repeatedly
+static volatile int yield_count = 0;
+static void task_yield_loop(void)
+{
+    for (int i = 0; i < 50; i++)
+    {
+        unsigned long flags = spin_lock_irqsave(&test_lock);
+        yield_count++;
+        spin_unlock_irqrestore(&test_lock, flags);
+        schedule(); // yield to other tasks
+    }
+}
+
 // test suite
 
 void test_scheduler(void)
@@ -435,6 +448,16 @@ void test_scheduler(void)
         TEST_ASSERT("slow done", counter_b == 1);
     }
     TEST_PASS("mixed fast/slow tasks");
+
+    // yield loop task
+    {
+        yield_count = 0;
+        sched_create_task(task_yield_loop);
+        sched_create_task(task_yield_loop);
+        sched_sleep_ms(150);
+        TEST_ASSERT("2x50 yields completed", yield_count == 100);
+    }
+    TEST_PASS("yield loop tasks");
 
     // system time monotonicity under scheduling
 

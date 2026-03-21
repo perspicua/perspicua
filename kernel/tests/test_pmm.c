@@ -26,9 +26,18 @@ void test_pmm(void)
     }
     TEST_PASS("alloc_pages(1)");
 
+    // edge cases
+
     // zero-count returns null
     TEST_ASSERT("alloc_pages(0) is null", pmm_alloc_pages(0) == NULL);
     TEST_PASS("zero-count returns NULL");
+
+    // excessive order (beyond max order 10)
+    {
+        void* p = pmm_alloc_pages(2048); // order 11 is 2048 pages
+        TEST_ASSERT("alloc_pages(2048) beyond max order", p == NULL);
+    }
+    TEST_PASS("excessive order returns NULL");
 
     // free null is safe
     pmm_free_page(NULL);

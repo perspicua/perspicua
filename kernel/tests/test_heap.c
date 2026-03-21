@@ -25,6 +25,10 @@ void test_heap(void)
     TEST_ASSERT("zero alloc returns null", heap_malloc(0) == NULL);
     TEST_PASS("zero-size returns NULL");
 
+    // excessively large alloc should return null
+    TEST_ASSERT("huge alloc returns null", heap_malloc(0xFFFFFFFFFFFFFFFFULL) == NULL);
+    TEST_PASS("huge alloc returns NULL");
+
     // heap_free(null) is safe
     heap_free(NULL);
     TEST_PASS("heap_free(NULL) safe");
