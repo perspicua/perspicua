@@ -107,6 +107,6 @@ void remap_framebuffer_pages(void)
 
     for (unsigned long va = fb_start; va < fb_end; va += PAGE_SIZE)
     {
-        mmu_map_page(va, V2P(va), MMU_FLAGS_DEVICE_RW);
+        mmu_map_page(va, V2P(va), MMU_FLAGS_FRAMEBUFFER);
     }
 }

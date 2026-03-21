@@ -54,12 +54,10 @@ void fb_console_init(void)
 }
 
 /*
- * fb_console_putc - Prints a single character to the console.
+ * fb_console_putc_unlocked - Internal character printing (no locking).
  */
-void fb_console_putc(char c)
+static void fb_console_putc_unlocked(char c)
 {
-    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
-
     if (c == '\n')
     {
         cursor_x = 0;
@@ -93,7 +91,15 @@ void fb_console_putc(char c)
     {
         fb_console_scroll();
     }
+}
 
+/*
+ * fb_console_putc - Prints a single character to the console.
+ */
+void fb_console_putc(char c)
+{
+    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+    fb_console_putc_unlocked(c);
     spin_unlock_irqrestore(&fb_console_lock, flags);
 }
 
@@ -102,8 +108,10 @@ void fb_console_putc(char c)
  */
 void fb_console_puts(const char* s)
 {
+    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
     while (*s)
     {
-        fb_console_putc(*s++);
+        fb_console_putc_unlocked(*s++);
     }
+    spin_unlock_irqrestore(&fb_console_lock, flags);
 }
