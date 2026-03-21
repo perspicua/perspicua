@@ -30,7 +30,10 @@ _Static_assert(__builtin_offsetof(struct task, state) == 112, "struct task->stat
 
 /* Static scheduler state */
 static struct task* sched_idle_tasks[4] = {(void*)0};
+
+static uint64_t sched_canary_before = 0xAAAAAAAAAAAAAAAAULL;
 static struct task sched_init_tasks[4];
+static uint64_t sched_canary_after = 0xBBBBBBBBBBBBBBBBULL;
 
 /* Per-CPU ready queues and locks */
 static struct task* sched_ready_heads[4] = {(void*)0};
@@ -48,11 +51,6 @@ static int sched_core_pids[4] = {-1, -1, -1, -1};
 /* Global task ID generation */
 static int sched_next_id = 0;
 static spinlock_t sched_next_id_lock = SPINLOCK_INIT;
-
-/* Corruption detection canaries */
-static uint64_t sched_canary_before = 0xAAAAAAAAAAAAAAAAULL;
-static struct task sched_init_tasks[4];
-static uint64_t sched_canary_after = 0xBBBBBBBBBBBBBBBBULL;
 
 void sched_check_corruption(void)
 {

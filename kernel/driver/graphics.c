@@ -136,12 +136,14 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
 
         if (bg != 0xFFFFFFFF)
         {
-            /* Optimized opaque background path: 64-bit writes */
-            uint64_t* d64 = (uint64_t*)dest;
-            d64[0] = ((uint64_t)((row_data & 0x02) ? fg : bg) << 32) | ((row_data & 0x01) ? fg : bg);
-            d64[1] = ((uint64_t)((row_data & 0x08) ? fg : bg) << 32) | ((row_data & 0x04) ? fg : bg);
-            d64[2] = ((uint64_t)((row_data & 0x20) ? fg : bg) << 32) | ((row_data & 0x10) ? fg : bg);
-            d64[3] = ((uint64_t)((row_data & 0x80) ? fg : bg) << 32) | ((row_data & 0x40) ? fg : bg);
+            dest[0] = (row_data & 0x01) ? fg : bg;
+            dest[1] = (row_data & 0x02) ? fg : bg;
+            dest[2] = (row_data & 0x04) ? fg : bg;
+            dest[3] = (row_data & 0x08) ? fg : bg;
+            dest[4] = (row_data & 0x10) ? fg : bg;
+            dest[5] = (row_data & 0x20) ? fg : bg;
+            dest[6] = (row_data & 0x40) ? fg : bg;
+            dest[7] = (row_data & 0x80) ? fg : bg;
         }
         else
         {
