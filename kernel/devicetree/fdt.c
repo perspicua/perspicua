@@ -46,12 +46,15 @@ static void fdt_update_pointers(uintptr_t base)
 
 void fdt_init(uintptr_t global_dtb_ptr)
 {
+    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
     fdt_update_pointers(global_dtb_ptr);
+    printf("[  DTB ] DTB parsed successfully at 0x%lx\n", global_dtb_ptr);
 }
 
 void fdt_rebase(uintptr_t new_base)
 {
     fdt_update_pointers(new_base);
+    printf("[  DTB ] DTB rebased to virtual address 0x%lx\n", new_base);
 }
 
 void fdt_parse_memory_reservations(void)

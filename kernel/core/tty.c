@@ -37,6 +37,8 @@ void tty_init(struct tty* tty)
     tty->lock = (spinlock_t)SPINLOCK_INIT;
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
+
+    printf("[ TTY  ] Console TTY initialized\n");
 }
 
 /*

@@ -11,8 +11,12 @@
 #include "types.h"
 #include "mm/pmm.h"
 
-/* Maximum number of concurrent tasks supported by the system */
-#define SCHED_MAX_TASKS 16
+/* Stack protection and sizing constants */
+#define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
+#define SCHED_STACK_GUARD_PAGES  1
+#define SCHED_STACK_USABLE_PAGES 7
+#define SCHED_STACK_PAGES        (SCHED_STACK_GUARD_PAGES + SCHED_STACK_USABLE_PAGES)
+#define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
 /*
  * cpu_context - Saved processor state for context switching.
@@ -80,7 +84,7 @@ void sched_create_task(void (*entry)(void));
 /*
  * sched_create_user_task - Initializes a task structure for a user-mode process.
  */
-void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
+struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
 
 /*
  * sched_sleep_ms - Puts the current task to sleep for a minimum number of milliseconds.

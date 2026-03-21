@@ -25,13 +25,6 @@
 _Static_assert(sizeof(struct cpu_context) == 104, "struct cpu_context size mismatch");
 _Static_assert(__builtin_offsetof(struct task, state) == 112, "struct task->state offset mismatch");
 
-/* Stack protection and sizing constants */
-#define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
-#define SCHED_STACK_GUARD_PAGES  1
-#define SCHED_STACK_USABLE_PAGES 2
-#define SCHED_STACK_PAGES        (SCHED_STACK_GUARD_PAGES + SCHED_STACK_USABLE_PAGES)
-#define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
-
 /* Internal helper to locate the stack canary at the top of the guard page */
 #define SCHED_TASK_CANARY_PTR(t) ((unsigned long*)((t)->stack + PAGE_SIZE))
 
@@ -317,7 +310,7 @@ void sched_sleep_ms(unsigned long ms)
 /*
  * sched_create_user_task - Initializes a task for a user process.
  */
-void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
+struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
 {
     struct task* t = (struct task*)heap_malloc(sizeof(struct task));
     memset(t, 0, sizeof(struct task));
@@ -334,6 +327,7 @@ void sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, ui
     spin_unlock_irqrestore(&sched_next_id_lock, flags);
 
     enqueue_ready(get_core_id(), t);
+    return t;
 }
 
 /*
@@ -416,7 +410,7 @@ void schedule(void)
 
         if (dead->pid != 0)
         {
-            process_exit(dead->pid, 0);
+            process_exit(dead->pid, process_table[dead->pid].exit_status);
         }
 
         if (dead->stack)

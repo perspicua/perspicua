@@ -12,6 +12,7 @@
 
 #include "devicetree/fdt.h"
 
+#include "stdio.h"
 /* Mailbox Register Pointers (Static) */
 static volatile unsigned int* mbox_read = (void*)0;
 static volatile unsigned int* mbox_status = (void*)0;
@@ -51,6 +52,8 @@ void mbox_init(void)
     mbox_read = (unsigned int*)(vbase + 0x00);
     mbox_status = (unsigned int*)(vbase + 0x18);
     mbox_write = (unsigned int*)(vbase + 0x20);
+
+    printf("[ MBOX ] VideoCore mailbox initialized\n");
 }
 
 /*

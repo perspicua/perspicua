@@ -38,6 +38,8 @@ void vfs_init(void)
         vfs_mount_table[i].root = (void*)0;
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
+
+    printf("[  VFS ] Virtual File System initialized\n");
 }
 
 /*
