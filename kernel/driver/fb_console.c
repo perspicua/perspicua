@@ -13,6 +13,8 @@
 #include "driver/graphics.h"
 #include "driver/fb.h"
 
+#include "stdio.h"
+
 /* Console dimensions and rendering offsets. */
 #define CONSOLE_Y_OFFSET 20
 #define CHAR_WIDTH       8
@@ -51,6 +53,8 @@ void fb_console_init(void)
     cursor_y = CONSOLE_Y_OFFSET;
     graphics_clear(0x00000000);  // black
     spin_unlock(&fb_console_lock);
+
+    printf("[ CON  ] Framebuffer console initialized\n");
 }
 
 /*

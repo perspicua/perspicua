@@ -58,7 +58,6 @@ static spinlock_t console_lock = SPINLOCK_INIT;
  */
 static void smp_init(void)
 {
-    printf("\n");
     printf("[  SMP ] Bringing up secondary cores...\n");
 
     unsigned long entry_phys = V2P((unsigned long)_entry);
@@ -145,9 +144,8 @@ static void dashboard_task(void)
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
     /* Stage 0: initialize devicetree parser*/
-    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
     fdt_init(global_dtb_ptr);
-    printf("[  DTB ] DTB parsed successfully, root node: \n");
+
     /* Stage 1: Basic hardware and console bring-up */
     gpio_init();
     uart_init();
@@ -157,9 +155,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     tty_init(&console_tty);
 
     print_banner();
-    printf("[  0.000] BOOT: perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
-    printf("[  0.000] BOOT: Board: Raspberry Pi 4B (BCM2711, Cortex-A72 x4)\n");
-    printf("[  0.000] BOOT: Architecture: AArch64, 39-bit VA, 4KB granule\n");
+    printf("[ BOOT ] perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
 
     /* Stage 2: Memory management initialization */
     fdt_parse_memory_reservations();
@@ -182,11 +178,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Start the graphical dashboard update task */
     sched_create_task(dashboard_task);
 
-    /* Stage 4: Multi-processing and testing */
+    /* Stage 4: Multi-processing and Filesystem */
     smp_init();
-    printf("\n BOOT COMPLETE - all subsystems operational\n");
 
-    /* Stage 5: Filesystem and User-space bring-up */
     vfs_init();
     process_init();
     devfs_init();
@@ -196,57 +190,14 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     if (fat32_init("sd0") == PERS_SUCCESS)
     {
         vfs_mount("/", fat32_get_root_node());
-        printf("[ BOOT ] FAT32 mounted as root (/)\n");
-
-        printf("[ BOOT ] Listing Root Directory:\n");
-        fat32_ls();
-
-        printf("[ BOOT ] Testing fat32_cat(\"big.txt\"):\n");
-        fat32_cat("big.txt");
-    }
-    else
-    {
-        printf("[ BOOT ] Warning: Failed to initialize FAT32 root filesystem\n");
     }
 
     /* Mount devfs over the FAT32 root */
     vfs_mount("/dev", devfs_get_root());
 
-    run_all_tests();
+    // run_all_tests();
     enable_interrupts();
-    run_scheduler_tests();
-
-    /* Demonstration of VFS functionality - now reading from SD card root! */
-    int fd = vfs_open("/hello.txt", VFS_O_RDONLY);
-    if (fd >= 0)
-    {
-        char buf[100];
-        int bytes = vfs_read(fd, buf, sizeof(buf) - 1);
-        if (bytes >= 0)
-        {
-            buf[bytes] = '\0';
-            printf("Read from SD card (/hello.txt): %s", buf);
-        }
-        vfs_close(fd);
-    }
-
-    /* Test subdirectory reading */
-    fd = vfs_open("/SUBDIR/SUBFILE.TXT", VFS_O_RDONLY);
-    if (fd >= 0)
-    {
-        char buf[100];
-        int bytes = vfs_read(fd, buf, sizeof(buf) - 1);
-        if (bytes >= 0)
-        {
-            buf[bytes] = '\0';
-            printf("Read from subdirectory (/SUBDIR/SUBFILE.TXT): %s\n", buf);
-        }
-        vfs_close(fd);
-    }
-    else
-    {
-        printf("[  VFS ] Error: could not open /SUBDIR/SUBFILE.TXT\n");
-    }
+    // run_scheduler_tests();
 
     /* Load and execute the primary user-space application from the SD card */
     if (process_create_from_file("/init.elf", 1) != 0)

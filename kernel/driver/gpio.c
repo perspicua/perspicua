@@ -12,6 +12,7 @@
 
 #include "devicetree/fdt.h"
 
+#include "stdio.h"
 /* GPIO Register Pointers (Static) */
 static volatile unsigned int* gpio_gpfsel0 = (void*)0;
 static volatile unsigned int* gpio_gppupdn0 = (void*)0;
@@ -45,6 +46,8 @@ void gpio_init(void)
     // BCM2711 GPIO register offsets
     gpio_gpfsel0 = (unsigned int*)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int*)(vbase + 0xE4);
+
+    printf("[ GPIO ] BCM2711 GPIO driver initialized (base 0x%lx)\n", vbase);
 }
 
 /*

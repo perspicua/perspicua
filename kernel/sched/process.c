@@ -169,6 +169,8 @@ void process_init(void)
     process_table[0].state = PROCESS_STATE_RUNNING;
     process_table[0].user_pgd = (void*)0;
     process_table[0].asid = 0;
+
+    printf("[ PROC ] Process management initialized\n");
 }
 
 /*
@@ -272,7 +274,8 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
 
-    struct task* t = sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
+    struct task* t =
+        sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
     process_table[pid].main_task = t;
 }
 

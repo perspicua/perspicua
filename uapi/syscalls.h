@@ -28,6 +28,6 @@
 #define SYS_KILL       16
 #define SYS_SIGRESTORE 17
 #define SYS_GETDENTS   18
-#define SYS_CHDIR       19
-#define SYS_GETCWD      20
+#define SYS_CHDIR      19
+#define SYS_GETCWD     20
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

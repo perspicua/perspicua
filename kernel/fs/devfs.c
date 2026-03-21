@@ -15,6 +15,7 @@
 #include "mm/heap.h"
 #include "core/lock.h"
 #include "string.h"
+#include "stdio.h"
 #include "panic.h"
 
 /*
@@ -192,4 +193,6 @@ void devfs_init(void)
     {
         PANIC("Failed to register /dev/uart");
     }
+
+    printf("[ DEVFS] Device File System initialized\n");
 }

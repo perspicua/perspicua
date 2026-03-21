@@ -38,6 +38,8 @@ void vfs_init(void)
         vfs_mount_table[i].root = (void*)0;
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
+
+    printf("[  VFS ] Virtual File System initialized\n");
 }
 
 /*
@@ -683,7 +685,8 @@ int vfs_dup2(int oldfd, int newfd)
     return newfd;
 }
 
-int vfs_chdir(const char* kpath){
+int vfs_chdir(const char* kpath)
+{
     int pid = process_find_current();
     if (pid < 0)
     {
@@ -692,7 +695,7 @@ int vfs_chdir(const char* kpath){
 
     struct process* p = &process_table[pid];
     int error = 0;
-    
+
     struct vfs_vnode* node = vfs_resolve_path(kpath, p->cwd, &error);
     if (!node)
     {

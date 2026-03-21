@@ -18,6 +18,7 @@
 
 #include "driver/gpio.h"
 
+#include "stdio.h"
 /* Extern console TTY from the TTY subsystem */
 extern struct tty console_tty;
 
@@ -150,6 +151,8 @@ void uart_init(void)
         // Fallback for RPi4 PL011 if interrupts property missing or different
         cached_uart_irq = 153;  // 121 SPI + 32
     }
+
+    printf("[ UART ] PL011 UART initialized (base 0x%lx, IRQ %u)\n", vbase, cached_uart_irq);
 }
 
 /*
