@@ -96,14 +96,14 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
     void* page = pmm_alloc_page();
     if (!page)
     {
-        return (void*)0;
+        return NULL;
     }
 
     struct slab_page* sp = (struct slab_page*)page;
     sp->magic = SLAB_MAGIC;
     sp->class_idx = idx;
     sp->in_use_count = 0;
-    sp->free_list = (void*)0;
+    sp->free_list = NULL;
 
     unsigned long obj_size = sc->object_size;
     unsigned long hdr_size = sizeof(struct slab_page);
@@ -134,8 +134,8 @@ void slab_init(void)
     for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
         slab_classes[i].object_size = slab_class_sizes[i];
-        slab_classes[i].partial_list = (void*)0;
-        slab_classes[i].full_list = (void*)0;
+        slab_classes[i].partial_list = NULL;
+        slab_classes[i].full_list = NULL;
         slab_classes[i].lock = (spinlock_t)SPINLOCK_INIT;
     }
 
@@ -159,7 +159,7 @@ void* slab_alloc(unsigned long size)
     int idx = size_to_class_index(size);
     if (idx < 0)
     {
-        return (void*)0;
+        return NULL;
     }
 
     struct slab_class* sc = &slab_classes[idx];
@@ -174,7 +174,7 @@ void* slab_alloc(unsigned long size)
         if (!sp)
         {
             spin_unlock_irqrestore(&sc->lock, flags);
-            return (void*)0;
+            return NULL;
         }
     }
 
@@ -221,7 +221,7 @@ void slab_free(void* ptr)
         PANIC("SLAB: Double-free detected");
     }
 
-    int was_full = (sp->free_list == (void*)0);
+    int was_full = (sp->free_list == NULL);
 
     /* Push the slot back onto the free list and poison its canary */
     obj->free_canary = SLAB_FREE_POISON;

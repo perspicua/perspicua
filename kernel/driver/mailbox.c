@@ -14,9 +14,9 @@
 
 #include "stdio.h"
 /* Mailbox Register Pointers (Static) */
-static volatile unsigned int* mbox_read = (void*)0;
-static volatile unsigned int* mbox_status = (void*)0;
-static volatile unsigned int* mbox_write = (void*)0;
+static volatile unsigned int* mbox_read = NULL;
+static volatile unsigned int* mbox_status = NULL;
+static volatile unsigned int* mbox_write = NULL;
 
 /* Mailbox Status Flags */
 #define MBOX_STATUS_FULL  0x80000000

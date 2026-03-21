@@ -42,7 +42,7 @@ static void pipe_wake(struct task** queue)
         sched_unblock(t);
         t = next;
     }
-    *queue = (void*)0;
+    *queue = NULL;
 }
 
 static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
@@ -166,14 +166,14 @@ static int pipe_close(struct vfs_file* file)
     if (destroy)
     {
         heap_free(pipe);
-        node->internal_info = (void*)0;
+        node->internal_info = NULL;
     }
 
     return PERS_SUCCESS;
 }
 
 /* Pipe operations table */
-struct vfs_vnode_ops pipe_ops = {.read = pipe_read, .write = pipe_write, .lookup = (void*)0, .close = pipe_close};
+struct vfs_vnode_ops pipe_ops = {.read = pipe_read, .write = pipe_write, .lookup = NULL, .close = pipe_close};
 
 /*
  * kernel_pipe - Internal implementation of the pipe() system call.

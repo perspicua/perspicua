@@ -30,10 +30,10 @@ void tty_init(struct tty* tty)
     tty->tx_head = 0;
     tty->tx_tail = 0;
 
-    tty->wait_queue_head = (void*)0;
-    tty->wait_queue_tail = (void*)0;
-    tty->tx_wait_queue_head = (void*)0;
-    tty->tx_wait_queue_tail = (void*)0;
+    tty->wait_queue_head = NULL;
+    tty->wait_queue_tail = NULL;
+    tty->tx_wait_queue_head = NULL;
+    tty->tx_wait_queue_tail = NULL;
     tty->lock = (spinlock_t)SPINLOCK_INIT;
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
@@ -46,7 +46,7 @@ void tty_init(struct tty* tty)
  */
 static void wait_queue_add(struct task** head, struct task** tail, struct task* t)
 {
-    t->next = (void*)0;
+    t->next = NULL;
     if (*tail)
     {
         (*tail)->next = t;
@@ -67,11 +67,11 @@ static struct task* wait_queue_remove(struct task** head, struct task** tail)
     if (t)
     {
         *head = t->next;
-        if (*head == (void*)0)
+        if (*head == NULL)
         {
-            *tail = (void*)0;
+            *tail = NULL;
         }
-        t->next = (void*)0;
+        t->next = NULL;
     }
     return t;
 }

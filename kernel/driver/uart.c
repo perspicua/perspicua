@@ -27,18 +27,18 @@ static spinlock_t uart_lock = SPINLOCK_INIT;
 static unsigned int cached_uart_irq = 0;
 
 /* Public Register Pointers */
-volatile uint32_t* uart_dr = (void*)0;
-volatile uint32_t* uart_fr = (void*)0;
-volatile uint32_t* uart_mis = (void*)0;
-volatile uint32_t* uart_imsc = (void*)0;
+volatile uint32_t* uart_dr = NULL;
+volatile uint32_t* uart_fr = NULL;
+volatile uint32_t* uart_mis = NULL;
+volatile uint32_t* uart_imsc = NULL;
 
 /* Private Register Pointers (Static) */
-static volatile uint32_t* uart_ibrd = (void*)0;
-static volatile uint32_t* uart_fbrd = (void*)0;
-static volatile uint32_t* uart_lcrh = (void*)0;
-static volatile uint32_t* uart_cr = (void*)0;
-static volatile uint32_t* uart_ifls = (void*)0;
-static volatile uint32_t* uart_icr = (void*)0;
+static volatile uint32_t* uart_ibrd = NULL;
+static volatile uint32_t* uart_fbrd = NULL;
+static volatile uint32_t* uart_lcrh = NULL;
+static volatile uint32_t* uart_cr = NULL;
+static volatile uint32_t* uart_ifls = NULL;
+static volatile uint32_t* uart_icr = NULL;
 
 /*
  * uart_init - Configures the UART for standard serial communication.

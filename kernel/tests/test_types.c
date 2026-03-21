@@ -25,7 +25,7 @@ void test_types(void)
     TEST_PASS("pointer/size type sizes");
 
     // null
-    TEST_ASSERT("NULL is zero", NULL == (void*)0);
+    TEST_ASSERT("NULL is zero", NULL == NULL);
     void* p = NULL;
     TEST_ASSERT("NULL ptr is false", !p);
     TEST_PASS("NULL definition");

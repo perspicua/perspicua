@@ -1,3 +1,11 @@
+/*
+ * exception.c - AArch64 exception and interrupt handlers.
+ *
+ * Handles synchronous exceptions (aborts, SVC), IRQs, and unhandled vectors.
+ * Integrates with the panic system for kernel faults: PANIC_TF() is used
+ * wherever a trap frame is available so panic_full() can print the complete
+ * faulting register state rather than a snapshot from inside panic itself.
+ */
 #include "arch/exception.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
@@ -30,14 +38,14 @@ int exception_fixup(struct exception_trap_frame* tf)
     return 0;
 }
 
-// Exception Class values (EC field of ESR_EL1, bits [31:26])
+/* Exception Class values (EC field of ESR_EL1, bits [31:26]) */
 #define EC_SVC              0x15
 #define EC_INST_ABORT_LOWER 0x20
 #define EC_INST_ABORT_SAME  0x21
 #define EC_DATA_ABORT_LOWER 0x24
 #define EC_DATA_ABORT_SAME  0x25
 
-// Fault Status Code masks (IFSC/DFSC, bits [5:0] of ESR_EL1)
+/* Fault Status Code masks (IFSC/DFSC, bits [5:0] of ESR_EL1) */
 #define FSC_MASK           0x3F
 #define FSC_TRANSLATION_L0 0x04
 #define FSC_TRANSLATION_L3 0x07
@@ -87,26 +95,23 @@ static const char* fsc_to_string(uint32_t fsc)
     }
 }
 
-static void dump_regs(struct exception_trap_frame* tf)
-{
-    printf("Register Dump:\n");
-    for (int i = 0; i < 30; i += 2)
-    {
-        printf("  x%d: %p  x%d: %p\n", i, (void*)tf->x[i], i + 1, (void*)tf->x[i + 1]);
-    }
-    printf("  x30: %p  sp_el0: %p\n", (void*)tf->x30, (void*)tf->sp_el0);
-    printf("  elr_el1: %p  spsr_el1: %p\n", (void*)tf->elr_el1, (void*)tf->spsr_el1);
-}
-
+/*
+ * handle_abort - Handles instruction and data abort exceptions.
+ *
+ * For user aborts: prints a process fault report and kills the process.
+ * For kernel aborts: calls PANIC_TF() so the full trap frame register
+ * state is included in the panic output.
+ *
+ * CoW handling runs first for user permission faults, before any output.
+ */
 static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t esr)
 {
     unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
+    /* Check the exception fixup table for known-safe fault sites */
     if (exception_fixup(tf))
-    {
         return;
-    }
 
     uint32_t fsc = esr & FSC_MASK;
     int is_write = (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
@@ -114,35 +119,33 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     int is_inst = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
     int is_translation = (fsc >= FSC_TRANSLATION_L0 && fsc <= FSC_TRANSLATION_L3);
 
-    if (is_user && is_write && (fsc == FSC_PERMISSION_L3))
+    (void)is_translation; /* demand paging hook — not yet implemented */
+
+    if (is_user && is_write && fsc == FSC_PERMISSION_L3)
     {
         int pid = process_find_current();
         if (pid >= 0)
         {
             unsigned long* pgd = process_table[pid].user_pgd;
             if (mmu_handle_cow(pgd, far) == 0)
-            {
                 return;
-            }
         }
     }
-
-    (void)is_translation;  // demand paging hook (ca tot ma batea la cap riciu cu demand paging)
 
     if (is_user)
     {
         int pid = process_find_current();
 
         printf("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data", pid);
-        if (far < 0x1000)
-            printf("  Type     : NULL Pointer Dereference\n");
-        printf("  FAR_EL1  : %p\n", (void*)far);
-        printf("  ELR_EL1  : %p\n", (void*)tf->elr_el1);
-        printf("  ESR_EL1  : %lx\n", (unsigned long)esr);
-        printf("  Fault    : %s\n", fsc_to_string(fsc));
-        printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
 
-        dump_regs(tf);
+        if (far < 0x1000)
+            printf("  Type     : Likely NULL pointer dereference (FAR < 4K)\n");
+
+        printf("  FAR_EL1  : 0x%016lx\n", far);
+        printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+        printf("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
+        printf("  FSC      : %s\n", fsc_to_string(fsc));
+        printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
 
         if (pid >= 0)
         {
@@ -160,60 +163,63 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         }
         else
         {
-            printf("  Action   : no owning process found, halting\n");
+            printf("  Action   : no owning process found — halting\n");
+            while (1)
+                asm volatile("wfe");
         }
-
-        while (1)
-            asm volatile("wfe");
     }
     else
     {
-        struct task* curr = sched_get_current();
-        int pid = curr ? (int)curr->pid : -1;
-        unsigned long tid = curr ? curr->id : 0;
-
-        printf("\n[KERNEL PANIC] %s abort in kernel! (PID %d, TID %lu)\n", is_inst ? "Instruction" : "Data", pid, tid);
         if (far < 0x1000)
-            printf("  Type     : NULL Pointer Dereference\n");
-        printf("  FAR_EL1  : %p\n", (void*)far);
-        printf("  ELR_EL1  : %p\n", (void*)tf->elr_el1);
-        printf("  ESR_EL1  : %lx\n", (unsigned long)esr);
-        printf("  Fault    : %s\n", fsc_to_string(fsc));
-        printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
-
-        dump_regs(tf);
-        PANIC("Unrecoverable kernel abort");
+        {
+            printf("\n[KERNEL FAULT] NULL pointer dereference (FAR=0x%016lx)\n", far);
+        }
+        else
+        {
+            printf("\n[KERNEL FAULT] %s at FAR=0x%016lx, FSC=%s\n",
+                   is_inst ? "Instruction abort" : (is_write ? "Write fault" : "Read fault"),
+                   far,
+                   fsc_to_string(fsc));
+        }
+        PANIC_TF("Unrecoverable kernel memory abort", tf);
     }
 }
 
+/*
+ * exception_unhandled_vector - Fallback for exception vectors with no handler.
+ *
+ * This fires for exception classes that the kernel has no registered path
+ * for (e.g., FIQ, SError, EL2 vectors taken at EL1). Since we have no trap
+ * frame here (the vector entry did not save one), we fall back to a plain
+ * PANIC() with a live register snapshot.
+ */
 void exception_unhandled_vector(void)
 {
-    unsigned int esr;
+    unsigned long esr, elr, far;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
-
-    unsigned long elr;
     asm volatile("mrs %0, elr_el1" : "=r"(elr));
-
-    unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
-    printf("An unhandled exception occurred!\n");
-    printf("FAR_EL1 (Faulting Address): 0x%lx\n", far);
-    printf("ESR_EL1 (Reason)  : 0x%lx\n", (unsigned long)esr);
-    printf("ELR_EL1 (Address) : 0x%lx\n", elr);
-    printf("System halted.\n");
+    printf("\n[UNHANDLED VECTOR]\n");
+    printf("  ESR_EL1  : 0x%016lx\n", esr);
+    printf("  ELR_EL1  : 0x%016lx\n", elr);
+    printf("  FAR_EL1  : 0x%016lx\n", far);
 
-    while (1)
-    {
-        asm volatile("wfe");
-    }
+    PANIC("Unhandled exception vector");
 }
 
 static unsigned int uart_irq_cached = 0;
 
+/*
+ * exception_irq_handler - Top-level IRQ handler.
+ *
+ * Dispatches timer ticks, UART RX/TX, and panic IPIs.
+ * Spurious interrupts (IAR >= 1020) are silently ignored per GIC spec —
+ * writing EOIR for a spurious IRQ is architecturally incorrect.
+ */
 void exception_irq_handler(void)
 {
-    // check before even reading IAR — a panic IPI may have woken us
+    /* A panic IPI may have fired to wake this core; check before IAR read */
     if (kernel_panicked)
     {
         disable_interrupts();
@@ -227,11 +233,13 @@ void exception_irq_handler(void)
     unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
-    if (irq_id >= 1020)  // spurious interrupt — do NOT write EOIR
+    /* Spurious interrupt — do NOT write EOIR */
+    if (irq_id >= 1020)
         return;
 
-    if (irq_id == 0)  // SGI 0: panic IPI from another core
+    if (irq_id == 0)
     {
+        /* SGI 0: panic IPI broadcast from another core */
         mmio_write(gic_c_eoir, iar);
         disable_interrupts();
         for (;;)
@@ -248,7 +256,7 @@ void exception_irq_handler(void)
     {
         uint32_t mis = mmio_read(uart_mis);
 
-        // Handle RX and RX Timeout
+        /* RX data ready or RX timeout */
         if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS))
         {
             while (!(mmio_read(uart_fr) & UART_FR_RXFE))
@@ -258,11 +266,9 @@ void exception_irq_handler(void)
             }
         }
 
-        // Handle TX
+        /* TX FIFO has space — pump the TX queue */
         if (mis & UART_MIS_TXMIS)
-        {
-            tty_handle_rx(&console_tty, 0);  // Trigger pump_tx
-        }
+            tty_handle_rx(&console_tty, 0);
 
         uart_clear_interrupt(mis);
     }
@@ -270,37 +276,45 @@ void exception_irq_handler(void)
     mmio_write(gic_c_eoir, iar);
 }
 
+/*
+ * exception_sync_handler - Top-level synchronous exception dispatcher.
+ *
+ * Reads ESR_EL1 to determine the exception class and routes to the
+ * appropriate handler. Unrecognised ECs use PANIC_TF() so the full trap
+ * frame is available in the panic output.
+ */
 void exception_sync_handler(struct exception_trap_frame* tf)
 {
     uintptr_t esr;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
 
-    uint32_t ec = (esr >> 26) & 0b111111;
+    uint32_t ec = (uint32_t)((esr >> 26) & 0x3F);
 
     switch (ec)
     {
     case EC_SVC:
-    {
         syscall_handle(tf);
         break;
-    }
+
     case EC_INST_ABORT_LOWER:
     case EC_INST_ABORT_SAME:
     case EC_DATA_ABORT_LOWER:
     case EC_DATA_ABORT_SAME:
         handle_abort(tf, ec, esr);
         break;
+
     default:
     {
         unsigned long far;
         asm volatile("mrs %0, far_el1" : "=r"(far));
 
-        printf("\n[KERNEL PANIC] Unhandled synchronous exception!\n");
-        printf("  EC       : 0x%lx\n", (unsigned long)ec);
-        printf("  FAR_EL1  : 0x%lx\n", far);
-        printf("  ESR_EL1  : 0x%lx\n", (unsigned long)esr);
-        printf("  ELR_EL1  : 0x%lx\n", tf->elr_el1);
-        PANIC("Unhandled exception class");
+        printf("\n[KERNEL FAULT] Unhandled synchronous exception\n");
+        printf("  EC       : 0x%02x\n", (unsigned int)ec);
+        printf("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
+        printf("  FAR_EL1  : 0x%016lx\n", far);
+        printf("  ELR_EL1  : 0x%016lx\n", tf->elr_el1);
+
+        PANIC_TF("Unhandled exception class", tf);
     }
     }
 }

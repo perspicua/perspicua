@@ -29,8 +29,8 @@ struct devfs_node
 };
 
 /* Internal filesystem state and synchronization */
-static struct vfs_vnode* devfs_root_vnode = (void*)0;
-static struct devfs_node* devfs_devices = (void*)0;
+static struct vfs_vnode* devfs_root_vnode = NULL;
+static struct devfs_node* devfs_devices = NULL;
 static spinlock_t devfs_lock = SPINLOCK_INIT;
 
 /* Extern console TTY from the TTY subsystem */
@@ -44,7 +44,7 @@ static struct vfs_vnode* devfs_root_lookup(struct vfs_vnode* dir, const char* fi
 {
     if (dir != devfs_root_vnode)
     {
-        return (void*)0;
+        return NULL;
     }
 
     spin_lock(&devfs_lock);
@@ -62,7 +62,7 @@ static struct vfs_vnode* devfs_root_lookup(struct vfs_vnode* dir, const char* fi
     }
     spin_unlock(&devfs_lock);
 
-    return (void*)0;
+    return NULL;
 }
 
 /*
@@ -99,8 +99,8 @@ static int devfs_root_readdir(struct vfs_file* file, void* buffer, size_t count)
 static struct vfs_vnode_ops devfs_root_ops = {
     .lookup = devfs_root_lookup,
     .readdir = devfs_root_readdir,
-    .read = (void*)0,
-    .write = (void*)0,
+    .read = NULL,
+    .write = NULL,
 };
 
 /*
@@ -168,7 +168,7 @@ static int devfs_tty_write(struct vfs_file* file, const void* buffer, size_t siz
 }
 
 /* Operation mapping for TTY device nodes */
-static struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write, .lookup = (void*)0};
+static struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write, .lookup = NULL};
 
 /*
  * devfs_init - Boot-time initialization for the device filesystem.
@@ -183,8 +183,8 @@ void devfs_init(void)
 
     devfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
     devfs_root_vnode->ops = &devfs_root_ops;
-    devfs_root_vnode->internal_info = (void*)0;
-    devfs_root_vnode->parent = (void*)0;
+    devfs_root_vnode->internal_info = NULL;
+    devfs_root_vnode->parent = NULL;
     devfs_root_vnode->file_size = 0;
     devfs_root_vnode->refcount.counter = 1;
 

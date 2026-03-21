@@ -294,12 +294,12 @@ void pmm_init(void)
 
     for (int i = 0; i <= PMM_MAX_ORDER; i++)
     {
-        pmm_free_lists[i] = (void*)0;
+        pmm_free_lists[i] = NULL;
     }
 
     for (unsigned long i = 0; i < pmm_num_pages; i++)
     {
-        pmm_page_array[i].next = (void*)0;
+        pmm_page_array[i].next = NULL;
         pmm_page_array[i].order = 0;
         pmm_page_array[i].is_free = 0;
         pmm_page_array[i].refcount = 0;
@@ -356,7 +356,7 @@ void* pmm_alloc_pages(unsigned long count)
 {
     if (count == 0)
     {
-        return (void*)0;
+        return NULL;
     }
 
     unsigned int target_order = get_order(count);
@@ -378,7 +378,7 @@ void* pmm_alloc_pages(unsigned long count)
     {
         spin_unlock_irqrestore(&pmm_lock, flags);
         PANIC("PMM: Physical memory exhaustion");
-        return (void*)0;
+        return NULL;
     }
 
     struct pmm_page* p = pmm_free_lists[current_order];
