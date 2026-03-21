@@ -31,6 +31,8 @@ extern struct fb_info_struct fb_info;
  */
 void fb_init(void);
 
+void fb_register_device(void);
+
 /*
  * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.
  * Ensures the framebuffer memory is mapped with device-specific attributes.

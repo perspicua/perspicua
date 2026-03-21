@@ -28,6 +28,7 @@ typedef signed long ptrdiff_t;
 typedef unsigned long uintptr_t;
 typedef signed long intptr_t;
 
+typedef int64_t off_t;
 /* Integer type limits */
 #define INT8_MIN  (-128)
 #define INT8_MAX  (127)

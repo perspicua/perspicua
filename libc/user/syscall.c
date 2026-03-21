@@ -298,3 +298,38 @@ int sys_chdir(const char* path)
                  : "x0", "x8", "memory");
     return (int)res;
 }
+
+int sys_getcwd(char* buf, size_t size)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(buf), "r"((long)size), "i"(SYS_GETCWD)
+                 : "x0", "x1", "x8", "memory");
+    return (int)res;
+}
+
+/*
+ * sys_mmap - Maps files or devices into memory.
+ */
+void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x3, %4\n"
+                 "mov x4, %5\n"
+                 "mov x5, %6\n"
+                 "mov x8, %7\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(addr), "r"(length), "r"((long)prot), "r"((long)flags), "r"((long)fd), "r"(offset), "i"(SYS_MMAP)
+                 : "x0", "x1", "x2", "x3", "x4", "x5", "x8", "memory");
+    return (void*)res;
+}

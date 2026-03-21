@@ -71,6 +71,7 @@ struct vfs_vnode_ops
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
     int (*readdir)(struct vfs_file* file, void* buffer, size_t count);
     int (*close)(struct vfs_file* file);
+    int (*mmap)(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags);
 };
 
 /*

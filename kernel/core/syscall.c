@@ -9,6 +9,9 @@
 #include "core/syscall.h"
 
 #include "core/signals.h"
+#include "fs/vfs.h"
+#include "mm/pmm.h"
+#include "uapi/mman.h"
 #include "uapi/syscalls.h"
 #include "uapi/errors.h"
 
@@ -24,6 +27,7 @@
 #include "string.h"
 #include "panic.h"
 #include "core/signals.h"
+#include <stdint.h>
 
 /*
  * validate_user_buffer - Verifies that a memory range provided by a user
@@ -545,6 +549,74 @@ void syscall_handle(struct exception_trap_frame* tf)
         int res = vfs_chdir(kpath);
         heap_free(kpath);
         tf->x[0] = (uint64_t)res;
+        break;
+    }
+    case SYS_MMAP:
+    {  // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+        uintptr_t addr = (uintptr_t)tf->x[0];
+        size_t length = (size_t)tf->x[1];
+        int prot = (int)tf->x[2];
+        int flags = (int)tf->x[3];
+        int fd = (int)tf->x[4];
+        off_t offset = (off_t)tf->x[5];
+
+        int curr_process_pid = process_find_current();
+        if (curr_process_pid < 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+            break;
+        }
+
+        struct process* curr_process = &process_table[curr_process_pid];
+
+        size_t pages_needed = length / PAGE_SIZE;
+        if (length > 0 && length % PAGE_SIZE != 0)
+            pages_needed++;
+
+        uintptr_t new_region = process_va_alloc(&curr_process->va, pages_needed);
+        if (new_region == 0)
+        {
+            tf->x[0] = -PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        if (fd != -1)
+        {
+            struct vfs_file* file = curr_process->fd_table[fd];
+            if (file == NULL)
+            {
+                tf->x[0] = (uintptr_t)MAP_FAILED;
+                break;
+            }
+            if (file->node->ops->mmap != NULL)
+            {
+                int rc = file->node->ops->mmap(file, new_region, length, prot, flags);
+                if (rc < 0)
+                {
+                    tf->x[0] = (uintptr_t)MAP_FAILED;
+                    break;
+                }
+            }
+        }
+        if (flags & MAP_ANONYMOUS)
+        {
+            unsigned long mmu_flags =
+                MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_PXN;
+            if (!(prot & PROT_WRITE))
+            {
+                mmu_flags |= MMU_AP_RO;
+            }
+
+            mmu_flags |= MMU_UXN;
+            void* kaddr = pmm_alloc_pages(pages_needed);
+            memset(kaddr, 0, pages_needed * PAGE_SIZE);
+            for (int i = 0; i < pages_needed; i++)
+            {
+                uintptr_t phys = V2P((uintptr_t)kaddr + i * PAGE_SIZE);
+                mmu_user_map_page(curr_process->user_pgd, new_region + i * PAGE_SIZE, phys, mmu_flags);
+            }
+        }
+        tf->x[0] = new_region;
         break;
     }
 

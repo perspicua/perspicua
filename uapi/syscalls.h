@@ -30,4 +30,6 @@
 #define SYS_GETDENTS   18
 #define SYS_CHDIR      19
 #define SYS_GETCWD     20
+#define SYS_MMAP       21
+
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

@@ -7,6 +7,8 @@
 
 #include "driver/fb.h"
 
+#include "fs/devfs.h"
+#include "sched/process.h"
 #include "types.h"
 #include "stdio.h"
 #include "mm/addr.h"
@@ -20,6 +22,26 @@ static __attribute__((aligned(16))) unsigned int mbox[36];
 
 /* The global framebuffer device information. */
 struct fb_info_struct fb_info;
+struct vfs_vnode_ops fb_vfs_ops = {0};
+
+int fb_mmap(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags)
+{
+    uintptr_t phys_fb = V2P((uintptr_t)fb_info.ptr);
+
+    size_t pages = length / PAGE_SIZE;
+    if (length % PAGE_SIZE != 0)
+        pages++;
+
+    int pid = process_find_current();
+    unsigned long* pgd = process_table[pid].user_pgd;
+
+    for (size_t i = 0; i < pages; i++)
+    {
+        mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE, MMU_FLAGS_FRAMEBUFFER | MMU_AP_USER);
+    }
+
+    return 0;
+}
 
 /*
  * fb_init - Initializes the Raspberry Pi 4 framebuffer.
@@ -89,6 +111,11 @@ void fb_init(void)
     }
 }
 
+void fb_register_device(void)
+{
+    fb_vfs_ops.mmap = fb_mmap;
+    devfs_register_device("fb0", &fb_vfs_ops, NULL);
+}
 /*
  * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.
  */

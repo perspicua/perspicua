@@ -56,4 +56,5 @@ void sys_sigreturn(void);
 void sys_sigrestore(uintptr_t restorer);
 int sys_chdir(const char* path);
 int sys_getcwd(char* buf, size_t size);
+void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 #endif /* PERSPICUA_LIBC_SYSCALL_H */
