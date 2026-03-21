@@ -14,8 +14,8 @@
 
 #include "stdio.h"
 /* GPIO Register Pointers (Static) */
-static volatile unsigned int* gpio_gpfsel0 = (void*)0;
-static volatile unsigned int* gpio_gppupdn0 = (void*)0;
+static volatile unsigned int* gpio_gpfsel0 = NULL;
+static volatile unsigned int* gpio_gppupdn0 = NULL;
 
 /*
  * gpio_init - Discovers and initializes the GPIO base address from the hardware tree.

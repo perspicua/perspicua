@@ -151,7 +151,7 @@ char* strchr(const char* str, int c)
         }
         str++;
     }
-    return (void*)0;
+    return NULL;
 }
 
 /*
@@ -159,7 +159,7 @@ char* strchr(const char* str, int c)
  */
 char* strrchr(const char* str, int c)
 {
-    char* last = (void*)0;
+    char* last = NULL;
     while (str)
     {
         if (*str == (char)c)
@@ -204,7 +204,7 @@ char* strstr(const char* haystack, const char* needle)
         }
         haystack++;
     }
-    return (void*)0;
+    return NULL;
 }
 
 /*
@@ -247,23 +247,23 @@ char* strtok_r(char* str, const char* delim, char** saveptr)
 
     if (!str || *str == '\0')
     {
-        *saveptr = (void*)0;
-        return (void*)0;
+        *saveptr = NULL;
+        return NULL;
     }
 
     /* Skip leading delimiters */
     str += strspn(str, delim);
     if (*str == '\0')
     {
-        *saveptr = (void*)0;
-        return (void*)0;
+        *saveptr = NULL;
+        return NULL;
     }
 
     /* Locate the end of the current token */
     char* end = str + strcspn(str, delim);
     if (*end == '\0')
     {
-        *saveptr = (void*)0;
+        *saveptr = NULL;
     }
     else
     {

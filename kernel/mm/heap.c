@@ -31,7 +31,7 @@ struct heap_block_header
 #define HEAP_ALIGN(x)    (((x) + 15) & ~15UL)
 
 /* Heap state and synchronization */
-static struct heap_block_header* heap_free_list = (void*)0;
+static struct heap_block_header* heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
 static unsigned long heap_used_size = 0;
@@ -47,12 +47,12 @@ static struct heap_block_header* heap_expand(unsigned long min_size)
     void* region = pmm_alloc_pages(pages);
     if (!region)
     {
-        return (void*)0;
+        return NULL;
     }
 
     struct heap_block_header* block = (struct heap_block_header*)region;
     block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
-    block->next = (void*)0;
+    block->next = NULL;
     block->is_free = 1;
 
     heap_total_size += pages * PAGE_SIZE;
@@ -84,7 +84,7 @@ void* heap_malloc(unsigned long size)
 {
     if (size == 0)
     {
-        return (void*)0;
+        return NULL;
     }
 
     /* Use the O(1) slab path for small objects */

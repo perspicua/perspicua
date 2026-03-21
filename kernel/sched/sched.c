@@ -29,23 +29,23 @@ _Static_assert(__builtin_offsetof(struct task, state) == 112, "struct task->stat
 #define SCHED_TASK_CANARY_PTR(t) ((unsigned long*)((t)->stack + PAGE_SIZE))
 
 /* Static scheduler state */
-static struct task* sched_idle_tasks[4] = {(void*)0};
+static struct task* sched_idle_tasks[4] = {NULL};
 
 static uint64_t sched_canary_before = 0xAAAAAAAAAAAAAAAAULL;
 static struct task sched_init_tasks[4];
 static uint64_t sched_canary_after = 0xBBBBBBBBBBBBBBBBULL;
 
 /* Per-CPU ready queues and locks */
-static struct task* sched_ready_heads[4] = {(void*)0};
-static struct task* sched_ready_tails[4] = {(void*)0};
+static struct task* sched_ready_heads[4] = {NULL};
+static struct task* sched_ready_tails[4] = {NULL};
 static spinlock_t sched_ready_locks[4] = {SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT, SPINLOCK_INIT};
 
 /* Global sleep queue for tasks blocked on time */
-static struct task* sched_sleep_head = (void*)0;
+static struct task* sched_sleep_head = NULL;
 static spinlock_t sched_sleep_lock = SPINLOCK_INIT;
 
 /* Housekeeping state for task cleanup */
-static struct task* sched_cleanup_tasks[4] = {(void*)0};
+static struct task* sched_cleanup_tasks[4] = {NULL};
 static int sched_core_pids[4] = {-1, -1, -1, -1};
 
 /* Global task ID generation */
@@ -83,7 +83,7 @@ static void enqueue_ready(int cpu, struct task* t)
     unsigned long flags = spin_lock_irqsave(&sched_ready_locks[cpu]);
 
     t->state = SCHED_TASK_READY;
-    t->next = (void*)0;
+    t->next = NULL;
 
     if (!sched_ready_heads[cpu])
     {
@@ -107,7 +107,7 @@ static struct task* dequeue_ready_filtered(int cpu, int allow_pid0)
 {
     unsigned long flags = spin_lock_irqsave(&sched_ready_locks[cpu]);
 
-    struct task* prev = (void*)0;
+    struct task* prev = NULL;
     struct task* curr = sched_ready_heads[cpu];
 
     while (curr)
@@ -120,11 +120,11 @@ static struct task* dequeue_ready_filtered(int cpu, int allow_pid0)
                 sched_ready_heads[cpu] = curr->next;
 
             if (!sched_ready_heads[cpu])
-                sched_ready_tails[cpu] = (void*)0;
+                sched_ready_tails[cpu] = NULL;
             else if (curr == sched_ready_tails[cpu])
                 sched_ready_tails[cpu] = prev;
 
-            curr->next = (void*)0;
+            curr->next = NULL;
             spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
             return curr;
         }
@@ -133,7 +133,7 @@ static struct task* dequeue_ready_filtered(int cpu, int allow_pid0)
     }
 
     spin_unlock_irqrestore(&sched_ready_locks[cpu], flags);
-    return (void*)0;
+    return NULL;
 }
 
 static struct task* dequeue_ready(int cpu)
@@ -220,7 +220,7 @@ void sched_init(void)
     main_task->state = SCHED_TASK_RUNNING;
     main_task->id = sched_next_id++;
     main_task->pid = 0;
-    main_task->stack = (void*)0;
+    main_task->stack = NULL;
     main_task->ttbr0 = mmu_kernel_ttbr0();
 
     /* Store the task pointer in TPIDR_EL1 for fast retrieval */
@@ -404,7 +404,7 @@ void schedule(void)
             PANIC("SCHED: Attempted to cleanup the active task");
         }
 
-        sched_cleanup_tasks[cpu] = (void*)0;
+        sched_cleanup_tasks[cpu] = NULL;
 
         if (dead->pid != 0)
         {

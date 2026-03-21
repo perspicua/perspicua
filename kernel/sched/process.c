@@ -56,7 +56,7 @@ static void* alloc_kernel_stack(void)
     unsigned char* base = (unsigned char*)pmm_alloc_pages(SCHED_STACK_PAGES);
     if (!base)
     {
-        return (void*)0;
+        return NULL;
     }
     mmu_unmap_page((unsigned long)base);
 
@@ -167,7 +167,7 @@ void process_init(void)
     // PID 0 is the kernel/boot process
     process_table[0].pid = 0;
     process_table[0].state = PROCESS_STATE_RUNNING;
-    process_table[0].user_pgd = (void*)0;
+    process_table[0].user_pgd = NULL;
     process_table[0].asid = 0;
 
     printf("[ PROC ] Process management initialized\n");
@@ -264,11 +264,11 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].pid = pid;
     process_table[pid].state = PROCESS_STATE_RUNNING;
     int err;
-    process_table[pid].cwd = vfs_resolve_path("/", (void*)0, &err);
+    process_table[pid].cwd = vfs_resolve_path("/", NULL, &err);
 
     for (size_t i = 0; i < VFS_MAX_FDS; i++)
     {
-        process_table[pid].fd_table[i] = (void*)0;
+        process_table[pid].fd_table[i] = NULL;
     }
     vfs_open_pid("/dev/uart", VFS_O_RDONLY, pid);
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
@@ -350,7 +350,7 @@ int process_create_from_file(const char* path, uint32_t pid)
     process_table[pid].paddr_kernel_stack = V2P(kstack);
 
     int err;
-    process_table[pid].cwd = vfs_resolve_path("/", (void*)0, &err);
+    process_table[pid].cwd = vfs_resolve_path("/", NULL, &err);
 
     uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
     struct exception_trap_frame* tf =
@@ -366,7 +366,7 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     for (size_t i = 0; i < VFS_MAX_FDS; i++)
     {
-        process_table[pid].fd_table[i] = (void*)0;
+        process_table[pid].fd_table[i] = NULL;
     }
     vfs_open_pid("/dev/uart", VFS_O_RDONLY, pid);
     vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
@@ -510,7 +510,7 @@ void process_exit(uint32_t pid, int exit_status)
         struct vfs_file* f = process_table[pid].fd_table[i];
         if (f)
         {
-            process_table[pid].fd_table[i] = (void*)0;
+            process_table[pid].fd_table[i] = NULL;
             if (atomic_dec_and_test(&f->refcount))
             {
                 vfs_vnode_put(f->node);
@@ -521,12 +521,12 @@ void process_exit(uint32_t pid, int exit_status)
     spin_unlock(&process_table[pid].fd_lock);
 
     unsigned long* pgd = process_table[pid].user_pgd;
-    process_table[pid].user_pgd = (void*)0;
+    process_table[pid].user_pgd = NULL;
 
     if (process_table[pid].cwd)
     {
         vfs_vnode_put(process_table[pid].cwd);
-        process_table[pid].cwd = (void*)0;
+        process_table[pid].cwd = NULL;
     }
 
     process_table[pid].va.count = 0;
@@ -602,7 +602,7 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->vaddr_user_stack = parent->vaddr_user_stack;
     child->va = parent->va;
     child->parent_pid = (uint32_t)parent_pid;
-    child->main_task = (void*)0;
+    child->main_task = NULL;
 
     /* Copy signal state */
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
@@ -626,7 +626,7 @@ int process_fork(struct exception_trap_frame* parent_tf)
         }
         else
         {
-            child->fd_table[i] = (void*)0;
+            child->fd_table[i] = NULL;
         }
     }
     spin_unlock(&parent->fd_lock);

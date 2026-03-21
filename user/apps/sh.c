@@ -246,8 +246,8 @@ static void execute_pipeline(char* left_str, char* right_str)
 
     sys_close(pipefd[0]);
     sys_close(pipefd[1]);
-    sys_waitpid(pid1, (void*)0);
-    sys_waitpid(pid2, (void*)0);
+    sys_waitpid(pid1, NULL);
+    sys_waitpid(pid2, NULL);
 }
 
 static void execute_line(char* line)

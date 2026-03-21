@@ -33,7 +33,7 @@ static struct ramfs_file_data ramfs_files[RAMFS_MAX_FILES];
 static int ramfs_file_count = 0;
 
 /* VFS nodes and operation tables for RAMFS */
-static struct vfs_vnode* ramfs_root_vnode = (void*)0;
+static struct vfs_vnode* ramfs_root_vnode = NULL;
 static struct vfs_vnode_ops ramfs_dir_ops;
 static struct vfs_vnode_ops ramfs_file_ops;
 
@@ -71,7 +71,7 @@ struct vfs_vnode* ramfs_lookup(struct vfs_vnode* dir, const char* filename)
 {
     if (dir->type != VFS_VNODE_TYPE_DIR)
     {
-        return (void*)0;
+        return NULL;
     }
 
     for (int i = 0; i < ramfs_file_count; i++)
@@ -83,7 +83,7 @@ struct vfs_vnode* ramfs_lookup(struct vfs_vnode* dir, const char* filename)
         }
     }
 
-    return (void*)0;
+    return NULL;
 }
 
 /*
@@ -135,19 +135,19 @@ void ramfs_init(void)
 
     // Initialize directory operations table
     ramfs_dir_ops.lookup = ramfs_lookup;
-    ramfs_dir_ops.read = (void*)0;
-    ramfs_dir_ops.write = (void*)0;
+    ramfs_dir_ops.read = NULL;
+    ramfs_dir_ops.write = NULL;
 
     // Initialize file operations table
-    ramfs_file_ops.lookup = (void*)0;
+    ramfs_file_ops.lookup = NULL;
     ramfs_file_ops.read = ramfs_read;
-    ramfs_file_ops.write = (void*)0;
+    ramfs_file_ops.write = NULL;
 
     // Set up the root directory vnode
     ramfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
     ramfs_root_vnode->ops = &ramfs_dir_ops;
-    ramfs_root_vnode->internal_info = (void*)0;
-    ramfs_root_vnode->parent = (void*)0;
+    ramfs_root_vnode->internal_info = NULL;
+    ramfs_root_vnode->parent = NULL;
     ramfs_root_vnode->file_size = 0;
     ramfs_root_vnode->refcount.counter = 1;
 

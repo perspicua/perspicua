@@ -437,7 +437,7 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
     unsigned long* child_pgd = mmu_create_user_pgd();
     if (!child_pgd)
     {
-        return (void*)0;
+        return NULL;
     }
 
     unsigned long flags = spin_lock_irqsave(&mmu_lock);

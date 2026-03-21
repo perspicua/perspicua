@@ -19,17 +19,17 @@
 #include "driver/uart.h"
 
 /* Distributor registers */
-volatile unsigned int* gic_d_ctlr = (void*)0;
-volatile unsigned int* gic_d_isenablern = (void*)0;
-volatile unsigned char* gic_d_ipriorityr = (void*)0;
-volatile unsigned char* gic_d_itargetsr = (void*)0;
-volatile unsigned int* gic_d_sgir = (void*)0;
+volatile unsigned int* gic_d_ctlr = NULL;
+volatile unsigned int* gic_d_isenablern = NULL;
+volatile unsigned char* gic_d_ipriorityr = NULL;
+volatile unsigned char* gic_d_itargetsr = NULL;
+volatile unsigned int* gic_d_sgir = NULL;
 
 /* CPU Interface registers */
-volatile unsigned int* gic_c_ctlr = (void*)0;
-volatile unsigned int* gic_c_pmr = (void*)0;
-volatile unsigned int* gic_c_iar = (void*)0;
-volatile unsigned int* gic_c_eoir = (void*)0;
+volatile unsigned int* gic_c_ctlr = NULL;
+volatile unsigned int* gic_c_pmr = NULL;
+volatile unsigned int* gic_c_iar = NULL;
+volatile unsigned int* gic_c_eoir = NULL;
 
 static unsigned int cached_uart_irq = 0;
 

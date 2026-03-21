@@ -35,7 +35,7 @@ void vfs_init(void)
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++)
     {
         memset(vfs_mount_table[i].path, 0, VFS_MAX_PATH_LEN);
-        vfs_mount_table[i].root = (void*)0;
+        vfs_mount_table[i].root = NULL;
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
 
@@ -111,7 +111,7 @@ int vfs_mount(const char* path, struct vfs_vnode* root)
         }
 
         int err;
-        struct vfs_vnode* parent = vfs_resolve_path_locked(parent_path, (void*)0, &err);
+        struct vfs_vnode* parent = vfs_resolve_path_locked(parent_path, NULL, &err);
         if (parent)
         {
             root->parent = parent;
@@ -119,7 +119,7 @@ int vfs_mount(const char* path, struct vfs_vnode* root)
     }
     else
     {
-        root->parent = (void*)0;
+        root->parent = NULL;
     }
 
     /* Register the new mount entry */
@@ -154,7 +154,7 @@ int vfs_unmount(const char* path)
             vfs_mount_table[i].root = vfs_mount_table[vfs_mount_count - 1].root;
 
             memset(vfs_mount_table[vfs_mount_count - 1].path, 0, VFS_MAX_PATH_LEN);
-            vfs_mount_table[vfs_mount_count - 1].root = (void*)0;
+            vfs_mount_table[vfs_mount_count - 1].root = NULL;
 
             vfs_mount_count--;
             spin_unlock_irqrestore(&vfs_lock, flags);
@@ -199,7 +199,7 @@ static struct vfs_mount_entry* find_mount(const char* path, int* error)
     if (longest_match_index == -1)
     {
         *error = -PERS_ERR_NOT_FOUND;
-        return (void*)0;
+        return NULL;
     }
 
     *error = PERS_SUCCESS;
@@ -211,7 +211,7 @@ static struct vfs_mount_entry* find_mount(const char* path, int* error)
  */
 static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vnode* cwd, int* error)
 {
-    struct vfs_vnode* curr = (void*)0;
+    struct vfs_vnode* curr = NULL;
     char filepath[VFS_MAX_PATH_LEN];
     const char* path_remainder = path;
 
@@ -221,7 +221,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
         struct vfs_mount_entry* best_match = find_mount(path, error);
         if (!best_match)
         {
-            return (void*)0;
+            return NULL;
         }
 
         curr = best_match->root;
@@ -248,7 +248,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
             struct vfs_mount_entry* root_match = find_mount("/", error);
             if (!root_match)
             {
-                return (void*)0;
+                return NULL;
             }
             curr = root_match->root;
         }
@@ -273,7 +273,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
 
     while (token)
     {
-        struct vfs_vnode* next = (void*)0;
+        struct vfs_vnode* next = NULL;
 
         if (strcmp(token, ".") == 0)
         {
@@ -292,7 +292,7 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
             {
                 vfs_vnode_put(curr);
                 *error = -PERS_ERR_NOT_A_DIRECTORY;
-                return (void*)0;
+                return NULL;
             }
 
             next = curr->ops->lookup(curr, token);
@@ -300,13 +300,13 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
             {
                 vfs_vnode_put(curr);
                 *error = -PERS_ERR_NOT_FOUND;
-                return (void*)0;
+                return NULL;
             }
         }
 
         vfs_vnode_put(curr);
         curr = next;
-        token = strtok_r((void*)0, "/", &saveptr);
+        token = strtok_r(NULL, "/", &saveptr);
     }
 
     *error = PERS_SUCCESS;
@@ -431,7 +431,7 @@ int vfs_close(int fd)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    p->fd_table[fd] = (void*)0;
+    p->fd_table[fd] = NULL;
     spin_unlock(&p->fd_lock);
 
     if (atomic_dec_and_test(&f->refcount))
@@ -643,7 +643,7 @@ int vfs_dup2(int oldfd, int newfd)
     }
 
     struct process* p = &process_table[pid];
-    struct vfs_file* to_free = (void*)0;
+    struct vfs_file* to_free = NULL;
 
     spin_lock(&p->fd_lock);
     struct vfs_file* old_f = p->fd_table[oldfd];

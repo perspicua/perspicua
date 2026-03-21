@@ -59,7 +59,7 @@ static int validate_user_buffer(const void* ptr, size_t len, int writable)
     while (curr < end)
     {
         unsigned long current_flags;
-        if (!mmu_user_query(pgd, curr, (void*)0, &current_flags))
+        if (!mmu_user_query(pgd, curr, NULL, &current_flags))
         {
             spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
