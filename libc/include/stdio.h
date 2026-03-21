@@ -1,19 +1,35 @@
 /*
- * stdio.h - Standard Input/Output definitions.
- *
- * This file provides the interface for formatted output operations,
- * primarily used for kernel debugging and basic user application output.
+ * stdio.h - Kernel/user formatted output API.
  */
-
 #ifndef PERSPICUA_LIBC_STDIO_H
 #define PERSPICUA_LIBC_STDIO_H
 
 #include "types.h"
+#include <stdarg.h>
 
 /*
- * printf - Performs formatted output to the system console.
- * Supported format specifiers include %d, %u, %x, %ld, %lu, %lx, %p, %s, and %c.
+ * printf - Formatted output to the console (UART).
+ *   \n is translated to \r\n automatically.
+ *   Thread-safe under __KERNEL__ via printf_lock.
  */
-void printf(const char* fmt, ...);
+int printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/*
+ * vprintf - va_list variant of printf.
+ */
+int vprintf(const char* fmt, va_list args);
+
+/*
+ * snprintf - Formatted output into a size-bounded buffer.
+ *   Always NUL-terminates. Returns the number of bytes that would have been
+ *   written if the buffer were unlimited (C99 semantics).
+ *   Does NOT translate \n to \r\n — produces clean strings.
+ */
+int snprintf(char* buf, size_t size, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+
+/*
+ * vsnprintf - va_list variant of snprintf.
+ */
+int vsnprintf(char* buf, size_t size, const char* fmt, va_list args);
 
 #endif /* PERSPICUA_LIBC_STDIO_H */

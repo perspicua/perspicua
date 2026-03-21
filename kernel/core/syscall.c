@@ -268,9 +268,57 @@ void syscall_handle(struct exception_trap_frame* tf)
     case SYS_EXEC:
     { /* sys_exec(const char* path) */
         const char* path = (const char*)(tf->x[0]);
+        // /* TEMP DEBUG */
+        // int cur_pid = process_find_current();
+        // unsigned long dbg_paddr = 0, dbg_flags = 0;
+        // int dbg_mapped =
+        //     (cur_pid >= 0)
+        //     && mmu_user_query(process_table[cur_pid].user_pgd, (unsigned long)path & ~0xFFFUL, &dbg_paddr,
+        //     &dbg_flags);
+        // printf("[EXEC DEBUG] path=0x%lx mapped=%d paddr=0x%lx flags=0x%lx\n",
+        //        (unsigned long)path,
+        //        dbg_mapped,
+        //        dbg_paddr,
+        //        dbg_flags);
+        // if (dbg_mapped)
+        // {
+        //     const char* direct = (const char*)P2V(dbg_paddr) + ((unsigned long)path & 0xFFF);
+        //     printf("[EXEC DEBUG] P2V direct read: '%.16s'\n", direct);
+        // }
 
         size_t path_len = 0;
         const char* p = path;
+        // unsigned long actual_ttbr0;
+        // asm volatile("mrs %0, ttbr0_el1" : "=r"(actual_ttbr0));
+        // printf("[EXEC DEBUG] actual TTBR0=0x%lx expected=0x%lx\n",
+        //        actual_ttbr0,
+        //        (unsigned long)process_table[cur_pid].ttbr0);
+        // /* Read PGD[0] via software (kernel virtual address) */
+        // unsigned long* pgd_virt = (unsigned long*)P2V(actual_ttbr0 & 0xFFFFFFFFFFFUL);
+        // unsigned long pgd_entry_sw = pgd_virt[0];
+        //
+        // /* Force a cache flush of the PGD page to ensure PTW sees same data */
+        // asm volatile("dc civac, %0" ::"r"(pgd_virt) : "memory");
+        // asm volatile("dsb ish" ::: "memory");
+        //
+        // /* Read again after flush */
+        // unsigned long pgd_entry_after = pgd_virt[0];
+        //
+        // printf("[EXEC DEBUG] PGD[0] sw=0x%lx after_flush=0x%lx\n", pgd_entry_sw, pgd_entry_after);
+        //
+        // /* Walk manually to L3 entry for 0x102060 */
+        // if (pgd_entry_sw & 1)
+        // {
+        //     unsigned long* pmd = (unsigned long*)P2V(pgd_entry_sw & 0x0000FFFFFFFFF000ULL);
+        //     unsigned long pmd_entry = pmd[0]; /* L2 index = 0 */
+        //     printf("[EXEC DEBUG] PMD[0]=0x%lx\n", pmd_entry);
+        //     if (pmd_entry & 1)
+        //     {
+        //         unsigned long* pte_table = (unsigned long*)P2V(pmd_entry & 0x0000FFFFFFFFF000ULL);
+        //         unsigned long pte = pte_table[0x102]; /* L3 index for 0x102060 */
+        //         printf("[EXEC DEBUG] PTE[0x102]=0x%lx\n", pte);
+        //     }
+        // }
         while (path_len < VFS_MAX_PATH_LEN)
         {
             unsigned char c;
@@ -293,6 +341,8 @@ void syscall_handle(struct exception_trap_frame* tf)
         }
 
         char* kpath = heap_malloc(path_len + 1);
+        // unsigned char direct_read = *(volatile unsigned char*)(uintptr_t)path;
+        // printf("[EXEC DEBUG] direct deref byte0=0x%02x (expect 0x2f for '/')\n", direct_read);
         if (copy_from_user(kpath, path, path_len + 1) != 0)
         {
             heap_free(kpath);
@@ -300,7 +350,13 @@ void syscall_handle(struct exception_trap_frame* tf)
             break;
         }
 
+        // printf("[EXEC DEBUG] syscall tf=0x%lx x0=0x%lx path_ptr=0x%lx\n",
+        //        (unsigned long)tf,
+        //        (unsigned long)tf->x[0],
+        //        (unsigned long)(const char*)(tf->x[0]));
         int res = process_exec(kpath);
+        //
+        // printf("[EXEC DEBUG] process_exec('%s') = %d\n", kpath, res);  // ADD THIS
         heap_free(kpath);
 
         if (res < 0)
