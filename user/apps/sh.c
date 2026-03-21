@@ -188,10 +188,9 @@ static void run_output_builtin(Command* cmd)
     }
     else if (strcmp(cmd->argv[0], "help") == 0)
     {
-        print_string("\033[1;33mPerspicua Beefy Shell\033[0m\n");
+        print_string("Perspicua Shell\n");
         print_string("Built-ins: help, echo, clear, pwd, cd, exit\n");
-        print_string(
-            "Features: Multiple Pipes (|), Redirections (>, >>, <), Quotes (\" \"), Background (&), Sequences (;)\n");
+        print_string("Features: |, >, >>, <, \" \", &, ;\n");
     }
 }
 
@@ -423,9 +422,9 @@ static void print_prompt(void)
     char cwd[256];
     if (sys_getcwd(cwd, sizeof(cwd)) == 0)
     {
-        print_string("\033[1;32mperspicua\033[0m:\033[1;34m");
+        print_string("perspicua:");
         print_string(cwd);
-        print_string("\033[0m$ ");
+        print_string("$ ");
     }
     else
     {
@@ -435,11 +434,8 @@ static void print_prompt(void)
 
 int main(void)
 {
-    print_string("\033[2J\033[H"); /* Clear screen */
-    print_string("\033[1;36m==============================\033[0m\n");
-    print_string("      \033[1;33mPerspicua OS Shell\033[0m      \n");
-    print_string("\033[1;36m==============================\033[0m\n");
-    print_string("Type \033[1mhelp\033[0m to see available commands.\n\n");
+    print_string("Perspicua Shell\n");
+    print_string("Type help to see available commands.\n\n");
 
     char cmd_buffer[CMD_MAX_LEN];
     int cmd_length = 0;

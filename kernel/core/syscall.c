@@ -551,6 +551,11 @@ void syscall_handle(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)res;
         break;
     }
+    case SYS_GETCWD:
+    {
+        tf->x[0] = -PERS_ERR_NOT_IMPLEMENTED;
+        break;
+    }
     case SYS_MMAP:
     {  // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
         uintptr_t addr = (uintptr_t)tf->x[0];
