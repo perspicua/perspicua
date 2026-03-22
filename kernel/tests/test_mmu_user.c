@@ -425,11 +425,11 @@ void test_mmu_user(void)
         unsigned long va1 = USER_VA_BASE + 0x8000;
         unsigned long va2 = USER_VA_BASE + 0x9000;
 
-        pmm_hold_page(shared_page); // Hold due to multi-map
+        pmm_hold_page(shared_page);  // Hold due to multi-map
         mmu_user_map_page(pgd, va1, V2P(shared_page), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(shared_page), MMU_PAGE_USER_DATA);
 
-        *(volatile unsigned long*)V2P(shared_page) = 0; // zero out physical memory directly not possible securely here if not in kernel window, but we are kernel tests
+        *(volatile unsigned long*)shared_page = 0;
 
         unsigned long pa1, pa2;
         TEST_ASSERT("multi-va: map1", mmu_user_query(pgd, va1, &pa1, 0) && pa1 == V2P(shared_page));
@@ -450,14 +450,11 @@ void test_mmu_user(void)
         unsigned long va = USER_VA_BASE + 0xA000;
 
         mmu_user_map_page(pgd, va, V2P(p1), MMU_PAGE_USER_DATA);
-        mmu_user_map_page(pgd, va, V2P(p2), MMU_PAGE_USER_DATA); // Overwrite
-
+        mmu_user_map_page(pgd, va, V2P(p2), MMU_PAGE_USER_DATA);  // frees p1 internally
         unsigned long pa;
         TEST_ASSERT("overwrite: queried map", mmu_user_query(pgd, va, &pa, 0));
         TEST_ASSERT("overwrite: updated to p2", pa == V2P(p2));
-
         mmu_user_unmap_page(pgd, va);
-        pmm_free_page(p1); // Since mmu_user_map_page overwrote, p1 might have leaked if not freed by map. We free manually to be safe or rely on map replacing logic.
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("map over existing mapping");

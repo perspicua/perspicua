@@ -138,7 +138,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                 // Adjust permissions if needed when mapping memory for data
                 if ((mmu_flags & MMU_PAGE_USER_DATA) && !(current_flags & MMU_UXN))
                 {
-                    mmu_user_unmap_page(pgd, page);
+                    pmm_hold_page((void*)P2V(current_paddr));
                     mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);
                 }
             }

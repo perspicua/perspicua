@@ -12,7 +12,7 @@
 
 #include "sched/process.h"
 #include "string.h"
-
+#include "mm/addr.h"
 /*
  * signal_handle_pending - Checks for and delivers pending signals.
  *
@@ -22,6 +22,7 @@
  */
 void signal_handle_pending(struct exception_trap_frame* tf)
 {
+    /* Only deliver signals when returning to EL0 (user-space). */
     if ((tf->spsr_el1 & 0xF) != 0)
         return;
 
@@ -30,6 +31,7 @@ void signal_handle_pending(struct exception_trap_frame* tf)
         return;
 
     struct process* curr_process = &process_table[curr_pid];
+
     if (curr_process->state == PROCESS_STATE_EMPTY)
         return;
 
@@ -38,53 +40,75 @@ void signal_handle_pending(struct exception_trap_frame* tf)
 
     int trailing_zeros = __builtin_ctz(curr_process->pending_signals);
     int sig = trailing_zeros + 1;
+
+    curr_process->pending_signals &= ~(1u << trailing_zeros);
+
+    if (trailing_zeros >= SIGNAL_COUNT)
+        return;
+
     signal_handler_t handler = curr_process->signal_handlers[trailing_zeros];
 
     if (sig == SIGNAL_KILL)
     {
-        process_exit(curr_pid, 128 + SIGNAL_KILL);
+        curr_process->exit_status = 128 + SIGNAL_KILL;
+        sched_get_current()->state = SCHED_TASK_DEAD;
+        schedule();
         return;
     }
 
     if (handler == SIGNAL_IGN)
-    {
-        curr_process->pending_signals &= ~(1 << (trailing_zeros));
         return;
-    }
-    else if (handler == SIGNAL_DFL)
+
+    if (handler == SIGNAL_DFL)
     {
         if (sig == SIGNAL_CHLD || sig == SIGNAL_CONT || sig == SIGNAL_USR1 || sig == SIGNAL_USR2)
-        {
-            curr_process->pending_signals &= ~(1 << (trailing_zeros));
             return;
-        }
 
-        process_exit(curr_pid, 128 + sig);
+        curr_process->exit_status = 128 + sig;
+        sched_get_current()->state = SCHED_TASK_DEAD;
+        schedule();
         return;
     }
-    else
+
+#define SIGNAL_STACK_GUARD 128UL
+    if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD) || tf->sp_el0 >= KERNEL_VMA)
     {
-        uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame));
-        new_sp &= ~0xF;
+        goto deliver_kill;
+    }
+
+    {
+        uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
+
+        if (new_sp == 0 || new_sp >= KERNEL_VMA)
+            goto deliver_kill;
 
         struct signal_frame frame;
         memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
 
-        if (copy_to_user((void*)new_sp, &frame, sizeof(struct signal_frame)) != 0)
+        if (!validate_user_buffer((void*)new_sp, sizeof(struct signal_frame), 1)
+            || copy_to_user((void*)new_sp, &frame, sizeof(struct signal_frame)) != 0)
         {
-            process_exit(curr_pid, -1);
-            return;
+            goto deliver_kill;
         }
 
         tf->elr_el1 = (uintptr_t)handler;
         tf->sp_el0 = new_sp;
-        tf->x[0] = sig;
+        tf->x[0] = (uint64_t)sig;
 
         if (curr_process->sig_restorer)
         {
+            if (curr_process->sig_restorer >= KERNEL_VMA)
+                goto deliver_kill;
             tf->x30 = curr_process->sig_restorer;
         }
-
-        curr_process->pending_signals &= ~(1 << (trailing_zeros));
+        else
+        {
+        }
     }
+    return;
+
+deliver_kill:
+    curr_process->exit_status = -1;
+    sched_get_current()->state = SCHED_TASK_DEAD;
+    schedule();
 }

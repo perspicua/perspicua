@@ -189,7 +189,7 @@ static void task_yield_loop(void)
         unsigned long flags = spin_lock_irqsave(&test_lock);
         yield_count++;
         spin_unlock_irqrestore(&test_lock, flags);
-        schedule(); // yield to other tasks
+        schedule();  // yield to other tasks
     }
 }
 

@@ -58,6 +58,7 @@ static void* alloc_kernel_stack(void)
     {
         return NULL;
     }
+
     mmu_unmap_page((unsigned long)base);
 
     asm volatile("dsb ish" ::: "memory");
@@ -207,25 +208,19 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     {
         PANIC("Out of memory for process code");
     }
-    void* stack_page = pmm_alloc_page();
-    if (!stack_page)
-    {
-        PANIC("Out of memory for process stack");
-    }
 
     process_table[pid].vaddr_code = process_va_alloc(&process_table[pid].va, 1);
     if (!process_table[pid].vaddr_code)
     {
         PANIC("Out of virtual address space for process code");
     }
-    process_table[pid].vaddr_user_stack = process_va_alloc(&process_table[pid].va, 1);
+    process_table[pid].vaddr_user_stack = process_va_alloc(&process_table[pid].va, PROCESS_USER_STACK_PAGES);
     if (!process_table[pid].vaddr_user_stack)
     {
         PANIC("Out of virtual address space for process stack");
     }
 
     process_table[pid].paddr_code = V2P(code_page);
-    process_table[pid].paddr_user_stack = V2P(stack_page);
 
     unsigned long* user_pgd = mmu_create_user_pgd();
     if (!user_pgd)
@@ -238,8 +233,16 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     process_table[pid].ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
 
     mmu_user_map_page(user_pgd, process_table[pid].vaddr_code, process_table[pid].paddr_code, MMU_PAGE_USER_CODE);
-    mmu_user_map_page(
-        user_pgd, process_table[pid].vaddr_user_stack, process_table[pid].paddr_user_stack, MMU_PAGE_USER_DATA);
+    for (size_t i = 0; i < PROCESS_USER_STACK_PAGES; i++)
+    {
+        void* spage = pmm_alloc_page();
+        if (!spage)
+        {
+            PANIC("Out of memory for process user stack page");
+        }
+        mmu_user_map_page(
+            user_pgd, process_table[pid].vaddr_user_stack + i * PAGE_SIZE, V2P(spage), MMU_PAGE_USER_DATA);
+    }
 
     void* kstack = alloc_kernel_stack();
     process_table[pid].vaddr_kernel_stack = (uintptr_t)kstack;
@@ -256,7 +259,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     memset(tf, 0, sizeof(struct exception_trap_frame));
     tf->elr_el1 = process_table[pid].vaddr_code;
     tf->spsr_el1 = SPSR_EL0_USER;
-    tf->sp_el0 = (process_table[pid].vaddr_user_stack + PAGE_SIZE) & ~15UL;
+    tf->sp_el0 = (process_table[pid].vaddr_user_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE) & ~15UL;
 
     process_table[pid].context.sp = (unsigned long)tf;
     process_table[pid].context.lr = (unsigned long)ret_to_user;
@@ -533,6 +536,9 @@ void process_exit(uint32_t pid, int exit_status)
     process_table[pid].exit_status = exit_status;
     process_table[pid].state = PROCESS_STATE_DEAD;
 
+    void* kstack = (void*)process_table[pid].vaddr_kernel_stack;
+    process_table[pid].vaddr_kernel_stack = 0;
+
     uint32_t ppid = process_table[pid].parent_pid;
     if (ppid != 0 && process_table[ppid].state != PROCESS_STATE_EMPTY)
     {
@@ -654,6 +660,37 @@ int process_fork(struct exception_trap_frame* parent_tf)
 
     child->state = PROCESS_STATE_RUNNING;
     struct task* t = sched_create_user_task(child->context.sp, child->context.lr, (uint32_t)child_pid);
+    if (!t)
+    {
+        pmm_free_pages((void*)((uintptr_t)kstack - PAGE_SIZE), SCHED_STACK_PAGES);
+        mmu_destroy_user_pgd(child_pgd);
+
+        spin_lock(&child->fd_lock);
+        for (int i = 0; i < VFS_MAX_FDS; i++)
+        {
+            if (child->fd_table[i])
+            {
+                if (atomic_dec_and_test(&child->fd_table[i]->refcount))
+                {
+                    vfs_vnode_put(child->fd_table[i]->node);
+                    slab_free(child->fd_table[i]);
+                }
+                child->fd_table[i] = NULL;
+            }
+        }
+        spin_unlock(&child->fd_lock);
+
+        if (child->cwd)
+        {
+            vfs_vnode_put(child->cwd);
+            child->cwd = NULL;
+        }
+
+        spin_lock_irqsave(&process_table_lock);
+        child->state = PROCESS_STATE_EMPTY;
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
     child->main_task = t;
 
     printf("[PROCESS] PID %d forked child PID %d\n", parent_pid, child_pid);

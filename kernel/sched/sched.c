@@ -257,9 +257,18 @@ void sched_secondary_init(void)
 void sched_create_task(void (*entry)(void))
 {
     struct task* t = (struct task*)heap_malloc(sizeof(struct task));
+    if (!t)
+    {
+        PANIC("SCHED: Failed to allocate task struct.");
+    }
     memset(t, 0, sizeof(struct task));
 
     unsigned char* stack = (unsigned char*)pmm_alloc_pages(SCHED_STACK_PAGES);
+    if (!stack)
+    {
+        PANIC("SCHED: Failed to allocate stack for new task.");
+    }
+
     mmu_unmap_page((unsigned long)stack);
 
     unsigned char* usable = stack + PAGE_SIZE;
@@ -289,6 +298,7 @@ void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
     struct task* curr = sched_get_current();
+
     int cpu = get_core_id();
 
     if (!curr || curr == sched_idle_tasks[cpu])
@@ -298,7 +308,9 @@ void sched_sleep_ms(unsigned long ms)
     }
 
     curr->state = SCHED_TASK_BLOCKED;
+
     curr->wake_time = get_system_time() + ms;
+
     insert_sleep(curr);
 
     schedule();
@@ -311,6 +323,10 @@ void sched_sleep_ms(unsigned long ms)
 struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid)
 {
     struct task* t = (struct task*)heap_malloc(sizeof(struct task));
+    if (!t)
+    {
+        return NULL;
+    }
     memset(t, 0, sizeof(struct task));
 
     t->state = SCHED_TASK_READY;

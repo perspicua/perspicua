@@ -19,8 +19,9 @@
 #define PROCESS_TABLE_SIZE 1024
 
 /* --- User Virtual Address Space --- */
-#define USER_VA_BASE        0x40000000ULL /* 1GB - leaves lower area for ELF loading */
-#define USER_VA_MAX_REGIONS 16
+#define USER_VA_BASE             0x40000000ULL /* 1GB - leaves lower area for ELF loading */
+#define USER_VA_MAX_REGIONS      16
+#define PROCESS_USER_STACK_PAGES 64 /* 64*4 KB user stack */
 
 /* --- Hardware/Architecture Specifics --- */
 #define SPSR_EL0_USER      0x00000000ULL

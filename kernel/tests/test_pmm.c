@@ -34,7 +34,7 @@ void test_pmm(void)
 
     // excessive order (beyond max order 10)
     {
-        void* p = pmm_alloc_pages(2048); // order 11 is 2048 pages
+        void* p = pmm_alloc_pages(2048);  // order 11 is 2048 pages
         TEST_ASSERT("alloc_pages(2048) beyond max order", p == NULL);
     }
     TEST_PASS("excessive order returns NULL");

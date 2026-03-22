@@ -3,6 +3,7 @@
 #include "mm/heap.h"
 #include "string.h"
 #include "types.h"
+#include <stdio.h>
 
 void test_slab(void)
 {

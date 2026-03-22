@@ -14,6 +14,8 @@ struct exception_trap_frame;
 
 /* --- Function Prototypes --- */
 
+int validate_user_buffer(const void* ptr, size_t len, int writable);
+
 /*
  * Safely copies data from user-space to kernel-space.
  * Returns the number of bytes that could NOT be copied (0 on success).
