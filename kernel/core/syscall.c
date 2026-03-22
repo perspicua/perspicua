@@ -435,7 +435,15 @@ void syscall_handle(struct exception_trap_frame* tf)
             break;
         }
 
-        process_table[target_pid].pending_signals |= (1u << (sig - 1));
+        /* Permission check: can only kill self, children, or parent */
+        if (target_pid != (int)pid && process_table[target_pid].parent_pid != pid
+            && (int)process_table[pid].parent_pid != target_pid)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+            break;
+        }
+
+        __atomic_fetch_or(&process_table[target_pid].pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
         tf->x[0] = PERS_SUCCESS;
         break;
     }
@@ -557,6 +565,9 @@ sigreturn_kill:
         int flags = (int)tf->x[3];
         int fd = (int)tf->x[4];
         off_t offset = (off_t)tf->x[5];
+
+        (void)addr;
+        (void)offset;
 
         int curr_process_pid = process_find_current();
         if (curr_process_pid < 0)

@@ -35,75 +35,82 @@ void signal_handle_pending(struct exception_trap_frame* tf)
     if (curr_process->state == PROCESS_STATE_EMPTY)
         return;
 
-    if (curr_process->pending_signals == 0)
-        return;
-
-    int trailing_zeros = __builtin_ctz(curr_process->pending_signals);
-    int sig = trailing_zeros + 1;
-
-    curr_process->pending_signals &= ~(1u << trailing_zeros);
-
-    if (trailing_zeros >= SIGNAL_COUNT)
-        return;
-
-    signal_handler_t handler = curr_process->signal_handlers[trailing_zeros];
-
-    if (sig == SIGNAL_KILL)
+    while (curr_process->pending_signals != 0)
     {
-        curr_process->exit_status = 128 + SIGNAL_KILL;
-        sched_get_current()->state = SCHED_TASK_DEAD;
-        schedule();
-        return;
-    }
+        int trailing_zeros = __builtin_ctz(curr_process->pending_signals);
+        int sig = trailing_zeros + 1;
 
-    if (handler == SIGNAL_IGN)
-        return;
+        curr_process->pending_signals &= ~(1u << trailing_zeros);
 
-    if (handler == SIGNAL_DFL)
-    {
-        if (sig == SIGNAL_CHLD || sig == SIGNAL_CONT || sig == SIGNAL_USR1 || sig == SIGNAL_USR2)
+        if (trailing_zeros >= SIGNAL_COUNT)
+            break;
+
+        signal_handler_t handler = curr_process->signal_handlers[trailing_zeros];
+
+        if (sig == SIGNAL_KILL)
+        {
+            curr_process->exit_status = 128 + SIGNAL_KILL;
+            sched_get_current()->state = SCHED_TASK_DEAD;
+            schedule();
             return;
+        }
 
-        curr_process->exit_status = 128 + sig;
-        sched_get_current()->state = SCHED_TASK_DEAD;
-        schedule();
-        return;
-    }
+        if (handler == SIGNAL_IGN)
+            continue;
+
+        if (handler == SIGNAL_DFL)
+        {
+            if (sig == SIGNAL_CHLD || sig == SIGNAL_CONT || sig == SIGNAL_USR1 || sig == SIGNAL_USR2)
+                continue;
+
+            curr_process->exit_status = 128 + sig;
+            sched_get_current()->state = SCHED_TASK_DEAD;
+            schedule();
+            return;
+        }
 
 #define SIGNAL_STACK_GUARD 128UL
-    if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD) || tf->sp_el0 >= KERNEL_VMA)
-    {
-        goto deliver_kill;
-    }
-
-    {
-        uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
-
-        if (new_sp == 0 || new_sp >= KERNEL_VMA)
-            goto deliver_kill;
-
-        struct signal_frame frame;
-        memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
-
-        if (!validate_user_buffer((void*)new_sp, sizeof(struct signal_frame), 1)
-            || copy_to_user((void*)new_sp, &frame, sizeof(struct signal_frame)) != 0)
+        if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD) || tf->sp_el0 >= KERNEL_VMA)
         {
             goto deliver_kill;
         }
 
-        tf->elr_el1 = (uintptr_t)handler;
-        tf->sp_el0 = new_sp;
-        tf->x[0] = (uint64_t)sig;
-
-        if (curr_process->sig_restorer)
         {
-            if (curr_process->sig_restorer >= KERNEL_VMA)
+            uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
+
+            if (new_sp == 0 || new_sp >= KERNEL_VMA)
                 goto deliver_kill;
-            tf->x30 = curr_process->sig_restorer;
+
+            struct signal_frame frame;
+            memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
+
+            if (!validate_user_buffer((void*)new_sp, sizeof(struct signal_frame), 1)
+                || copy_to_user((void*)new_sp, &frame, sizeof(struct signal_frame)) != 0)
+            {
+                goto deliver_kill;
+            }
+
+            tf->elr_el1 = (uintptr_t)handler;
+            tf->sp_el0 = new_sp;
+            tf->x[0] = (uint64_t)sig;
+
+            if (curr_process->sig_restorer)
+            {
+                if (curr_process->sig_restorer >= KERNEL_VMA)
+                    goto deliver_kill;
+                /* x30 is the return address for the handler; it must point to the restorer */
+                tf->x30 = curr_process->sig_restorer;
+            }
+            else
+            {
+                /* If no restorer, we have no safe way to return to user-space context.
+                 * This usually means crt0 failed to register it. */
+                goto deliver_kill;
+            }
         }
-        else
-        {
-        }
+        /* After setting up one signal frame, return to EL0 to run the handler.
+         * Other pending signals will be handled on the next transition from EL0 to EL1. */
+        return;
     }
     return;
 

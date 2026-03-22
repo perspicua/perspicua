@@ -215,6 +215,7 @@ void stress_signals()
         // Child: wait for signals
         while (sig_count < 100)
         {
+            printf("%d\n", sig_count);
             sys_yield();
         }
         sys_exit(sig_count);

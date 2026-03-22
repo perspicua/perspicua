@@ -265,16 +265,16 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
         return curr;
     }
 
+    /* Copy path_remainder to a safe buffer for tokenization */
     strncpy(filepath, path_remainder, VFS_MAX_PATH_LEN - 1);
     filepath[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char* saveptr;
+    char* saveptr = NULL;
     char* token = strtok_r(filepath, "/", &saveptr);
 
     while (token)
     {
         struct vfs_vnode* next = NULL;
-
         if (strcmp(token, ".") == 0)
         {
             next = curr;

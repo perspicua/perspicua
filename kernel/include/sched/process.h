@@ -32,6 +32,7 @@ typedef enum
 {
     PROCESS_STATE_EMPTY = 0,
     PROCESS_STATE_RUNNING,
+    PROCESS_STATE_ZOMBIE,
     PROCESS_STATE_DEAD
 } process_state_t;
 

@@ -26,6 +26,10 @@ struct vfs_vnode_ops fb_vfs_ops = {0};
 
 int fb_mmap(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags)
 {
+    (void)file;
+    (void)prot;
+    (void)flags;
+
     uintptr_t phys_fb = V2P((uintptr_t)fb_info.ptr);
 
     size_t pages = length / PAGE_SIZE;

@@ -528,7 +528,7 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     }
 
     l3t[l3] = paddr | PTE_VALID | PTE_PAGE | flags;
-    pmm_hold_page((void*)P2V(paddr));
+    /* Redundant hold removed: pmm_alloc_page/pmm_copy already set refcount to 1 */
     tlbi_va_is(vaddr);
 
     spin_unlock_irqrestore(&mmu_lock, irq);

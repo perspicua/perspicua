@@ -447,8 +447,13 @@ void schedule(void)
     {
         struct task* w = sched_sleep_head;
         sched_sleep_head = w->next;
-        w->state = SCHED_TASK_READY;
-        enqueue_ready(cpu, w);
+
+        /* Atomic transition from BLOCKED to READY to prevent double-enqueuing if unblocked elsewhere */
+        enum sched_task_state expected = SCHED_TASK_BLOCKED;
+        if (__atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+        {
+            enqueue_ready(cpu, w);
+        }
     }
     spin_unlock_irqrestore(&sched_sleep_lock, s_flags);
 

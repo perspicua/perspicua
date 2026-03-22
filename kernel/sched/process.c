@@ -158,9 +158,9 @@ int process_find_current(void)
  */
 void process_init(void)
 {
+    memset(process_table, 0, sizeof(process_table));
     for (size_t i = 0; i < PROCESS_TABLE_SIZE; i++)
     {
-        memset(&process_table[i], 0, sizeof(struct process));
         process_table[i].state = PROCESS_STATE_EMPTY;
         process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
     }
@@ -171,7 +171,7 @@ void process_init(void)
     process_table[0].user_pgd = NULL;
     process_table[0].asid = 0;
 
-    printf("[ PROC ] Process management initialized\n");
+    printf("[ PROC ] Process management initialized (%zu slots)\n", (size_t)PROCESS_TABLE_SIZE);
 }
 
 /*
@@ -487,13 +487,22 @@ int process_exec(const char* path)
  */
 void process_exit(uint32_t pid, int exit_status)
 {
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state == PROCESS_STATE_EMPTY
-        || process_table[pid].state == PROCESS_STATE_DEAD)
+    if (pid >= PROCESS_TABLE_SIZE)
+        return;
+
+    /* Use atomic exchange to ensure only one core/task proceeds with cleanup */
+    process_state_t expected = PROCESS_STATE_RUNNING;
+    if (!__atomic_compare_exchange_n(&process_table[pid].state,
+                                     &expected,
+                                     PROCESS_STATE_DEAD, /* Temporary state during cleanup */
+                                     0,
+                                     __ATOMIC_SEQ_CST,
+                                     __ATOMIC_SEQ_CST))
     {
-        spin_unlock_irqrestore(&process_table_lock, flags);
         return;
     }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
     printf("[PROCESS] PID %d exiting with status %d. Reclaiming resources...\n", pid, exit_status);
 
@@ -534,9 +543,9 @@ void process_exit(uint32_t pid, int exit_status)
 
     process_table[pid].va.count = 0;
     process_table[pid].exit_status = exit_status;
-    process_table[pid].state = PROCESS_STATE_DEAD;
+    process_table[pid].state = PROCESS_STATE_ZOMBIE;
 
-    void* kstack = (void*)process_table[pid].vaddr_kernel_stack;
+    // void* kstack = (void*)process_table[pid].vaddr_kernel_stack;
     process_table[pid].vaddr_kernel_stack = 0;
 
     uint32_t ppid = process_table[pid].parent_pid;
@@ -730,7 +739,7 @@ int process_waitpid(int pid, int* status)
 
             has_children = 1;
 
-            if (process_table[i].state == PROCESS_STATE_DEAD)
+            if (process_table[i].state == PROCESS_STATE_ZOMBIE)
             {
                 if (status)
                 {
