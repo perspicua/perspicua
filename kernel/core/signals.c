@@ -26,6 +26,13 @@ void signal_handle_pending(struct exception_trap_frame* tf)
     if ((tf->spsr_el1 & 0xF) != 0)
         return;
 
+    struct task* curr = sched_get_current();
+    if (curr && curr->skip_signals)
+    {
+        curr->skip_signals = 0;
+        return;
+    }
+
     int curr_pid = process_find_current();
     if (curr_pid < 0)
         return;

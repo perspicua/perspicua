@@ -213,6 +213,7 @@ void stress_signals()
     if (pid == 0)
     {
         // Child: wait for signals
+        printf("caught %d signals\n", sig_count);
         while (sig_count < 100)
         {
             sys_yield();

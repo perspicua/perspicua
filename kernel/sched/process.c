@@ -478,6 +478,8 @@ int process_exec(const char* path)
         curr_task->context.sp = (unsigned long)tf;
         curr_task->context.lr = (unsigned long)ret_to_user;
         curr_task->ttbr0 = V2P(new_pgd) | ((p->asid & 0xFFFFUL) << 48);
+        curr_task->skip_signals =
+            1;  // ← add this to defer signal handling until we're back in user mode with the new image
     }
 
     return PERS_SUCCESS;

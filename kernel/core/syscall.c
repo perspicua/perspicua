@@ -325,7 +325,20 @@ void syscall_handle(struct exception_trap_frame* tf)
         if (res < 0)
         {
             tf->x[0] = (uint64_t)res;
+            break;
         }
+        
+        struct task* curr_task = sched_get_current();
+        if (curr_task)
+        {
+            // The new trap frame was built by process_exec — copy it into
+            // the live tf so restore_all uses the right ELR/SP/SPSR
+            uintptr_t kernel_stack_top = process_table[curr_task->pid].vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
+            struct exception_trap_frame* new_tf =
+                (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
+            memcpy(tf, new_tf, sizeof(struct exception_trap_frame));
+        }
+        // Do NOT set tf->x[0] — the new tf already has x[0]=0 from memset
         break;
     }
 

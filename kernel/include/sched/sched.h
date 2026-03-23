@@ -63,6 +63,7 @@ struct task
     uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
     unsigned char* stack;        /* Pointer to the allocated stack region */
     struct task* next;           /* Link for ready and sleep queues */
+    int skip_signals;         /* Flag to indicate if signal handling should be deferred */
 };
 
 /*
