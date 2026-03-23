@@ -121,7 +121,7 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
 
     (void)is_translation; /* demand paging hook — not yet implemented */
 
-    if (is_user && is_write && fsc == FSC_PERMISSION_L3)
+    if (is_user && is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3))
     {
         int pid = process_find_current();
         if (pid >= 0)

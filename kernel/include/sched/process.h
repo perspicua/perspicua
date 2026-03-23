@@ -86,9 +86,10 @@ struct process
     struct vfs_vnode* cwd;
 
     /* Signals */
-    uint32_t pending_signals;
-    signal_handler_t signal_handlers[SIGNAL_COUNT];
-    uintptr_t sig_restorer;
+    sigset_t pending_signals;
+    sigset_t blocked_signals;
+    struct sigaction signal_handlers[SIGNAL_COUNT];
+    uintptr_t default_sigrestorer;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

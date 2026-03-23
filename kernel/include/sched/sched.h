@@ -63,7 +63,7 @@ struct task
     uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
     unsigned char* stack;        /* Pointer to the allocated stack region */
     struct task* next;           /* Link for ready and sleep queues */
-    int skip_signals;         /* Flag to indicate if signal handling should be deferred */
+    int skip_signals;            /* Flag to indicate if signal handling should be deferred */
 };
 
 /*
@@ -100,7 +100,8 @@ void sched_create_task(void (*entry)(void));
 /*
  * sched_create_user_task - Initializes a task structure for a user-mode process.
  */
-struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
+struct task*
+sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr_t kstack_base, uint32_t pid);
 
 /*
  * sched_sleep_ms - Puts the current task to sleep for a minimum number of milliseconds.

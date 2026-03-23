@@ -286,6 +286,62 @@ void sys_sigrestore(uintptr_t restorer)
                  : "x0", "x8", "memory");
 }
 
+int sys_sigaction(int sig, const struct sigaction* act, struct sigaction* oact)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)sig), "r"(act), "r"(oact), "i"(SYS_SIGACTION)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return (int)res;
+}
+
+int sys_sigprocmask(int how, const sigset_t* set, sigset_t* oset)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)how), "r"(set), "r"(oset), "i"(SYS_SIGPROCMASK)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return (int)res;
+}
+
+int sys_sigpending(sigset_t* set)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(set), "i"(SYS_SIGPENDING)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}
+
+int sys_sigsuspend(const sigset_t* mask)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(mask), "i"(SYS_SIGSUSPEND)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}
+
 int sys_chdir(const char* path)
 {
     long res;

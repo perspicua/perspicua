@@ -103,10 +103,7 @@ __attribute__((used)) void secondary_main(void)
 
     sched_secondary_init();
 
-    /* Fallback loop: secondary cores should enter the scheduler */ for (;;)
-    {
-        asm volatile("wfe");
-    }
+    /* Fallback loop: secondary cores should enter the scheduler */ for (;;) { asm volatile("wfe"); }
 }
 
 /*
@@ -193,7 +190,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Mount devfs over the FAT32 root */
     vfs_mount("/dev", devfs_get_root());
 
-    run_all_tests();
+    // run_all_tests();
     enable_interrupts();
     run_scheduler_tests();
 

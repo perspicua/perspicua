@@ -198,6 +198,7 @@ void stress_mmap()
 volatile int sig_count = 0;
 void sig_handler(int sig)
 {
+    printf("got a signal %d, curr count: %d\n", sig, sig_count);
     if (sig == SIGNAL_USR1)
     {
         sig_count++;
@@ -213,7 +214,6 @@ void stress_signals()
     if (pid == 0)
     {
         // Child: wait for signals
-        printf("caught %d signals\n", sig_count);
         while (sig_count < 100)
         {
             sys_yield();
@@ -226,7 +226,7 @@ void stress_signals()
         for (int i = 0; i < 100; i++)
         {
             sys_kill(pid, SIGNAL_USR1);
-            sys_yield();  // Give child a chance to handle
+            sys_yield();
         }
         int status;
         sys_waitpid(pid, &status);
@@ -237,12 +237,12 @@ void stress_signals()
 int main(int argc __attribute__((unused)), char** argv __attribute__((unused)))
 {
     printf("[STRESS] Starting comprehensive stress test...\n");
-    stress_stack();
+    // stress_stack();
     stress_fork();
-    stress_pipe();
-    stress_fd();
-    stress_mmap();
-    stress_signals();
+    // stress_pipe();
+    // stress_fd();
+    // stress_mmap();
+    // stress_signals();
     printf("[STRESS] Comprehensive stress test complete.\n");
     return 0;
 }

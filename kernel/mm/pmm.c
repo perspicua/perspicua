@@ -410,11 +410,11 @@ void pmm_free_pages(void* ptr, unsigned long count)
         PANIC("PMM: corrupt page order");
     }
 
+    memset(ptr, 0, (size_t)(1UL << order) * PAGE_SIZE);
     pmm_free_pages_count += (1UL << order);
     pmm_free_buddy_internal(pfn, order);
 
     spin_unlock_irqrestore(&pmm_lock, irq);
-    memset(ptr, 0, (size_t)(1UL << order) * PAGE_SIZE);
 }
 
 void pmm_hold_page(void* ptr)

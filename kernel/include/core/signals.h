@@ -16,6 +16,7 @@
 struct signal_frame
 {
     struct exception_trap_frame saved_tf;
+    sigset_t saved_mask;
 };
 
 /* --- Signal Dispatch & Delivery --- */

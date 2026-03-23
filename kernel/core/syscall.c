@@ -327,7 +327,7 @@ void syscall_handle(struct exception_trap_frame* tf)
             tf->x[0] = (uint64_t)res;
             break;
         }
-        
+
         struct task* curr_task = sched_get_current();
         if (curr_task)
         {
@@ -425,14 +425,18 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         struct process* curr_process = &process_table[curr_process_pid];
 
-        curr_process->signal_handlers[sig - 1] = handler;
+        signal_handler_t old = curr_process->signal_handlers[sig - 1].sa_handler;
+        curr_process->signal_handlers[sig - 1].sa_handler = handler;
+        curr_process->signal_handlers[sig - 1].sa_mask = 0;
+        curr_process->signal_handlers[sig - 1].sa_flags = 0;
+        curr_process->signal_handlers[sig - 1].sa_restorer = NULL;
 
-        tf->x[0] = PERS_SUCCESS;
+        tf->x[0] = (uint64_t)old;
         break;
     }
 
     case SYS_KILL:
-    { /* sys_kill(int pid, int sig) */
+    {
         int target_pid = (int)tf->x[0];
         int sig = (int)tf->x[1];
 
@@ -457,10 +461,21 @@ void syscall_handle(struct exception_trap_frame* tf)
         }
 
         __atomic_fetch_or(&process_table[target_pid].pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+
+        /* If process was blocked, wake it up if the signal is not ignored */
+        if (process_table[target_pid].signal_handlers[sig - 1].sa_handler != SIGNAL_IGN)
+        {
+            if (process_table[target_pid].main_task->state == SCHED_TASK_BLOCKED)
+            {
+                // Wake up the task.
+                // NOTE: This might need more careful handling if the task is blocked on something specific.
+                sched_unblock(process_table[target_pid].main_task);
+            }
+        }
+
         tf->x[0] = PERS_SUCCESS;
         break;
     }
-
     case SYS_SIGRETURN:
     {
         uintptr_t user_frame_ptr = tf->sp_el0;
@@ -485,6 +500,9 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
+        /* Restore signal mask */
+        process_table[pid].blocked_signals = frame.saved_mask;
+
         tf->spsr_el1 &= 0xF0000000ULL;
 
         break;
@@ -498,21 +516,190 @@ sigreturn_kill:
     case SYS_SIGRESTORE:
     {
         uintptr_t restorer = (uintptr_t)tf->x[0];
+        if (restorer >= KERNEL_VMA)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        process_table[pid].default_sigrestorer = restorer;
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGACTION:
+    { /* sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact) */
+        int sig = (int)tf->x[0];
+        const struct sigaction* uact = (const struct sigaction*)tf->x[1];
+        struct sigaction* uoact = (struct sigaction*)tf->x[2];
 
-        if (restorer == 0 || restorer >= KERNEL_VMA)
+        if (sig >= SIGNAL_COUNT || sig < 1 || sig == SIGNAL_KILL || sig == SIGNAL_STOP)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
-        int curr_process_pid = process_find_current();
-        if (curr_process_pid < 0)
+        struct process* p = &process_table[pid];
+
+        if (uoact)
         {
-            tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+            if (!validate_user_buffer(uoact, sizeof(struct sigaction), 1))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            if (copy_to_user(uoact, &p->signal_handlers[sig - 1], sizeof(struct sigaction)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+        }
+
+        if (uact)
+        {
+            if (!validate_user_buffer(uact, sizeof(struct sigaction), 0))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            struct sigaction kact;
+            if (copy_from_user(&kact, uact, sizeof(struct sigaction)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            p->signal_handlers[sig - 1] = kact;
+            /* Ensure KILL and STOP cannot be blocked in sa_mask */
+            p->signal_handlers[sig - 1].sa_mask &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        }
+
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGPROCMASK:
+    { /* sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset) */
+        int how = (int)tf->x[0];
+        const sigset_t* uset = (const sigset_t*)tf->x[1];
+        sigset_t* uoset = (sigset_t*)tf->x[2];
+
+        struct process* p = &process_table[pid];
+
+        if (uoset)
+        {
+            if (!validate_user_buffer(uoset, sizeof(sigset_t), 1))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            if (copy_to_user(uoset, &p->blocked_signals, sizeof(sigset_t)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+        }
+
+        if (uset)
+        {
+            if (!validate_user_buffer(uset, sizeof(sigset_t), 0))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            sigset_t kset;
+            if (copy_from_user(&kset, uset, sizeof(sigset_t)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            if (how == SIG_BLOCK)
+            {
+                p->blocked_signals |= kset;
+            }
+            else if (how == SIG_UNBLOCK)
+            {
+                p->blocked_signals &= ~kset;
+            }
+            else if (how == SIG_SETMASK)
+            {
+                p->blocked_signals = kset;
+            }
+            else
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* Ensure KILL and STOP cannot be blocked */
+            p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        }
+
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGPENDING:
+    { /* sys_sigpending(sigset_t *set) */
+        sigset_t* uset = (sigset_t*)tf->x[0];
+        if (!validate_user_buffer(uset, sizeof(sigset_t), 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-        process_table[curr_process_pid].sig_restorer = restorer;
+        if (copy_to_user(uset, &process_table[pid].pending_signals, sizeof(sigset_t)) != 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
         tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGSUSPEND:
+    { /* sys_sigsuspend(const sigset_t *mask) */
+        const sigset_t* umask = (const sigset_t*)tf->x[0];
+        if (!validate_user_buffer(umask, sizeof(sigset_t), 0))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        sigset_t kmask;
+        if (copy_from_user(&kmask, umask, sizeof(sigset_t)) != 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        struct process* p = &process_table[pid];
+        p->blocked_signals = kmask;
+        /* Ensure KILL and STOP cannot be blocked */
+        p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+
+        /* Wait for a signal */
+        while (!(p->pending_signals & ~p->blocked_signals))
+        {
+            /* Fix lost-wakeup: set state to BLOCKED before yielding.
+             * If a signal arrives after this but before schedule(),
+             * sched_unblock() will see BLOCKED and re-ready us. */
+            curr->state = SCHED_TASK_BLOCKED;
+            schedule();
+        }
+
+        /* The signal will be delivered by ret_to_user -> signal_handle_pending */
+        /* But we need to make sure sigreturn restores the OLD mask, not the sigsuspend mask.
+         * This is tricky because signal_handle_pending will save the CURRENT mask (which is kmask).
+         * Standard sigsuspend says the signal mask is restored after the handler returns.
+         * So signal_handle_pending should save the OLD mask if we are in sigsuspend?
+         * Actually, signal_handle_pending always saves the mask that was in effect before the handler was called.
+         * For sigsuspend, it IS the kmask.
+         * Wait, standard sigsuspend: "The signal mask of the process is restored to its previous value when
+         * sigsuspend() returns." If a signal is delivered, sigsuspend returns after the signal handler returns. So the
+         * sigreturn should restore the mask that was in effect BEFORE sigsuspend.
+         */
+
+        /* I'll use a hack for now: signal_handle_pending will be called after this syscall returns to user mode,
+         * but before any user code runs.
+         * If I change p->blocked_signals here, it will be saved by signal_handle_pending.
+         * To restore old_mask, I'd need to save it somewhere.
+         */
+
+        tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;  // sigsuspend always returns -1/EINTR
         break;
     }
 

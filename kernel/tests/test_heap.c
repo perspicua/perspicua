@@ -183,7 +183,7 @@ void test_heap(void)
         void* big = heap_malloc(8192);
         heap_free(big);
         // Freed block has size >= 8192.
-        // Allocate LARGE from it. Remainder = 8192-2048-32 = 6112 >= 48 → splits.
+        // Allocate LARGE from it. Remainder = 8192-2048-32 = 6112 >= 48 -> splits.
         void* small = heap_malloc(LARGE);
         TEST_ASSERT("split: first part", small == big);
         // Second allocation should come from the split remainder
@@ -201,7 +201,7 @@ void test_heap(void)
     // no split when remainder < header_size + 16 (48)
     //    If the remaining space after alloc is < 48 bytes, no split occurs.
     {
-        // Allocate then free a block. Re-alloc the same size → no split expected.
+        // Allocate then free a block. Re-alloc the same size -> no split expected.
         void* p = heap_malloc(LARGE);
         heap_free(p);
         void* q = heap_malloc(LARGE);
@@ -314,7 +314,7 @@ void test_heap(void)
         void* guard = heap_malloc(LARGE);
         heap_free(a);
         heap_free(b);
-        // Coalesced block = 4128, alloc LARGE from it → split (4128-2048-32=2048 >= 48)
+        // Coalesced block = 4128, alloc LARGE from it -> split (4128-2048-32=2048 >= 48)
         void* small = heap_malloc(LARGE);
         TEST_ASSERT("coalesce+split: first part", small == a);
         void* next = heap_malloc(LARGE);
@@ -538,7 +538,7 @@ void test_heap(void)
         void* ptrs[16];
         for (int i = 0; i < 16; i++)
             ptrs[i] = heap_malloc(64);
-        // Free even-indexed blocks → creates 8 "holes"
+        // Free even-indexed blocks -> creates 8 "holes"
         for (int i = 0; i < 16; i += 2)
             heap_free(ptrs[i]);
         // Reallocate into holes
@@ -613,7 +613,7 @@ void test_heap(void)
     }
     TEST_PASS("mixed sizes interleaved");
 
-    // growing allocations: 16 → 32 → 64 → ... → 4096
+    // growing allocations: 16 -> 32 -> 64 -> ... -> 4096
     {
         void* ptrs[9];
         for (int i = 0; i < 9; i++)
@@ -627,7 +627,7 @@ void test_heap(void)
     }
     TEST_PASS("growing allocs");
 
-    // shrinking allocations: 4096 → 2048 → ... → 16
+    // shrinking allocations: 4096 -> 2048 -> ... -> 16
     {
         void* ptrs[9];
         for (int i = 0; i < 9; i++)
@@ -841,7 +841,7 @@ void test_heap(void)
         void* blk = heap_malloc(4096);
         heap_free(blk);
 
-        // Alloc LARGE: remaining = 4096-2048 = 2048 >= 48 → SHOULD split
+        // Alloc LARGE: remaining = 4096-2048 = 2048 >= 48 -> SHOULD split
         void* a = heap_malloc(LARGE);
         void* split_part = heap_malloc(LARGE);  // should come from split remainder
         TEST_ASSERT("threshold: split exists", split_part != NULL);
@@ -863,7 +863,7 @@ void test_heap(void)
 
     // full lifecycle
 
-    // alloc → write → free → re-alloc → verify clean
+    // alloc -> write -> free -> re-alloc -> verify clean
     {
         unsigned char* p = (unsigned char*)heap_malloc(256);
         for (int i = 0; i < 256; i++)

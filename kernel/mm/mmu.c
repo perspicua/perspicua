@@ -420,9 +420,9 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
             if (!(l2e & MMU_PTE_TABLE))
             {
                 unsigned long pte = l2e;
-                if ((pte & (3ULL << 6)) == MMU_AP_RW)
+                if (!(pte & MMU_AP_RO))
                 {
-                    pte &= ~(3ULL << 6);
+                    pte &= ~MMU_AP_RO;
                     pte |= MMU_AP_RO | MMU_PTE_COW;
                     parent_pmd[j] = pte;
                 }
@@ -444,9 +444,9 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
                 if (!(pte & MMU_PTE_VALID))
                     continue;
 
-                if ((pte & (3ULL << 6)) == MMU_AP_RW)
+                if (!(pte & MMU_AP_RO))
                 {
-                    pte &= ~(3ULL << 6);
+                    pte &= ~MMU_AP_RO;
                     pte |= MMU_AP_RO | MMU_PTE_COW;
                     parent_pte[k] = pte;
                 }
@@ -653,7 +653,7 @@ int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
     memcpy(new_page, (void*)P2V(paddr), PAGE_SIZE);
 
     unsigned long new_flags = flags & ~MMU_PTE_COW;
-    new_flags &= ~(3ULL << 6);
+    new_flags &= ~MMU_AP_RO;
     new_flags |= MMU_AP_RW;
 
     mmu_user_map_page(pgd, vaddr, V2P((uintptr_t)new_page), new_flags);

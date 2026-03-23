@@ -25,6 +25,7 @@ extern struct tty console_tty;
 /* UART State and Synchronization */
 static spinlock_t uart_lock = SPINLOCK_INIT;
 static unsigned int cached_uart_irq = 0;
+int uart_ready = 0;
 
 /* Public Register Pointers */
 volatile uint32_t* uart_dr = NULL;
@@ -128,6 +129,8 @@ void uart_init(void)
 
     // Enable UART, TX, and RX
     mmio_write(uart_cr, UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
+
+    uart_ready = 1;
 
     struct fdt_property irq_prop;
     if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0)
