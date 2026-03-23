@@ -64,19 +64,9 @@ void sched_check_corruption(void)
 }
 
 /*
- * get_core_id - Returns the index of the current CPU core (0-3).
- */
-static inline int get_core_id(void)
-{
-    unsigned long mpidr;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-    return (int)(mpidr & 3);
-}
-
-/*
  * enqueue_ready - Appends a task to the end of a specific CPU's ready queue.
  */
-static void enqueue_ready(int cpu, struct task* t)
+void enqueue_ready(int cpu, struct task* t)
 {
     if (!t)
         return;
@@ -148,7 +138,7 @@ static void insert_sleep(struct task* t)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
 
-    if (!sched_sleep_head || t->wake_time < sched_sleep_head->wake_time)
+    if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0)
     {
         t->next = sched_sleep_head;
         sched_sleep_head = t;
@@ -157,7 +147,7 @@ static void insert_sleep(struct task* t)
     }
 
     struct task* curr = sched_sleep_head;
-    while (curr->next && curr->next->wake_time <= t->wake_time)
+    while (curr->next && (long)(t->wake_time - curr->next->wake_time) >= 0)
     {
         curr = curr->next;
     }
@@ -175,6 +165,7 @@ extern void task_wrapper_asm(void);
  */
 static void idle_task_entry(void)
 {
+    enable_interrupts();
     while (1)
     {
         asm volatile("wfe");
@@ -248,6 +239,7 @@ void sched_secondary_init(void)
     asm volatile("msr tpidr_el1, %0" : : "r"(boot_task));
     sched_idle_tasks[core_id] = create_idle_task(core_id);
 
+    enable_interrupts();
     schedule();
 }
 
@@ -340,7 +332,6 @@ struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forge
     t->id = sched_next_id++;
     spin_unlock_irqrestore(&sched_next_id_lock, flags);
 
-    enqueue_ready(get_core_id(), t);
     return t;
 }
 
@@ -422,11 +413,6 @@ void schedule(void)
 
         sched_cleanup_tasks[cpu] = NULL;
 
-        if (dead->pid != 0)
-        {
-            process_exit(dead->pid, process_table[dead->pid].exit_status);
-        }
-
         if (dead->stack)
         {
             unsigned long guard_va = (unsigned long)dead->stack;
@@ -443,7 +429,7 @@ void schedule(void)
     /* 2. Wake up tasks from the sleep queue */
     unsigned long now = get_system_time();
     unsigned long s_flags = spin_lock_irqsave(&sched_sleep_lock);
-    while (sched_sleep_head && sched_sleep_head->wake_time <= now)
+    while (sched_sleep_head && (long)(now - sched_sleep_head->wake_time) >= 0)
     {
         struct task* w = sched_sleep_head;
         sched_sleep_head = w->next;

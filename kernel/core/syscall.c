@@ -140,7 +140,7 @@ void syscall_handle(struct exception_trap_frame* tf)
     case SYS_EXIT:
     { /* sys_exit(int status) */
         int status = (int)tf->x[0];
-        process_table[pid].exit_status = status;
+        process_exit(pid, status);
         curr->state = SCHED_TASK_DEAD;
         schedule();
         break;

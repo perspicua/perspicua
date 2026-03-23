@@ -97,15 +97,13 @@ __attribute__((used)) void secondary_main(void)
     mmu_secondary_init();
     gic_secondary_init();
     timer_interrupt_init();
-
     unsigned long flags = spin_lock_irqsave(&console_lock);
     printf("[  SMP ] CPU%lu online - MMU active, GIC configured, timer armed\n", core_id);
     spin_unlock_irqrestore(&console_lock, flags);
 
     sched_secondary_init();
 
-    /* Fallback loop: secondary cores should enter the scheduler */
-    for (;;)
+    /* Fallback loop: secondary cores should enter the scheduler */ for (;;)
     {
         asm volatile("wfe");
     }

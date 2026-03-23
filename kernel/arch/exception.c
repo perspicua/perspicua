@@ -153,15 +153,14 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
             struct task* curr = sched_get_current();
             if (curr && curr->pid == (uint32_t)pid)
             {
-                process_table[pid].exit_status = 1;
+                process_exit(pid, 1);
                 curr->state = SCHED_TASK_DEAD;
                 schedule();
             }
             else
             {
                 // This shouldn't happen, but fallback to direct kill if current task mismatch
-                process_table[pid].exit_status = 1;
-                process_table[pid].state = PROCESS_STATE_DEAD;
+                process_exit(pid, 1);
             }
         }
         else

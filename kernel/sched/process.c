@@ -61,7 +61,6 @@ static void* alloc_kernel_stack(void)
 
     mmu_unmap_page((unsigned long)base);
 
-    asm volatile("dsb ish" ::: "memory");
     *(unsigned long*)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
 
     return base + PAGE_SIZE;
@@ -280,6 +279,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     struct task* t =
         sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, process_table[pid].pid);
     process_table[pid].main_task = t;
+    enqueue_ready(get_core_id(), t);
 }
 
 /*
@@ -377,6 +377,7 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     struct task* t = sched_create_user_task(process_table[pid].context.sp, process_table[pid].context.lr, pid);
     process_table[pid].main_task = t;
+    enqueue_ready(get_core_id(), t);
 
     printf("[PROCESS] Loaded ELF %s for PID %d, entry at 0x%lx\n", path, pid, entry_point);
     return PERS_SUCCESS;
@@ -695,12 +696,13 @@ int process_fork(struct exception_trap_frame* parent_tf)
             child->cwd = NULL;
         }
 
-        spin_lock_irqsave(&process_table_lock);
+        unsigned long f2 = spin_lock_irqsave(&process_table_lock);
         child->state = PROCESS_STATE_EMPTY;
-        spin_unlock_irqrestore(&process_table_lock, flags);
+        spin_unlock_irqrestore(&process_table_lock, f2);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
     child->main_task = t;
+    enqueue_ready(get_core_id(), t);
 
     printf("[PROCESS] PID %d forked child PID %d\n", parent_pid, child_pid);
     return child_pid;
@@ -721,6 +723,13 @@ int process_waitpid(int pid, int* status)
     {
         unsigned long irqf = irq_save();
         spin_lock(&process_table_lock);
+
+        struct task* curr = sched_get_current();
+        if (curr)
+        {
+            curr->state = SCHED_TASK_BLOCKED;
+        }
+
         int has_children = 0;
         for (int i = 0; i < PROCESS_TABLE_SIZE; i++)
         {
@@ -747,6 +756,12 @@ int process_waitpid(int pid, int* status)
                 }
                 int found_pid = (int)process_table[i].pid;
                 process_table[i].state = PROCESS_STATE_EMPTY;
+
+                if (curr)
+                {
+                    curr->state = SCHED_TASK_RUNNING;
+                }
+
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
                 return found_pid;
@@ -755,15 +770,13 @@ int process_waitpid(int pid, int* status)
 
         if (!has_children)
         {
+            if (curr)
+            {
+                curr->state = SCHED_TASK_RUNNING;
+            }
             spin_unlock(&process_table_lock);
             irq_restore(irqf);
             return -PERS_ERR_NO_SUCH_PROCESS;
-        }
-
-        struct task* curr = sched_get_current();
-        if (curr)
-        {
-            curr->state = SCHED_TASK_BLOCKED;
         }
 
         spin_unlock(&process_table_lock);

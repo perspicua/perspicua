@@ -66,6 +66,21 @@ struct task
 };
 
 /*
+ * get_core_id - Returns the index of the current CPU core (0-3).
+ */
+static inline int get_core_id(void)
+{
+    unsigned long mpidr;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return (int)(mpidr & 3);
+}
+
+/*
+ * enqueue_ready - Appends a task to the end of a specific CPU's ready queue.
+ */
+void enqueue_ready(int cpu, struct task* t);
+
+/*
  * sched_init - Initializes the scheduler on the primary CPU core.
  * Sets up the initial main task and the idle task.
  */

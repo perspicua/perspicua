@@ -63,17 +63,27 @@ static void wait_queue_add(struct task** head, struct task** tail, struct task* 
  */
 static struct task* wait_queue_remove(struct task** head, struct task** tail)
 {
-    struct task* t = *head;
-    if (t)
+    while (*head)
     {
+        struct task* t = *head;
         *head = t->next;
         if (*head == NULL)
         {
             *tail = NULL;
         }
         t->next = NULL;
+
+        /*
+         * Check if the task is still BLOCKED. We don't change the state here
+         * because sched_unblock needs to perform the atomic transition to
+         * READY to safely enqueue it.
+         */
+        if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_BLOCKED)
+        {
+            return t;
+        }
     }
-    return t;
+    return NULL;
 }
 
 /*
@@ -251,9 +261,10 @@ int tty_read(struct tty* tty, char* buf, size_t count)
         if (!ready)
         {
             struct task* curr = sched_get_current();
+            curr->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr);
             spin_unlock_irqrestore(&tty->lock, flags);
-            sched_block();
+            schedule();
             continue;
         }
 
@@ -291,9 +302,10 @@ int tty_write(struct tty* tty, const char* buf, size_t count)
         while ((tty->tx_head + 1) % TTY_BUFFER_SIZE == tty->tx_tail)
         {
             struct task* curr = sched_get_current();
+            curr->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
             spin_unlock_irqrestore(&tty->lock, flags);
-            sched_block();
+            schedule();
             flags = spin_lock_irqsave(&tty->lock);
         }
 

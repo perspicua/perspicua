@@ -462,7 +462,8 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
 
 oom:
     spin_unlock_irqrestore(&mmu_lock, irq);
-    return child_pgd;
+    mmu_destroy_user_pgd(child_pgd);
+    return NULL;
 }
 
 void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags)

@@ -49,7 +49,7 @@ void signal_handle_pending(struct exception_trap_frame* tf)
 
         if (sig == SIGNAL_KILL)
         {
-            curr_process->exit_status = 128 + SIGNAL_KILL;
+            process_exit(curr_pid, 128 + SIGNAL_KILL);
             sched_get_current()->state = SCHED_TASK_DEAD;
             schedule();
             return;
@@ -63,7 +63,7 @@ void signal_handle_pending(struct exception_trap_frame* tf)
             if (sig == SIGNAL_CHLD || sig == SIGNAL_CONT || sig == SIGNAL_USR1 || sig == SIGNAL_USR2)
                 continue;
 
-            curr_process->exit_status = 128 + sig;
+            process_exit(curr_pid, 128 + sig);
             sched_get_current()->state = SCHED_TASK_DEAD;
             schedule();
             return;
@@ -115,7 +115,7 @@ void signal_handle_pending(struct exception_trap_frame* tf)
     return;
 
 deliver_kill:
-    curr_process->exit_status = -1;
+    process_exit(curr_pid, -1);
     sched_get_current()->state = SCHED_TASK_DEAD;
     schedule();
 }
