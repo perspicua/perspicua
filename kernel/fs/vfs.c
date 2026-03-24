@@ -110,6 +110,13 @@ int vfs_mount(const char* path, struct vfs_vnode* root)
             *last_slash = '\0';
         }
 
+        char* orig_last_slash = strrchr(path, '/');
+        if (orig_last_slash && orig_last_slash[1] != '\0')
+        {
+            strncpy(root->name, orig_last_slash + 1, sizeof(root->name) - 1);
+            root->name[sizeof(root->name) - 1] = '\0';
+        }
+
         int err;
         struct vfs_vnode* parent = vfs_resolve_path_locked(parent_path, NULL, &err);
         if (parent)
@@ -120,6 +127,7 @@ int vfs_mount(const char* path, struct vfs_vnode* root)
     else
     {
         root->parent = NULL;
+        root->name[0] = '\0';
     }
 
     /* Register the new mount entry */
