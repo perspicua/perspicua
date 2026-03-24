@@ -64,6 +64,7 @@ struct task
     unsigned char* stack;        /* Pointer to the allocated stack region */
     struct task* next;           /* Link for ready and sleep queues */
     int skip_signals;            /* Flag to indicate if signal handling should be deferred */
+    volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
 
 /*

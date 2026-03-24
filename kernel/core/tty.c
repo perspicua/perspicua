@@ -93,6 +93,10 @@ static struct task* wait_queue_remove(struct task** head, struct task** tail)
 static void tty_pump_tx(struct tty* tty)
 {
     size_t initial_tail = tty->tx_tail;
+
+    /* Acquire the hardware lock for the duration of the pump loop */
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+
     while (tty->tx_head != tty->tx_tail)
     {
         if (mmio_read(uart_fr) & UART_FR_TXFF)
@@ -100,9 +104,11 @@ static void tty_pump_tx(struct tty* tty)
             break;
         }
 
-        mmio_write(uart_dr, (unsigned char)tty->tx_buffer[tty->tx_tail]);
+        uart_send_raw((unsigned char)tty->tx_buffer[tty->tx_tail]);
         tty->tx_tail = (tty->tx_tail + 1) % TTY_BUFFER_SIZE;
     }
+
+    spin_unlock_irqrestore(&uart_tx_lock, flags);
 
     /* Unblock tasks that were waiting for space in the TX buffer */
     if (tty->tx_tail != initial_tail)

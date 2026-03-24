@@ -51,7 +51,7 @@ extern void __libc_write(const char* buf, size_t len);
 
 /* Output buffer size for printf's stack buffer.
  * Increase if you routinely format very long lines. */
-#define PRINTF_BUF_SIZE 512
+#define PRINTF_BUF_SIZE 256
 
 /* -------------------------------------------------------------------------
  * Internal formatting context
@@ -482,7 +482,10 @@ int vsnprintf(char* buf, size_t size, const char* fmt, va_list args)
         return 0;
 
     struct fmt_buf fb = {
-        .buf = buf, .size = size, .pos = 0, .crlf = 0, /* no CRLF translation in string buffers */
+        .buf = buf,
+        .size = size,
+        .pos = 0,
+        .crlf = 0, /* no CRLF translation in string buffers */
     };
 
     int ret = fmt_core(&fb, fmt, args);
@@ -518,7 +521,10 @@ int vprintf(const char* fmt, va_list args)
     char stack_buf[PRINTF_BUF_SIZE];
 
     struct fmt_buf fb = {
-        .buf = stack_buf, .size = sizeof(stack_buf), .pos = 0, .crlf = 1, /* UART: translate \n to \r\n */
+        .buf = stack_buf,
+        .size = sizeof(stack_buf),
+        .pos = 0,
+        .crlf = 1, /* UART: translate \n to \r\n */
     };
 
     fmt_core(&fb, fmt, args);

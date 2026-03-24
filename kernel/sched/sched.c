@@ -120,6 +120,9 @@ static struct task* sched_cleanup[SCHED_NUM_CORES];
 /* Per-core PID tracking (for sched_get_core_pid). */
 static int sched_core_pid[SCHED_NUM_CORES];
 
+/* Per-core deferred-active-clear slot: task whose on_core flag should be cleared. */
+static struct task* sched_prev_task[SCHED_NUM_CORES];
+
 /* Monotonically increasing task ID. */
 static unsigned long sched_next_id;
 static spinlock_t sched_id_lock = SPINLOCK_INIT;
@@ -279,6 +282,7 @@ static void rq_enqueue(int cpu, struct task* t)
  *
  * Returns NULL if no eligible task is found.
  */
+
 static struct task* rq_dequeue(int cpu, int allow_pid0)
 {
     unsigned long flags = spin_lock_irqsave(&sched_rq_lock[cpu]);
@@ -288,9 +292,8 @@ static struct task* rq_dequeue(int cpu, int allow_pid0)
 
     while (curr)
     {
-        if (allow_pid0 || curr->pid != 0)
+        if ((allow_pid0 || curr->pid != 0) && curr->on_core == -1)
         {
-            /* Unlink curr from the list. */
             if (prev)
                 prev->next = curr->next;
             else
@@ -299,7 +302,6 @@ static struct task* rq_dequeue(int cpu, int allow_pid0)
             if (curr == sched_rq_tail[cpu])
                 sched_rq_tail[cpu] = prev;
 
-            /* Tail must be NULL when queue is empty. */
             if (!sched_rq_head[cpu])
                 sched_rq_tail[cpu] = NULL;
 
@@ -385,6 +387,13 @@ static void sleep_drain(int cpu)
 
 static void idle_entry(void)
 {
+    int cpu = get_core_id();
+    if (sched_prev_task[cpu])
+    {
+        sched_prev_task[cpu]->on_core = -1;
+        sched_prev_task[cpu] = NULL;
+    }
+
     enable_interrupts();
     for (;;)
         asm volatile("wfe");
@@ -407,6 +416,7 @@ static struct task* create_idle_task(int core_id)
     t->id = 900 + (unsigned long)core_id;
     t->pid = 0;
     t->ttbr0 = mmu_kernel_ttbr0();
+    t->on_core = -1;
 
     return t;
 }
@@ -440,12 +450,31 @@ static void cleanup_dead_task(int cpu)
      * Validate the task struct before using any of its fields.
      * Dump everything so we can identify the corruption source.
      */
+    unsigned long dead_addr_before = (unsigned long)dead;
     printf("SCHED: cleanup task id=%lu pid=%u stack=0x%lx ttbr0=0x%lx state=%d\n",
            dead->id,
            (unsigned)dead->pid,
            (unsigned long)dead->stack,
            dead->ttbr0,
            (int)dead->state);
+
+    /*
+     * Re-verify 'dead' after printf in case of stack corruption.
+     * Use a volatile-like check to ensure the compiler reloads it.
+     */
+    if ((unsigned long)dead != dead_addr_before)
+    {
+        printf("SCHED: STACK CORRUPTION DETECTED during printf!\n");
+        printf("  dead addr before printf: 0x%lx\n", dead_addr_before);
+        printf("  dead addr after  printf: 0x%lx\n", (unsigned long)dead);
+        PANIC("sched: cleanup_dead_task stack corruption");
+    }
+
+    if (dead_addr_before < KERNEL_VMA)
+    {
+        printf("SCHED: cleanup_dead_task: dead pointer is not a kernel VA: 0x%lx\n", dead_addr_before);
+        PANIC("sched: invalid task pointer in cleanup_dead_task");
+    }
 
     if ((unsigned long)dead->stack != 0 && (unsigned long)dead->stack < KERNEL_VMA)
     {
@@ -463,14 +492,6 @@ static void cleanup_dead_task(int cpu)
         for (int i = 136; i < 168; i++)
             printf("%02x ", raw[i]);
         printf("\n");
-        /*
-         * Also check if 'dead' itself looks like a valid heap pointer.
-         * If dead < KERNEL_VMA then the task struct pointer is also corrupted.
-         */
-        if ((unsigned long)dead < KERNEL_VMA)
-        {
-            printf("  dead pointer itself is not a kernel VA!\n");
-        }
         PANIC("sched: t->stack corrupted before cleanup_dead_task");
     }
 
@@ -519,7 +540,7 @@ void sched_init(void)
     boot->pid = 0;
     boot->stack = NULL; /* boot task has no separately allocated stack */
     boot->ttbr0 = mmu_kernel_ttbr0();
-
+    boot->on_core = 0;
     /* Publish as the current task for CPU 0. */
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
@@ -547,7 +568,7 @@ void sched_secondary_init(void)
     boot->id = 800 + (unsigned long)core_id;
     boot->pid = 0;
     boot->ttbr0 = mmu_kernel_ttbr0();
-
+    boot->on_core = core_id;
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
     sched_idle[core_id] = create_idle_task(core_id);
@@ -586,6 +607,7 @@ void sched_create_task(void (*entry)(void))
     t->ttbr0 = mmu_kernel_ttbr0();
     t->pid = 0;
     t->id = alloc_task_id();
+    t->on_core = -1;
 
     rq_enqueue(get_core_id(), t);
 }
@@ -612,7 +634,7 @@ sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr
     t->context.lr = forged_lr;
     t->pid = pid;
     t->id = alloc_task_id();
-
+    t->on_core = -1;
     /*
      * t->stack points to the guard page base of the kernel stack so that
      * TASK_CANARY_PTR() resolves correctly and free_task_stack() can release
@@ -746,6 +768,15 @@ void schedule(void)
     unsigned long flags = irq_save();
     int cpu = get_core_id();
 
+    /* ── Step 0: Clear deferred on_core flag from previous bypassed tasks ── */
+    /* If a newly forked task bypassed the normal return path in a previous cycle,
+       we clean up its predecessor safely here. */
+    if (sched_prev_task[cpu])
+    {
+        sched_prev_task[cpu]->on_core = -1;
+        sched_prev_task[cpu] = NULL;
+    }
+
     /* ── Step 1: deferred dead-task cleanup ── */
     cleanup_dead_task(cpu);
 
@@ -758,55 +789,33 @@ void schedule(void)
     struct task* prev = sched_get_current();
     if (!prev)
     {
-        /* Should never happen after sched_init, but be defensive. */
         irq_restore(flags);
         return;
     }
 
-    /* ── Step 3b: stack canary check on the outgoing task ── */
     task_check_stack_canary(prev);
 
-    /* ── Step 4: transition outgoing task ── */
     switch (prev->state)
     {
     case SCHED_TASK_RUNNING:
-        /*
-         * Normal preemption or voluntary yield — put the task back at the
-         * tail of the ready queue so other tasks get a turn first.
-         */
-
         if (prev != sched_idle[cpu])
             rq_enqueue(cpu, prev);
-        /* If prev IS the idle task we simply let it be superseded; it is
-         * re-selected in step 5 if nothing else is runnable. */
         break;
-
     case SCHED_TASK_BLOCKED:
-        /* Task voluntarily blocked (sched_block / sched_sleep_ms).
-         * It is either in the sleep queue or waiting for an explicit
-         * sched_unblock().  Do not re-enqueue. */
         break;
-
     case SCHED_TASK_DEAD:
-        /* Task exited.  Stash for cleanup on the next schedule() call.
-         * Only one dead task can be pending at a time on a core; if the
-         * slot is already occupied something has gone seriously wrong. */
         if (sched_cleanup[cpu])
             PANIC("sched: double-dead task on same core");
         sched_cleanup[cpu] = prev;
         break;
-
     case SCHED_TASK_READY:
-        /* Already in a ready queue or just unblocked. No action needed. */
         break;
     }
 
-    /* ── Step 5: select next task ── */
     struct task* next = rq_dequeue(cpu, /*allow_pid0=*/1);
 
     if (!next)
     {
-        /* Work-steal from other cores; never steal PID-0 tasks. */
         for (int i = 1; i <= SCHED_NUM_CORES; i++)
         {
             int victim = (cpu + i) % SCHED_NUM_CORES;
@@ -819,15 +828,11 @@ void schedule(void)
     if (!next)
         next = sched_idle[cpu];
 
-    /* ── Step 6: context switch ── */
+    next->on_core = cpu;
+
     next->state = SCHED_TASK_RUNNING;
     sched_core_pid[cpu] = (int)next->pid;
 
-    /*
-     * Publish the new task pointer and address space before the register
-     * switch so that any exception arriving immediately after sees a
-     * consistent state.
-     */
     asm volatile("msr tpidr_el1, %0" ::"r"(next));
     asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));
     asm volatile("dsb sy");
@@ -835,15 +840,9 @@ void schedule(void)
 
     if (prev != next)
     {
-        /*
-         * Validate the incoming context before trusting the stack pointer.
-         * A zero LR or SP almost certainly means an uninitialised or
-         * corrupted task struct.
-         */
         if (next->context.lr == 0 || next->context.sp == 0)
         {
-            printf("SCHED: corrupt context — task id=%lu pid=%u "
-                   "lr=0x%lx sp=0x%lx\n",
+            printf("SCHED: corrupt context — task id=%lu pid=%u lr=0x%lx sp=0x%lx\n",
                    next->id,
                    (unsigned)next->pid,
                    next->context.lr,
@@ -851,12 +850,18 @@ void schedule(void)
             PANIC("sched: corrupt task context");
         }
 
+        sched_prev_task[cpu] = prev;
+
         switch_context(&prev->context, &next->context);
-        /*
-         * We return here when 'prev' is next scheduled.  At that point
-         * tpidr_el1 has already been restored to 'prev' by the switch
-         * that resumed us, so sched_get_current() is valid again.
-         */
+
+        /* We return here executing on the NEW task's stack.
+         * The task may have migrated cores while asleep, so re-fetch core ID. */
+        int new_cpu = get_core_id();
+        if (sched_prev_task[new_cpu])
+        {
+            sched_prev_task[new_cpu]->on_core = -1;
+            sched_prev_task[new_cpu] = NULL;
+        }
     }
 
     irq_restore(flags);

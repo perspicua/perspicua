@@ -237,11 +237,11 @@ void stress_signals()
 int main(int argc __attribute__((unused)), char** argv __attribute__((unused)))
 {
     printf("[STRESS] Starting comprehensive stress test...\n");
-    // stress_stack();
+    stress_stack();
     stress_fork();
-    // stress_pipe();
-    // stress_fd();
-    // stress_mmap();
+    stress_pipe();
+    stress_fd();
+    stress_mmap();
     // stress_signals();
     printf("[STRESS] Comprehensive stress test complete.\n");
     return 0;
