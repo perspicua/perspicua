@@ -403,8 +403,12 @@ void syscall_handle(struct exception_trap_frame* tf)
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-        if (target_pid <= 0 || target_pid >= PROCESS_TABLE_SIZE
-            || process_table[target_pid].state == PROCESS_STATE_EMPTY)
+        if (target_pid == 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+            break;
+        }
+        if (target_pid >= PROCESS_TABLE_SIZE || process_table[target_pid].state == PROCESS_STATE_EMPTY)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
             break;
