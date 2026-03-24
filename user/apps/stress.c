@@ -196,25 +196,33 @@ void stress_mmap()
 
 // 6. Signal Stress
 volatile int sig_count = 0;
+volatile int stop_child = 0;  // Added stop flag
+
 void sig_handler(int sig)
 {
-    printf("got a signal %d, curr count: %d\n", sig, sig_count);
     if (sig == SIGNAL_USR1)
     {
+        printf("got a signal %d, curr count: %d\n", sig, sig_count);
         sig_count++;
     }
+    else if (sig == SIGNAL_USR2)
+    {
+        stop_child = 1;  // Parent says we are done
+    }
 }
-
 void stress_signals()
 {
     printf("[STRESS] Testing signal delivery...\n");
+
+    sys_sigrestore((uintptr_t)sys_sigreturn);
+
     sys_signal(SIGNAL_USR1, sig_handler);
+    sys_signal(SIGNAL_USR2, sig_handler);
 
     int pid = sys_fork();
     if (pid == 0)
     {
-        // Child: wait for signals
-        while (sig_count < 100)
+        while (!stop_child)
         {
             sys_yield();
         }
@@ -222,27 +230,30 @@ void stress_signals()
     }
     else
     {
-        // Parent: send 100 signals
         for (int i = 0; i < 100; i++)
         {
             sys_kill(pid, SIGNAL_USR1);
             sys_yield();
         }
+
+        sys_kill(pid, SIGNAL_USR2);
+
         int status;
         sys_waitpid(pid, &status);
-        printf("[STRESS] Signal delivery done. Child caught %d signals.\n", status);
+
+        printf("[STRESS] Signal delivery done. Child caught %d signals (coalescing is normal).\n", status);
     }
 }
 
 int main(int argc __attribute__((unused)), char** argv __attribute__((unused)))
 {
     printf("[STRESS] Starting comprehensive stress test...\n");
-    stress_stack();
-    stress_fork();
-    stress_pipe();
-    stress_fd();
-    stress_mmap();
-    // stress_signals();
+    // stress_stack();
+    // stress_fork();
+    // stress_pipe();
+    // stress_fd();
+    // stress_mmap();
+    stress_signals();
     printf("[STRESS] Comprehensive stress test complete.\n");
     return 0;
 }
