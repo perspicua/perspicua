@@ -78,7 +78,6 @@ static unsigned long* alloc_table_page(void)
     {
         PANIC("MMU: out of memory for page table");
     }
-    printf("[  MMU ] allocated table page at %p\n", page);
     memset(page, 0, PAGE_SIZE);
     return page;
 }
@@ -167,8 +166,8 @@ void mmu_init(void)
     asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys) : "memory");
     tlbi_all_is();
 
-    printf("[  MMU ] TTBR1 -> 0x%lx, TTBR0 -> empty (0x%lx)\n", kernel_pgd_phys, empty_pgd_phys);
-    printf("[  MMU ] Kernel mapped [0x%lx – 0x%lx)\n", ks, ke);
+    pr_info("mmu: TTBR1 -> 0x%lx, TTBR0 -> empty (0x%lx)\n", kernel_pgd_phys, empty_pgd_phys);
+    pr_info("mmu: Kernel mapped [0x%lx – 0x%lx)\n", ks, ke);
 }
 
 void mmu_secondary_init(void)

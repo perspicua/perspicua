@@ -39,7 +39,7 @@ void vfs_init(void)
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
 
-    printf("[  VFS ] Virtual File System initialized\n");
+    pr_info("vfs: Virtual File System initialized\n");
 }
 
 /*

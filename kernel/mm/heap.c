@@ -140,8 +140,7 @@ void heap_init(void)
         PANIC("HEAP: Failed to initialize pool.");
     }
 
-    printf("[ HEAP ] First-fit pool: %lu bytes\n", heap_free_list->size);
-    printf("[ HEAP ] Alignment: 16 bytes\n");
+    pr_info("heap: %lu bytes aligned to 16 bytes\n", heap_free_list->size);
 }
 
 /*

@@ -194,5 +194,5 @@ void devfs_init(void)
         PANIC("Failed to register /dev/uart");
     }
 
-    printf("[ DEVFS] Device File System initialized\n");
+    pr_info("devfs: Device File System initialized\n");
 }

@@ -54,7 +54,7 @@ void fb_console_init(void)
     graphics_clear(0x00000000);  // black
     spin_unlock(&fb_console_lock);
 
-    printf("[ CON  ] Framebuffer console initialized\n");
+    pr_info("fb: Console initialized\n");
 }
 
 /*

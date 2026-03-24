@@ -130,7 +130,7 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char*
 
     if (pmm_reserved_range_count >= PMM_MAX_RESERVED_RANGES)
     {
-        printf("PMM: Too many reserved ranges! Limit %d exceeded (tag: %s)\n", PMM_MAX_RESERVED_RANGES, tag);
+        pr_err("pmm: Too many reserved ranges! Limit %d exceeded (tag: %s)\n", PMM_MAX_RESERVED_RANGES, tag);
         PANIC("PMM: PMM_MAX_RESERVED_RANGES is too small");
     }
 
@@ -241,7 +241,7 @@ void pmm_init(void)
                 PANIC("PMM: DTB reports zero memory");
 
             pmm_phys_mem_size = (unsigned long)mem_size_cells;
-            printf("[  PMM ] Physical memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
+            pr_info("pmm: Memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
         }
     }
     else
@@ -265,10 +265,7 @@ void pmm_init(void)
     unsigned long usable_start_va = (array_start + array_bytes + PAGE_SIZE - 1) & ~(unsigned long)(PAGE_SIZE - 1);
     pmm_metadata_end = usable_start_va;
 
-    printf("[  PMM ] pmm_page_array: %p, pmm_metadata_end: %p, array_bytes: %lu\n",
-           pmm_page_array,
-           (void*)pmm_metadata_end,
-           array_bytes);
+    pr_info("pmm: Metadata: %lu KB at %p, ends at %p\n", array_bytes / 1024, pmm_page_array, (void*)pmm_metadata_end);
 
     // Step 3: Reserve kernel + metadata
     unsigned long usable_start_phys = V2P(usable_start_va);
@@ -284,16 +281,7 @@ void pmm_init(void)
 
     memset(pmm_page_array, 0, array_bytes);
 
-    printf("[  PMM ] %lu pages, descriptor array: %lu KB at 0x%lx\n", pmm_num_pages, array_bytes / 1024, array_start);
-
-    for (unsigned int i = 0; i < pmm_reserved_range_count; i++)
-    {
-        unsigned long s = pmm_reserved_ranges[i].start_phys;
-        unsigned long e = pmm_reserved_ranges[i].end_phys;
-        if (s >= e)
-            continue;
-        printf("[  PMM ] reserve 0x%lx..0x%lx (%s)\n", s, e - 1, pmm_reserved_ranges[i].tag ?: "(untagged)");
-    }
+    /* (Removed verbose range prints) */
 
     // Step 5: Populate free lists
     unsigned long pfn = 0;
@@ -324,7 +312,7 @@ void pmm_init(void)
 
     pmm_managed_pages = pmm_free_pages_count;
     pmm_ready = 1;
-    printf("[  PMM ] %lu MB free — buddy system ready\n", (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
+    pr_info("pmm: %lu MB free - buddy system ready\n", (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
 void* pmm_alloc_pages(unsigned long count)
@@ -391,15 +379,14 @@ void pmm_free_pages(void* ptr, unsigned long count)
 
     if ((unsigned long)ptr < KERNEL_VMA)
     {
-        printf("PMM: pmm_free_pages called with non-kernel VA: %p (0x%lx)\n", ptr, (unsigned long)ptr);
+        pr_err("pmm: pmm_free_pages called with non-kernel VA: %p\n", ptr);
         PANIC("PMM: invalid pointer in free");
     }
 
     unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
     if (pfn >= pmm_num_pages || pfn_is_reserved(pfn))
     {
-        printf(
-            "PMM: pmm_free_pages: PFN %lu is unmanaged or reserved (ptr %p, num_pages %lu)\n", pfn, ptr, pmm_num_pages);
+        pr_err("pmm: pmm_free_pages: PFN %lu is unmanaged or reserved (ptr %p)\n", pfn, ptr);
         return;
     }
 

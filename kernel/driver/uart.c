@@ -127,7 +127,7 @@ void uart_init(void)
         cached_uart_irq = 153;
     }
 
-    printf("[ UART ] PL011 UART initialized (base 0x%lx, IRQ %u)\n", vbase, cached_uart_irq);
+    pr_info("uart: PL011 at 0x%lx, IRQ %u\n", vbase, cached_uart_irq);
 }
 
 /*

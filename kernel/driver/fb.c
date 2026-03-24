@@ -86,7 +86,7 @@ void fb_init(void)
         uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
         if (phys_addr == 0)
         {
-            printf("[   FB ] Error: VideoCore returned NULL or invalid address!\n");
+            pr_err("fb: VideoCore returned invalid address!\n");
             return;
         }
 
@@ -101,17 +101,16 @@ void fb_init(void)
         // Reserve framebuffer pages in the PMM before they are allocated elsewhere.
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
-        printf("[   FB ] Framebuffer initialized: %dx%d @ %p (phys 0x%lx, size %d, pitch %d)\n",
-               fb_info.width,
-               fb_info.height,
-               fb_info.ptr,
-               (unsigned long)phys_addr,
-               fb_info.size,
-               fb_info.pitch);
+        pr_info("fb: %dx%d @ %p (%lu MB, pitch %d)\n",
+                fb_info.width,
+                fb_info.height,
+                fb_info.ptr,
+                (unsigned long)(fb_info.size / (1024 * 1024)),
+                fb_info.pitch);
     }
     else
     {
-        printf("[   FB ] Error: Could not initialize framebuffer!\n");
+        pr_err("fb: Could not initialize framebuffer!\n");
     }
 }
 

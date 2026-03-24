@@ -119,10 +119,8 @@ void gic_init(void)
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
 
-    printf("[  GIC ] GIC-400 distributor @ 0x%lx, CPU interface @ 0x%lx\n",
-           (unsigned long)gicd_vbase,
-           (unsigned long)gicc_vbase);
-    printf("[  GIC ] IRQ %d (phys timer) enabled, IRQ %d (UART0) -> CPU0\n", GIC_TIMER_IRQ, cached_uart_irq);
+    pr_info("gic: GIC-400 distributor @ 0x%lx, CPU @ 0x%lx\n", (unsigned long)gicd_vbase, (unsigned long)gicc_vbase);
+    pr_info("gic: Timer IRQ %d, UART IRQ %d enabled\n", GIC_TIMER_IRQ, cached_uart_irq);
 }
 
 /*

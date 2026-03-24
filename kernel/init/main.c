@@ -50,7 +50,7 @@ extern void _entry(void);
 extern struct tty console_tty;
 
 /* Global synchronization for early boot messages */
-static spinlock_t console_lock = SPINLOCK_INIT;
+// static spinlock_t console_lock = SPINLOCK_INIT; // Removed in favor of printk's internal lock
 
 /*
  * smp_init - Brings up the secondary CPU cores by writing the kernel
@@ -58,7 +58,7 @@ static spinlock_t console_lock = SPINLOCK_INIT;
  */
 static void smp_init(void)
 {
-    printf("[  SMP ] Bringing up secondary cores...\n");
+    pr_info("smp: Bringing up secondary cores...\n");
 
     unsigned long entry_phys = V2P((unsigned long)_entry);
 
@@ -97,27 +97,24 @@ __attribute__((used)) void secondary_main(void)
     mmu_secondary_init();
     gic_secondary_init();
     timer_interrupt_init();
-    unsigned long flags = spin_lock_irqsave(&console_lock);
-    printf("[  SMP ] CPU%lu online - MMU active, GIC configured, timer armed\n", core_id);
-    spin_unlock_irqrestore(&console_lock, flags);
+
+    pr_info("smp: CPU%lu online\n", core_id);
 
     sched_secondary_init();
 
-    /* Fallback loop: secondary cores should enter the scheduler */ for (;;) { asm volatile("wfe"); }
+    /* Fallback loop: secondary cores should enter the scheduler */
+    for (;;)
+    {
+        asm volatile("wfe");
+    }
 }
 
 /*
- * print_banner - Displays the kernel ASCII logo and version string.
+ * print_banner - Displays the kernel version string.
  */
 static void print_banner(void)
 {
-    printf("\n");
-    printf("  _ __   ___ _ __ ___ _ __ (_) ___ _   _  __ _\n");
-    printf(" | '_ \\ / _ \\ '__/ __| '_ \\| |/ __| | | |/ _` |\n");
-    printf(" | |_) |  __/ |  \\__ \\ |_) | | (__| |_| | (_| |\n");
-    printf(" | .__/ \\___|_|  |___/ .__/|_|\\___|\\__,_|\\__,_| v%s\n", KERNEL_VERSION);
-    printf(" |_|                 |_|\n");
-    printf("\n");
+    pr_info("perspicua kernel v%s (" __DATE__ " " __TIME__ ")\n", KERNEL_VERSION);
 }
 
 /*
@@ -150,7 +147,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     tty_init(&console_tty);
 
     print_banner();
-    printf("[ BOOT ] perspicua kernel v%s, built " __DATE__ " " __TIME__ "\n", KERNEL_VERSION);
 
     /* Stage 2: Memory management initialization */
     fdt_parse_memory_reservations();
@@ -197,7 +193,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Load and execute the primary user-space application from the SD card */
     if (process_create_from_file("/init.elf", 1) != 0)
     {
-        printf("[  ELF ] Error: failed to load /init.elf from SD card\n");
+        pr_err("init: Failed to load /init.elf\n");
     }
 
     /* The main thread remains parked while the scheduler handles execution */

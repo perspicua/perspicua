@@ -44,6 +44,7 @@
 
 #ifdef __KERNEL__
     #include "core/lock.h"
+    #include "core/timer.h"
 static spinlock_t printf_lock = SPINLOCK_INIT;
 #endif
 
@@ -559,3 +560,39 @@ int printf(const char* fmt, ...)
 
     return ret;
 }
+
+#ifdef __KERNEL__
+/*
+ * printk - Kernel logging with system timestamps.
+ */
+int printk(const char* fmt, ...)
+{
+    unsigned long irqflags = spin_lock_irqsave(&printf_lock);
+
+    unsigned long ms = get_system_time();
+    unsigned long sec = ms / 1000;
+    unsigned long rem_ms = ms % 1000;
+
+    /* Prepend the Linux-style timestamp [ seconds.microseconds] */
+    char ts_buf[32];
+    snprintf(ts_buf, sizeof(ts_buf), "[%5lu.%06lu] ", sec, rem_ms * 1000);
+
+    /* Use vprintf directly to avoid re-locking */
+    /* vprintf doesn't have a va_list version for fixed strings easily,
+     * so we just write it directly or use snprintf.
+     * Actually, we can just call __libc_write if we want to be efficient. */
+    size_t ts_len = 0;
+    while (ts_buf[ts_len])
+        ts_len++;
+    __libc_write(ts_buf, ts_len);
+
+    va_list args;
+    va_start(args, fmt);
+    int ret = vprintf(fmt, args);
+    va_end(args);
+
+    spin_unlock_irqrestore(&printf_lock, irqflags);
+
+    return ret;
+}
+#endif

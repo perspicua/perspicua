@@ -146,9 +146,9 @@ static void sched_check_bss_canaries(void)
 {
     if (s_canary_lo != 0xAAAAAAAAAAAAAAAAULL || s_canary_hi != 0xBBBBBBBBBBBBBBBBULL)
     {
-        printf("SCHED: BSS canary corruption!\n");
-        printf("  lo: 0x%llx (expected 0xAAAAAAAAAAAAAAAA)\n", (unsigned long long)s_canary_lo);
-        printf("  hi: 0x%llx (expected 0xBBBBBBBBBBBBBBBB)\n", (unsigned long long)s_canary_hi);
+        pr_err("sched: BSS canary corruption!\n");
+        pr_err("  lo: 0x%llx (expected 0xAAAAAAAAAAAAAAAA)\n", (unsigned long long)s_canary_lo);
+        pr_err("  hi: 0x%llx (expected 0xBBBBBBBBBBBBBBBB)\n", (unsigned long long)s_canary_hi);
         PANIC("sched: memory corruption around boot task structs");
     }
 }
@@ -161,7 +161,7 @@ static void task_check_stack_canary(const struct task* t)
 {
     if (t->stack && *TASK_CANARY_PTR(t) != SCHED_STACK_CANARY)
     {
-        printf("SCHED: stack overflow in task id=%lu pid=%u\n", t->id, (unsigned)t->pid);
+        pr_err("sched: stack overflow in task id=%lu pid=%u\n", t->id, (unsigned)t->pid);
         PANIC("sched: stack overflow detected via canary");
     }
 }
@@ -220,8 +220,7 @@ static void free_task_stack(unsigned char* stack)
      */
     if ((unsigned long)stack < KERNEL_VMA)
     {
-        printf("SCHED: free_task_stack called with non-VA pointer: 0x%lx\n", (unsigned long)stack);
-        printf("SCHED: this is a physical address — t->stack was corrupted\n");
+        pr_err("sched: free_task_stack: non-VA pointer 0x%lx\n", (unsigned long)stack);
         PANIC("sched: corrupted t->stack in free_task_stack");
     }
 
@@ -448,50 +447,25 @@ static void cleanup_dead_task(int cpu)
 
     /*
      * Validate the task struct before using any of its fields.
-     * Dump everything so we can identify the corruption source.
      */
     unsigned long dead_addr_before = (unsigned long)dead;
-    printf("SCHED: cleanup task id=%lu pid=%u stack=0x%lx ttbr0=0x%lx state=%d\n",
-           dead->id,
-           (unsigned)dead->pid,
-           (unsigned long)dead->stack,
-           dead->ttbr0,
-           (int)dead->state);
 
-    /*
-     * Re-verify 'dead' after printf in case of stack corruption.
-     * Use a volatile-like check to ensure the compiler reloads it.
-     */
     if ((unsigned long)dead != dead_addr_before)
     {
-        printf("SCHED: STACK CORRUPTION DETECTED during printf!\n");
-        printf("  dead addr before printf: 0x%lx\n", dead_addr_before);
-        printf("  dead addr after  printf: 0x%lx\n", (unsigned long)dead);
+        pr_err("sched: STACK CORRUPTION during task cleanup!\n");
         PANIC("sched: cleanup_dead_task stack corruption");
     }
 
     if (dead_addr_before < KERNEL_VMA)
     {
-        printf("SCHED: cleanup_dead_task: dead pointer is not a kernel VA: 0x%lx\n", dead_addr_before);
+        pr_err("sched: cleanup_dead_task: invalid pointer 0x%lx\n", dead_addr_before);
         PANIC("sched: invalid task pointer in cleanup_dead_task");
     }
 
     if ((unsigned long)dead->stack != 0 && (unsigned long)dead->stack < KERNEL_VMA)
     {
-        printf("SCHED: CORRUPTION DETECTED\n");
-        printf("  dead->stack = 0x%lx (physical address — should be kernel VA)\n", (unsigned long)dead->stack);
-        printf("  dead->id    = %lu\n", dead->id);
-        printf("  dead->pid   = %u\n", (unsigned)dead->pid);
-        printf("  dead addr   = 0x%lx\n", (unsigned long)dead);
-        /*
-         * Print what's at offset 144 in raw hex — this is the corrupted
-         * t->stack field. Bytes 136-160 of the task struct:
-         */
-        unsigned char* raw = (unsigned char*)dead;
-        printf("  task bytes [136..167]: ");
-        for (int i = 136; i < 168; i++)
-            printf("%02x ", raw[i]);
-        printf("\n");
+        pr_err(
+            "sched: CORRUPTION DETECTED (t->stack 0x%lx, pid %u)\n", (unsigned long)dead->stack, (unsigned)dead->pid);
         PANIC("sched: t->stack corrupted before cleanup_dead_task");
     }
 
@@ -510,8 +484,7 @@ void enqueue_ready(int cpu, struct task* t)
 {
     if (t && t->stack && (unsigned long)t->stack < KERNEL_VMA)
     {
-        printf("SCHED: enqueue_ready: t->stack=0x%lx is not kernel VA! "
-               "id=%lu pid=%u\n",
+        pr_err("sched: enqueue_ready: t->stack 0x%lx is not VA! (id=%lu pid=%u)\n",
                (unsigned long)t->stack,
                t->id,
                (unsigned)t->pid);
@@ -547,7 +520,7 @@ void sched_init(void)
     sched_idle[0] = create_idle_task(0);
     sched_core_pid[0] = 0;
 
-    printf("[ SCHED ] Scheduler initialized (SCHED_NUM_CORES=%d)\n", SCHED_NUM_CORES);
+    pr_info("sched: Initialized with %d cores\n", SCHED_NUM_CORES);
 }
 
 /*
@@ -842,7 +815,7 @@ void schedule(void)
     {
         if (next->context.lr == 0 || next->context.sp == 0)
         {
-            printf("SCHED: corrupt context — task id=%lu pid=%u lr=0x%lx sp=0x%lx\n",
+            pr_err("sched: corrupt context — task id=%lu pid=%u lr=0x%lx sp=0x%lx\n",
                    next->id,
                    (unsigned)next->pid,
                    next->context.lr,

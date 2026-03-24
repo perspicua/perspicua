@@ -211,7 +211,7 @@ void slab_init(void)
         }
     }
 
-    printf("[ SLAB ] Initialized %d size classes from 16 to 1024 bytes\n", SLAB_NUM_CLASSES);
+    pr_info("slab: Initialized %d size classes (16 to 1024 bytes)\n", SLAB_NUM_CLASSES);
 }
 
 /*
