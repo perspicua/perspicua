@@ -545,7 +545,7 @@ int process_create_from_file(const char* path, uint32_t pid)
  * The function:
  *   1. Loads the new ELF into a fresh page table.
  *   2. Allocates a new user stack.
- *   3. Resets signal handlers (SIG_IGN preserved, everything else → SIG_DFL).
+ *   3. Resets signal handlers (SIG_IGN preserved, everything else -> SIG_DFL).
  *   4. Switches TTBR0, invalidates ASID-tagged TLB entries.
  *   5. Destroys the old page table.
  *   6. Rewrites the trap frame so the next return-to-user lands in the new
@@ -667,7 +667,7 @@ void process_exit(uint32_t pid, int exit_status)
 
     struct process* p = &process_table[pid];
 
-    /* ── Reparent orphaned children to init (PID 1) ── */
+    /* Reparent orphaned children to init (PID 1) */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++)
     {
@@ -680,17 +680,14 @@ void process_exit(uint32_t pid, int exit_status)
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    /* ── Close file descriptors ── */
     close_all_fds(p);
 
-    /* ── Drop cwd reference ── */
     if (p->cwd)
     {
         vfs_vnode_put(p->cwd);
         p->cwd = NULL;
     }
 
-    /* ── Destroy user address space ── */
     unsigned long* pgd = p->user_pgd;
     p->user_pgd = NULL;
     if (pgd)
@@ -703,27 +700,19 @@ void process_exit(uint32_t pid, int exit_status)
         mmu_destroy_user_pgd(pgd);
     }
 
-    /* ── Record the kernel stack base for the reaper ──
-     *
-     * We cannot free the kernel stack here — we are executing on it.
-     * Store the guard-page base (vaddr_kernel_stack - PAGE_SIZE) in
-     * paddr_kernel_stack so process_waitpid can free it after we have
-     * been switched away from.
-     *
-     * vaddr_kernel_stack was set to the first *usable* byte by alloc_kernel_stack,
-     * so the full allocation starts one page earlier.
+    /*
+     * Do NOT touch vaddr_kernel_stack or paddr_kernel_stack here.
+     * The kernel stack is freed by cleanup_dead_task() in schedule()
+     * via the task struct's t->stack pointer, after the task has been
+     * fully switched away from.
      */
-    p->paddr_kernel_stack = p->vaddr_kernel_stack - PAGE_SIZE;
-    p->vaddr_kernel_stack = 0;
 
-    /* ── Publish exit status and transition to ZOMBIE ── */
     p->va.count = 0;
     p->exit_status = exit_status;
 
     flags = spin_lock_irqsave(&process_table_lock);
     p->state = PROCESS_STATE_ZOMBIE;
 
-    /* Wake the parent if it is blocked in process_waitpid. */
     uint32_t ppid = p->parent_pid;
     if (ppid != 0 && ppid < PROCESS_TABLE_SIZE && process_table[ppid].state != PROCESS_STATE_EMPTY
         && process_table[ppid].main_task != NULL)
@@ -732,22 +721,14 @@ void process_exit(uint32_t pid, int exit_status)
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    /*
-     * Mark the scheduler task as DEAD so that schedule() stashes it in the
-     * cleanup slot.  Do this BEFORE calling schedule() so that schedule()'s
-     * outgoing-task handling puts it in sched_cleanup rather than re-enqueueing
-     * it as RUNNING.
-     */
     struct task* dying = sched_get_current();
     if (dying)
         dying->state = SCHED_TASK_DEAD;
 
-    /* Yield — we will never return from here. */
     schedule();
-
-    /* Unreachable, but keeps the compiler happy. */
     __builtin_unreachable();
 }
+
 /*
  * process_fork — duplicate the calling process.
  *
@@ -877,15 +858,15 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->main_task = t;
     enqueue_ready(get_core_id(), t);
 
-    printf("[PROCESS] PID %d forked → child PID %d\n", parent_pid, child_pid);
+    printf("[PROCESS] PID %d forked -> child PID %d\n", parent_pid, child_pid);
     return child_pid;
 }
 
 /*
  * process_waitpid — wait for a child to terminate and collect its exit status.
  *
- * pid == -1  → wait for any child
- * pid  > 0  → wait for that specific child
+ * pid == -1  -> wait for any child
+ * pid  > 0  -> wait for that specific child
  *
  * Returns the PID of the reaped child on success, or a negative error code.
  *

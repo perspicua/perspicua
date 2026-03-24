@@ -76,6 +76,7 @@ static unsigned long* alloc_table_page(void)
     {
         PANIC("MMU: out of memory for page table");
     }
+    printf("[  MMU ] allocated table page at %p\n", page);
     memset(page, 0, PAGE_SIZE);
     return page;
 }

@@ -209,6 +209,7 @@ static void free_task_stack(unsigned char* stack)
 {
     if (!stack)
         return;
+    printf("[SCHED] freeing task stack at virtual %p (phys %lx)\n", stack, V2P(stack));
     /* Restore the guard page mapping before freeing so the PMM can reuse it. */
     mmu_map_page((unsigned long)stack, V2P(stack), MMU_FLAGS_KERNEL_RW);
     pmm_free_pages(stack, SCHED_STACK_PAGES);
@@ -679,9 +680,9 @@ int sched_get_core_pid(int cpu)
  *   1. Free any dead task left over from the previous invocation.
  *   2. Drain expired sleepers back into the ready queue.
  *   3. Validate the outgoing task's stack canary.
- *   4. Transition the outgoing task: RUNNING → READY (re-enqueue) or
- *      DEAD → stash in cleanup slot.
- *   5. Select the next task: local queue → work-steal → idle.
+ *   4. Transition the outgoing task: RUNNING -> READY (re-enqueue) or
+ *      DEAD -> stash in cleanup slot.
+ *   5. Select the next task: local queue -> work-steal -> idle.
  *   6. Context switch.
  *
  * IRQs are disabled for the duration.  switch_context() saves callee-saved
