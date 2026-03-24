@@ -175,6 +175,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     vfs_init();
     process_init();
     devfs_init();
+    fb_register_device();
     sd_init();
 
     /* Initialize and mount FAT32 as the root filesystem */
