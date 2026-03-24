@@ -136,20 +136,20 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     {
         int pid = process_find_current();
 
-        printf("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data", pid);
+        printk("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data", pid);
 
         if (far < 0x1000)
-            printf("  Type     : Likely NULL pointer dereference (FAR < 4K)\n");
+            printk("  Type     : Likely NULL pointer dereference (FAR < 4K)\n");
 
-        printf("  FAR_EL1  : 0x%016lx\n", far);
-        printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
-        printf("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
-        printf("  FSC      : %s\n", fsc_to_string(fsc));
-        printf("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
+        printk("  FAR_EL1  : 0x%016lx\n", far);
+        printk("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+        printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
+        printk("  FSC      : %s\n", fsc_to_string(fsc));
+        printk("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
 
         if (pid >= 0)
         {
-            printf("  Action   : killing PID %d\n", pid);
+            printk("  Action   : killing PID %d\n", pid);
             struct task* curr = sched_get_current();
             if (curr && curr->pid == (uint32_t)pid)
             {
@@ -165,7 +165,7 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
         }
         else
         {
-            printf("  Action   : no owning process found — halting\n");
+            printk("  Action   : no owning process found — halting\n");
             while (1)
                 asm volatile("wfe");
         }
@@ -174,11 +174,11 @@ static void handle_abort(struct exception_trap_frame* tf, uint32_t ec, uintptr_t
     {
         if (far < 0x1000)
         {
-            printf("\n[KERNEL FAULT] NULL pointer dereference (FAR=0x%016lx)\n", far);
+            pr_err("\n[KERNEL FAULT] NULL pointer dereference (FAR=0x%016lx)\n", far);
         }
         else
         {
-            printf("\n[KERNEL FAULT] %s at FAR=0x%016lx, FSC=%s\n",
+            pr_err("\n[KERNEL FAULT] %s at FAR=0x%016lx, FSC=%s\n",
                    is_inst ? "Instruction abort" : (is_write ? "Write fault" : "Read fault"),
                    far,
                    fsc_to_string(fsc));
@@ -202,10 +202,10 @@ void exception_unhandled_vector(void)
     asm volatile("mrs %0, elr_el1" : "=r"(elr));
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
-    printf("\n[UNHANDLED VECTOR]\n");
-    printf("  ESR_EL1  : 0x%016lx\n", esr);
-    printf("  ELR_EL1  : 0x%016lx\n", elr);
-    printf("  FAR_EL1  : 0x%016lx\n", far);
+    printk("\n[UNHANDLED VECTOR]\n");
+    printk("  ESR_EL1  : 0x%016lx\n", esr);
+    printk("  ELR_EL1  : 0x%016lx\n", elr);
+    printk("  FAR_EL1  : 0x%016lx\n", far);
 
     PANIC("Unhandled exception vector");
 }
@@ -310,11 +310,11 @@ void exception_sync_handler(struct exception_trap_frame* tf)
         unsigned long far;
         asm volatile("mrs %0, far_el1" : "=r"(far));
 
-        printf("\n[KERNEL FAULT] Unhandled synchronous exception\n");
-        printf("  EC       : 0x%02x\n", (unsigned int)ec);
-        printf("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
-        printf("  FAR_EL1  : 0x%016lx\n", far);
-        printf("  ELR_EL1  : 0x%016lx\n", tf->elr_el1);
+        pr_err("\n[KERNEL FAULT] Unhandled synchronous exception\n");
+        printk("  EC       : 0x%02x\n", (unsigned int)ec);
+        printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
+        printk("  FAR_EL1  : 0x%016lx\n", far);
+        printk("  ELR_EL1  : 0x%016lx\n", tf->elr_el1);
 
         PANIC_TF("Unhandled exception class", tf);
     }

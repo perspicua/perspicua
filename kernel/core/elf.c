@@ -66,7 +66,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     int fd = vfs_open(path, VFS_O_RDONLY);
     if (fd < 0)
     {
-        printf("[  ELF ] Error: could not open %s\n", path);
+        pr_err("elf: could not open %s\n", path);
         return fd;
     }
 
@@ -74,7 +74,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     int rc = vfs_read(fd, &ehdr, sizeof(struct elf64_header));
     if (rc != sizeof(struct elf64_header))
     {
-        printf("[  ELF ] Error: could not read ELF header\n");
+        pr_err("elf: could not read ELF header\n");
         vfs_close(fd);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
@@ -82,7 +82,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     rc = elf_check_header(&ehdr);
     if (rc != 0)
     {
-        printf("[  ELF ] Error: invalid ELF header\n");
+        pr_err("elf: invalid ELF header\n");
         vfs_close(fd);
         return rc;
     }
@@ -93,7 +93,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     struct elf64_program_header* phdrs = heap_malloc(phdr_table_size);
     if (!phdrs)
     {
-        printf("[  ELF ] Error: could not allocate memory for program headers\n");
+        pr_err("elf: could not allocate memory for program headers\n");
         vfs_close(fd);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
@@ -101,7 +101,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
     vfs_lseek(fd, ehdr.ph_offset, VFS_SEEK_SET);
     if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size)
     {
-        printf("[  ELF ] Error: could not read program headers\n");
+        pr_err("elf: could not read program headers\n");
         heap_free(phdrs);
         vfs_close(fd);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
@@ -180,7 +180,7 @@ int elf_load(const char* path, unsigned long* pgd, uint64_t* entry_point)
                 if (vfs_read(fd, (void*)((uintptr_t)kernel_vaddr + copy_start_in_page), bytes_to_read)
                     != (int)bytes_to_read)
                 {
-                    printf("[  ELF ] Error: failed to read segment data\n");
+                    pr_err("elf: failed to read segment data\n");
                     heap_free(phdrs);
                     vfs_close(fd);
                     return -PERS_ERR_IO_ERROR;

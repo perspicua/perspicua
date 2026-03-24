@@ -365,7 +365,7 @@ void* pmm_alloc_pages(unsigned long count)
     spin_unlock_irqrestore(&pmm_lock, irq);
 
     void* vaddr = (void*)P2V(pfn * PAGE_SIZE);
-    // printf("[  PMM ] alloc: pfn=%lx, vaddr=%p, order=%u\n", pfn, vaddr, target_order);
+    // pr_debug("pmm: alloc: pfn=%lx, vaddr=%p, order=%u\n", pfn, vaddr, target_order);
     memset(vaddr, 0, (size_t)(1UL << target_order) * PAGE_SIZE);
 
     return vaddr;

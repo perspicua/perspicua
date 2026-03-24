@@ -46,15 +46,15 @@ static void fdt_update_pointers(uintptr_t base)
 
 void fdt_init(uintptr_t global_dtb_ptr)
 {
-    printf("[  DTB ] Initializing Flattened Device Tree parser...\n");
+    pr_info("dtb: initializing flattened device tree parser...\n");
     fdt_update_pointers(global_dtb_ptr);
-    printf("[  DTB ] DTB parsed successfully at 0x%lx\n", global_dtb_ptr);
+    pr_info("dtb: parsed successfully at 0x%lx\n", global_dtb_ptr);
 }
 
 void fdt_rebase(uintptr_t new_base)
 {
     fdt_update_pointers(new_base);
-    printf("[  DTB ] DTB rebased to virtual address 0x%lx\n", new_base);
+    pr_info("dtb: rebased to virtual address 0x%lx\n", new_base);
 }
 
 void fdt_parse_memory_reservations(void)
@@ -70,7 +70,7 @@ void fdt_parse_memory_reservations(void)
     uint32_t rsv_offset = fdt32_to_cpu(fdt->off_mem_rsvmap);
     if (rsv_offset >= totalsize)
     {
-        printf("[  DTB ] WARNING: rsvmap offset out of bounds!\n");
+        pr_warn("dtb: rsvmap offset out of bounds!\n");
         return;
     }
 
@@ -85,7 +85,7 @@ void fdt_parse_memory_reservations(void)
 
         if (size > 0)
         {
-            printf("[  DTB ] rsvmap[%d]: base=0x%lx size=0x%lx\n", count++, addr, size);
+            pr_info("dtb: rsvmap[%d]: base=0x%lx size=0x%lx\n", count++, addr, size);
             pmm_reserve_range((unsigned long)addr, (unsigned long)size, "dtb-reserved");
         }
         rsvmap++;

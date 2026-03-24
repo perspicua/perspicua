@@ -9,41 +9,41 @@ extern int _suite_failed;
 
 // test assertion macros
 
-#define TEST_ASSERT(name, cond)                       \
-    do                                                \
-    {                                                 \
-        if (!(cond))                                  \
-        {                                             \
-            printf("[FAILED] %s: %s\n", name, #cond); \
-            tests_failed++;                           \
-            return;                                   \
-        }                                             \
+#define TEST_ASSERT(name, cond)                             \
+    do                                                      \
+    {                                                       \
+        if (!(cond))                                        \
+        {                                                   \
+            pr_err("test: %s: %s [FAILED]\n", name, #cond); \
+            tests_failed++;                                 \
+            return;                                         \
+        }                                                   \
     } while (0)
 
-#define TEST_ASSERT_EQ(name, actual, expected)                            \
-    do                                                                    \
-    {                                                                     \
-        long _a = (long)(actual);                                         \
-        long _e = (long)(expected);                                       \
-        if (_a != _e)                                                     \
-        {                                                                 \
-            printf("[FAILED] %s: expected %ld, got %ld\n", name, _e, _a); \
-            tests_failed++;                                               \
-            return;                                                       \
-        }                                                                 \
+#define TEST_ASSERT_EQ(name, actual, expected)                                  \
+    do                                                                          \
+    {                                                                           \
+        long _a = (long)(actual);                                               \
+        long _e = (long)(expected);                                             \
+        if (_a != _e)                                                           \
+        {                                                                       \
+            pr_err("test: %s: expected %ld, got %ld [FAILED]\n", name, _e, _a); \
+            tests_failed++;                                                     \
+            return;                                                             \
+        }                                                                       \
     } while (0)
 
-#define TEST_ASSERT_NEQ(name, actual, unexpected)                    \
-    do                                                               \
-    {                                                                \
-        long _a = (long)(actual);                                    \
-        long _u = (long)(unexpected);                                \
-        if (_a == _u)                                                \
-        {                                                            \
-            printf("[FAILED] %s: unexpected value %ld\n", name, _u); \
-            tests_failed++;                                          \
-            return;                                                  \
-        }                                                            \
+#define TEST_ASSERT_NEQ(name, actual, unexpected)                          \
+    do                                                                     \
+    {                                                                      \
+        long _a = (long)(actual);                                          \
+        long _u = (long)(unexpected);                                      \
+        if (_a == _u)                                                      \
+        {                                                                  \
+            pr_err("test: %s: unexpected value %ld [FAILED]\n", name, _u); \
+            tests_failed++;                                                \
+            return;                                                        \
+        }                                                                  \
     } while (0)
 
 #define TEST_PASS(name) \
@@ -58,13 +58,13 @@ extern int _suite_failed;
         _suite_failed = tests_failed; \
     } while (0)
 
-#define TEST_SUITE_END(name)                                                          \
-    do                                                                                \
-    {                                                                                 \
-        if (tests_failed == _suite_failed)                                            \
-            printf("[  OK  ] %s\n", name);                                            \
-        else                                                                          \
-            printf("[FAILED] %s: %d failures\n", name, tests_failed - _suite_failed); \
+#define TEST_SUITE_END(name)                                                                \
+    do                                                                                      \
+    {                                                                                       \
+        if (tests_failed == _suite_failed)                                                  \
+            pr_info("test: %s [OK]\n", name);                                               \
+        else                                                                                \
+            pr_err("test: %s: %d failures [FAILED]\n", name, tests_failed - _suite_failed); \
     } while (0)
 
 void run_all_tests(void);

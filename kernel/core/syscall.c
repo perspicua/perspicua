@@ -844,7 +844,7 @@ mmap_done:
 
     default:
     {
-        printf("Unknown syscall: %lu\n", syscall_nr);
+        pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
         break;
     }
     }

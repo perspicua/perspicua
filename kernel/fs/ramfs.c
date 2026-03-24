@@ -138,7 +138,7 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
     ramfs_files[ramfs_file_count].node = vn;
     ramfs_file_count++;
 
-    printf("[ RAMFS ] Registered file: %s (%u bytes)\n", name, (unsigned int)size);
+    pr_info("ramfs: registered file: %s (%u bytes)\n", name, (unsigned int)size);
 }
 
 /* Hardcoded greeting message for the initial root filesystem */

@@ -616,7 +616,8 @@ sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr
      */
     t->stack = (unsigned char*)(kstack_base - PAGE_SIZE);
     t->ttbr0 = process_get_ttbr0(pid);
-    // printf("SCHED: created user task id=%lu pid=%u stack=0x%lx\n", t->id, (unsigned)t->pid, (unsigned long)t->stack);
+    // pr_debug("sched: created user task id=%lu pid=%u stack=0x%lx\n", t->id, (unsigned)t->pid, (unsigned
+    // long)t->stack);
     return t;
 }
 

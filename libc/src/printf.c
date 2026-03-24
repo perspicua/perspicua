@@ -573,7 +573,6 @@ int printk(const char* fmt, ...)
     unsigned long sec = ms / 1000;
     unsigned long rem_ms = ms % 1000;
 
-    /* Prepend the Linux-style timestamp [ seconds.microseconds] */
     char ts_buf[32];
     snprintf(ts_buf, sizeof(ts_buf), "[%5lu.%06lu] ", sec, rem_ms * 1000);
 

@@ -272,15 +272,15 @@ static void print_fat_name(const uint8_t* name, const uint8_t* ext)
     for (int i = 0; i < 8; i++)
     {
         if (name[i] != ' ' && name[i] != 0)
-            printf("%c", name[i]);
+            printk("%c", name[i]);
     }
     if (ext[0] != ' ' && ext[0] != 0)
     {
-        printf(".");
+        printk(".");
         for (int i = 0; i < 3; i++)
         {
             if (ext[i] != ' ' && ext[i] != 0)
-                printf("%c", ext[i]);
+                printk("%c", ext[i]);
         }
     }
 }
@@ -297,9 +297,9 @@ void fat32_ls(void)
             break;
         if (dirs[i].name[0] == 0xE5 || dirs[i].attributes == 0x0F)
             continue;
-        pr_info("fat32: ");
+        printk("fat32: ");
         print_fat_name(dirs[i].name, dirs[i].ext);
-        printf("  (size: %u bytes)\n", dirs[i].size);
+        printk("  (size: %u bytes)\n", dirs[i].size);
     }
 }
 
@@ -317,7 +317,7 @@ void fat32_cat(const char* filename)
         {
             uint32_t cluster = (dirs[i].cluster_high << 16) | dirs[i].cluster_low;
             uint32_t size = dirs[i].size;
-            pr_info("fat32: Reading %s (%u bytes)...\n", filename, size);
+            pr_info("fat32: reading %s (%u bytes)...\n", filename, size);
             char buffer[512];
             while (cluster < 0x0FFFFFF8)
             {
@@ -327,15 +327,15 @@ void fat32_cat(const char* filename)
                     if (current_fs.dev->read_blocks(current_fs.dev, &buffer, file_lba + j, 1) != 0)
                         break;
                     for (size_t buf_idx = 0; buf_idx < 512; buf_idx++)
-                        printf("%c", buffer[buf_idx]);
+                        printk("%c", buffer[buf_idx]);
                 }
                 cluster = get_next_cluster(cluster);
             }
-            printf("\n");
+            printk("\n");
             return;
         }
     }
-    pr_info("fat32: File %s not found.\n", filename);
+    pr_info("fat32: file %s not found.\n", filename);
 }
 
 int fat32_init(const char* device_name)
@@ -381,6 +381,6 @@ int fat32_init(const char* device_name)
     current_fs.num_fats = bpb.num_fats;
     current_fs.fat_lba_start = current_fs.partition_lba_start + current_fs.reserved_sectors;
     current_fs.data_lba_start = current_fs.fat_lba_start + (current_fs.num_fats * current_fs.sectors_per_fat);
-    pr_info("fat32: Partition at LBA %u\n", current_fs.partition_lba_start);
+    pr_info("fat32: partition at LBA %u\n", current_fs.partition_lba_start);
     return PERS_SUCCESS;
 }

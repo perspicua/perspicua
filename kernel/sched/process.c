@@ -334,12 +334,12 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     /* ---- Validate arguments ---- */
     if (pid >= PROCESS_TABLE_SIZE)
     {
-        printf("[PROCESS] process_create: PID %u out of range\n", pid);
+        pr_err("proc: process_create: PID %u out of range\n", pid);
         return;
     }
     if (code_size == 0 || code_size > PAGE_SIZE)
     {
-        printf("[PROCESS] process_create: invalid code_size %zu\n", code_size);
+        pr_err("proc: process_create: invalid code_size %zu\n", code_size);
         return;
     }
 
@@ -348,7 +348,7 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
     if (process_table[pid].state != PROCESS_STATE_EMPTY)
     {
         spin_unlock_irqrestore(&process_table_lock, flags);
-        printf("[PROCESS] process_create: PID %u already in use\n", pid);
+        pr_err("proc: process_create: PID %u already in use\n", pid);
         return;
     }
     process_table[pid].state = PROCESS_STATE_RUNNING; /* reserved */
