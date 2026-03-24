@@ -103,7 +103,10 @@ __attribute__((used)) void secondary_main(void)
 
     sched_secondary_init();
 
-    /* Fallback loop: secondary cores should enter the scheduler */ for (;;) { asm volatile("wfe"); }
+    /* Fallback loop: secondary cores should enter the scheduler */ for (;;)
+    {
+        asm volatile("wfe");
+    }
 }
 
 /*

@@ -49,12 +49,14 @@ static unsigned long empty_pgd_phys;
 
 static spinlock_t mmu_lock = SPINLOCK_INIT;
 
-/* Invalidate TLB entry for a single page (Inner Shareable) */
+/* Invalidate TLB entry for a single page (Inner Shareable, All ASIDs) */
 static inline void tlbi_va_is(unsigned long vaddr)
 {
-    unsigned long va_op = vaddr >> 12;
+    /* Use VAAE1IS (All ASIDs) to ensure user mappings are cleared correctly
+     * without needing to track the specific ASID of the PGD being modified. */
+    unsigned long va_op = (vaddr >> 12) & 0x00000FFFFFFFFFFFULL;
     asm volatile("dsb ishst" : : : "memory");
-    asm volatile("tlbi vale1is, %0" : : "r"(va_op));
+    asm volatile("tlbi vaae1is, %0" : : "r"(va_op));
     asm volatile("dsb ish" : : : "memory");
     asm volatile("isb" : : : "memory");
 }
@@ -368,7 +370,9 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
 
             if (!(l2e & PTE_TABLE))
             {
-                pmm_free_page((void*)P2V(l2e & PTE_ADDR));
+                void* vaddr = (void*)P2V(l2e & PTE_ADDR);
+                if (pmm_is_managed(vaddr))
+                    pmm_free_page(vaddr);
                 continue;
             }
 
@@ -378,7 +382,9 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
                 unsigned long l3e = l3[k];
                 if ((l3e & PTE_VALID) && (l3e & PTE_PAGE))
                 {
-                    pmm_free_page((void*)P2V(l3e & PTE_ADDR));
+                    void* vaddr = (void*)P2V(l3e & PTE_ADDR);
+                    if (pmm_is_managed(vaddr))
+                        pmm_free_page(vaddr);
                 }
             }
             pmm_free_page(l3);
@@ -428,7 +434,9 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
                     parent_pmd[j] = pte;
                 }
                 child_pmd[j] = pte;
-                pmm_hold_page((void*)P2V(pte & PTE_ADDR));
+                void* v_pa = (void*)P2V(pte & PTE_ADDR);
+                if (pmm_is_managed(v_pa))
+                    pmm_hold_page(v_pa);
                 continue;
             }
 
@@ -452,7 +460,9 @@ unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
                     parent_pte[k] = pte;
                 }
                 child_pte[k] = pte;
-                pmm_hold_page((void*)P2V(pte & PTE_ADDR));
+                void* v_pa = (void*)P2V(pte & PTE_ADDR);
+                if (pmm_is_managed(v_pa))
+                    pmm_hold_page(v_pa);
             }
         }
     }
@@ -526,7 +536,9 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
         unsigned long old_pa = l3t[l3] & PTE_ADDR;
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
-        pmm_free_page((void*)P2V(old_pa));
+        void* v_old_pa = (void*)P2V(old_pa);
+        if (pmm_is_managed(v_old_pa))
+            pmm_free_page(v_old_pa);
     }
 
     l3t[l3] = paddr | PTE_VALID | PTE_PAGE | flags;
@@ -572,7 +584,9 @@ void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
         unsigned long old_pa = l3t[l3] & PTE_ADDR;
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
-        pmm_free_page((void*)P2V(old_pa));
+        void* v_old_pa = (void*)P2V(old_pa);
+        if (pmm_is_managed(v_old_pa))
+            pmm_free_page(v_old_pa);
     }
 
 out:

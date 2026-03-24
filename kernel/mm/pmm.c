@@ -18,6 +18,8 @@ unsigned long pmm_metadata_end = 0;
 
 /* Internal constants and types */
 #define PMM_MAX_FREE_LIST_SCAN 131072UL
+#undef PMM_MAX_RESERVED_RANGES
+#define PMM_MAX_RESERVED_RANGES 64
 
 struct pmm_page
 {
@@ -125,6 +127,12 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char*
 {
     if (size == 0)
         return;
+
+    if (pmm_reserved_range_count >= PMM_MAX_RESERVED_RANGES)
+    {
+        printf("PMM: Too many reserved ranges! Limit %d exceeded (tag: %s)\n", PMM_MAX_RESERVED_RANGES, tag);
+        PANIC("PMM: PMM_MAX_RESERVED_RANGES is too small");
+    }
 
     if (pmm_ready)
         PANIC("PMM: reserve called after init");
@@ -257,6 +265,11 @@ void pmm_init(void)
     unsigned long usable_start_va = (array_start + array_bytes + PAGE_SIZE - 1) & ~(unsigned long)(PAGE_SIZE - 1);
     pmm_metadata_end = usable_start_va;
 
+    printf("[  PMM ] pmm_page_array: %p, pmm_metadata_end: %p, array_bytes: %lu\n",
+           pmm_page_array,
+           (void*)pmm_metadata_end,
+           array_bytes);
+
     // Step 3: Reserve kernel + metadata
     unsigned long usable_start_phys = V2P(usable_start_va);
     if (usable_start_phys >= pmm_phys_mem_size)
@@ -364,7 +377,7 @@ void* pmm_alloc_pages(unsigned long count)
     spin_unlock_irqrestore(&pmm_lock, irq);
 
     void* vaddr = (void*)P2V(pfn * PAGE_SIZE);
-    printf("[  PMM ] alloc: pfn=%lx, vaddr=%p, order=%u\n", pfn, vaddr, target_order);
+    // printf("[  PMM ] alloc: pfn=%lx, vaddr=%p, order=%u\n", pfn, vaddr, target_order);
     memset(vaddr, 0, (size_t)(1UL << target_order) * PAGE_SIZE);
 
     return vaddr;
@@ -376,12 +389,19 @@ void pmm_free_pages(void* ptr, unsigned long count)
     if (!ptr)
         return;
 
-    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
-    if (pfn >= pmm_num_pages)
-        PANIC("PMM: free out of range");
+    if ((unsigned long)ptr < KERNEL_VMA)
+    {
+        printf("PMM: pmm_free_pages called with non-kernel VA: %p (0x%lx)\n", ptr, (unsigned long)ptr);
+        PANIC("PMM: invalid pointer in free");
+    }
 
-    if (pfn_is_reserved(pfn))
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    if (pfn >= pmm_num_pages || pfn_is_reserved(pfn))
+    {
+        printf(
+            "PMM: pmm_free_pages: PFN %lu is unmanaged or reserved (ptr %p, num_pages %lu)\n", pfn, ptr, pmm_num_pages);
         return;
+    }
 
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
     struct pmm_page* p = pfn_to_page(pfn);
@@ -411,7 +431,6 @@ void pmm_free_pages(void* ptr, unsigned long count)
         PANIC("PMM: corrupt page order");
     }
 
-    memset(ptr, 0, (size_t)(1UL << order) * PAGE_SIZE);
     pmm_free_pages_count += (1UL << order);
     pmm_free_buddy_internal(pfn, order);
 

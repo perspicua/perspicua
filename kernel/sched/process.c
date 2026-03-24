@@ -78,15 +78,16 @@ static void* alloc_kernel_stack(void)
     if (!base)
         return NULL;
 
-    /* Guard page — any underflow will immediately fault. */
+    /*
+     * Guard page: unmap it so any stack underflow faults immediately.
+     */
     mmu_unmap_page((unsigned long)base);
 
-    /* Write the canary at the very bottom of the usable region. */
+    /* Canary at the bottom of the usable region. */
     *(unsigned long*)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
 
     return base + PAGE_SIZE;
 }
-
 /*
  * free_kernel_stack — release a kernel stack obtained via alloc_kernel_stack.
  * Pass the value returned by alloc_kernel_stack (i.e. base + PAGE_SIZE).
@@ -101,8 +102,11 @@ static void free_kernel_stack(void* stack_base)
     /*
      * RE-MAP the guard page!
      * pmm_free_pages (and future pmm_alloc_pages) will attempt to zero this
-     * memory. If it remains unmapped, the kernel will panic.
+     * memory. If it remains unmapped or RO, the kernel will panic.
      */
+    mmu_map_page((unsigned long)alloc_base, V2P(alloc_base), MMU_FLAGS_KERNEL_RW);
+
+    pmm_free_pages(alloc_base, SCHED_STACK_PAGES);
 }
 
 /*
@@ -747,6 +751,8 @@ int process_fork(struct exception_trap_frame* parent_tf)
     if (parent_pid < 0)
         return parent_pid;
 
+    printf("[FORK] Starting fork for parent PID %d\n", parent_pid);
+
     struct process* parent = &process_table[parent_pid];
 
     /* ---- Find a free slot ---- */
@@ -764,7 +770,12 @@ int process_fork(struct exception_trap_frame* parent_tf)
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     if (child_pid == -1)
+    {
+        printf("[FORK] PID %d failed to find free slot\n", parent_pid);
         return -PERS_ERR_OUT_OF_RESOURCES;
+    }
+
+    printf("[FORK] PID %d allocated child slot PID %d\n", parent_pid, child_pid);
 
     struct process* child = &process_table[child_pid];
 
@@ -775,21 +786,26 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->fd_lock = (spinlock_t)SPINLOCK_INIT;
 
     /* ---- Copy-on-write user address space ---- */
+    printf("[FORK] PID %d -> PID %d: copying PGD 0x%lx\n", parent_pid, child_pid, (unsigned long)parent->user_pgd);
     unsigned long* child_pgd = mmu_copy_user_pgd(parent->user_pgd);
     if (!child_pgd)
     {
+        printf("[FORK] PID %d -> PID %d: mmu_copy_user_pgd failed\n", parent_pid, child_pid);
         child->state = PROCESS_STATE_EMPTY;
         return -PERS_ERR_OUT_OF_MEMORY;
     }
+    printf("[FORK] PID %d -> PID %d: child_pgd = 0x%lx\n", parent_pid, child_pid, (unsigned long)child_pgd);
 
     /* ---- Kernel stack for the child ---- */
     void* kstack = alloc_kernel_stack();
     if (!kstack)
     {
+        printf("[FORK] PID %d -> PID %d: alloc_kernel_stack failed\n", parent_pid, child_pid);
         mmu_destroy_user_pgd(child_pgd);
         child->state = PROCESS_STATE_EMPTY;
         return -PERS_ERR_OUT_OF_MEMORY;
     }
+    printf("[FORK] PID %d -> PID %d: kstack = 0x%lx (usable base)\n", parent_pid, child_pid, (unsigned long)kstack);
 
     /* ---- Fill in child PCB ---- */
     child->user_pgd = child_pgd;
@@ -801,6 +817,12 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->paddr_kernel_stack = V2P(kstack);
     child->va = parent->va;
     child->parent_pid = (uint32_t)parent_pid;
+
+    printf("[FORK] PID %d -> PID %d: ttbr0=0x%lx, asid=%lu\n",
+           parent_pid,
+           child_pid,
+           child->ttbr0,
+           (unsigned long)child->asid);
 
     /* ---- Signal state ---- */
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
@@ -831,6 +853,13 @@ int process_fork(struct exception_trap_frame* parent_tf)
     uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
     uintptr_t tf_addr = (kernel_stack_top - sizeof(struct exception_trap_frame)) & ~15UL;
     struct exception_trap_frame* child_tf = (struct exception_trap_frame*)tf_addr;
+
+    printf("[FORK] PID %d -> PID %d: creating trap frame at 0x%lx (top=0x%lx)\n",
+           parent_pid,
+           child_pid,
+           (unsigned long)child_tf,
+           (unsigned long)kernel_stack_top);
+
     memcpy(child_tf, parent_tf, sizeof(*child_tf));
     child_tf->x[0] = 0; /* fork() returns 0 in the child */
 
@@ -838,10 +867,12 @@ int process_fork(struct exception_trap_frame* parent_tf)
     child->context.lr = (unsigned long)ret_to_user;
 
     /* ---- Create scheduler task ---- */
+    printf("[FORK] PID %d -> PID %d: calling sched_create_user_task\n", parent_pid, child_pid);
     struct task* t =
         sched_create_user_task(child->context.sp, child->context.lr, (uintptr_t)kstack, (uint32_t)child_pid);
     if (!t)
     {
+        printf("[FORK] PID %d -> PID %d: sched_create_user_task failed\n", parent_pid, child_pid);
         /* Clean up everything we allocated. */
         close_all_fds(child);
         if (child->cwd)
@@ -856,9 +887,11 @@ int process_fork(struct exception_trap_frame* parent_tf)
     }
 
     child->main_task = t;
+    printf("[FORK] PID %d -> PID %d: task=%p, stack=0x%lx\n", parent_pid, child_pid, t, (unsigned long)t->stack);
+
     enqueue_ready(get_core_id(), t);
 
-    printf("[PROCESS] PID %d forked -> child PID %d\n", parent_pid, child_pid);
+    printf("[PROCESS] PID %d forked -> child PID %d (task %p)\n", parent_pid, child_pid, t);
     return child_pid;
 }
 

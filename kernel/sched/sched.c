@@ -209,12 +209,22 @@ static void free_task_stack(unsigned char* stack)
 {
     if (!stack)
         return;
-    printf("[SCHED] freeing task stack at virtual %p (phys %lx)\n", stack, V2P(stack));
-    /* Restore the guard page mapping before freeing so the PMM can reuse it. */
+
+    /*
+     * Sanity check: stack must be a kernel virtual address.
+     * If it's below KERNEL_VMA it's a physical address — someone corrupted
+     * dead->stack after sched_create_user_task wrote it.
+     */
+    if ((unsigned long)stack < KERNEL_VMA)
+    {
+        printf("SCHED: free_task_stack called with non-VA pointer: 0x%lx\n", (unsigned long)stack);
+        printf("SCHED: this is a physical address — t->stack was corrupted\n");
+        PANIC("sched: corrupted t->stack in free_task_stack");
+    }
+
     mmu_map_page((unsigned long)stack, V2P(stack), MMU_FLAGS_KERNEL_RW);
     pmm_free_pages(stack, SCHED_STACK_PAGES);
 }
-
 /*
  * init_task_stack_context — set up the cpu_context fields for a brand-new
  * task so that the first switch_context() into it lands in task_wrapper_asm
@@ -421,29 +431,71 @@ static void cleanup_dead_task(int cpu)
     if (!dead)
         return;
 
-    /* Paranoia: should never be the currently running task. */
     if (dead == sched_get_current())
         PANIC("sched: attempt to free the active task");
 
     sched_cleanup[cpu] = NULL;
 
+    /*
+     * Validate the task struct before using any of its fields.
+     * Dump everything so we can identify the corruption source.
+     */
+    printf("SCHED: cleanup task id=%lu pid=%u stack=0x%lx ttbr0=0x%lx state=%d\n",
+           dead->id,
+           (unsigned)dead->pid,
+           (unsigned long)dead->stack,
+           dead->ttbr0,
+           (int)dead->state);
+
+    if ((unsigned long)dead->stack != 0 && (unsigned long)dead->stack < KERNEL_VMA)
+    {
+        printf("SCHED: CORRUPTION DETECTED\n");
+        printf("  dead->stack = 0x%lx (physical address — should be kernel VA)\n", (unsigned long)dead->stack);
+        printf("  dead->id    = %lu\n", dead->id);
+        printf("  dead->pid   = %u\n", (unsigned)dead->pid);
+        printf("  dead addr   = 0x%lx\n", (unsigned long)dead);
+        /*
+         * Print what's at offset 144 in raw hex — this is the corrupted
+         * t->stack field. Bytes 136-160 of the task struct:
+         */
+        unsigned char* raw = (unsigned char*)dead;
+        printf("  task bytes [136..167]: ");
+        for (int i = 136; i < 168; i++)
+            printf("%02x ", raw[i]);
+        printf("\n");
+        /*
+         * Also check if 'dead' itself looks like a valid heap pointer.
+         * If dead < KERNEL_VMA then the task struct pointer is also corrupted.
+         */
+        if ((unsigned long)dead < KERNEL_VMA)
+        {
+            printf("  dead pointer itself is not a kernel VA!\n");
+        }
+        PANIC("sched: t->stack corrupted before cleanup_dead_task");
+    }
+
     free_task_stack(dead->stack);
     dead->stack = NULL;
 
-    /* Static boot tasks live in the BSS — do not heap_free them. */
     int is_boot_task = (dead >= &sched_boot_tasks[0] && dead < &sched_boot_tasks[SCHED_NUM_CORES]);
     if (!is_boot_task)
         heap_free(dead);
 }
-
 /* --------------------------------------------------------------------------
  * Public API — enqueue_ready (called from process.c and elsewhere)
  * -------------------------------------------------------------------------- */
 
 void enqueue_ready(int cpu, struct task* t)
 {
-    if (!t)
-        return;
+    if (t && t->stack && (unsigned long)t->stack < KERNEL_VMA)
+    {
+        printf("SCHED: enqueue_ready: t->stack=0x%lx is not kernel VA! "
+               "id=%lu pid=%u\n",
+               (unsigned long)t->stack,
+               t->id,
+               (unsigned)t->pid);
+        PANIC("sched: corrupted t->stack at enqueue");
+    }
     rq_enqueue(cpu, t);
 }
 
@@ -569,7 +621,7 @@ sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr
      */
     t->stack = (unsigned char*)(kstack_base - PAGE_SIZE);
     t->ttbr0 = process_get_ttbr0(pid);
-
+    // printf("SCHED: created user task id=%lu pid=%u stack=0x%lx\n", t->id, (unsigned)t->pid, (unsigned long)t->stack);
     return t;
 }
 

@@ -14,8 +14,8 @@
 /* Stack protection and sizing constants */
 #define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
 #define SCHED_STACK_GUARD_PAGES  1
-#define SCHED_STACK_USABLE_PAGES 64
-#define SCHED_STACK_PAGES        (SCHED_STACK_GUARD_PAGES + SCHED_STACK_USABLE_PAGES)
+#define SCHED_STACK_USABLE_PAGES 63
+#define SCHED_STACK_PAGES        64  // must be exact power of two for buddy allocator
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
 /*
