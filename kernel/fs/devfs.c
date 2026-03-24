@@ -70,29 +70,30 @@ static struct vfs_vnode* devfs_root_lookup(struct vfs_vnode* dir, const char* fi
  */
 static int devfs_root_readdir(struct vfs_file* file, void* buffer, size_t count)
 {
-    (void)count;
-    struct vfs_dirent* dirent = (struct vfs_dirent*)buffer;
-    uint32_t entries_skipped = 0;
+    struct vfs_dirent* dirent_buf = (struct vfs_dirent*)buffer;
+    size_t max_entries = count / sizeof(struct vfs_dirent);
+    int entries_read = 0;
+    uint32_t current_idx = 0;
 
     spin_lock(&devfs_lock);
     struct devfs_node* curr = devfs_devices;
-    while (curr)
+    while (curr && entries_read < (int)max_entries)
     {
-        if (entries_skipped == file->offset)
+        if (current_idx >= (uint32_t)file->offset)
         {
+            struct vfs_dirent* dirent = &dirent_buf[entries_read];
             strncpy(dirent->name, curr->name, 255);
             dirent->name[255] = '\0';
             dirent->ino = 0;  // Device nodes don't have inodes in devfs
             file->offset++;
-            spin_unlock(&devfs_lock);
-            return 1;
+            entries_read++;
         }
-        entries_skipped++;
+        current_idx++;
         curr = curr->next;
     }
     spin_unlock(&devfs_lock);
 
-    return 0;
+    return entries_read;
 }
 
 /* Operation mapping for the devfs root directory */

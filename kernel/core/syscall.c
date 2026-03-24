@@ -263,7 +263,8 @@ void syscall_handle(struct exception_trap_frame* tf)
         int res = vfs_readdir(fd, kbuf, count);
         if (res > 0)
         {
-            if (copy_to_user(buf, kbuf, count) != 0)
+            size_t copy_size = (size_t)res * sizeof(struct vfs_dirent);
+            if (copy_to_user(buf, kbuf, copy_size) != 0)
             {
                 res = -PERS_ERR_INVALID_ARGUMENT;
             }
