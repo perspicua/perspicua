@@ -586,7 +586,54 @@ int vfs_readdir(int fd, void* buffer, size_t count)
         return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
-    int res = f->node->ops->readdir(f, buffer, count);
+    size_t dirent_size = sizeof(struct vfs_dirent);
+    size_t max_entries = count / dirent_size;
+    struct vfs_dirent* dirents = (struct vfs_dirent*)buffer;
+
+    vfs_off_t orig_offset = f->offset;
+    uint32_t mount_idx = (uint32_t)((orig_offset >> 32) & 0xFFFFFFFF);
+    f->offset = orig_offset & 0xFFFFFFFF;
+
+    int res = 0;
+    if (mount_idx == 0)
+    {
+        res = f->node->ops->readdir(f, buffer, count);
+        if (res < 0)
+        {
+            f->offset = orig_offset;
+            atomic_dec_and_test(&f->refcount);
+            return res;
+        }
+
+        if ((size_t)res == max_entries)
+        {
+            /* FS driver filled the buffer completely, check mounts later */
+            atomic_dec_and_test(&f->refcount);
+            return res;
+        }
+        
+        /* FS driver has finished or partially filled buffer. Start mounts. */
+        mount_idx = 1;
+    }
+
+    /* Append VFS mount points that attach to this directory node */
+    unsigned long flags = spin_lock_irqsave(&vfs_lock);
+    while ((size_t)res < max_entries && (mount_idx - 1) < (uint32_t)vfs_mount_count)
+    {
+        int i = mount_idx - 1;
+        if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == f->node)
+        {
+            strncpy(dirents[res].name, vfs_mount_table[i].root->name, 255);
+            dirents[res].name[255] = '\0';
+            dirents[res].ino = 0;
+            res++;
+        }
+        mount_idx++;
+    }
+    spin_unlock_irqrestore(&vfs_lock, flags);
+
+    f->offset = (f->offset & 0xFFFFFFFF) | ((vfs_off_t)mount_idx << 32);
+
     atomic_dec_and_test(&f->refcount);
     return res;
 }
