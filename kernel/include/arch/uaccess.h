@@ -35,3 +35,4 @@ int copy_to_user(void* dest, const void* src, size_t n);
 int exception_fixup(struct exception_trap_frame* tf);
 
 #endif /* PERSPICUA_ARCH_UACCESS_H */
+long strncpy_from_user(char *dest, const char *src, long count);
