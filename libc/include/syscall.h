@@ -54,6 +54,11 @@ int sys_signal(int sig, signal_handler_t handler);
 int sys_kill(int pid, int sig);
 void sys_sigreturn(void);
 void sys_sigrestore(uintptr_t restorer);
+int sys_sigaction(int sig, const struct sigaction* act, struct sigaction* oact);
+int sys_sigprocmask(int how, const sigset_t* set, sigset_t* oset);
+int sys_sigpending(sigset_t* set);
+int sys_sigsuspend(const sigset_t* mask);
 int sys_chdir(const char* path);
 int sys_getcwd(char* buf, size_t size);
+void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

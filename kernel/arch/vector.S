@@ -42,7 +42,7 @@ default_exception_handler:
 fiq_discard:
     stp x0, x1, [sp, #-16]!
     mrs x0, spsr_el1
-    orr x0, x0, #(1 << 6)      // set PSTATE.F in SPSR → mask FIQ
+    orr x0, x0, #(1 << 6)      // set PSTATE.F in SPSR -> mask FIQ
     msr spsr_el1, x0
     ldp x0, x1, [sp], #16
     eret

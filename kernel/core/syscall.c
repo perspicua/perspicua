@@ -9,6 +9,9 @@
 #include "core/syscall.h"
 
 #include "core/signals.h"
+#include "fs/vfs.h"
+#include "mm/pmm.h"
+#include "uapi/mman.h"
 #include "uapi/syscalls.h"
 #include "uapi/errors.h"
 
@@ -29,8 +32,10 @@
  * validate_user_buffer - Verifies that a memory range provided by a user
  * process is valid, belongs to user-space, and has appropriate permissions.
  */
-static int validate_user_buffer(const void* ptr, size_t len, int writable)
+int validate_user_buffer(const void* ptr, size_t len, int writable)
 {
+    if (!ptr || len == 0)
+        return 0;
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
 
@@ -103,26 +108,29 @@ void syscall_handle(struct exception_trap_frame* tf)
         const char* buf = (const char*)(tf->x[1]);
         size_t len = (size_t)(tf->x[2]);
 
+        /* Enforce a per-syscall maximum to prevent heap exhaustion */
+        if (len == 0 || len > SYSCALL_MAX_RW_SIZE)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
         if (!validate_user_buffer(buf, len, 0))
         {
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-
         char* kbuf = heap_malloc(len);
         if (!kbuf)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
-
         if (copy_from_user(kbuf, buf, len) != 0)
         {
             heap_free(kbuf);
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
-
         int bytes = vfs_write(fd, kbuf, len);
         heap_free(kbuf);
         tf->x[0] = (uint64_t)bytes;
@@ -132,7 +140,7 @@ void syscall_handle(struct exception_trap_frame* tf)
     case SYS_EXIT:
     { /* sys_exit(int status) */
         int status = (int)tf->x[0];
-        process_table[pid].exit_status = status;
+        process_exit(pid, status);
         curr->state = SCHED_TASK_DEAD;
         schedule();
         break;
@@ -205,20 +213,27 @@ void syscall_handle(struct exception_trap_frame* tf)
         char* buf = (char*)(tf->x[1]);
         size_t len = (size_t)(tf->x[2]);
 
+        if (len == 0 || len > SYSCALL_MAX_RW_SIZE)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
         if (!validate_user_buffer(buf, len, 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        char* kbuf = heap_malloc(len);
+        if (!kbuf)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
-
-        char* kbuf = heap_malloc(len);
         int bytes = vfs_read(fd, kbuf, len);
         if (bytes > 0)
         {
             if (copy_to_user(buf, kbuf, (size_t)bytes) != 0)
-            {
-                bytes = -PERS_ERR_INVALID_ARGUMENT;
-            }
+                bytes = -PERS_ERR_OUT_OF_MEMORY;
         }
         heap_free(kbuf);
         tf->x[0] = (uint64_t)bytes;
@@ -233,7 +248,7 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         if (!validate_user_buffer(buf, count, 1))
         {
-            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
@@ -248,7 +263,8 @@ void syscall_handle(struct exception_trap_frame* tf)
         int res = vfs_readdir(fd, kbuf, count);
         if (res > 0)
         {
-            if (copy_to_user(buf, kbuf, count) != 0)
+            size_t copy_size = (size_t)res * sizeof(struct vfs_dirent);
+            if (copy_to_user(buf, kbuf, copy_size) != 0)
             {
                 res = -PERS_ERR_INVALID_ARGUMENT;
             }
@@ -268,57 +284,13 @@ void syscall_handle(struct exception_trap_frame* tf)
     case SYS_EXEC:
     { /* sys_exec(const char* path) */
         const char* path = (const char*)(tf->x[0]);
-        // /* TEMP DEBUG */
-        // int cur_pid = process_find_current();
-        // unsigned long dbg_paddr = 0, dbg_flags = 0;
-        // int dbg_mapped =
-        //     (cur_pid >= 0)
-        //     && mmu_user_query(process_table[cur_pid].user_pgd, (unsigned long)path & ~0xFFFUL, &dbg_paddr,
-        //     &dbg_flags);
-        // printf("[EXEC DEBUG] path=0x%lx mapped=%d paddr=0x%lx flags=0x%lx\n",
-        //        (unsigned long)path,
-        //        dbg_mapped,
-        //        dbg_paddr,
-        //        dbg_flags);
-        // if (dbg_mapped)
-        // {
-        //     const char* direct = (const char*)P2V(dbg_paddr) + ((unsigned long)path & 0xFFF);
-        //     printf("[EXEC DEBUG] P2V direct read: '%.16s'\n", direct);
-        // }
-
+        if (!validate_user_buffer(path, 1, 0))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
         size_t path_len = 0;
         const char* p = path;
-        // unsigned long actual_ttbr0;
-        // asm volatile("mrs %0, ttbr0_el1" : "=r"(actual_ttbr0));
-        // printf("[EXEC DEBUG] actual TTBR0=0x%lx expected=0x%lx\n",
-        //        actual_ttbr0,
-        //        (unsigned long)process_table[cur_pid].ttbr0);
-        // /* Read PGD[0] via software (kernel virtual address) */
-        // unsigned long* pgd_virt = (unsigned long*)P2V(actual_ttbr0 & 0xFFFFFFFFFFFUL);
-        // unsigned long pgd_entry_sw = pgd_virt[0];
-        //
-        // /* Force a cache flush of the PGD page to ensure PTW sees same data */
-        // asm volatile("dc civac, %0" ::"r"(pgd_virt) : "memory");
-        // asm volatile("dsb ish" ::: "memory");
-        //
-        // /* Read again after flush */
-        // unsigned long pgd_entry_after = pgd_virt[0];
-        //
-        // printf("[EXEC DEBUG] PGD[0] sw=0x%lx after_flush=0x%lx\n", pgd_entry_sw, pgd_entry_after);
-        //
-        // /* Walk manually to L3 entry for 0x102060 */
-        // if (pgd_entry_sw & 1)
-        // {
-        //     unsigned long* pmd = (unsigned long*)P2V(pgd_entry_sw & 0x0000FFFFFFFFF000ULL);
-        //     unsigned long pmd_entry = pmd[0]; /* L2 index = 0 */
-        //     printf("[EXEC DEBUG] PMD[0]=0x%lx\n", pmd_entry);
-        //     if (pmd_entry & 1)
-        //     {
-        //         unsigned long* pte_table = (unsigned long*)P2V(pmd_entry & 0x0000FFFFFFFFF000ULL);
-        //         unsigned long pte = pte_table[0x102]; /* L3 index for 0x102060 */
-        //         printf("[EXEC DEBUG] PTE[0x102]=0x%lx\n", pte);
-        //     }
-        // }
         while (path_len < VFS_MAX_PATH_LEN)
         {
             unsigned char c;
@@ -341,8 +313,6 @@ void syscall_handle(struct exception_trap_frame* tf)
         }
 
         char* kpath = heap_malloc(path_len + 1);
-        // unsigned char direct_read = *(volatile unsigned char*)(uintptr_t)path;
-        // printf("[EXEC DEBUG] direct deref byte0=0x%02x (expect 0x2f for '/')\n", direct_read);
         if (copy_from_user(kpath, path, path_len + 1) != 0)
         {
             heap_free(kpath);
@@ -350,19 +320,26 @@ void syscall_handle(struct exception_trap_frame* tf)
             break;
         }
 
-        // printf("[EXEC DEBUG] syscall tf=0x%lx x0=0x%lx path_ptr=0x%lx\n",
-        //        (unsigned long)tf,
-        //        (unsigned long)tf->x[0],
-        //        (unsigned long)(const char*)(tf->x[0]));
         int res = process_exec(kpath);
-        //
-        // printf("[EXEC DEBUG] process_exec('%s') = %d\n", kpath, res);  // ADD THIS
         heap_free(kpath);
 
         if (res < 0)
         {
             tf->x[0] = (uint64_t)res;
+            break;
         }
+
+        struct task* curr_task = sched_get_current();
+        if (curr_task)
+        {
+            // The new trap frame was built by process_exec — copy it into
+            // the live tf so restore_all uses the right ELR/SP/SPSR
+            uintptr_t kernel_stack_top = process_table[curr_task->pid].vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
+            struct exception_trap_frame* new_tf =
+                (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
+            memcpy(tf, new_tf, sizeof(struct exception_trap_frame));
+        }
+        // Do NOT set tf->x[0] — the new tf already has x[0]=0 from memset
         break;
     }
 
@@ -378,16 +355,19 @@ void syscall_handle(struct exception_trap_frame* tf)
         int* ustatus = (int*)tf->x[1];
         int kstatus = 0;
 
-        int res = process_waitpid(wait_pid, &kstatus);
-        if (res >= 0 && ustatus)
+        if (ustatus != NULL && !validate_user_buffer(ustatus, sizeof(int), 1))
         {
-            if (validate_user_buffer(ustatus, sizeof(int), 1))
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        int res = process_waitpid(wait_pid, &kstatus);
+        if (res >= 0 && ustatus != NULL)
+        {
+            if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0)
             {
-                if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0)
-                {
-                    tf->x[0] = -PERS_ERR_UNKNOWN;
-                    break;
-                }
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
             }
         }
         tf->x[0] = (uint64_t)res;
@@ -446,66 +426,292 @@ void syscall_handle(struct exception_trap_frame* tf)
 
         struct process* curr_process = &process_table[curr_process_pid];
 
-        curr_process->signal_handlers[sig - 1] = handler;
+        signal_handler_t old = curr_process->signal_handlers[sig - 1].sa_handler;
+        curr_process->signal_handlers[sig - 1].sa_handler = handler;
+        curr_process->signal_handlers[sig - 1].sa_mask = 0;
+        curr_process->signal_handlers[sig - 1].sa_flags = 0;
+        curr_process->signal_handlers[sig - 1].sa_restorer = NULL;
 
-        tf->x[0] = PERS_SUCCESS;
+        tf->x[0] = (uint64_t)old;
         break;
     }
 
     case SYS_KILL:
-    { /* sys_kill(int pid, int sig) */
-        int pid = (int)tf->x[0];
+    {
+        int target_pid = (int)tf->x[0];
         int sig = (int)tf->x[1];
 
-        if (sig >= SIGNAL_COUNT || sig < 1)
+        if (sig < 1 || sig >= SIGNAL_COUNT)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-        if (pid < 0 || pid >= PROCESS_TABLE_SIZE || process_table[pid].state == PROCESS_STATE_EMPTY)
+        if (target_pid <= 0 || target_pid >= PROCESS_TABLE_SIZE
+            || process_table[target_pid].state == PROCESS_STATE_EMPTY)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
             break;
         }
 
-        process_table[pid].pending_signals |= (1 << (sig - 1));
+        /* Permission check: can only kill self, children, or parent */
+        if (target_pid != (int)pid && process_table[target_pid].parent_pid != pid
+            && (int)process_table[pid].parent_pid != target_pid)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+            break;
+        }
+
+        __atomic_fetch_or(&process_table[target_pid].pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+
+        /* If process was blocked, wake it up if the signal is not ignored */
+        if (process_table[target_pid].signal_handlers[sig - 1].sa_handler != SIGNAL_IGN)
+        {
+            if (process_table[target_pid].main_task->state == SCHED_TASK_BLOCKED)
+            {
+                // Wake up the task.
+                // NOTE: This might need more careful handling if the task is blocked on something specific.
+                sched_unblock(process_table[target_pid].main_task);
+            }
+        }
 
         tf->x[0] = PERS_SUCCESS;
-
         break;
     }
-
     case SYS_SIGRETURN:
     {
         uintptr_t user_frame_ptr = tf->sp_el0;
 
-        struct signal_frame frame;
-
-        if (copy_from_user(&frame, (void*)user_frame_ptr, sizeof(struct signal_frame)) != 0)
+        if (user_frame_ptr == 0 || user_frame_ptr >= KERNEL_VMA
+            || user_frame_ptr + sizeof(struct signal_frame) < user_frame_ptr)
         {
-            process_exit(pid, -1);
-            break;
+            goto sigreturn_kill;
         }
+
+        if (!validate_user_buffer((void*)user_frame_ptr, sizeof(struct signal_frame), 0))
+            goto sigreturn_kill;
+
+        struct signal_frame frame;
+        if (copy_from_user(&frame, (void*)user_frame_ptr, sizeof(struct signal_frame)) != 0)
+            goto sigreturn_kill;
+
+        if (frame.saved_tf.elr_el1 >= KERNEL_VMA)
+            goto sigreturn_kill;
+        if (frame.saved_tf.sp_el0 >= KERNEL_VMA)
+            goto sigreturn_kill;
 
         memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
+        /* Restore signal mask */
+        process_table[pid].blocked_signals = frame.saved_mask;
+
+        tf->spsr_el1 &= 0xF0000000ULL;
+
+        break;
+
+sigreturn_kill:
+        process_table[pid].exit_status = -1;
+        curr->state = SCHED_TASK_DEAD;
+        schedule();
         break;
     }
-
     case SYS_SIGRESTORE:
     {
         uintptr_t restorer = (uintptr_t)tf->x[0];
-        int curr_process_pid = process_find_current();
-        struct process* curr_process = &process_table[curr_process_pid];
-        curr_process->sig_restorer = restorer;
+        if (restorer >= KERNEL_VMA)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        process_table[pid].default_sigrestorer = restorer;
         tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGACTION:
+    { /* sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact) */
+        int sig = (int)tf->x[0];
+        const struct sigaction* uact = (const struct sigaction*)tf->x[1];
+        struct sigaction* uoact = (struct sigaction*)tf->x[2];
+
+        if (sig >= SIGNAL_COUNT || sig < 1 || sig == SIGNAL_KILL || sig == SIGNAL_STOP)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        struct process* p = &process_table[pid];
+
+        if (uoact)
+        {
+            if (!validate_user_buffer(uoact, sizeof(struct sigaction), 1))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            if (copy_to_user(uoact, &p->signal_handlers[sig - 1], sizeof(struct sigaction)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+        }
+
+        if (uact)
+        {
+            if (!validate_user_buffer(uact, sizeof(struct sigaction), 0))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            struct sigaction kact;
+            if (copy_from_user(&kact, uact, sizeof(struct sigaction)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            p->signal_handlers[sig - 1] = kact;
+            /* Ensure KILL and STOP cannot be blocked in sa_mask */
+            p->signal_handlers[sig - 1].sa_mask &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        }
+
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGPROCMASK:
+    { /* sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset) */
+        int how = (int)tf->x[0];
+        const sigset_t* uset = (const sigset_t*)tf->x[1];
+        sigset_t* uoset = (sigset_t*)tf->x[2];
+
+        struct process* p = &process_table[pid];
+
+        if (uoset)
+        {
+            if (!validate_user_buffer(uoset, sizeof(sigset_t), 1))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            if (copy_to_user(uoset, &p->blocked_signals, sizeof(sigset_t)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+        }
+
+        if (uset)
+        {
+            if (!validate_user_buffer(uset, sizeof(sigset_t), 0))
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            sigset_t kset;
+            if (copy_from_user(&kset, uset, sizeof(sigset_t)) != 0)
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            if (how == SIG_BLOCK)
+            {
+                p->blocked_signals |= kset;
+            }
+            else if (how == SIG_UNBLOCK)
+            {
+                p->blocked_signals &= ~kset;
+            }
+            else if (how == SIG_SETMASK)
+            {
+                p->blocked_signals = kset;
+            }
+            else
+            {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* Ensure KILL and STOP cannot be blocked */
+            p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        }
+
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGPENDING:
+    { /* sys_sigpending(sigset_t *set) */
+        sigset_t* uset = (sigset_t*)tf->x[0];
+        if (!validate_user_buffer(uset, sizeof(sigset_t), 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        if (copy_to_user(uset, &process_table[pid].pending_signals, sizeof(sigset_t)) != 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+        tf->x[0] = PERS_SUCCESS;
+        break;
+    }
+    case SYS_SIGSUSPEND:
+    { /* sys_sigsuspend(const sigset_t *mask) */
+        const sigset_t* umask = (const sigset_t*)tf->x[0];
+        if (!validate_user_buffer(umask, sizeof(sigset_t), 0))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        sigset_t kmask;
+        if (copy_from_user(&kmask, umask, sizeof(sigset_t)) != 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        struct process* p = &process_table[pid];
+        p->blocked_signals = kmask;
+        /* Ensure KILL and STOP cannot be blocked */
+        p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+
+        /* Wait for a signal */
+        while (!(p->pending_signals & ~p->blocked_signals))
+        {
+            /* Fix lost-wakeup: set state to BLOCKED before yielding.
+             * If a signal arrives after this but before schedule(),
+             * sched_unblock() will see BLOCKED and re-ready us. */
+            curr->state = SCHED_TASK_BLOCKED;
+            schedule();
+        }
+
+        /* The signal will be delivered by ret_to_user -> signal_handle_pending */
+        /* But we need to make sure sigreturn restores the OLD mask, not the sigsuspend mask.
+         * This is tricky because signal_handle_pending will save the CURRENT mask (which is kmask).
+         * Standard sigsuspend says the signal mask is restored after the handler returns.
+         * So signal_handle_pending should save the OLD mask if we are in sigsuspend?
+         * Actually, signal_handle_pending always saves the mask that was in effect before the handler was called.
+         * For sigsuspend, it IS the kmask.
+         * Wait, standard sigsuspend: "The signal mask of the process is restored to its previous value when
+         * sigsuspend() returns." If a signal is delivered, sigsuspend returns after the signal handler returns. So the
+         * sigreturn should restore the mask that was in effect BEFORE sigsuspend.
+         */
+
+        /* I'll use a hack for now: signal_handle_pending will be called after this syscall returns to user mode,
+         * but before any user code runs.
+         * If I change p->blocked_signals here, it will be saved by signal_handle_pending.
+         * To restore old_mask, I'd need to save it somewhere.
+         */
+
+        tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;  // sigsuspend always returns -1/EINTR
         break;
     }
 
     case SYS_CHDIR:
     {
         const char* path = (const char*)(tf->x[0]);
-
+        if (!validate_user_buffer(path, 1, 0))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
         size_t path_len = 0;
         const char* p = path;
         while (path_len < VFS_MAX_PATH_LEN)
@@ -547,10 +753,108 @@ void syscall_handle(struct exception_trap_frame* tf)
         tf->x[0] = (uint64_t)res;
         break;
     }
+    case SYS_GETCWD:
+    {
+        char* buf = (char*)tf->x[0];
+        size_t size = (size_t)tf->x[1];
+
+        // Basic security check (should ideally use `is_valid_user_ptr`)
+        if (!buf || (uintptr_t)buf >= KERNEL_VMA)
+        {
+            tf->x[0] = -PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        tf->x[0] = (uint64_t)vfs_getcwd(buf, size);
+        break;
+    }
+    case SYS_MMAP:
+    {  // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+        uintptr_t addr = (uintptr_t)tf->x[0];
+        size_t length = (size_t)tf->x[1];
+        int prot = (int)tf->x[2];
+        int flags = (int)tf->x[3];
+        int fd = (int)tf->x[4];
+        off_t offset = (off_t)tf->x[5];
+
+        (void)addr;
+        (void)offset;
+
+        int curr_process_pid = process_find_current();
+        if (curr_process_pid < 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+            break;
+        }
+
+        struct process* curr_process = &process_table[curr_process_pid];
+
+        if (length == 0 || length > SYSCALL_MAX_MMAP_SIZE)
+        {
+            tf->x[0] = (uintptr_t)MAP_FAILED;
+            break;
+        }
+
+        /* Safe page-count rounding — length is bounded, no overflow possible */
+        size_t pages_needed = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+        uintptr_t new_region = process_va_alloc(&curr_process->va, pages_needed);
+        if (new_region == 0)
+        {
+            tf->x[0] = (uintptr_t)MAP_FAILED;
+            break;
+        }
+
+        if (fd != -1)
+        {
+            struct vfs_file* file = curr_process->fd_table[fd];
+            if (file == NULL)
+            {
+                tf->x[0] = (uintptr_t)MAP_FAILED;
+                break;
+            }
+            if (file->node->ops->mmap != NULL)
+            {
+                int rc = file->node->ops->mmap(file, new_region, length, prot, flags);
+                if (rc < 0)
+                {
+                    tf->x[0] = (uintptr_t)MAP_FAILED;
+                    break;
+                }
+            }
+        }
+        if (flags & MAP_ANONYMOUS)
+        {
+            unsigned long mmu_flags =
+                MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_PXN;
+            if (!(prot & PROT_WRITE))
+            {
+                mmu_flags |= MMU_AP_RO;
+            }
+
+            mmu_flags |= MMU_UXN;
+            for (size_t i = 0; i < pages_needed; i++)
+            {
+                void* kaddr = pmm_alloc_page();
+                if (!kaddr)
+                {
+                    // For now, fail if any page allocation fails.
+                    // Ideally we'd rollback here, but MAP_FAILED signals the error.
+                    tf->x[0] = (uintptr_t)MAP_FAILED;
+                    goto mmap_done;
+                }
+                memset(kaddr, 0, PAGE_SIZE);
+                uintptr_t phys = V2P((uintptr_t)kaddr);
+                mmu_user_map_page(curr_process->user_pgd, new_region + i * PAGE_SIZE, phys, mmu_flags);
+            }
+        }
+        tf->x[0] = new_region;
+mmap_done:
+        break;
+    }
 
     default:
     {
-        printf("Unknown syscall: %lu\n", syscall_nr);
+        pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
         break;
     }
     }

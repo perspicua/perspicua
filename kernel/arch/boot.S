@@ -123,6 +123,8 @@ enable_mmu:
     //   bits 11,20,22,23,28,29 = RES1 on Cortex-A72
     //   WXN(19)=0, A(1)=0, E0E(24)=0, EE(25)=0
     ldr x0, =0x30D01805
+    orr x0, x0, #(1 << 3)  // Enable SA (SP Alignment Check for EL1)
+    orr x0, x0, #(1 << 4)  // Enable SA0 (SP Alignment Check for EL0)
     msr sctlr_el1, x0
     isb
 

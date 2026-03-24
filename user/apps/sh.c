@@ -1,8 +1,19 @@
 #include "syscall.h"
 #include "string.h"
 
-#define MAX_ARGS    16
-#define CMD_MAX_LEN 256
+#define MAX_ARGS    32
+#define CMD_MAX_LEN 512
+#define MAX_CMDS    16
+
+typedef struct
+{
+    char* argv[MAX_ARGS];
+    int argc;
+    char* infile;
+    char* outfile;
+    int append;
+    int background;
+} Command;
 
 static void print_string(const char* s)
 {
@@ -14,161 +25,199 @@ static void print_char(char c)
     sys_write(1, &c, 1);
 }
 
-static char* trim(char* str)
+/* * Replaces special shell operators with spaced-out versions
+ * so our tokenizer can easily split them without breaking quotes.
+ */
+static void expand_operators(const char* line, char* expanded)
 {
-    char* end;
-    while (*str == ' ')
-        str++;
-    if (*str == 0)
-        return str;
-    end = str + strlen(str) - 1;
-    while (end > str && *end == ' ')
-        end--;
-    end[1] = '\0';
-    return str;
-}
+    int i = 0, j = 0;
+    int in_quotes = 0;
 
-static char current_dir[CMD_MAX_LEN] = "/";
-
-static void set_current_dir(const char* path)
-{
-    char temp[512];
-    if (path[0] == '/')
+    while (line[i] != '\0')
     {
-        strcpy(temp, path);
-    }
-    else
-    {
-        strcpy(temp, current_dir);
-        if (strcmp(temp, "/") != 0)
+        if (line[i] == '"')
         {
-            strcat(temp, "/");
+            in_quotes = !in_quotes;
         }
-        strcat(temp, path);
-    }
 
-    char* parts[64];
-    int count = 0;
-    char* token = strtok(temp, "/");
-
-    while (token)
-    {
-        if (strcmp(token, ".") == 0)
+        if (!in_quotes && (line[i] == '<' || line[i] == '>' || line[i] == '|' || line[i] == ';'))
         {
-            // ignore
-        }
-        else if (strcmp(token, "..") == 0)
-        {
-            if (count > 0)
-                count--;
-        }
-        else
-        {
-            parts[count++] = token;
-        }
-        token = strtok(NULL, "/");
-    }
-
-    if (count == 0)
-    {
-        strcpy(current_dir, "/");
-    }
-    else
-    {
-        current_dir[0] = '\0';
-        for (int i = 0; i < count; i++)
-        {
-            strcat(current_dir, "/");
-            strcat(current_dir, parts[i]);
-        }
-    }
-}
-
-static void run_command(int argc, char** argv)
-{
-    if (argc == 0 || !argv[0])
-        return;
-
-    if (strcmp(argv[0], "help") == 0)
-    {
-        print_string("Commands: help, echo, clear, exit, pipes (|), programs in /\n");
-        return;
-    }
-
-    if (strcmp(argv[0], "clear") == 0)
-    {
-        print_string("\033[2J\033[H");
-        return;
-    }
-
-    if (strcmp(argv[0], "echo") == 0)
-    {
-        for (int i = 1; i < argc; i++)
-        {
-            print_string(argv[i]);
-            if (i < argc - 1)
-                print_string(" ");
-        }
-        print_string("\n");
-        return;
-    }
-
-    if (strcmp(argv[0], "exit") == 0)
-    {
-        sys_exit(0);
-    }
-
-    if (strcmp(argv[0], "cd") == 0)
-    {
-        int res = 0;
-        if (argc == 1)
-        {
-            sys_chdir("/");
-            set_current_dir("/");
-            // print_string("Changed directory to /\n");
-            return;
-        }
-        else
-        {
-            res = sys_chdir(argv[1]);
-            if (res < 0)
+            if (line[i] == '>' && line[i + 1] == '>')
             {
-                print_string("sh: cd : no such directory: ");
-                print_string(argv[1]);
-                print_string("\n");
+                expanded[j++] = ' ';
+                expanded[j++] = '>';
+                expanded[j++] = '>';
+                expanded[j++] = ' ';
+                i++;
             }
             else
             {
-                set_current_dir(argv[1]);
+                expanded[j++] = ' ';
+                expanded[j++] = line[i];
+                expanded[j++] = ' ';
             }
         }
-        return;
+        else
+        {
+            expanded[j++] = line[i];
+        }
+        i++;
+    }
+    expanded[j] = '\0';
+}
+
+static void parse_command(char* str, Command* cmd)
+{
+    cmd->argc = 0;
+    cmd->infile = NULL;
+    cmd->outfile = NULL;
+    cmd->append = 0;
+    cmd->background = 0;
+
+    char* tokens[64];
+    int token_count = 0;
+    char* p = str;
+
+    while (*p)
+    {
+        while (*p == ' ' || *p == '\t')
+            *p++ = '\0';
+        if (!*p)
+            break;
+
+        if (*p == '"')
+        {
+            p++;  // Skip opening quote
+            tokens[token_count++] = p;
+            while (*p && *p != '"')
+                p++;
+            if (*p)
+                *p++ = '\0';  // Replace closing quote
+        }
+        else
+        {
+            tokens[token_count++] = p;
+            while (*p && *p != ' ' && *p != '\t')
+                p++;
+        }
     }
 
-    char path[128];
-    if (argv[0][0] == '/')
+    for (int i = 0; i < token_count; i++)
     {
-        strcpy(path, argv[0]);
+        if (strcmp(tokens[i], "<") == 0 && i + 1 < token_count)
+        {
+            cmd->infile = tokens[++i];
+        }
+        else if (strcmp(tokens[i], ">") == 0 && i + 1 < token_count)
+        {
+            cmd->outfile = tokens[++i];
+        }
+        else if (strcmp(tokens[i], ">>") == 0 && i + 1 < token_count)
+        {
+            cmd->append = 1;
+            cmd->outfile = tokens[++i];
+        }
+        else if (strcmp(tokens[i], "&") == 0)
+        {
+            cmd->background = 1;
+        }
+        else
+        {
+            if (cmd->argc < MAX_ARGS - 1)
+            {
+                cmd->argv[cmd->argc++] = tokens[i];
+            }
+        }
+    }
+    cmd->argv[cmd->argc] = NULL;
+}
+
+static int is_parent_builtin(const char* name)
+{
+    return (strcmp(name, "cd") == 0 || strcmp(name, "exit") == 0);
+}
+
+static void run_parent_builtin(Command* cmd)
+{
+    if (strcmp(cmd->argv[0], "exit") == 0)
+    {
+        sys_exit(0);
+    }
+    else if (strcmp(cmd->argv[0], "cd") == 0)
+    {
+        const char* target = (cmd->argc > 1) ? cmd->argv[1] : "/";
+        if (sys_chdir(target) < 0)
+        {
+            print_string("sh: cd: no such directory: ");
+            print_string(target);
+            print_string("\n");
+        }
+    }
+}
+
+static int is_output_builtin(const char* name)
+{
+    return (strcmp(name, "clear") == 0 || strcmp(name, "echo") == 0 || strcmp(name, "pwd") == 0
+            || strcmp(name, "help") == 0);
+}
+
+static void run_output_builtin(Command* cmd)
+{
+    if (strcmp(cmd->argv[0], "clear") == 0)
+    {
+        print_string("\033[2J\033[H");
+    }
+    else if (strcmp(cmd->argv[0], "echo") == 0)
+    {
+        for (int i = 1; i < cmd->argc; i++)
+        {
+            print_string(cmd->argv[i]);
+            if (i < cmd->argc - 1)
+                print_string(" ");
+        }
+        print_string("\n");
+    }
+    else if (strcmp(cmd->argv[0], "pwd") == 0)
+    {
+        char cwd[256];
+        if (sys_getcwd(cwd, sizeof(cwd)) == 0)
+        {
+            print_string(cwd);
+            print_string("\n");
+        }
+    }
+    else if (strcmp(cmd->argv[0], "help") == 0)
+    {
+        print_string("Perspicua Shell\n");
+        print_string("Built-ins: help, echo, clear, pwd, cd, exit\n");
+        print_string("Features: |, >, >>, <, \" \", &, ;\n");
+    }
+}
+
+static void run_exec(Command* cmd)
+{
+    char path[256];
+    if (cmd->argv[0][0] == '/')
+    {
+        strcpy(path, cmd->argv[0]);
     }
     else
     {
         strcpy(path, "/");
-        strcat(path, argv[0]);
+        strcat(path, cmd->argv[0]);
         strcat(path, ".elf");
     }
 
-    /* Note: Currently, our kernel sys_exec only takes the path and no argv. */
     if (sys_exec(path) < 0)
     {
-        /* Try without .elf just in case */
-        if (argv[0][0] != '/')
+        if (cmd->argv[0][0] != '/')
         {
             strcpy(path, "/");
-            strcat(path, argv[0]);
+            strcat(path, cmd->argv[0]);
             if (sys_exec(path) < 0)
             {
                 print_string("sh: command not found: ");
-                print_string(argv[0]);
+                print_string(cmd->argv[0]);
                 print_string("\n");
                 sys_exit(1);
             }
@@ -176,148 +225,216 @@ static void run_command(int argc, char** argv)
         else
         {
             print_string("sh: command not found: ");
-            print_string(argv[0]);
+            print_string(cmd->argv[0]);
             print_string("\n");
             sys_exit(1);
         }
     }
 }
 
-static void execute_pipeline(char* left_str, char* right_str)
+static int apply_redirections(Command* cmd)
 {
-    int pipefd[2];
-    if (sys_pipe(pipefd) < 0)
+    if (cmd->infile)
     {
-        print_string("sh: pipe failed\n");
-        return;
-    }
-
-    int pid1 = sys_fork();
-    if (pid1 == 0)
-    {
-        sys_dup2(pipefd[1], 1);
-        sys_close(pipefd[0]);
-        sys_close(pipefd[1]);
-
-        char* argv[MAX_ARGS];
-        int argc = 0;
-        char* p = left_str;
-        while (*p)
+        int fd = sys_open(cmd->infile, VFS_O_RDONLY);
+        if (fd < 0)
         {
-            while (*p == ' ')
-                *p++ = '\0';
-            if (!*p)
-                break;
-            if (argc < MAX_ARGS - 1)
-                argv[argc++] = p;
-            while (*p && *p != ' ')
-                p++;
+            print_string("sh: cannot open input file\n");
+            return -1;
         }
-        argv[argc] = NULL;
-        run_command(argc, argv);
-        sys_exit(0);
+        sys_dup2(fd, 0);
+        sys_close(fd);
     }
-
-    int pid2 = sys_fork();
-    if (pid2 == 0)
+    if (cmd->outfile)
     {
-        sys_dup2(pipefd[0], 0);
-        sys_close(pipefd[0]);
-        sys_close(pipefd[1]);
-
-        char* argv[MAX_ARGS];
-        int argc = 0;
-        char* p = right_str;
-        while (*p)
+        int flags = VFS_O_WRONLY | VFS_O_CREAT | (cmd->append ? VFS_O_APPEND : VFS_O_TRUNC);
+        int fd = sys_open(cmd->outfile, flags);
+        if (fd < 0)
         {
-            while (*p == ' ')
-                *p++ = '\0';
-            if (!*p)
-                break;
-            if (argc < MAX_ARGS - 1)
-                argv[argc++] = p;
-            while (*p && *p != ' ')
-                p++;
+            print_string("sh: cannot open output file\n");
+            return -1;
         }
-        argv[argc] = NULL;
-        run_command(argc, argv);
-        sys_exit(0);
+        sys_dup2(fd, 1);
+        sys_close(fd);
     }
-
-    sys_close(pipefd[0]);
-    sys_close(pipefd[1]);
-    sys_waitpid(pid1, NULL);
-    sys_waitpid(pid2, NULL);
+    return 0;
 }
 
-static void execute_line(char* line)
+static void execute_pipeline(char* pipe_string)
 {
-    char* pipe_ptr = strchr(line, '|');
-    if (pipe_ptr)
-    {
-        *pipe_ptr = '\0';
-        char* left = trim(line);
-        char* right = trim(pipe_ptr + 1);
-        execute_pipeline(left, right);
-    }
-    else
-    {
-        char* argv[MAX_ARGS];
-        int argc = 0;
-        char* p = line;
+    char* commands_str[MAX_CMDS];
+    int num_cmds = 0;
 
-        while (*p)
+    char* p = pipe_string;
+    commands_str[num_cmds++] = p;
+    while (*p)
+    {
+        if (*p == '|')
         {
-            while (*p == ' ')
-                *p++ = '\0';
-            if (!*p)
-                break;
-            if (argc < MAX_ARGS - 1)
-                argv[argc++] = p;
-            while (*p && *p != ' ')
-                p++;
+            *p = '\0';
+            commands_str[num_cmds++] = p + 1;
         }
-        argv[argc] = NULL;
+        p++;
+    }
 
-        if (argc == 0)
+    if (num_cmds == 1)
+    {
+        Command cmd;
+        parse_command(commands_str[0], &cmd);
+        if (cmd.argc == 0)
             return;
 
-        /* Built-ins that should run in the parent process (like exit, clear, echo, help) */
-        if (strcmp(argv[0], "exit") == 0 || strcmp(argv[0], "clear") == 0 || strcmp(argv[0], "echo") == 0
-            || strcmp(argv[0], "help") == 0 || strcmp(argv[0], "cd") == 0)
+        if (is_parent_builtin(cmd.argv[0]))
         {
-            run_command(argc, argv);
+            run_parent_builtin(&cmd);
             return;
         }
 
         int pid = sys_fork();
-        if (pid < 0)
+        if (pid == 0)
         {
-            print_string("sh: fork failed\n");
-        }
-        else if (pid == 0)
-        {
-            run_command(argc, argv);
-            sys_exit(0);
+            if (apply_redirections(&cmd) < 0)
+                sys_exit(1);
+
+            if (is_output_builtin(cmd.argv[0]))
+            {
+                run_output_builtin(&cmd);
+                sys_exit(0);
+            }
+            run_exec(&cmd);
+            sys_exit(1);
         }
         else
         {
-            int status = 0;
-            sys_waitpid(pid, &status);
+            if (!cmd.background)
+            {
+                sys_waitpid(pid, NULL);
+            }
         }
+        return;
+    }
+
+    /* Handle multiple piped commands */
+    int prev_pipe = -1;
+    int pipefd[2];
+    int pids[MAX_CMDS];
+    int bg_flag = 0;
+
+    for (int i = 0; i < num_cmds; i++)
+    {
+        Command cmd;
+        parse_command(commands_str[i], &cmd);
+        if (cmd.argc == 0)
+            continue;
+        if (cmd.background)
+            bg_flag = 1;
+
+        if (i < num_cmds - 1)
+        {
+            if (sys_pipe(pipefd) < 0)
+            {
+                print_string("sh: pipe failed\n");
+                return;
+            }
+        }
+
+        int pid = sys_fork();
+        if (pid == 0)
+        {
+            if (prev_pipe != -1)
+            {
+                sys_dup2(prev_pipe, 0);
+                sys_close(prev_pipe);
+            }
+            if (i < num_cmds - 1)
+            {
+                sys_dup2(pipefd[1], 1);
+                sys_close(pipefd[0]);
+                sys_close(pipefd[1]);
+            }
+
+            if (apply_redirections(&cmd) < 0)
+                sys_exit(1);
+
+            if (is_output_builtin(cmd.argv[0]))
+            {
+                run_output_builtin(&cmd);
+                sys_exit(0);
+            }
+            run_exec(&cmd);
+            sys_exit(1);
+        }
+        else
+        {
+            pids[i] = pid;
+            if (prev_pipe != -1)
+                sys_close(prev_pipe);
+            if (i < num_cmds - 1)
+            {
+                sys_close(pipefd[1]);
+                prev_pipe = pipefd[0];
+            }
+        }
+    }
+
+    if (!bg_flag)
+    {
+        for (int i = 0; i < num_cmds; i++)
+        {
+            sys_waitpid(pids[i], NULL);
+        }
+    }
+}
+
+static void execute_line(char* line)
+{
+    char expanded[CMD_MAX_LEN * 2];
+    expand_operators(line, expanded);
+
+    /* Split by semi-colons for sequential execution */
+    char* seq_commands[16];
+    int num_seq = 0;
+
+    char* p = expanded;
+    seq_commands[num_seq++] = p;
+
+    int in_quotes = 0;
+    while (*p)
+    {
+        if (*p == '"')
+            in_quotes = !in_quotes;
+        if (*p == ';' && !in_quotes)
+        {
+            *p = '\0';
+            seq_commands[num_seq++] = p + 1;
+        }
+        p++;
+    }
+
+    for (int i = 0; i < num_seq; i++)
+    {
+        execute_pipeline(seq_commands[i]);
     }
 }
 
 static void print_prompt(void)
 {
-    print_string("perspicua:");
-    print_string(current_dir);
-    print_string("$ ");
+    char cwd[256];
+    if (sys_getcwd(cwd, sizeof(cwd)) == 0)
+    {
+        print_string("perspicua:");
+        print_string(cwd);
+        print_string("$ ");
+    }
+    else
+    {
+        print_string("perspicua:$ ");
+    }
 }
 
 int main(void)
 {
-    print_string("Perspicua OS Shell\n");
+    print_string("Perspicua Shell\n");
     print_string("Type help to see available commands.\n\n");
 
     char cmd_buffer[CMD_MAX_LEN];

@@ -11,24 +11,6 @@ static uint32_t cluster_to_lba(uint32_t cluster)
     return current_fs.data_lba_start + (cluster - 2) * current_fs.sectors_per_cluster;
 }
 
-static void print_fat_name(const uint8_t* name, const uint8_t* ext)
-{
-    for (int i = 0; i < 8; i++)
-    {
-        if (name[i] != ' ' && name[i] != 0)
-            printf("%c", name[i]);
-    }
-    if (ext[0] != ' ' && ext[0] != 0)
-    {
-        printf(".");
-        for (int i = 0; i < 3; i++)
-        {
-            if (ext[i] != ' ' && ext[i] != 0)
-                printf("%c", ext[i]);
-        }
-    }
-}
-
 static uint32_t get_next_cluster(uint32_t cluster)
 {
     uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
@@ -190,63 +172,81 @@ struct vfs_vnode* fat32_vfs_lookup(struct vfs_vnode* dir, const char* filename)
 
 int fat32_vfs_readdir(struct vfs_file* file, void* buffer, size_t count)
 {
-    (void)count;
     if (file->node->type != VFS_VNODE_TYPE_DIR)
         return -PERS_ERR_NOT_A_DIRECTORY;
-    struct vfs_dirent* dirent = (struct vfs_dirent*)buffer;
-    uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
-    struct fat32_dir_entry dirs[16];
-    uint32_t entries_skipped = 0;
 
-    while (cluster < 0x0FFFFFF8)
+    struct vfs_dirent* dirent_buf = (struct vfs_dirent*)buffer;
+    size_t max_entries = count / sizeof(struct vfs_dirent);
+    int entries_read = 0;
+
+    uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
+    uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
+
+    /* Treat file->offset as a raw byte offset into the directory (32-byte entries). */
+    uint32_t clusters_to_skip = (uint32_t)(file->offset / bytes_per_cluster);
+    for (uint32_t i = 0; i < clusters_to_skip; i++)
     {
-        uint32_t lba = cluster_to_lba(cluster);
-        for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++)
+        cluster = get_next_cluster(cluster);
+        if (cluster >= 0x0FFFFFF8)
+            return 0;
+    }
+
+    struct fat32_dir_entry dirs[16];
+    while (cluster < 0x0FFFFFF8 && entries_read < (int)max_entries)
+    {
+        uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
+        uint32_t start_sector = offset_in_cluster / 512;
+
+        for (uint32_t s = start_sector; s < current_fs.sectors_per_cluster && entries_read < (int)max_entries; s++)
         {
-            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0)
+            uint32_t lba = cluster_to_lba(cluster) + s;
+            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba, 1) != 0)
                 return -PERS_ERR_IO_ERROR;
-            for (int i = 0; i < 16; i++)
+
+            uint32_t start_entry = (uint32_t)((file->offset % 512) / 32);
+            for (int i = (int)start_entry; i < 16 && entries_read < (int)max_entries; i++)
             {
+                /* Advance offset immediately so we don't re-process this entry next time */
+                file->offset += 32;
+
                 if (dirs[i].name[0] == 0x00)
-                    return 0;
+                    return entries_read; /* End of directory */
                 if (dirs[i].name[0] == 0xE5 || dirs[i].attributes == 0x0F)
-                    continue;
-                if (entries_skipped == file->offset)
+                    continue; /* Deleted or LFN entry */
+
+                struct vfs_dirent* dirent = &dirent_buf[entries_read];
+                int idx = 0;
+                for (int k = 0; k < 8; k++)
                 {
-                    int idx = 0;
-                    for (int k = 0; k < 8; k++)
+                    uint8_t c = dirs[i].name[k];
+                    if (c == ' ' || c == 0)
+                        continue;
+                    if (c >= 'A' && c <= 'Z')
+                        c = c - 'A' + 'a';
+                    dirent->name[idx++] = (char)c;
+                }
+                if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0)
+                {
+                    dirent->name[idx++] = '.';
+                    for (int k = 0; k < 3; k++)
                     {
-                        uint8_t c = dirs[i].name[k];
+                        uint8_t c = dirs[i].ext[k];
                         if (c == ' ' || c == 0)
                             continue;
                         if (c >= 'A' && c <= 'Z')
                             c = c - 'A' + 'a';
-                        dirent->name[idx++] = c;
+                        dirent->name[idx++] = (char)c;
                     }
-                    if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0)
-                    {
-                        dirent->name[idx++] = '.';
-                        for (int k = 0; k < 3; k++)
-                        {
-                            uint8_t c = dirs[i].ext[k];
-                            if (c == ' ' || c == 0)
-                                continue;
-                            if (c >= 'A' && c <= 'Z')
-                                c = c - 'A' + 'a';
-                            dirent->name[idx++] = c;
-                        }
-                    }
-                    dirent->name[idx] = '\0';
-                    dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
-                    file->offset++;
-                    return 1;
                 }
-                entries_skipped++;
+                dirent->name[idx] = '\0';
+                dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
+                entries_read++;
             }
         }
         cluster = get_next_cluster(cluster);
     }
-    return 0;
+
+    return entries_read;
 }
 
 static struct vfs_vnode_ops fat32_vnode_ops = {
@@ -267,7 +267,25 @@ struct vfs_vnode* fat32_get_root_node(void)
     return node;
 }
 
-void fat32_ls()
+static void print_fat_name(const uint8_t* name, const uint8_t* ext)
+{
+    for (int i = 0; i < 8; i++)
+    {
+        if (name[i] != ' ' && name[i] != 0)
+            printk("%c", name[i]);
+    }
+    if (ext[0] != ' ' && ext[0] != 0)
+    {
+        printk(".");
+        for (int i = 0; i < 3; i++)
+        {
+            if (ext[i] != ' ' && ext[i] != 0)
+                printk("%c", ext[i]);
+        }
+    }
+}
+
+void fat32_ls(void)
 {
     uint32_t lba = cluster_to_lba(current_fs.root_cluster);
     struct fat32_dir_entry dirs[16];
@@ -279,9 +297,9 @@ void fat32_ls()
             break;
         if (dirs[i].name[0] == 0xE5 || dirs[i].attributes == 0x0F)
             continue;
-        printf("[ FAT32 ]: ");
+        printk("fat32: ");
         print_fat_name(dirs[i].name, dirs[i].ext);
-        printf("  (size: %u bytes)\n", dirs[i].size);
+        printk("  (size: %u bytes)\n", dirs[i].size);
     }
 }
 
@@ -299,7 +317,7 @@ void fat32_cat(const char* filename)
         {
             uint32_t cluster = (dirs[i].cluster_high << 16) | dirs[i].cluster_low;
             uint32_t size = dirs[i].size;
-            printf("[ FAT32 ]: Reading %s (%u bytes)...\n", filename, size);
+            pr_info("fat32: reading %s (%u bytes)...\n", filename, size);
             char buffer[512];
             while (cluster < 0x0FFFFFF8)
             {
@@ -309,15 +327,15 @@ void fat32_cat(const char* filename)
                     if (current_fs.dev->read_blocks(current_fs.dev, &buffer, file_lba + j, 1) != 0)
                         break;
                     for (size_t buf_idx = 0; buf_idx < 512; buf_idx++)
-                        printf("%c", buffer[buf_idx]);
+                        printk("%c", buffer[buf_idx]);
                 }
                 cluster = get_next_cluster(cluster);
             }
-            printf("\n");
+            printk("\n");
             return;
         }
     }
-    printf("[ FAT32 ]: File %s not found.\n", filename);
+    pr_info("fat32: file %s not found.\n", filename);
 }
 
 int fat32_init(const char* device_name)
@@ -363,6 +381,6 @@ int fat32_init(const char* device_name)
     current_fs.num_fats = bpb.num_fats;
     current_fs.fat_lba_start = current_fs.partition_lba_start + current_fs.reserved_sectors;
     current_fs.data_lba_start = current_fs.fat_lba_start + (current_fs.num_fats * current_fs.sectors_per_fat);
-    printf("[ FAT32 ]: Initialized partition at LBA %u\n", current_fs.partition_lba_start);
+    pr_info("fat32: partition at LBA %u\n", current_fs.partition_lba_start);
     return PERS_SUCCESS;
 }

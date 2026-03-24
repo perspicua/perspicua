@@ -16,19 +16,19 @@ void test_sd(void)
 
     if (res == 0)
     {
-        printf("[ INFO ] SD read block 0 successful\n");
+        pr_info("test: sd read block 0 successful\n");
         if (strncmp((char*)buf, "PERSPICUA SD TEST DATA", 22) == 0)
         {
-            printf("[  OK  ] SD data verification: found test string!\n");
+            pr_info("test: sd data verification: found test string!\n");
         }
         else
         {
-            printf("[ INFO ] SD data verification: block 0 did not contain test string.\n");
+            pr_info("test: sd data verification: block 0 did not contain test string.\n");
         }
     }
     else
     {
-        printf("[ INFO ] SD read block 0 failed (expected if no SD card/image attached to QEMU)\n");
+        pr_info("test: sd read block 0 failed (expected if no SD card/image attached to QEMU)\n");
     }
 
     TEST_PASS("SD Driver");

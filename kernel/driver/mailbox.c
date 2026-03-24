@@ -53,7 +53,7 @@ void mbox_init(void)
     mbox_status = (unsigned int*)(vbase + 0x18);
     mbox_write = (unsigned int*)(vbase + 0x20);
 
-    printf("[ MBOX ] VideoCore mailbox initialized\n");
+    pr_info("mbox: VideoCore mailbox initialized\n");
 }
 
 /*

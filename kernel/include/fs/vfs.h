@@ -71,6 +71,7 @@ struct vfs_vnode_ops
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
     int (*readdir)(struct vfs_file* file, void* buffer, size_t count);
     int (*close)(struct vfs_file* file);
+    int (*mmap)(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags);
 };
 
 /*
@@ -79,6 +80,7 @@ struct vfs_vnode_ops
 struct vfs_vnode
 {
     enum vfs_vnode_type type;
+    char name[256];
     vfs_off_t file_size;
     struct vfs_vnode* parent;
     struct vfs_vnode_ops* ops;
@@ -172,5 +174,6 @@ int vfs_mount(const char* path, struct vfs_vnode* root);
 int vfs_unmount(const char* path);
 
 int vfs_chdir(const char* path);
+
 int vfs_getcwd(char* buf, size_t size);
 #endif /* PERSPICUA_KERNEL_VFS_H */

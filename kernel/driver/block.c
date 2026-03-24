@@ -86,7 +86,7 @@ void block_device_register(struct block_device* dev)
 
     if (nr_devices >= BLOCK_MAX_DEVICES)
     {
-        printf("[ BLOCK ] Registration failed: device table full\n");
+        pr_err("block: Registration failed: table full\n");
         return;
     }
 
@@ -94,7 +94,7 @@ void block_device_register(struct block_device* dev)
 
     if (devfs_register_device(dev->name, &block_device_vfs_ops, dev) != PERS_SUCCESS)
     {
-        printf("[ BLOCK ] Failed to register /dev/%s\n", dev->name);
+        pr_err("block: Failed to register /dev/%s\n", dev->name);
     }
 }
 

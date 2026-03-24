@@ -106,7 +106,7 @@ void timer_interrupt_init(void)
 
     if (core_id == 0)
     {
-        printf("[ TIMER ] Generic timer: CNTFRQ = %u Hz, tick = 100 Hz (10ms)\n", freq);
+        pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }
 

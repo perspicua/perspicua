@@ -65,6 +65,28 @@ int ramfs_read(struct vfs_file* file, void* buffer, size_t size)
 }
 
 /*
+ * ramfs_readdir - Reads directory entries from the RAMFS root.
+ */
+static int ramfs_readdir(struct vfs_file* file, void* buffer, size_t count)
+{
+    struct vfs_dirent* dirent_buf = (struct vfs_dirent*)buffer;
+    size_t max_entries = count / sizeof(struct vfs_dirent);
+    int entries_read = 0;
+
+    for (int i = (int)file->offset; i < ramfs_file_count && entries_read < (int)max_entries; i++)
+    {
+        struct vfs_dirent* dirent = &dirent_buf[entries_read];
+        strncpy(dirent->name, ramfs_files[i].name, 255);
+        dirent->name[255] = '\0';
+        dirent->ino = 0;  // RAMFS files don't have inodes in this implementation
+        file->offset++;
+        entries_read++;
+    }
+
+    return entries_read;
+}
+
+/*
  * ramfs_lookup - Searches the static file array for a matching filename.
  */
 struct vfs_vnode* ramfs_lookup(struct vfs_vnode* dir, const char* filename)
@@ -116,7 +138,7 @@ void ramfs_register_file(const char* name, const void* data, size_t size)
     ramfs_files[ramfs_file_count].node = vn;
     ramfs_file_count++;
 
-    printf("[ RAMFS ] Registered file: %s (%u bytes)\n", name, (unsigned int)size);
+    pr_info("ramfs: registered file: %s (%u bytes)\n", name, (unsigned int)size);
 }
 
 /* Hardcoded greeting message for the initial root filesystem */
@@ -135,6 +157,7 @@ void ramfs_init(void)
 
     // Initialize directory operations table
     ramfs_dir_ops.lookup = ramfs_lookup;
+    ramfs_dir_ops.readdir = ramfs_readdir;
     ramfs_dir_ops.read = NULL;
     ramfs_dir_ops.write = NULL;
 

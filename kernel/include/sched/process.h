@@ -19,8 +19,9 @@
 #define PROCESS_TABLE_SIZE 1024
 
 /* --- User Virtual Address Space --- */
-#define USER_VA_BASE        0x40000000ULL /* 1GB - leaves lower area for ELF loading */
-#define USER_VA_MAX_REGIONS 16
+#define USER_VA_BASE             0x40000000ULL /* 1GB - leaves lower area for ELF loading */
+#define USER_VA_MAX_REGIONS      16
+#define PROCESS_USER_STACK_PAGES 64 /* 64*4 KB user stack */
 
 /* --- Hardware/Architecture Specifics --- */
 #define SPSR_EL0_USER      0x00000000ULL
@@ -31,6 +32,7 @@ typedef enum
 {
     PROCESS_STATE_EMPTY = 0,
     PROCESS_STATE_RUNNING,
+    PROCESS_STATE_ZOMBIE,
     PROCESS_STATE_DEAD
 } process_state_t;
 
@@ -84,9 +86,10 @@ struct process
     struct vfs_vnode* cwd;
 
     /* Signals */
-    uint32_t pending_signals;
-    signal_handler_t signal_handlers[SIGNAL_COUNT];
-    uintptr_t sig_restorer;
+    sigset_t pending_signals;
+    sigset_t blocked_signals;
+    struct sigaction signal_handlers[SIGNAL_COUNT];
+    uintptr_t default_sigrestorer;
 };
 
 extern struct process process_table[PROCESS_TABLE_SIZE];

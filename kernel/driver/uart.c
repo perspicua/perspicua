@@ -23,8 +23,9 @@
 extern struct tty console_tty;
 
 /* UART State and Synchronization */
-static spinlock_t uart_lock = SPINLOCK_INIT;
+spinlock_t uart_tx_lock = SPINLOCK_INIT;
 static unsigned int cached_uart_irq = 0;
+int uart_ready = 0;
 
 /* Public Register Pointers */
 volatile uint32_t* uart_dr = NULL;
@@ -60,13 +61,6 @@ void uart_init(void)
     const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
     uint32_t phys_base;
 
-    /*
-     * RPi4 DTB often uses different #address-cells. We determine the
-     * correct address cell by looking at the property size.
-     * 8 bytes:  (addr32, size32)
-     * 12 bytes: (addr64, size32)
-     * 16 bytes: (addr64, size64)
-     */
     if (reg_prop.size >= 12)
     {
         phys_base = fdt32_to_cpu(reg_data[1]);
@@ -78,9 +72,6 @@ void uart_init(void)
 
     if (phys_base < 0xFC000000)
     {
-        // Broadcom uses legacy 0x7E... addresses in DTB for compatibility, we must map them
-        // to RPi4's actual 0xFE... bus addresses. Usually DTBs have a `ranges` under /soc,
-        // but as a hardcoded workaround to ease migration for now:
         phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
     }
 
@@ -98,47 +89,32 @@ void uart_init(void)
     uart_mis = (uint32_t*)(vbase + 0x40);
     uart_icr = (uint32_t*)(vbase + 0x44);
 
-    // Disable UART for safe configuration
     mmio_write(uart_cr, 0);
 
-    // Configure GPIO pins 14 and 15 for ALT0 function (UART)
     gpio_set_pin_function(14, GPIO_FUNC_ALT0);
     gpio_set_pin_function(15, GPIO_FUNC_ALT0);
-
-    // Disable pull-up/down resistors for cleaner signal
     gpio_set_pull(14, GPIO_PUPDN_NONE);
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
-    // Small delay for hardware stability
     sleep_ms(10);
-
-    // Clear all pending interrupts
     mmio_write(uart_icr, 0x7FF);
 
-    // Set baud rate to 115200 for 48MHz clock.
-    // 48,000,000 / (16 * 115200) = 26.04166
     mmio_write(uart_ibrd, 26);
     mmio_write(uart_fbrd, 3);
-
-    // Enable FIFOs and set 8-bit word length
     mmio_write(uart_lcrh, UART_LCRH_FEN | UART_LCRH_WLEN_8);
-
-    // Set FIFO interrupt levels to 1/8 to trigger early
     mmio_write(uart_ifls, 0);
-
-    // Enable UART, TX, and RX
     mmio_write(uart_cr, UART_CR_UARTEN | UART_CR_TXE | UART_CR_RXE);
+
+    uart_ready = 1;
 
     struct fdt_property irq_prop;
     if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0)
     {
         const uint32_t* irq_data = (const uint32_t*)irq_prop.value;
-        // GIC interrupts in DTB often have 3 cells [type, number, flags].
-        // For SPIs (type 0), we usually add 32 to get the actual IRQ number.
         uint32_t type = fdt32_to_cpu(irq_data[0]);
         uint32_t num = fdt32_to_cpu(irq_data[1]);
         if (type == 0)
-        {  // SPI
+        {
             cached_uart_irq = num + 32;
         }
         else
@@ -148,11 +124,10 @@ void uart_init(void)
     }
     else
     {
-        // Fallback for RPi4 PL011 if interrupts property missing or different
-        cached_uart_irq = 153;  // 121 SPI + 32
+        cached_uart_irq = 153;
     }
 
-    printf("[ UART ] PL011 UART initialized (base 0x%lx, IRQ %u)\n", vbase, cached_uart_irq);
+    pr_info("uart: PL011 at 0x%lx, IRQ %u\n", vbase, cached_uart_irq);
 }
 
 /*
@@ -164,24 +139,11 @@ void uart_write(const char* buf, size_t len)
 }
 
 /*
- * uart_puts_locked - Atomically transmits a string with IRQs disabled.
+ * uart_send_raw - Low-level byte transmission without synchronization.
+ * Only for use by functions that have already acquired uart_tx_lock.
  */
-void uart_puts_locked(const char* str)
+void uart_send_raw(char c)
 {
-    unsigned long flags = spin_lock_irqsave(&uart_lock);
-    while (*str)
-    {
-        uart_send(*str++);
-    }
-    spin_unlock_irqrestore(&uart_lock, flags);
-}
-
-/*
- * uart_send - Transmits a single byte when space is available.
- */
-void uart_send(char c)
-{
-    // Wait for the transmit FIFO to have room
     while (mmio_read(uart_fr) & UART_FR_TXFF)
     {
         asm volatile("nop");
@@ -190,16 +152,37 @@ void uart_send(char c)
 }
 
 /*
+ * uart_send - Transmits a single byte with full synchronization.
+ */
+void uart_send(char c)
+{
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    uart_send_raw(c);
+    spin_unlock_irqrestore(&uart_tx_lock, flags);
+}
+
+/*
+ * uart_puts_locked - Atomically transmits a string with IRQs disabled.
+ */
+void uart_puts_locked(const char* str)
+{
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    while (*str)
+    {
+        uart_send_raw(*str++);
+    }
+    spin_unlock_irqrestore(&uart_tx_lock, flags);
+}
+
+/*
  * uart_getc - Receives a single byte, blocking until available.
  */
 char uart_getc(void)
 {
-    // Wait for the receive FIFO to be non-empty
     while (mmio_read(uart_fr) & UART_FR_RXFE)
     {
         asm volatile("nop");
     }
-
     return (char)(mmio_read(uart_dr) & 0xFF);
 }
 

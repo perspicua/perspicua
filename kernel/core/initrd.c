@@ -56,7 +56,7 @@ void initrd_init(void* initrd_start)
         /* Validate the CPIO 'newc' magic number */
         if (memcmp(hdr->magic, "070701", 6) != 0)
         {
-            printf("[  BOOT ] Error: Invalid CPIO magic at %p (found %c%c%c%c%c%c)\n",
+            pr_err("boot: invalid CPIO magic at %p (%c%c%c%c%c%c)\n",
                    ptr,
                    hdr->magic[0],
                    hdr->magic[1],
@@ -95,5 +95,5 @@ void initrd_init(void* initrd_start)
         ptr = (char*)(((uintptr_t)ptr + 3) & ~3UL);
     }
 
-    printf("[  BOOT ] InitRD parsed: %d files registered\n", count);
+    pr_info("boot: initrd parsed: %d files registered\n", count);
 }

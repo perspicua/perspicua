@@ -8,6 +8,7 @@
 #ifndef PERSPICUA_DRIVER_UART_H
 #define PERSPICUA_DRIVER_UART_H
 
+#include "core/lock.h"
 #include "types.h"
 #include "io.h"
 
@@ -35,11 +36,12 @@
 #define UART_MIS_TXMIS (1 << 5)
 #define UART_MIS_RTMIS (1 << 6)
 
-/* Public UART Register Pointers */
+/* Public UART Register Pointers and Synchronization */
 extern volatile uint32_t* uart_dr;
 extern volatile uint32_t* uart_fr;
 extern volatile uint32_t* uart_mis;
 extern volatile uint32_t* uart_imsc;
+extern spinlock_t uart_tx_lock;
 
 /*
  * uart_init - Discovers the UART device from the hardware tree and
@@ -48,10 +50,15 @@ extern volatile uint32_t* uart_imsc;
 void uart_init(void);
 
 /*
- * uart_send - Transmits a single character. This function blocks until
- * there is space available in the transmit FIFO.
+ * uart_send - Transmits a single character with full synchronization.
  */
 void uart_send(char c);
+
+/*
+ * uart_send_raw - Transmits a single character without taking a lock.
+ * Caller MUST hold uart_tx_lock.
+ */
+void uart_send_raw(char c);
 
 /*
  * uart_getc - Receives a single character. This function blocks until

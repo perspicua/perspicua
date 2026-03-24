@@ -14,12 +14,12 @@ static void pipe_wait(struct task** queue, spinlock_t* lock)
     struct task* self = sched_get_current();
     unsigned long flags = irq_save();
 
+    /* Set state to BLOCKED before releasing the lock to avoid lost wake-up */
+    self->state = SCHED_TASK_BLOCKED;
+
     /* Add self to the wait queue (simple linked list) */
     self->next = *queue;
     *queue = self;
-
-    /* Set state to BLOCKED while holding the pipe lock */
-    self->state = SCHED_TASK_BLOCKED;
 
     /* Release the pipe lock and the CPU */
     spin_unlock(lock);
@@ -36,13 +36,14 @@ static void pipe_wait(struct task** queue, spinlock_t* lock)
 static void pipe_wake(struct task** queue)
 {
     struct task* t = *queue;
+    *queue = NULL; /* Clear queue FIRST to avoid race with new waiters */
+
     while (t)
     {
         struct task* next = t->next;
         sched_unblock(t);
         t = next;
     }
-    *queue = NULL;
 }
 
 static int pipe_read(struct vfs_file* file, void* buffer, size_t count)

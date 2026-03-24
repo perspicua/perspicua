@@ -26,9 +26,18 @@ void test_pmm(void)
     }
     TEST_PASS("alloc_pages(1)");
 
+    // edge cases
+
     // zero-count returns null
     TEST_ASSERT("alloc_pages(0) is null", pmm_alloc_pages(0) == NULL);
     TEST_PASS("zero-count returns NULL");
+
+    // excessive order (beyond max order 10)
+    {
+        void* p = pmm_alloc_pages(2048);  // order 11 is 2048 pages
+        TEST_ASSERT("alloc_pages(2048) beyond max order", p == NULL);
+    }
+    TEST_PASS("excessive order returns NULL");
 
     // free null is safe
     pmm_free_page(NULL);
@@ -196,7 +205,7 @@ void test_pmm(void)
 
     // non-power-of-2 counts (rounded up internally by get_order)
 
-    // 3 pages → rounds up to order 2 = 4 pages
+    // 3 pages -> rounds up to order 2 = 4 pages
     {
         void* blk = pmm_alloc_pages(3);
         TEST_ASSERT("3-page alloc", blk != NULL);
@@ -211,7 +220,7 @@ void test_pmm(void)
     }
     TEST_PASS("3-page alloc (order 2)");
 
-    // 5 pages → order 3 = 8 pages
+    // 5 pages -> order 3 = 8 pages
     {
         void* blk = pmm_alloc_pages(5);
         TEST_ASSERT("5-page alloc", blk != NULL);
@@ -240,7 +249,7 @@ void test_pmm(void)
 
     // buddy merging
 
-    // two single pages free → can alloc 2-page block
+    // two single pages free -> can alloc 2-page block
     {
         void* a = pmm_alloc_page();
         void* b = pmm_alloc_page();
@@ -253,7 +262,7 @@ void test_pmm(void)
     }
     TEST_PASS("buddy merge 2 pages");
 
-    // four pages free → should merge up to order 2
+    // four pages free -> should merge up to order 2
     {
         void* pages[4];
         for (int i = 0; i < 4; i++)
@@ -266,7 +275,7 @@ void test_pmm(void)
     }
     TEST_PASS("buddy merge 4 pages");
 
-    // eight pages free → merge to order 3
+    // eight pages free -> merge to order 3
     {
         void* pages[8];
         for (int i = 0; i < 8; i++)
@@ -279,12 +288,12 @@ void test_pmm(void)
     }
     TEST_PASS("buddy merge 8 pages");
 
-    // ── 6d. partial merge: free 2, keep 1 between → no merge past held page
+    // ── 6d. partial merge: free 2, keep 1 between -> no merge past held page
     {
         void* a = pmm_alloc_page();
         void* b = pmm_alloc_page();
         void* c = pmm_alloc_page();
-        // Free a and c but keep b → buddies of a and c may merge with
+        // Free a and c but keep b -> buddies of a and c may merge with
         // other blocks but a and c cannot merge with each other (b blocks)
         pmm_free_page(a);
         pmm_free_page(c);
@@ -333,7 +342,7 @@ void test_pmm(void)
     {
         void* big = pmm_alloc_pages(16);
         pmm_free_pages(big, 16);
-        // order-4 block should split 4 times: 16→8→4→2→1
+        // order-4 block should split 4 times: 16->8->4->2->1
         void* tiny = pmm_alloc_page();
         TEST_ASSERT("deep split", tiny != NULL);
         pmm_free_page(tiny);
@@ -472,7 +481,7 @@ void test_pmm(void)
         for (int i = 0; i < 4; i++)
             pmm_free_page(pages[i]);
     }
-    TEST_PASS("multi→single split");
+    TEST_PASS("multi->single split");
 
     // fragmentation patterns
 
@@ -522,7 +531,7 @@ void test_pmm(void)
         void* pages[8];
         for (int i = 0; i < 8; i++)
             pages[i] = pmm_alloc_page();
-        // Free all → buddies should merge back up
+        // Free all -> buddies should merge back up
         for (int i = 0; i < 8; i++)
             pmm_free_page(pages[i]);
         // Now alloc 8-page block — requires full merge to order 3
@@ -692,7 +701,7 @@ void test_pmm(void)
 
     // growing & shrinking allocation sizes
 
-    // growing: 1p → 2p → 4p → 8p → 16p → 32p
+    // growing: 1p -> 2p -> 4p -> 8p -> 16p -> 32p
     {
         void* ptrs[6];
         for (int i = 0; i < 6; i++)
@@ -706,7 +715,7 @@ void test_pmm(void)
     }
     TEST_PASS("growing alloc sizes");
 
-    // shrinking: 32p → 16p → 8p → 4p → 2p → 1p
+    // shrinking: 32p -> 16p -> 8p -> 4p -> 2p -> 1p
     {
         void* ptrs[6];
         for (int i = 0; i < 6; i++)
@@ -722,7 +731,7 @@ void test_pmm(void)
 
     // lifecycle
 
-    // multi-page lifecycle: alloc → write → free → re-alloc
+    // multi-page lifecycle: alloc -> write -> free -> re-alloc
     {
         unsigned char* blk = (unsigned char*)pmm_alloc_pages(4);
         for (int i = 0; i < 4; i++)

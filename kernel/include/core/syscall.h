@@ -10,6 +10,9 @@
 
 #include "arch/exception.h"
 
+#define SYSCALL_MAX_RW_SIZE   (4UL * 1024 * 1024)
+#define SYSCALL_MAX_MMAP_SIZE (256UL * 1024 * 1024)
+
 /*
  * syscall_handle - The central dispatcher for all system calls.
  * Processes the syscall number and arguments from the trap frame and

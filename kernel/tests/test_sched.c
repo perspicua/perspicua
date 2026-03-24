@@ -180,11 +180,83 @@ static void task_long_sleep_ts(void)
     ts_long_done = get_system_time();
 }
 
+// task that yields repeatedly
+static volatile int yield_count = 0;
+static void task_yield_loop(void)
+{
+    for (int i = 0; i < 50; i++)
+    {
+        unsigned long flags = spin_lock_irqsave(&test_lock);
+        yield_count++;
+        spin_unlock_irqrestore(&test_lock, flags);
+        schedule();  // yield to other tasks
+    }
+}
+
+// task that simulates the pipe_wait race: set state to BLOCKED, then yield
+static volatile int race_task_ran = 0;
+static struct task* race_wait_queue = NULL;
+
+static void task_race_waiter(void)
+{
+    struct task* self = sched_get_current();
+    unsigned long flags = irq_save();
+
+    /* 1. Pre-mark as BLOCKED (simulating pipe_wait) */
+    self->state = SCHED_TASK_BLOCKED;
+
+    /* 2. Add to a "queue" so the unblocker can find us */
+    unsigned long lock_flags = spin_lock_irqsave(&test_lock);
+    race_wait_queue = self;
+    spin_unlock_irqrestore(&test_lock, lock_flags);
+
+    /* 3. Call schedule().  In the bug, if an interrupt or another core
+     * unblocks us BEFORE we reach here, we enter schedule() with state=READY. */
+    schedule();
+
+    /* 4. If we survived, mark success */
+    race_task_ran = 1;
+    irq_restore(flags);
+}
+
+static void task_race_unblocker(void)
+{
+    // Wait for the waiter to put itself in the queue
+    while (1)
+    {
+        unsigned long flags = spin_lock_irqsave(&test_lock);
+        struct task* t = race_wait_queue;
+        spin_unlock_irqrestore(&test_lock, flags);
+        if (t)
+            break;
+        sched_sleep_ms(1);
+    }
+
+    // Unblock it
+    unsigned long flags = spin_lock_irqsave(&test_lock);
+    struct task* t = race_wait_queue;
+    race_wait_queue = NULL;
+    spin_unlock_irqrestore(&test_lock, flags);
+
+    sched_unblock(t);
+}
+
 // test suite
 
 void test_scheduler(void)
 {
     TEST_SUITE_BEGIN("Scheduler");
+
+    // unblock-before-schedule race test
+    {
+        race_task_ran = 0;
+        race_wait_queue = NULL;
+        sched_create_task(task_race_waiter);
+        sched_create_task(task_race_unblocker);
+        sched_sleep_ms(100);
+        TEST_ASSERT("race task resumed correctly", race_task_ran == 1);
+    }
+    TEST_PASS("unblock-before-schedule race");
 
     // single task creation & execution
 
@@ -436,6 +508,16 @@ void test_scheduler(void)
     }
     TEST_PASS("mixed fast/slow tasks");
 
+    // yield loop task
+    {
+        yield_count = 0;
+        sched_create_task(task_yield_loop);
+        sched_create_task(task_yield_loop);
+        sched_sleep_ms(150);
+        TEST_ASSERT("2x50 yields completed", yield_count == 100);
+    }
+    TEST_PASS("yield loop tasks");
+
     // system time monotonicity under scheduling
 
     // time always moves forward across sleeps
@@ -455,7 +537,7 @@ void test_scheduler(void)
 
     // lifecycle: complex sequence
 
-    // create → sleep → create more → wait for all
+    // create -> sleep -> create more -> wait for all
     {
         counter_a = 0;
         counter_b = 0;

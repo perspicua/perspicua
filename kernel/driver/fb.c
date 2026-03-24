@@ -7,6 +7,8 @@
 
 #include "driver/fb.h"
 
+#include "fs/devfs.h"
+#include "sched/process.h"
 #include "types.h"
 #include "stdio.h"
 #include "mm/addr.h"
@@ -20,6 +22,30 @@ static __attribute__((aligned(16))) unsigned int mbox[36];
 
 /* The global framebuffer device information. */
 struct fb_info_struct fb_info;
+struct vfs_vnode_ops fb_vfs_ops = {0};
+
+int fb_mmap(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags)
+{
+    (void)file;
+    (void)prot;
+    (void)flags;
+
+    uintptr_t phys_fb = V2P((uintptr_t)fb_info.ptr);
+
+    size_t pages = length / PAGE_SIZE;
+    if (length % PAGE_SIZE != 0)
+        pages++;
+
+    int pid = process_find_current();
+    unsigned long* pgd = process_table[pid].user_pgd;
+
+    for (size_t i = 0; i < pages; i++)
+    {
+        mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE, MMU_FLAGS_FRAMEBUFFER | MMU_AP_USER);
+    }
+
+    return 0;
+}
 
 /*
  * fb_init - Initializes the Raspberry Pi 4 framebuffer.
@@ -60,7 +86,7 @@ void fb_init(void)
         uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
         if (phys_addr == 0)
         {
-            printf("[   FB ] Error: VideoCore returned NULL or invalid address!\n");
+            pr_err("fb: VideoCore returned invalid address!\n");
             return;
         }
 
@@ -75,20 +101,24 @@ void fb_init(void)
         // Reserve framebuffer pages in the PMM before they are allocated elsewhere.
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
-        printf("[   FB ] Framebuffer initialized: %dx%d @ %p (phys 0x%lx, size %d, pitch %d)\n",
-               fb_info.width,
-               fb_info.height,
-               fb_info.ptr,
-               (unsigned long)phys_addr,
-               fb_info.size,
-               fb_info.pitch);
+        pr_info("fb: %dx%d @ %p (%lu MB, pitch %d)\n",
+                fb_info.width,
+                fb_info.height,
+                fb_info.ptr,
+                (unsigned long)(fb_info.size / (1024 * 1024)),
+                fb_info.pitch);
     }
     else
     {
-        printf("[   FB ] Error: Could not initialize framebuffer!\n");
+        pr_err("fb: Could not initialize framebuffer!\n");
     }
 }
 
+void fb_register_device(void)
+{
+    fb_vfs_ops.mmap = fb_mmap;
+    devfs_register_device("fb0", &fb_vfs_ops, NULL);
+}
 /*
  * remap_framebuffer_pages - Updates the MMU mapping for the framebuffer.
  */

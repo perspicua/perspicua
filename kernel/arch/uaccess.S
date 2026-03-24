@@ -42,5 +42,7 @@ copy_to_user:
 .align 3
     .quad .Lload_from
     .quad .Lfault_from
+    .quad .Lloop_to
+    .quad .Lfault_to
     .quad .Lstore_to
     .quad .Lfault_to

@@ -153,14 +153,14 @@ int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, s
         int res = sd_send_cmd(CMD17, addr);
         if (res != PERS_SUCCESS)
         {
-            printf("[ SD ] Read CMD17 failed at block %lu\n", start_block + i);
+            pr_err("sd: Read CMD17 failed at block %lu\n", start_block + i);
             return res;
         }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
         if (res != PERS_SUCCESS)
         {
-            printf("[ SD ] Read Ready timeout at block %lu\n", start_block + i);
+            pr_err("sd: Read Ready timeout at block %lu\n", start_block + i);
             return res;
         }
 
@@ -172,7 +172,7 @@ int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, s
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != PERS_SUCCESS)
         {
-            printf("[ SD ] Data Done timeout at block %lu\n", start_block + i);
+            pr_err("sd: Data Done timeout at block %lu\n", start_block + i);
             return res;
         }
     }
@@ -370,12 +370,9 @@ void sd_init(void)
     if (!node)
         return;
 
-    const char* node_name = (const char*)(node + 1);
-    printf("[ SD ] Initializing controller %s (%s)... ", node_name, matched_compatible);
-
     if (sd_set_clock(100000000) < 0)
     {
-        printf("Clock Failed\n");
+        pr_err("sd: Clock initialization failed\n");
         return;
     }
 
@@ -390,10 +387,10 @@ void sd_init(void)
         block_device_register(&sd_block_dev);
 
         size_t mb = (sd_block_dev.block_count * 512) / (1024 * 1024);
-        printf("OK (%lu MB, %s)\n", mb, sd_is_sdhc ? "SDHC" : "SDSC");
+        pr_info("sd: SDHC card found: %lu MB\n", mb);
     }
     else
     {
-        printf("Failed\n");
+        pr_err("sd: Card initialization failed\n");
     }
 }

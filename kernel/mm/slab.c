@@ -4,6 +4,11 @@
  * This file implements a per-page slab allocator for small objects.
  * It manages multiple size classes to reduce fragmentation and uses
  * per-class spinlocks to minimize contention.
+ *
+ * Lock ordering: slab class lock must always be acquired before the PMM
+ * lock. slab_grow() calls pmm_alloc_page() while holding the class lock,
+ * establishing this order. No code path may acquire a class lock while
+ * the PMM lock is held.
  */
 
 #include "mm/slab.h"
@@ -16,13 +21,22 @@
 /* Magic number for validating slab pages */
 #define SLAB_MAGIC 0x534C4142U
 
-/* Poison value used to detect double-frees and identify unallocated slots */
+/*
+ * Poison value written into the free_canary field of every free slot.
+ * Detects simple double-frees where the caller has not written to the
+ * object after freeing it. Use-after-free that clobbers the canary will
+ * defeat this check — it is a best-effort guard, not a guarantee.
+ */
 #define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
 
 /* Total number of supported size classes */
 #define SLAB_NUM_CLASSES 7
 
-/* The available object size classes in bytes */
+/*
+ * All object sizes must be powers of two. slab_grow() uses bitwise
+ * alignment which is only correct under this constraint. A static assert
+ * in slab_init() verifies this for every class at boot.
+ */
 static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 /*
@@ -62,6 +76,9 @@ struct slab_class
 /* Internal array of slab class descriptors */
 static struct slab_class slab_classes[SLAB_NUM_CLASSES];
 
+/* Total number of PMM pages currently held by the slab allocator */
+static unsigned long slab_total_pages = 0;
+
 /*
  * ptr_to_slab - Recovers the slab page header from a pointer to an
  * object within that page by masking the page offset.
@@ -90,6 +107,9 @@ static inline int size_to_class_index(unsigned long size)
 /*
  * slab_grow - Allocates a fresh physical page from the PMM, initializes
  * its header, and carves it into fixed-size slots for the specified class.
+ *
+ * Called with the class lock held. pmm_alloc_page() acquires the PMM lock
+ * internally, which is always taken after the class lock — see file header.
  */
 static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
 {
@@ -107,6 +127,12 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
 
     unsigned long obj_size = sc->object_size;
     unsigned long hdr_size = sizeof(struct slab_page);
+
+    /*
+     * Round the header up to the next multiple of obj_size so that every
+     * slot is naturally aligned. This relies on obj_size being a power of
+     * two, which is enforced by the assertion in slab_init().
+     */
     unsigned long start_offset = (hdr_size + obj_size - 1) & ~(obj_size - 1);
 
     unsigned int count = 0;
@@ -118,7 +144,21 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
         sp->free_list = obj;
         count++;
     }
+
+    if (count == 0)
+    {
+        /*
+         * The object size is so large that the header leaves no room for
+         * any slots. This should never happen with the current size classes
+         * and PAGE_SIZE, but return the page and signal failure cleanly
+         * rather than handing back a header-only slab.
+         */
+        pmm_free_page(page);
+        return NULL;
+    }
+
     sp->total_slots = count;
+    slab_total_pages++;
 
     /* Prepend the new page to the partial list since it has free slots */
     sp->next = sc->partial_list;
@@ -127,10 +167,33 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
 }
 
 /*
+ * slab_release_page - Returns an entirely empty slab page to the PMM.
+ *
+ * The page must already be unlinked from its class list before this is
+ * called. Called with the class lock held; pmm_free_page() acquires the
+ * PMM lock internally.
+ */
+static void slab_release_page(struct slab_page* sp)
+{
+    slab_total_pages--;
+    pmm_free_page((void*)sp);
+}
+
+/*
  * slab_init - Boot-time initialization of the slab allocator.
  */
 void slab_init(void)
 {
+    /* Verify the power-of-two constraint on every size class */
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
+    {
+        unsigned long sz = slab_class_sizes[i];
+        if (sz == 0 || (sz & (sz - 1)) != 0)
+        {
+            PANIC("SLAB: Size class is not a power of two");
+        }
+    }
+
     for (int i = 0; i < SLAB_NUM_CLASSES; i++)
     {
         slab_classes[i].object_size = slab_class_sizes[i];
@@ -148,11 +211,12 @@ void slab_init(void)
         }
     }
 
-    printf("[ SLAB ] Initialized %d size classes from 16 to 1024 bytes\n", SLAB_NUM_CLASSES);
+    pr_info("slab: Initialized %d size classes (16 to 1024 bytes)\n", SLAB_NUM_CLASSES);
 }
 
 /*
  * slab_alloc - Allocates an object of at least 'size' bytes.
+ * Returns NULL on failure; never panics.
  */
 void* slab_alloc(unsigned long size)
 {
@@ -212,6 +276,11 @@ void slab_free(void* ptr)
         PANIC("SLAB: Attempted to free a non-slab pointer");
     }
 
+    if (sp->class_idx >= SLAB_NUM_CLASSES)
+    {
+        PANIC("SLAB: Corrupt class index in slab header");
+    }
+
     struct slab_class* sc = &slab_classes[sp->class_idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
@@ -229,28 +298,61 @@ void slab_free(void* ptr)
     sp->free_list = obj;
     sp->in_use_count--;
 
-    /* If the page was previously full, move it back to the partial list */
     if (was_full)
     {
+        /*
+         * Unlink from full_list. O(n) in the number of full pages for this
+         * class — unavoidable with a singly-linked list.
+         */
         struct slab_page** prev = &sc->full_list;
         while (*prev && *prev != sp)
         {
             prev = &(*prev)->next;
         }
-        if (*prev)
+        if (!*prev)
         {
-            *prev = sp->next;
+            PANIC("SLAB: Page marked full but not found in full_list");
+        }
+        *prev = sp->next;
+
+        /* Return completely empty pages to the PMM immediately */
+        if (sp->in_use_count == 0)
+        {
+            spin_unlock_irqrestore(&sc->lock, flags);
+            slab_release_page(sp);
+            return;
         }
 
         sp->next = sc->partial_list;
         sc->partial_list = sp;
+    }
+    else if (sp->in_use_count == 0)
+    {
+        /*
+         * Page was already on the partial list and is now completely empty.
+         * Unlink and return it to the PMM.
+         */
+        struct slab_page** prev = &sc->partial_list;
+        while (*prev && *prev != sp)
+        {
+            prev = &(*prev)->next;
+        }
+        if (!*prev)
+        {
+            PANIC("SLAB: Page not found in partial_list during empty reclaim");
+        }
+        *prev = sp->next;
+
+        spin_unlock_irqrestore(&sc->lock, flags);
+        slab_release_page(sp);
+        return;
     }
 
     spin_unlock_irqrestore(&sc->lock, flags);
 }
 
 /*
- * slab_owns - Validates if a pointer belongs to the slab allocator.
+ * slab_owns - Returns non-zero if ptr belongs to a slab-managed page.
  */
 int slab_owns(void* ptr)
 {
@@ -259,6 +361,10 @@ int slab_owns(void* ptr)
         return 0;
     }
     struct slab_page* sp = ptr_to_slab(ptr);
+    if (!pmm_is_managed((void*)sp))
+    {
+        return 0;
+    }
     return sp->magic == SLAB_MAGIC;
 }
 
@@ -296,26 +402,5 @@ unsigned long slab_get_used(void)
  */
 unsigned long slab_get_total(void)
 {
-    unsigned long total = 0;
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
-        unsigned long flags = spin_lock_irqsave(&slab_classes[i].lock);
-
-        struct slab_page* sp = slab_classes[i].partial_list;
-        while (sp)
-        {
-            total += sp->total_slots * slab_classes[i].object_size;
-            sp = sp->next;
-        }
-
-        sp = slab_classes[i].full_list;
-        while (sp)
-        {
-            total += sp->total_slots * slab_classes[i].object_size;
-            sp = sp->next;
-        }
-
-        spin_unlock_irqrestore(&slab_classes[i].lock, flags);
-    }
-    return total;
+    return slab_total_pages * PAGE_SIZE;
 }

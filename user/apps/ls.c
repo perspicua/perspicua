@@ -24,11 +24,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    struct vfs_dirent dirent;
-    while (sys_getdents(fd, &dirent, sizeof(struct vfs_dirent)) > 0)
+    struct vfs_dirent dirents[16];
+    int res;
+    while ((res = sys_getdents(fd, dirents, sizeof(dirents))) > 0)
     {
-        print_string(dirent.name);
-        print_string("\n");
+        for (int i = 0; i < res; i++)
+        {
+            print_string(dirents[i].name);
+            print_string("\n");
+        }
     }
 
     sys_close(fd);

@@ -3,6 +3,7 @@
 #include "mm/heap.h"
 #include "string.h"
 #include "types.h"
+#include <stdio.h>
 
 void test_slab(void)
 {
@@ -208,7 +209,7 @@ void test_slab(void)
     }
     TEST_PASS("exact class boundaries");
 
-    // boundary: size one byte above each class → promoted to next class
+    // boundary: size one byte above each class -> promoted to next class
     {
         unsigned long above[] = {17, 33, 65, 129, 257, 513};
         int n = sizeof(above) / sizeof(above[0]);

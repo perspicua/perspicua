@@ -14,8 +14,8 @@
 /* Stack protection and sizing constants */
 #define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
 #define SCHED_STACK_GUARD_PAGES  1
-#define SCHED_STACK_USABLE_PAGES 7
-#define SCHED_STACK_PAGES        (SCHED_STACK_GUARD_PAGES + SCHED_STACK_USABLE_PAGES)
+#define SCHED_STACK_USABLE_PAGES 63
+#define SCHED_STACK_PAGES        64  // must be exact power of two for buddy allocator
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
 /*
@@ -63,7 +63,24 @@ struct task
     uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
     unsigned char* stack;        /* Pointer to the allocated stack region */
     struct task* next;           /* Link for ready and sleep queues */
+    int skip_signals;            /* Flag to indicate if signal handling should be deferred */
+    volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
+
+/*
+ * get_core_id - Returns the index of the current CPU core (0-3).
+ */
+static inline int get_core_id(void)
+{
+    unsigned long mpidr;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return (int)(mpidr & 3);
+}
+
+/*
+ * enqueue_ready - Appends a task to the end of a specific CPU's ready queue.
+ */
+void enqueue_ready(int cpu, struct task* t);
 
 /*
  * sched_init - Initializes the scheduler on the primary CPU core.
@@ -84,7 +101,8 @@ void sched_create_task(void (*entry)(void));
 /*
  * sched_create_user_task - Initializes a task structure for a user-mode process.
  */
-struct task* sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uint32_t pid);
+struct task*
+sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr_t kstack_base, uint32_t pid);
 
 /*
  * sched_sleep_ms - Puts the current task to sleep for a minimum number of milliseconds.

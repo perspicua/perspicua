@@ -47,7 +47,7 @@ void gpio_init(void)
     gpio_gpfsel0 = (unsigned int*)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int*)(vbase + 0xE4);
 
-    printf("[ GPIO ] BCM2711 GPIO driver initialized (base 0x%lx)\n", vbase);
+    pr_info("gpio: BCM2711 driver initialized\n");
 }
 
 /*
