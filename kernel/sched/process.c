@@ -311,6 +311,7 @@ void process_init(void)
 
     /* PID 0 — the kernel itself. */
     process_table[0].pid = 0;
+    strcpy(process_table[0].name, "kernel");
     process_table[0].state = PROCESS_STATE_RUNNING;
     process_table[0].user_pgd = NULL;
     process_table[0].asid = 0;
@@ -390,8 +391,9 @@ void process_create(void* code_ptr, size_t code_size, uint32_t pid)
 
     /* ---- Fill in the PCB ---- */
     p->pid = pid;
+    strcpy(p->name, "init");
     p->user_pgd = user_pgd;
-    p->asid = pid;
+    p->asid = (unsigned long)pid;
     p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
     p->vaddr_code = vaddr_code;
     p->paddr_code = V2P(code_page);
@@ -490,8 +492,12 @@ int process_create_from_file(const char* path, uint32_t pid)
 
     /* ---- Fill in the PCB ---- */
     p->pid = pid;
+    const char* last_slash = strrchr(path, '/');
+    const char* filename = last_slash ? last_slash + 1 : path;
+    strncpy(p->name, filename, sizeof(p->name) - 1);
+    p->name[sizeof(p->name) - 1] = '\0';
     p->user_pgd = user_pgd;
-    p->asid = pid;
+    p->asid = (unsigned long)pid;
     p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = vaddr_stack;
@@ -613,6 +619,11 @@ int process_exec(const char* path)
     p->vaddr_user_stack = new_stack;
     p->va = new_va;
     p->ttbr0 = V2P(new_pgd) | ((uint64_t)(p->asid & 0xFFFFUL) << 48);
+
+    const char* last_slash = strrchr(path, '/');
+    const char* filename = last_slash ? last_slash + 1 : path;
+    strncpy(p->name, filename, sizeof(p->name) - 1);
+    p->name[sizeof(p->name) - 1] = '\0';
 
     /* Switch hardware TTBR0 and flush stale ASID-tagged TLB entries. */
     mmu_switch_user(new_pgd, p->asid);
@@ -799,6 +810,8 @@ int process_fork(struct exception_trap_frame* parent_tf)
 
     /* ---- Fill in child PCB ---- */
     child->user_pgd = child_pgd;
+    strncpy(child->name, parent->name, sizeof(child->name) - 1);
+    child->name[sizeof(child->name) - 1] = '\0';
     child->asid = (uint32_t)child_pid;
     child->ttbr0 = V2P(child_pgd) | ((uint64_t)child_pid << 48);
     child->vaddr_code = parent->vaddr_code;

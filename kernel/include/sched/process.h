@@ -56,6 +56,7 @@ struct process
 {
     /* Identifiers and Status */
     uint32_t pid;
+    char name[64];
     process_state_t state;
     uint32_t parent_pid;
     struct task* main_task;
