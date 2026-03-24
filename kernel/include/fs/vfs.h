@@ -80,6 +80,7 @@ struct vfs_vnode_ops
 struct vfs_vnode
 {
     enum vfs_vnode_type type;
+    char name[256];
     vfs_off_t file_size;
     struct vfs_vnode* parent;
     struct vfs_vnode_ops* ops;
@@ -173,5 +174,6 @@ int vfs_mount(const char* path, struct vfs_vnode* root);
 int vfs_unmount(const char* path);
 
 int vfs_chdir(const char* path);
+
 int vfs_getcwd(char* buf, size_t size);
 #endif /* PERSPICUA_KERNEL_VFS_H */

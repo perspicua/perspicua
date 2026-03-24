@@ -302,6 +302,8 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
                 *error = -PERS_ERR_NOT_FOUND;
                 return NULL;
             }
+            strncpy(next->name, token, sizeof(next->name) - 1);
+            next->name[sizeof(next->name) - 1] = '\0';
         }
 
         vfs_vnode_put(curr);
@@ -717,5 +719,79 @@ int vfs_chdir(const char* kpath)
     // atomic_inc(&node->refcount);
     spin_unlock(&p->fd_lock);
 
+    return PERS_SUCCESS;
+}
+
+int vfs_getcwd(char* buf, size_t size)
+{
+    if (!buf || size == 0)
+    {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0)
+    {
+        return pid;
+    }
+
+    struct process* p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_vnode* curr_node = p->cwd;
+    if (!curr_node)
+    {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_NOT_FOUND;
+    }
+    atomic_inc(&curr_node->refcount);
+    spin_unlock(&p->fd_lock);
+
+    char temp_path[VFS_MAX_PATH_LEN];
+    char* ptr = temp_path + VFS_MAX_PATH_LEN - 1;
+    *ptr = '\0';
+
+    struct vfs_vnode* node = curr_node;
+
+    if (!node->parent)
+    {
+        // We are at the root
+        if (size < 2)
+        {
+            vfs_vnode_put(curr_node);
+            return -PERS_ERR_INVALID_ARGUMENT;
+        }
+        buf[0] = '/';
+        buf[1] = '\0';
+        vfs_vnode_put(curr_node);
+        return 0;
+    }
+
+    while (node && node->parent)
+    {
+        size_t len = strlen(node->name);
+        if (ptr - temp_path < (ptrdiff_t)len + 1)
+        {
+            vfs_vnode_put(curr_node);
+            return -PERS_ERR_INVALID_ARGUMENT;
+        }
+        ptr -= len;
+        memcpy(ptr, node->name, len);
+        
+        ptr--;
+        *ptr = '/';
+        
+        node = node->parent;
+    }
+
+    size_t result_len = (temp_path + VFS_MAX_PATH_LEN - 1) - ptr;
+    if (result_len >= size)
+    {
+        vfs_vnode_put(curr_node);
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    memcpy(buf, ptr, result_len + 1);
+    vfs_vnode_put(curr_node);
+    
     return PERS_SUCCESS;
 }

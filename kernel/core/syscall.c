@@ -755,7 +755,17 @@ sigreturn_kill:
     }
     case SYS_GETCWD:
     {
-        tf->x[0] = -PERS_ERR_NOT_IMPLEMENTED;
+        char* buf = (char*)tf->x[0];
+        size_t size = (size_t)tf->x[1];
+
+        // Basic security check (should ideally use `is_valid_user_ptr`)
+        if (!buf || (uintptr_t)buf >= KERNEL_VMA)
+        {
+            tf->x[0] = -PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        tf->x[0] = (uint64_t)vfs_getcwd(buf, size);
         break;
     }
     case SYS_MMAP:
