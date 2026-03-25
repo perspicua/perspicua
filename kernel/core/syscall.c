@@ -170,31 +170,9 @@ void syscall_handle(struct exception_trap_frame* tf)
         const char* path = (const char*)(tf->x[0]);
         int flags = (int)(tf->x[1]);
 
-        size_t path_len = 0;
-        const char* p = path;
-        while (path_len < VFS_MAX_PATH_LEN)
-        {
-            unsigned char c;
-            if (copy_from_user(&c, p++, 1) != 0)
-            {
-                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            if (c == '\0')
-            {
-                break;
-            }
-            path_len++;
-        }
-
-        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
-        {
-            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-            break;
-        }
-
-        char* kpath = heap_malloc(path_len + 1);
-        if (copy_from_user(kpath, path, path_len + 1) != 0)
+        char* kpath = heap_malloc(VFS_MAX_PATH_LEN);
+        long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+        if (copied < 0 || copied >= VFS_MAX_PATH_LEN)
         {
             heap_free(kpath);
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -289,31 +267,10 @@ void syscall_handle(struct exception_trap_frame* tf)
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-        size_t path_len = 0;
-        const char* p = path;
-        while (path_len < VFS_MAX_PATH_LEN)
-        {
-            unsigned char c;
-            if (copy_from_user(&c, p++, 1) != 0)
-            {
-                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            if (c == '\0')
-            {
-                break;
-            }
-            path_len++;
-        }
 
-        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
-        {
-            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-            break;
-        }
-
-        char* kpath = heap_malloc(path_len + 1);
-        if (copy_from_user(kpath, path, path_len + 1) != 0)
+        char* kpath = heap_malloc(VFS_MAX_PATH_LEN);
+        long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+        if (copied < 0 || copied >= VFS_MAX_PATH_LEN)
         {
             heap_free(kpath);
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -441,6 +398,22 @@ void syscall_handle(struct exception_trap_frame* tf)
     {
         int target_pid = (int)tf->x[0];
         int sig = (int)tf->x[1];
+
+        if (sig < 1 || sig >= SIGNAL_COUNT)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+        if (target_pid == 0)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+            break;
+        }
+        if (target_pid >= PROCESS_TABLE_SIZE || process_table[target_pid].state == PROCESS_STATE_EMPTY)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+            break;
+        }
 
         /* Permission check: can only kill self, children, or parent */
         if (target_pid > 0 && target_pid < PROCESS_TABLE_SIZE)
@@ -691,36 +664,16 @@ sigreturn_kill:
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
-        size_t path_len = 0;
-        const char* p = path;
-        while (path_len < VFS_MAX_PATH_LEN)
-        {
-            unsigned char c;
-            if (copy_from_user(&c, p++, 1) != 0)
-            {
-                path_len = (size_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            if (c == '\0')
-            {
-                break;
-            }
-            path_len++;
-        }
 
-        if (path_len == (size_t)-PERS_ERR_OUT_OF_MEMORY || path_len >= VFS_MAX_PATH_LEN)
-        {
-            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-            break;
-        }
-
-        char* kpath = heap_malloc(path_len + 1);
+        char* kpath = heap_malloc(VFS_MAX_PATH_LEN);
         if (!kpath)
         {
             tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
             break;
         }
-        if (copy_from_user(kpath, path, path_len + 1) != 0)
+
+        long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+        if (copied < 0 || copied >= VFS_MAX_PATH_LEN)
         {
             heap_free(kpath);
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -737,14 +690,35 @@ sigreturn_kill:
         char* buf = (char*)tf->x[0];
         size_t size = (size_t)tf->x[1];
 
-        // Basic security check (should ideally use `is_valid_user_ptr`)
-        if (!buf || (uintptr_t)buf >= KERNEL_VMA)
+        if (!buf || size == 0)
         {
-            tf->x[0] = -PERS_ERR_INVALID_ARGUMENT;
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
             break;
         }
 
-        tf->x[0] = (uint64_t)vfs_getcwd(buf, size);
+        char* kbuf = heap_malloc(VFS_MAX_PATH_LEN);
+        if (!kbuf)
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            break;
+        }
+
+        int res = vfs_getcwd(kbuf, VFS_MAX_PATH_LEN);
+        if (res == PERS_SUCCESS)
+        {
+            size_t len = strlen(kbuf) + 1;
+            if (len > size)
+            {
+                res = -PERS_ERR_INVALID_ARGUMENT;
+            }
+            else if (copy_to_user(buf, kbuf, len) != 0)
+            {
+                res = -PERS_ERR_INVALID_ARGUMENT;
+            }
+        }
+
+        heap_free(kbuf);
+        tf->x[0] = (uint64_t)res;
         break;
     }
     case SYS_MMAP:

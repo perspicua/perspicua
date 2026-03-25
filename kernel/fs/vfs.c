@@ -295,23 +295,43 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
         }
         else
         {
-            /* Delegate traversal to the filesystem driver's lookup operation */
-            if (!curr->ops || !curr->ops->lookup)
+            /* Check if the token matches a mount point directly under curr */
+            struct vfs_vnode* mount_node = NULL;
+            for (size_t i = 1; i < (size_t)vfs_mount_count; i++)
             {
-                vfs_vnode_put(curr);
-                *error = -PERS_ERR_NOT_A_DIRECTORY;
-                return NULL;
+                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr &&
+                    strcmp(vfs_mount_table[i].root->name, token) == 0)
+                {
+                    mount_node = vfs_mount_table[i].root;
+                    break;
+                }
             }
 
-            next = curr->ops->lookup(curr, token);
-            if (!next)
+            if (mount_node)
             {
-                vfs_vnode_put(curr);
-                *error = -PERS_ERR_NOT_FOUND;
-                return NULL;
+                next = mount_node;
+                atomic_inc(&next->refcount);
             }
-            strncpy(next->name, token, sizeof(next->name) - 1);
-            next->name[sizeof(next->name) - 1] = '\0';
+            else
+            {
+                /* Delegate traversal to the filesystem driver's lookup operation */
+                if (!curr->ops || !curr->ops->lookup)
+                {
+                    vfs_vnode_put(curr);
+                    *error = -PERS_ERR_NOT_A_DIRECTORY;
+                    return NULL;
+                }
+
+                next = curr->ops->lookup(curr, token);
+                if (!next)
+                {
+                    vfs_vnode_put(curr);
+                    *error = -PERS_ERR_NOT_FOUND;
+                    return NULL;
+                }
+                strncpy(next->name, token, sizeof(next->name) - 1);
+                next->name[sizeof(next->name) - 1] = '\0';
+            }
         }
 
         vfs_vnode_put(curr);
