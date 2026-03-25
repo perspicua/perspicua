@@ -49,7 +49,7 @@ void stress_fork()
         if (pid == 0)
         {
             // Child: do some minor work and exit
-            sys_sleep(20);
+            sys_sleep(7000);
             sys_exit(0);
         }
         else
@@ -63,7 +63,7 @@ void stress_fork()
     for (int i = 0; i < forked; i++)
     {
         int status;
-        sys_waitpid(pids[i], &status);
+        sys_waitpid(pids[i], &status, 0);
     }
     printf("[STRESS] All child processes exited.\n");
 }
@@ -111,7 +111,7 @@ void stress_pipe()
         sys_close(pipefd[1]);  // EOF
 
         int status;
-        sys_waitpid(pid, &status);
+        sys_waitpid(pid, &status, 0);
         int expected = (write_count * sizeof(msg)) % 256;
         if (status == expected)
         {
@@ -239,7 +239,7 @@ void stress_signals()
         sys_kill(pid, SIGNAL_USR2);
 
         int status;
-        sys_waitpid(pid, &status);
+        sys_waitpid(pid, &status, 0);
 
         printf("[STRESS] Signal delivery done. Child caught %d signals (coalescing is normal).\n", status);
     }
@@ -248,11 +248,11 @@ void stress_signals()
 int main(int argc __attribute__((unused)), char** argv __attribute__((unused)))
 {
     printf("[STRESS] Starting comprehensive stress test...\n");
-    // stress_stack();
-    // stress_fork();
-    // stress_pipe();
-    // stress_fd();
-    // stress_mmap();
+    stress_stack();
+    stress_fork();
+    stress_pipe();
+    stress_fd();
+    stress_mmap();
     stress_signals();
     printf("[STRESS] Comprehensive stress test complete.\n");
     return 0;

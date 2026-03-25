@@ -1,6 +1,7 @@
-
 #include "syscall.h"
 #include "string.h"
+#include "wait.h"
+
 static void print_string(const char* s)
 {
     sys_write(1, s, strlen(s));
@@ -13,16 +14,16 @@ int main(void)
     while (1)
     {
         print_string("[ INIT ] Forking shell...\n");
-        int pid = sys_fork();
+        int shell_pid = sys_fork();
 
-        if (pid < 0)
+        if (shell_pid < 0)
         {
             print_string("[ INIT ] Error: fork failed\n");
             sys_sleep(1000);
             continue;
         }
 
-        if (pid == 0)
+        if (shell_pid == 0)
         {
             /* Child process: execute the shell */
             sys_exec("/sh.elf");
@@ -31,9 +32,28 @@ int main(void)
         }
         else
         {
-            /* Parent process: wait for the shell to terminate */
-            int status = 0;
-            sys_waitpid(pid, &status);
+            /* Parent process: wait for the shell to terminate,
+               but also reap any orphaned zombies that get reparented to us. */
+            while (1)
+            {
+                int status = 0;
+                int reaped = sys_waitpid(-1, &status, 0);
+                if (reaped == shell_pid)
+                {
+                    /* The shell itself exited */
+                    break;
+                }
+                else if (reaped > 0)
+                {
+                    /* We reaped an orphan! Just continue waiting. */
+                    continue;
+                }
+                else
+                {
+                    /* Error or no more children (shouldn't happen as we have shell_pid) */
+                    break;
+                }
+            }
             print_string("[ INIT ] Shell exited, restarting...\n");
             sys_sleep(500);
         }

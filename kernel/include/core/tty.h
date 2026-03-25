@@ -37,6 +37,7 @@ struct tty
     spinlock_t lock;
     int echo_enabled;
     int canon_enabled; /* Canonical mode: waits for newline before returning data */
+    uint32_t foreground_pid;
 };
 
 /*

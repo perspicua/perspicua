@@ -307,9 +307,10 @@ void syscall_handle(struct exception_trap_frame* tf)
     }
 
     case SYS_WAITPID:
-    { /* sys_waitpid(int pid, int* status) */
+    { /* sys_waitpid(int pid, int* status, int options) */
         int wait_pid = (int)tf->x[0];
         int* ustatus = (int*)tf->x[1];
+        int options = (int)tf->x[2];
         int kstatus = 0;
 
         if (ustatus != NULL && !validate_user_buffer(ustatus, sizeof(int), 1))
@@ -318,7 +319,7 @@ void syscall_handle(struct exception_trap_frame* tf)
             break;
         }
 
-        int res = process_waitpid(wait_pid, &kstatus);
+        int res = process_waitpid(wait_pid, &kstatus, options);
         if (res >= 0 && ustatus != NULL)
         {
             if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0)
@@ -415,27 +416,17 @@ void syscall_handle(struct exception_trap_frame* tf)
         }
 
         /* Permission check: can only kill self, children, or parent */
-        if (target_pid != (int)pid && process_table[target_pid].parent_pid != pid
-            && (int)process_table[pid].parent_pid != target_pid)
+        if (target_pid > 0 && target_pid < PROCESS_TABLE_SIZE)
         {
-            tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
-            break;
-        }
-
-        __atomic_fetch_or(&process_table[target_pid].pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
-
-        /* If process was blocked, wake it up if the signal is not ignored */
-        if (process_table[target_pid].signal_handlers[sig - 1].sa_handler != SIGNAL_IGN)
-        {
-            if (process_table[target_pid].main_task->state == SCHED_TASK_BLOCKED)
+            if (target_pid != (int)pid && process_table[target_pid].parent_pid != pid
+                && (int)process_table[pid].parent_pid != target_pid)
             {
-                // Wake up the task.
-                // NOTE: This might need more careful handling if the task is blocked on something specific.
-                sched_unblock(process_table[target_pid].main_task);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
             }
         }
 
-        tf->x[0] = PERS_SUCCESS;
+        tf->x[0] = (uint64_t)signal_send(target_pid, sig);
         break;
     }
     case SYS_SIGRETURN:

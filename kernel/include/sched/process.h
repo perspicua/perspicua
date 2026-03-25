@@ -56,6 +56,7 @@ struct process
 {
     /* Identifiers and Status */
     uint32_t pid;
+    char name[64];
     process_state_t state;
     uint32_t parent_pid;
     struct task* main_task;
@@ -102,7 +103,7 @@ int process_create_from_file(const char* path, uint32_t pid);
 int process_exec(const char* path);
 int process_fork(struct exception_trap_frame* parent_tf);
 void process_exit(uint32_t pid, int status);
-int process_waitpid(int pid, int* status);
+int process_waitpid(int pid, int* status, int options);
 
 /* --- Context Switching & Execution --- */
 void process_drop_to_user(void* code_vaddr, void* stack_vaddr);

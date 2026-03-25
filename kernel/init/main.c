@@ -6,6 +6,7 @@
  * drivers, and the multi-core scheduler.
  */
 
+#include "fs/procfs.h"
 #include "types.h"
 #include "mm/addr.h"
 #include "core/lock.h"
@@ -186,6 +187,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     /* Mount devfs over the FAT32 root */
     vfs_mount("/dev", devfs_get_root());
+
+    /* Initialize and mount procfs */
+    procfs_init();
 
     // run_all_tests();
     enable_interrupts();

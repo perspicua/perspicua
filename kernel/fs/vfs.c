@@ -631,7 +631,7 @@ int vfs_readdir(int fd, void* buffer, size_t count)
             atomic_dec_and_test(&f->refcount);
             return res;
         }
-        
+
         /* FS driver has finished or partially filled buffer. Start mounts. */
         mount_idx = 1;
     }
@@ -641,12 +641,30 @@ int vfs_readdir(int fd, void* buffer, size_t count)
     while ((size_t)res < max_entries && (mount_idx - 1) < (uint32_t)vfs_mount_count)
     {
         int i = mount_idx - 1;
-        if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == f->node)
+        if (vfs_mount_table[i].root)
         {
-            strncpy(dirents[res].name, vfs_mount_table[i].root->name, 255);
-            dirents[res].name[255] = '\0';
-            dirents[res].ino = 0;
-            res++;
+            int is_child = 0;
+
+            if (vfs_mount_table[i].root->parent == f->node)
+            {
+                is_child = 1;
+            }
+            else if (f->node->parent == NULL && f->node->name[0] == '\0')
+            {
+                const char* mpath = vfs_mount_table[i].path;
+                if (mpath[0] == '/' && mpath[1] != '\0' && strchr(mpath + 1, '/') == NULL)
+                {
+                    is_child = 1;
+                }
+            }
+
+            if (is_child)
+            {
+                strncpy(dirents[res].name, vfs_mount_table[i].root->name, 255);
+                dirents[res].name[255] = '\0';
+                dirents[res].ino = 9000 + i;
+                res++;
+            }
         }
         mount_idx++;
     }
@@ -851,10 +869,10 @@ int vfs_getcwd(char* buf, size_t size)
         }
         ptr -= len;
         memcpy(ptr, node->name, len);
-        
+
         ptr--;
         *ptr = '/';
-        
+
         node = node->parent;
     }
 
@@ -867,6 +885,6 @@ int vfs_getcwd(char* buf, size_t size)
 
     memcpy(buf, ptr, result_len + 1);
     vfs_vnode_put(curr_node);
-    
+
     return PERS_SUCCESS;
 }

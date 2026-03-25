@@ -55,7 +55,7 @@ int main(void)
 
         /* Wait for child to finish */
         int status;
-        sys_waitpid(pid, &status);
+        sys_waitpid(pid, &status, 0);
 
         char done[] = "Parent done.\n";
         sys_write(1, done, sizeof(done) - 1);

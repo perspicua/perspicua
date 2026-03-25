@@ -24,4 +24,7 @@ struct signal_frame
 /* Processes pending signals for the current process before returning to user mode */
 void signal_handle_pending(struct exception_trap_frame* tf);
 
+/* Sends a signal to a process by its PID. Returns 0 on success, or a negative error. */
+int signal_send(uint32_t target_pid, int sig);
+
 #endif /* PERSPICUA_KERNEL_SIGNALS_H */
