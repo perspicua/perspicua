@@ -9,6 +9,11 @@ static void print_string(const char* s)
 
 int main(void)
 {
+    if (sys_getpid() != 1)
+    {
+        print_string("[ INIT ] Error: Must run as PID 1\n");
+        return 1;
+    }
     print_string("[ INIT ] Userspace started\n");
 
     while (1)
