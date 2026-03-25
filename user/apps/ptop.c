@@ -429,7 +429,8 @@ static int collect_procs(struct proc_info* out, int max)
  * If you prefer keeping them as separate binaries, replace the
  * demo_main() call with sys_exec("/bin/demo") instead.
  */
-extern int demo_main(void); /* defined in demo.c — rename main() there */
+/* ── demo launcher ───────────────────────────────────────────────── */
+#define DEMO_PATH "stress" /* adjust to wherever demo.elf is mounted */
 
 static void launch_demo(void)
 {
@@ -441,9 +442,11 @@ static void launch_demo(void)
     }
     if (pid == 0)
     {
-        /* child — run the demo workload then exit */
-        demo_main();
-        sys_exit(0);
+        /* child — replace image with demo binary */
+        sys_exec(DEMO_PATH);
+        /* if exec returns, the binary wasn't found */
+        ptop_write(C_WARN "ptop: exec(" DEMO_PATH ") failed\n" C_RESET);
+        sys_exit(1);
     }
     /* parent — demo runs in background, we don't wait for it */
 }
