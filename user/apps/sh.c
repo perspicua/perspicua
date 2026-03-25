@@ -218,13 +218,13 @@ static void run_exec(Command* cmd)
         strcat(path, ".elf");
     }
 
-    if (sys_exec(path) < 0)
+    if (sys_exec(path, cmd->argv) < 0)
     {
         if (cmd->argv[0][0] != '/')
         {
             strcpy(path, "/");
             strcat(path, cmd->argv[0]);
-            if (sys_exec(path) < 0)
+            if (sys_exec(path, cmd->argv) < 0)
             {
                 print_string("sh: command not found: ");
                 print_string(cmd->argv[0]);

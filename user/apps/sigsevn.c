@@ -18,7 +18,7 @@ int main()
     }
 
     printf("Sending SIGNAL_INT to ourselves (PID %d)...\n", sys_getpid());
-    int rc=sys_kill(0, SIGNAL_INT);
+    int rc = sys_kill(0, SIGNAL_INT);
     printf("Kill returned %d\n", rc);
     sys_yield();
 

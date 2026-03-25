@@ -260,8 +260,10 @@ void syscall_handle(struct exception_trap_frame* tf)
     }
 
     case SYS_EXEC:
-    { /* sys_exec(const char* path) */
+    { /* sys_exec(const char* path, char* const argv[]) */
         const char* path = (const char*)(tf->x[0]);
+        char* const* argv = (char* const*)(tf->x[1]);
+
         if (!validate_user_buffer(path, 1, 0))
         {
             tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -277,7 +279,8 @@ void syscall_handle(struct exception_trap_frame* tf)
             break;
         }
 
-        int res = process_exec(kpath);
+        /* argv validation is handled inside process_exec for now */
+        int res = process_exec(kpath, argv);
         heap_free(kpath);
 
         if (res < 0)
@@ -296,7 +299,7 @@ void syscall_handle(struct exception_trap_frame* tf)
                 (struct exception_trap_frame*)(kernel_stack_top - sizeof(struct exception_trap_frame));
             memcpy(tf, new_tf, sizeof(struct exception_trap_frame));
         }
-        // Do NOT set tf->x[0] — the new tf already has x[0]=0 from memset
+        // Do NOT set tf->x[0] — the new tf already has x[0] and x[1] set
         break;
     }
 

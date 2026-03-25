@@ -444,7 +444,8 @@ static void launch_demo(void)
     if (pid == 0)
     {
         /* child — replace image with demo binary */
-        sys_exec(DEMO_PATH);
+        char* argv[] = {DEMO_PATH, NULL};
+        sys_exec(DEMO_PATH, argv);
         /* if exec returns, the binary wasn't found */
         ptop_write(C_WARN "ptop: exec(" DEMO_PATH ") failed\n" C_RESET);
         sys_exit(1);

@@ -10,13 +10,19 @@ __sigrestorer:
 .global _start
 
 _start:
+    // x0 = argc, x1 = argv (passed by kernel in trap frame)
+    mov x19, x0
+    mov x20, x1
+
     adrp x0, __sigrestorer
     add x0, x0, :lo12:__sigrestorer
     mov x8, #SYS_SIGRESTORE
     svc #0
 
-    // User stack is allocated by the kernel and passed in SP_EL0
-    // No initialization needed yet, just jump to main
+    // Restore argc/argv for main
+    mov x0, x19
+    mov x1, x20
+
     bl main
     // If main returns, call exit(0)
     bl sys_exit

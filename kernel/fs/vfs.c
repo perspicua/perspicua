@@ -299,8 +299,8 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
             struct vfs_vnode* mount_node = NULL;
             for (size_t i = 1; i < (size_t)vfs_mount_count; i++)
             {
-                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr &&
-                    strcmp(vfs_mount_table[i].root->name, token) == 0)
+                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr
+                    && strcmp(vfs_mount_table[i].root->name, token) == 0)
                 {
                     mount_node = vfs_mount_table[i].root;
                     break;

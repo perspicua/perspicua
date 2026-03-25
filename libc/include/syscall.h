@@ -45,7 +45,7 @@ int sys_open(const char* path, int flags);
 int sys_read(int fd, void* buf, size_t len);
 int sys_getdents(int fd, void* buf, size_t count);
 int sys_close(int fd);
-int sys_exec(const char* path);
+int sys_exec(const char* path, char* const argv[]);
 int sys_fork(void);
 int sys_waitpid(int pid, int* status, int options);
 int sys_pipe(int pipefd[2]);
