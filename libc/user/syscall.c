@@ -371,6 +371,20 @@ int sys_getcwd(char* buf, size_t size)
     return (int)res;
 }
 
+int sys_stat(const char* path, struct stat* buf)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "r"(buf), "i"(SYS_STAT)
+                 : "x0", "x1", "x8", "memory");
+    return (int)res;
+}
+
 /*
  * sys_mmap - Maps files or devices into memory.
  */

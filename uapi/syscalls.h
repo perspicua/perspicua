@@ -35,5 +35,6 @@
 #define SYS_SIGPROCMASK 23
 #define SYS_SIGPENDING  24
 #define SYS_SIGSUSPEND  25
+#define SYS_STAT        26
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

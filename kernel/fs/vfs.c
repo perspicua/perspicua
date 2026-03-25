@@ -722,6 +722,57 @@ int vfs_write(int fd, const void* buffer, size_t count)
 }
 
 /*
+ * vfs_vnode_stat - Internal helper to fill a stat buffer from a vnode.
+ */
+static int vfs_vnode_stat(struct vfs_vnode* node, struct stat* buf)
+{
+    if (!node || !buf)
+        return -PERS_ERR_INVALID_ARGUMENT;
+
+    /* Initialize the stat buffer with default values from the vnode */
+    memset(buf, 0, sizeof(struct stat));
+
+    if (node->type == VFS_VNODE_TYPE_DIR)
+        buf->st_mode = S_IFDIR | 0755;
+    else if (node->type == VFS_VNODE_TYPE_DEVICE)
+        buf->st_mode = S_IFCHR | 0666;
+    else
+        buf->st_mode = S_IFREG | 0644;
+
+    buf->st_size = (uint64_t)node->file_size;
+    buf->st_nlink = 1;
+    buf->st_uid = 0;
+    buf->st_gid = 0;
+
+    /* If the filesystem provides a specific stat implementation, use it */
+    if (node->ops && node->ops->stat)
+    {
+        return node->ops->stat(node, buf);
+    }
+
+    return PERS_SUCCESS;
+}
+
+/*
+ * vfs_stat - Public path-based metadata retrieval.
+ */
+int vfs_stat(const char* path, struct stat* buf)
+{
+    int pid_idx = process_find_current();
+    if (pid_idx < 0)
+        return pid_idx;
+
+    int error = 0;
+    struct vfs_vnode* node = vfs_resolve_path(path, process_table[pid_idx].cwd, &error);
+    if (!node)
+        return error;
+
+    int res = vfs_vnode_stat(node, buf);
+    vfs_vnode_put(node);
+    return res;
+}
+
+/*
  * vfs_dup2 - Duplicates a file descriptor to a specific new descriptor.
  */
 int vfs_dup2(int oldfd, int newfd)

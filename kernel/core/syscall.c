@@ -724,6 +724,41 @@ sigreturn_kill:
         tf->x[0] = (uint64_t)res;
         break;
     }
+
+    case SYS_STAT:
+    { /* sys_stat(const char* path, struct stat* buf) */
+        const char* upath = (const char*)tf->x[0];
+        struct stat* ubuf = (struct stat*)tf->x[1];
+
+        if (!validate_user_buffer(upath, 1, 0) || !validate_user_buffer(ubuf, sizeof(struct stat), 1))
+        {
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        char* kpath = heap_malloc(VFS_MAX_PATH_LEN);
+        if (strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN) < 0)
+        {
+            heap_free(kpath);
+            tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            break;
+        }
+
+        struct stat kbuf;
+        int res = vfs_stat(kpath, &kbuf);
+        heap_free(kpath);
+
+        if (res == PERS_SUCCESS)
+        {
+            if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0)
+            {
+                res = -PERS_ERR_OUT_OF_MEMORY;
+            }
+        }
+        tf->x[0] = (uint64_t)res;
+        break;
+    }
+
     case SYS_MMAP:
     {  // void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
         uintptr_t addr = (uintptr_t)tf->x[0];
