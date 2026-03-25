@@ -168,6 +168,7 @@ static struct vfs_vnode* procfs_root_lookup(struct vfs_vnode* dir, const char* f
             node->refcount.counter = 1;
             node->internal_info = (void*)(uintptr_t)pid;
             node->parent = dir;
+            atomic_inc(&dir->refcount);
             snprintf(node->name, sizeof(node->name), "%ld", pid);
             return node;
         }
@@ -474,6 +475,7 @@ static struct vfs_vnode* procfs_pid_fd_lookup(struct vfs_vnode* dir, const char*
     node->refcount.counter = 1;
     node->internal_info = (void*)(uintptr_t)((pid << 16) | fd);
     node->parent = dir;
+    atomic_inc(&dir->refcount);
     strncpy(node->name, filename, sizeof(node->name) - 1);
     return node;
 }
@@ -550,6 +552,7 @@ static struct vfs_vnode* procfs_pid_lookup(struct vfs_vnode* dir, const char* fi
             node->refcount.counter = 1;
             node->internal_info = dir->internal_info;
             node->parent = dir;
+            atomic_inc(&dir->refcount);
             strcpy(node->name, names[i]);
             return node;
         }
@@ -591,6 +594,7 @@ void procfs_init(void)
     version_vnode->ops = &procfs_version_ops;
     version_vnode->refcount.counter = 1;
     version_vnode->parent = procfs_root_vnode;
+    atomic_inc(&procfs_root_vnode->refcount);
     strcpy(version_vnode->name, "version");
 
     memset(meminfo_vnode, 0, sizeof(struct vfs_vnode));
@@ -598,6 +602,7 @@ void procfs_init(void)
     meminfo_vnode->ops = &procfs_meminfo_ops;
     meminfo_vnode->refcount.counter = 1;
     meminfo_vnode->parent = procfs_root_vnode;
+    atomic_inc(&procfs_root_vnode->refcount);
     strcpy(meminfo_vnode->name, "meminfo");
 
     vfs_mount("/proc", procfs_root_vnode);

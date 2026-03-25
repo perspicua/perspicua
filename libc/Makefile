@@ -6,7 +6,7 @@ CFLAGS = $(COMMON_CFLAGS) -Iinclude -I../kernel/include -I..
 
 SRCS_COMMON = src/string.c src/printf.c
 SRCS_KERNEL = kernel/hooks.c kernel/panic.c
-SRCS_USER = user/hooks.c user/syscall.c
+SRCS_USER   = user/hooks.c user/syscall.c src/malloc.c
 
 OBJS_K = $(patsubst %.c, $(BUILD_DIR)/%.libk.o, $(SRCS_COMMON) $(SRCS_KERNEL))
 OBJS_U = $(patsubst %.c, $(BUILD_DIR)/%.libc.o, $(SRCS_COMMON) $(SRCS_USER))

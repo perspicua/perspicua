@@ -11,8 +11,8 @@
 #include "types.h"
 
 /* ── tunables ────────────────────────────────────────────────────── */
-#define REFRESH_INTERVAL_MS 10000
-#define MAX_ITERATIONS      5 /* exit after 60 refreshes (~1 min) */
+#define REFRESH_INTERVAL_MS 1000
+#define MAX_ITERATIONS      60 /* exit after 60 refreshes (~1 min) */
 #define MAX_PROCS           64
 #define READ_BUF_SIZE       512
 #define PATH_BUF_SIZE       64
@@ -348,63 +348,8 @@ static void draw_footer(void)
     ptop_write(" iterations" C_RESET "\n");
 }
 
-/* ── debug log ───────────────────────────────────────────────────── */
-/*
- * All debug output goes to a static ring buffer that is flushed to
- * stdout AFTER the normal screen draw, separated by a header line.
- * This avoids interleaving debug text with ANSI positioning codes.
- *
- * Remove the DBG_* calls and draw_debug_log() once the bug is found.
- */
-#define DBG_BUF_SIZE 4096
-static char dbg_buf[DBG_BUF_SIZE];
-static int dbg_pos = 0;
-
-static void dbg_reset(void)
-{
-    dbg_pos = 0;
-    dbg_buf[0] = '\0';
-}
-
-static void dbg_append(const char* s)
-{
-    int remaining = DBG_BUF_SIZE - dbg_pos - 1;
-    if (remaining <= 0)
-        return;
-    int i = 0;
-    while (s[i] && i < remaining)
-        dbg_buf[dbg_pos++] = s[i++];
-    dbg_buf[dbg_pos] = '\0';
-}
-
-static void dbg_int(const char* label, int v)
-{
-    char tmp[32];
-    snprintf(tmp, sizeof(tmp), "%d", v);
-    dbg_append(label);
-    dbg_append(tmp);
-    dbg_append("\n");
-}
-
-static void dbg_str(const char* label, const char* v)
-{
-    dbg_append(label);
-    dbg_append(v);
-    dbg_append("\n");
-}
-
-static void draw_debug_log(void)
-{
-    ptop_write("\n" C_WARN "══ DEBUG LOG ════════════════════════════════════════════\n" C_RESET);
-    if (dbg_pos == 0)
-        ptop_write(C_FOOTER "  (empty)\n" C_RESET);
-    else
-        sys_write(1, dbg_buf, dbg_pos);
-    ptop_write(C_WARN "═════════════════════════════════════════════════════════\n" C_RESET);
-}
-
 /* ── enumerate /proc ─────────────────────────────────────────────── */
-static int collect_procs(struct proc_info* out, int max, int iter)
+static int collect_procs(struct proc_info* out, int max)
 {
     struct vfs_dirent dent;
     char status_path[PATH_BUF_SIZE];
@@ -412,60 +357,27 @@ static int collect_procs(struct proc_info* out, int max, int iter)
     char field[64];
     int count = 0;
 
-    /* ── open /proc directory ── */
     int fd = sys_open("/proc", VFS_O_RDONLY);
-    dbg_int("open(/proc) => fd=", fd);
     if (fd < 0)
-    {
-        dbg_int("  FAILED, errno=", fd);
         return 0;
-    }
-
-    int getdents_calls = 0;
 
     while (count < max)
     {
         int n = sys_getdents(fd, &dent, sizeof(dent));
-        getdents_calls++;
-
-        /* log every getdents result so we can see where it stops */
-        {
-            char tmp[128];
-            snprintf(tmp,
-                     sizeof(tmp),
-                     "  getdents call #%d => n=%d  name=\"%s\"",
-                     getdents_calls,
-                     n,
-                     n > 0 ? dent.name : "");
-            dbg_append(tmp);
-            dbg_append("\n");
-        }
-
         if (n <= 0)
-        {
-            dbg_int("  getdents EOF/err, breaking. n=", n);
             break;
-        }
 
         /* skip "." ".." and non-numeric names (version, meminfo, etc.) */
         const char* nm = dent.name;
         if (nm[0] == '.' || nm[0] < '0' || nm[0] > '9')
-        {
-            dbg_str("  skipping non-pid entry: ", nm);
             continue;
-        }
 
         int pid = 0;
         const char* p = nm;
         while (*p >= '0' && *p <= '9')
             pid = pid * 10 + (*p++ - '0');
         if (*p != '\0')
-        {
-            dbg_str("  skipping non-pure-numeric: ", nm);
             continue;
-        }
-
-        dbg_int("  found pid=", pid);
 
         struct proc_info* info = &out[count];
         info->pid = pid;
@@ -474,44 +386,15 @@ static int collect_procs(struct proc_info* out, int max, int iter)
         info->name[0] = '\0';
         info->state[0] = '\0';
 
-        /* ── open /proc/<pid>/status ── */
         snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
-        int status_fd = sys_open(status_path, VFS_O_RDONLY);
-        dbg_int("  open(status) => fd=", status_fd);
-
-        if (status_fd >= 0)
-        {
-            sys_close(status_fd); /* read_proc_file opens it again internally */
-        }
-        else
-        {
-            dbg_int("  status open FAILED errno=", status_fd);
-        }
-
-        int bytes = read_proc_file(status_path, status_buf, sizeof(status_buf));
-        dbg_int("  read_proc_file(status) => bytes=", bytes);
-
-        if (bytes > 0)
+        if (read_proc_file(status_path, status_buf, sizeof(status_buf)) > 0)
         {
             if (parse_status_field(status_buf, "Name", field, sizeof(field)))
-            {
                 strncpy(info->name, field, sizeof(info->name) - 1);
-                dbg_str("    Name=", info->name);
-            }
-            else
-                dbg_append("    Name: parse FAILED\n");
-
             if (parse_status_field(status_buf, "State", field, sizeof(field)))
-            {
                 strncpy(info->state, field, sizeof(info->state) - 1);
-                dbg_str("    State=", info->state);
-            }
-            else
-                dbg_append("    State: parse FAILED\n");
-
             if (parse_status_field(status_buf, "PPid", field, sizeof(field)))
                 info->ppid = (int)ptop_atoul(field);
-
             if (parse_status_field(status_buf, "VmSize", field, sizeof(field)))
                 info->vmsize_kb = ptop_atoul(field);
         }
@@ -520,9 +403,7 @@ static int collect_procs(struct proc_info* out, int max, int iter)
         if (info->name[0] == '\0')
         {
             snprintf(status_path, sizeof(status_path), "/proc/%d/cmdline", pid);
-            int cbytes = read_proc_file(status_path, status_buf, sizeof(status_buf));
-            dbg_int("  read_proc_file(cmdline) fallback => bytes=", cbytes);
-            if (cbytes > 0)
+            if (read_proc_file(status_path, status_buf, sizeof(status_buf)) > 0)
                 strncpy(info->name, status_buf, sizeof(info->name) - 1);
         }
 
@@ -534,13 +415,37 @@ static int collect_procs(struct proc_info* out, int max, int iter)
         count++;
     }
 
-    dbg_int("collect_procs: total getdents calls=", getdents_calls);
-    dbg_int("collect_procs: returning count=", count);
-
     sys_close(fd);
-    dbg_append("closed /proc fd\n");
-
     return count;
+}
+
+/* ── demo launcher ───────────────────────────────────────────────── */
+/*
+ * Fork demo as a background child. The child calls into demo_main()
+ * which is defined in demo.c — just rename demo.c's main() to
+ * demo_main() and declare it here, or link both translation units
+ * together and use the approach below.
+ *
+ * If you prefer keeping them as separate binaries, replace the
+ * demo_main() call with sys_exec("/bin/demo") instead.
+ */
+extern int demo_main(void); /* defined in demo.c — rename main() there */
+
+static void launch_demo(void)
+{
+    int pid = sys_fork();
+    if (pid < 0)
+    {
+        ptop_write(C_WARN "ptop: failed to fork demo\n" C_RESET);
+        return;
+    }
+    if (pid == 0)
+    {
+        /* child — run the demo workload then exit */
+        demo_main();
+        sys_exit(0);
+    }
+    /* parent — demo runs in background, we don't wait for it */
 }
 
 /* ── entry point ─────────────────────────────────────────────────── */
@@ -548,16 +453,16 @@ int main(void)
 {
     struct proc_info procs[MAX_PROCS];
 
+    /* launch demo workload before first draw so processes are visible
+       immediately on iteration 1 */
+    launch_demo();
+
     ptop_write(ANSI_HIDE_CURSOR);
 
     for (int iter = 1; iter <= MAX_ITERATIONS; iter++)
     {
-        dbg_reset();
-        dbg_int("=== iteration ", iter);
+        int count = collect_procs(procs, MAX_PROCS);
 
-        int count = collect_procs(procs, MAX_PROCS, iter);
-
-        /* clear screen and redraw from top */
         ptop_write(ANSI_CLEAR);
 
         draw_header(iter, count);
@@ -565,13 +470,11 @@ int main(void)
         draw_meminfo();
         draw_proc_table(procs, count);
         draw_footer();
-        draw_debug_log(); /* ← remove once bug is found */
 
         if (iter < MAX_ITERATIONS)
             sys_sleep(REFRESH_INTERVAL_MS);
     }
 
-    /* restore terminal */
     ptop_write(ANSI_SHOW_CURSOR);
     ptop_write(C_RESET "\n");
 
