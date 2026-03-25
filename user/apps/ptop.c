@@ -9,11 +9,12 @@
 #include "stdio.h"
 #include "string.h"
 #include "types.h"
+#include "wait.h"
 
 /* ── tunables ────────────────────────────────────────────────────── */
 #define REFRESH_INTERVAL_MS 1000
-#define MAX_ITERATIONS      60 /* exit after 60 refreshes (~1 min) */
-#define MAX_PROCS           64
+#define MAX_ITERATIONS      10 /* exit after 10 refreshes (~10s) */
+#define MAX_PROCS           300
 #define READ_BUF_SIZE       512
 #define PATH_BUF_SIZE       64
 
@@ -430,7 +431,7 @@ static int collect_procs(struct proc_info* out, int max)
  * demo_main() call with sys_exec("/bin/demo") instead.
  */
 /* ── demo launcher ───────────────────────────────────────────────── */
-#define DEMO_PATH "stress" /* adjust to wherever demo.elf is mounted */
+#define DEMO_PATH "/stress.elf" /* adjust to wherever demo.elf is mounted */
 
 static void launch_demo(void)
 {
@@ -448,7 +449,7 @@ static void launch_demo(void)
         ptop_write(C_WARN "ptop: exec(" DEMO_PATH ") failed\n" C_RESET);
         sys_exit(1);
     }
-    /* parent — demo runs in background, we don't wait for it */
+    /* parent — demo runs in background, we don't wait for it here, but we'll reap it */
 }
 
 /* ── entry point ─────────────────────────────────────────────────── */
@@ -474,9 +475,18 @@ int main(void)
         draw_proc_table(procs, count);
         draw_footer();
 
+        /* Reap any children that have exited (non-blocking) */
+        int reaped;
+        while ((reaped = sys_waitpid(-1, NULL, WNOHANG)) > 0)
+            ;
+
         if (iter < MAX_ITERATIONS)
             sys_sleep(REFRESH_INTERVAL_MS);
     }
+
+    /* Final cleanup: reap the demo process if it finished */
+    while (sys_waitpid(-1, NULL, WNOHANG) > 0)
+        ;
 
     ptop_write(ANSI_SHOW_CURSOR);
     ptop_write(C_RESET "\n");
