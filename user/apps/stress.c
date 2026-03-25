@@ -63,7 +63,7 @@ void stress_fork()
     for (int i = 0; i < forked; i++)
     {
         int status;
-        sys_waitpid(pids[i], &status);
+        sys_waitpid(pids[i], &status, 0);
     }
     printf("[STRESS] All child processes exited.\n");
 }
@@ -111,7 +111,7 @@ void stress_pipe()
         sys_close(pipefd[1]);  // EOF
 
         int status;
-        sys_waitpid(pid, &status);
+        sys_waitpid(pid, &status, 0);
         int expected = (write_count * sizeof(msg)) % 256;
         if (status == expected)
         {
@@ -239,7 +239,7 @@ void stress_signals()
         sys_kill(pid, SIGNAL_USR2);
 
         int status;
-        sys_waitpid(pid, &status);
+        sys_waitpid(pid, &status, 0);
 
         printf("[STRESS] Signal delivery done. Child caught %d signals (coalescing is normal).\n", status);
     }

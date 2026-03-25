@@ -1,0 +1,6 @@
+#ifndef PERSPICUA_UAPI_WAIT_H
+#define PERSPICUA_UAPI_WAIT_H
+
+#define WNOHANG 1
+
+#endif /* PERSPICUA_UAPI_WAIT_H */

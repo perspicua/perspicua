@@ -15,7 +15,9 @@
 #include "mm/addr.h"
 
 #include "stdio.h"
+#include "uapi/errors.h"
 #include "uapi/syscalls.h"
+#include "sched/sched.h"
 /*
  * signal_handle_pending - Checks for and delivers pending signals.
  *
@@ -150,4 +152,33 @@ deliver_kill:
     process_exit(curr_pid, -1);
     sched_get_current()->state = SCHED_TASK_DEAD;
     schedule();
+}
+
+/* Sends a signal to a process by its PID. Returns 0 on success, or a negative error. */
+int signal_send(uint32_t target_pid, int sig)
+{
+    if (sig < 1 || sig >= SIGNAL_COUNT)
+    {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE || process_table[target_pid].state == PROCESS_STATE_EMPTY)
+    {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
+
+    struct process* p = &process_table[target_pid];
+
+    __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+
+    /* If process was blocked, wake it up if the signal is not ignored */
+    if (p->signal_handlers[sig - 1].sa_handler != SIGNAL_IGN)
+    {
+        if (p->main_task && p->main_task->state == SCHED_TASK_BLOCKED)
+        {
+            sched_unblock(p->main_task);
+        }
+    }
+
+    return PERS_SUCCESS;
 }

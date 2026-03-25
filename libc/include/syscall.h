@@ -47,7 +47,7 @@ int sys_getdents(int fd, void* buf, size_t count);
 int sys_close(int fd);
 int sys_exec(const char* path);
 int sys_fork(void);
-int sys_waitpid(int pid, int* status);
+int sys_waitpid(int pid, int* status, int options);
 int sys_pipe(int pipefd[2]);
 int sys_dup2(int oldfd, int newfd);
 int sys_signal(int sig, signal_handler_t handler);

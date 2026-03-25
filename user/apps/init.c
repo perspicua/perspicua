@@ -33,7 +33,7 @@ int main(void)
         {
             /* Parent process: wait for the shell to terminate */
             int status = 0;
-            sys_waitpid(pid, &status);
+            sys_waitpid(pid, &status, 0);
             print_string("[ INIT ] Shell exited, restarting...\n");
             sys_sleep(500);
         }

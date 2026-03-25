@@ -17,6 +17,7 @@
 
 #include "sched/process.h"
 
+#include "uapi/wait.h"
 #include "uapi/errors.h"
 #include "arch/exception.h"
 #include "mm/addr.h"
@@ -729,10 +730,15 @@ void process_exit(uint32_t pid, int exit_status)
     p->state = PROCESS_STATE_ZOMBIE;
 
     uint32_t ppid = p->parent_pid;
-    if (ppid != 0 && ppid < PROCESS_TABLE_SIZE && process_table[ppid].state != PROCESS_STATE_EMPTY
-        && process_table[ppid].main_task != NULL)
+    if (ppid != 0 && ppid < PROCESS_TABLE_SIZE && process_table[ppid].state != PROCESS_STATE_EMPTY)
     {
-        sched_unblock(process_table[ppid].main_task);
+        /* Send SIGCHLD to parent */
+        signal_send(ppid, SIGNAL_CHLD);
+
+        if (process_table[ppid].main_task != NULL)
+        {
+            sched_unblock(process_table[ppid].main_task);
+        }
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
@@ -894,7 +900,7 @@ int process_fork(struct exception_trap_frame* parent_tf)
  * none has exited yet.  process_exit() calls sched_unblock() on the parent
  * task to wake it up.
  */
-int process_waitpid(int pid, int* status)
+int process_waitpid(int pid, int* status, int options)
 {
     int parent_pid = process_find_current();
     if (parent_pid < 0)
@@ -941,6 +947,13 @@ int process_waitpid(int pid, int* status)
             spin_unlock(&process_table_lock);
             irq_restore(irqf);
             return -PERS_ERR_NO_SUCH_PROCESS;
+        }
+
+        if (options & WNOHANG)
+        {
+            spin_unlock(&process_table_lock);
+            irq_restore(irqf);
+            return 0;
         }
 
         /*

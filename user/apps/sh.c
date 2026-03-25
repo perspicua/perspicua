@@ -1,5 +1,7 @@
 #include "syscall.h"
 #include "string.h"
+#include "signals.h"
+#include "wait.h"
 
 #define MAX_ARGS    32
 #define CMD_MAX_LEN 512
@@ -14,6 +16,14 @@ typedef struct
     int append;
     int background;
 } Command;
+
+static void handle_sigchld(int sig)
+{
+    (void)sig;
+    /* Reap any finished background children */
+    while (sys_waitpid(-1, NULL, WNOHANG) > 0)
+        ;
+}
 
 static void print_string(const char* s)
 {
@@ -308,7 +318,7 @@ static void execute_pipeline(char* pipe_string)
         {
             if (!cmd.background)
             {
-                sys_waitpid(pid, NULL);
+                sys_waitpid(pid, NULL, 0);
             }
         }
         return;
@@ -381,7 +391,7 @@ static void execute_pipeline(char* pipe_string)
     {
         for (int i = 0; i < num_cmds; i++)
         {
-            sys_waitpid(pids[i], NULL);
+            sys_waitpid(pids[i], NULL, 0);
         }
     }
 }
@@ -434,6 +444,9 @@ static void print_prompt(void)
 
 int main(void)
 {
+    sys_signal(SIGNAL_INT, SIGNAL_IGN);
+    sys_signal(SIGNAL_CHLD, handle_sigchld);
+
     print_string("Perspicua Shell\n");
     print_string("Type help to see available commands.\n\n");
 

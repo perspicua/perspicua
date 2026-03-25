@@ -7,6 +7,9 @@
  */
 
 #include "core/tty.h"
+#include "core/signals.h"
+#include "sched/process.h"
+#include "uapi/errors.h"
 
 #include "stdio.h"
 #include "string.h"
@@ -37,6 +40,7 @@ void tty_init(struct tty* tty)
     tty->lock = (spinlock_t)SPINLOCK_INIT;
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
+    tty->foreground_pid = 0;
 
     pr_info("tty: console tty initialized\n");
 }
@@ -195,6 +199,17 @@ void tty_handle_rx(struct tty* tty, char c)
         c = '\n';
     }
 
+    /* Handle Ctrl+C (SIGINT) */
+    if (c == 3)
+    {
+        if (tty->foreground_pid > 0)
+        {
+            signal_send(tty->foreground_pid, SIGNAL_INT);
+        }
+        spin_unlock_irqrestore(&tty->lock, flags);
+        return;
+    }
+
     /* Handle backspace in canonical mode */
     if (tty->canon_enabled && (c == '\b' || c == 127))
     {
@@ -252,6 +267,13 @@ static int tty_has_line(struct tty* tty)
  */
 int tty_read(struct tty* tty, char* buf, size_t count)
 {
+    /* Set the current process as the foreground process for this TTY */
+    struct task* curr_task = sched_get_current();
+    if (curr_task)
+    {
+        tty->foreground_pid = curr_task->pid;
+    }
+
     size_t n = 0;
     while (n < count)
     {
@@ -266,9 +288,18 @@ int tty_read(struct tty* tty, char* buf, size_t count)
         /* Block if no data is available */
         if (!ready)
         {
-            struct task* curr = sched_get_current();
-            curr->state = SCHED_TASK_BLOCKED;
-            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr);
+            struct task* curr_task_inner = sched_get_current();
+            uint32_t pid = curr_task_inner->pid;
+
+            /* Interrupted by a signal? */
+            if (process_table[pid].pending_signals & ~process_table[pid].blocked_signals)
+            {
+                spin_unlock_irqrestore(&tty->lock, flags);
+                return -PERS_ERR_INTERRUPTED;
+            }
+
+            curr_task_inner->state = SCHED_TASK_BLOCKED;
+            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
             continue;

@@ -180,17 +180,18 @@ int sys_fork(void)
 /*
  * sys_waitpid - Waits for a specific child process to terminate.
  */
-int sys_waitpid(int pid, int* status)
+int sys_waitpid(int pid, int* status, int options)
 {
     long res;
     asm volatile("mov x0, %1\n"
                  "mov x1, %2\n"
-                 "mov x8, %3\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
                  "svc #0\n"
                  "mov %0, x0"
                  : "=r"(res)
-                 : "r"((long)pid), "r"(status), "i"(SYS_WAITPID)
-                 : "x0", "x1", "x8", "memory");
+                 : "r"((long)pid), "r"(status), "r"((long)options), "i"(SYS_WAITPID)
+                 : "x0", "x1", "x2", "x8", "memory");
     return (int)res;
 }
 
