@@ -8,8 +8,11 @@
 #ifndef PERSPICUA_LIBC_TYPES_H
 #define PERSPICUA_LIBC_TYPES_H
 
-/* NULL pointer definition */
+/* --- Constants --- */
+
 #define NULL ((void *)0)
+
+/* --- Base Types --- */
 
 /* Fixed-width integer types */
 typedef signed char int8_t;
@@ -28,9 +31,12 @@ typedef signed long ptrdiff_t;
 typedef unsigned long uintptr_t;
 typedef signed long intptr_t;
 
+/* Posix-compatible fundamental types */
 typedef unsigned long long ino_t;
 typedef int64_t off_t;
-/* Integer type limits */
+
+/* --- Integer Limits --- */
+
 #define INT8_MIN  (-128)
 #define INT8_MAX  (127)
 #define UINT8_MAX (255U)

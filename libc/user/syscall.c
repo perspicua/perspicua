@@ -180,7 +180,8 @@ int sys_dup2(int oldfd, int newfd)
     long res;
     asm volatile("mov x0, %1\n"
                  "mov x1, %2\n"
-                 "mov x8, %3\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
                  "svc #0\n"
                  "mov %0, x0"
                  : "=r"(res)
