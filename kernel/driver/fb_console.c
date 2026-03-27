@@ -1,32 +1,35 @@
 /*
  * fb_console.c - Implementation of the framebuffer-based console driver.
  *
- * This file handles character rendering, cursor management, and
+ * This module handles character rendering, cursor tracking, and
  * vertical scrolling for the system console.
  */
 
 #include "driver/fb_console.h"
 
+#include "stdio.h"
 #include "string.h"
-#include "core/lock.h"
 
+#include "core/lock.h"
 #include "driver/graphics.h"
 #include "driver/fb.h"
 
-#include "stdio.h"
+/* --- Private Macros --- */
 
-/* Console dimensions and rendering offsets. */
 #define CONSOLE_Y_OFFSET 20
 #define CHAR_WIDTH       8
 #define CHAR_HEIGHT      12
 
-/* Cursor state and access protection. */
+/* --- Private Variables --- */
+
 static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
 
+/* --- Private Helper Functions --- */
+
 /*
- * fb_console_scroll - Scrolls the console up by one character line.
+ * fb_console_scroll - Moves existing lines up and clears the bottom line.
  */
 static void fb_console_scroll(void)
 {
@@ -45,21 +48,7 @@ static void fb_console_scroll(void)
 }
 
 /*
- * fb_console_init - Initializes the framebuffer console.
- */
-void fb_console_init(void)
-{
-    spin_lock(&fb_console_lock);
-    cursor_x = 0;
-    cursor_y = CONSOLE_Y_OFFSET;
-    graphics_clear(0x00000000); // black
-    spin_unlock(&fb_console_lock);
-
-    pr_info("fb: Console initialized\n");
-}
-
-/*
- * fb_console_putc_unlocked - Internal character printing (no locking).
+ * fb_console_putc_unlocked - Internal rendering logic without synchronization.
  */
 static void fb_console_putc_unlocked(char c)
 {
@@ -88,8 +77,24 @@ static void fb_console_putc_unlocked(char c)
     }
 }
 
+/* --- Public API Implementations --- */
+
 /*
- * fb_console_putc - Prints a single character to the console.
+ * fb_console_init - Resets the cursor and wipes the screen.
+ */
+void fb_console_init(void)
+{
+    spin_lock(&fb_console_lock);
+    cursor_x = 0;
+    cursor_y = CONSOLE_Y_OFFSET;
+    graphics_clear(0x00000000);
+    spin_unlock(&fb_console_lock);
+
+    pr_info("fb: console initialized\n");
+}
+
+/*
+ * fb_console_putc - Thread-safe character output.
  */
 void fb_console_putc(char c)
 {
@@ -99,7 +104,7 @@ void fb_console_putc(char c)
 }
 
 /*
- * fb_console_puts - Prints a null-terminated string to the console.
+ * fb_console_puts - Thread-safe string output.
  */
 void fb_console_puts(const char *s)
 {

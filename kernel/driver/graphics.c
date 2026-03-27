@@ -1,20 +1,21 @@
 /*
- * graphics.c - Implementation of the kernel graphics primitives.
+ * graphics.c - Implementation of kernel graphics primitives.
  *
- * This file contains the implementation of low-level drawing functions,
- * interacting directly with the system's framebuffer for visual rendering.
+ * This module provides low-level drawing functions that interact
+ * directly with the primary system framebuffer.
  */
 
 #include "driver/graphics.h"
 
 #include "string.h"
 
-#include "driver/font8x8.h"
 #include "driver/fb.h"
+#include "driver/font8x8.h"
+
+/* --- Public API Implementations --- */
 
 /*
- * graphics_put_pixel - Draws a single pixel at (x, y) with the specified color.
- * Coordinates are checked to ensure they fall within the current framebuffer bounds.
+ * graphics_put_pixel - Updates a single memory location in the framebuffer.
  */
 void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
 {
@@ -27,9 +28,7 @@ void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
 }
 
 /*
- * graphics_draw_rect - Renders a rectangle at the given coordinates with width
- * and height dimensions. If the fill flag is set, the interior of the rectangle
- * is painted; otherwise, only the one-pixel wide boundary is drawn.
+ * graphics_draw_rect - Renders solid or hollow boxes with clipping.
  */
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h,
                         uint32_t color, int fill)
@@ -38,7 +37,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    // Adjust width and height to fit within framebuffer bounds to prevent overflow
+    /* Clip dimensions to prevent screen overflow */
     if (w > fb_info.width - x) {
         w = fb_info.width - x;
     }
@@ -54,7 +53,6 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
     uint32_t stride = fb_info.pitch >> 2;
 
     if (!fill) {
-        // Render hollow rectangle outline
         for (unsigned int i = 0; i < w; i++) {
             fb[y * stride + (x + i)] = color;
             fb[(y + h - 1) * stride + (x + i)] = color;
@@ -66,7 +64,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    // Render solid filled rectangle row by row
+    /* Solid fill optimized with 64-bit writes where aligned */
     uint32_t *line = &fb[y * stride + x];
     uint64_t c64 = ((uint64_t)color << 32) | color;
 
@@ -74,20 +72,17 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         uint32_t *p32 = line;
         unsigned int i = 0;
 
-        // Align to 8-byte boundary
         if ((uintptr_t)p32 & 4) {
             *p32++ = color;
             i++;
         }
 
-        // Write 64-bit blocks
         uint64_t *p64 = (uint64_t *)p32;
         while (i + 1 < w) {
             *p64++ = c64;
             i += 2;
         }
 
-        // Handle trailing 32-bit pixel
         if (i < w) {
             p32 = (uint32_t *)p64;
             *p32 = color;
@@ -98,9 +93,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
 }
 
 /*
- * graphics_draw_char - Renders a character glyph from the basic font set.
- * Characters are drawn as 8x8 bitmaps with specified foreground and background
- * colors. If bg is set to 0xFFFFFFFF, the background will be transparent.
+ * graphics_draw_char - Renders a fixed-size character from font8x8.
  */
 void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uint32_t bg)
 {
@@ -108,7 +101,6 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
         return;
     }
 
-    // Ensure the entire character glyph fits within the screen boundaries
     if (x > fb_info.width - 8 || y > fb_info.height - 8 || fb_info.width < 8
         || fb_info.height < 8) {
         return;
@@ -131,7 +123,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
             dest[6] = (row_data & 0x40) ? fg : bg;
             dest[7] = (row_data & 0x80) ? fg : bg;
         } else {
-            /* Standard transparent path */
+            /* Optimized transparency path */
             for (int col = 0; col < 8; col++) {
                 if ((row_data >> col) & 1) {
                     dest[col] = fg;
@@ -143,8 +135,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
 }
 
 /*
- * graphics_draw_string - Iteratively renders characters from a null-terminated
- * string. Each character is advanced by 8 pixels horizontally.
+ * graphics_draw_string - Maps a character array to the framebuffer.
  */
 void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_t fg, uint32_t bg)
 {
@@ -156,8 +147,7 @@ void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_
 }
 
 /*
- * graphics_clear - Fills the entire display area with the given color
- * effectively clearing the screen.
+ * graphics_clear - Wipes the display area with a solid color.
  */
 void graphics_clear(uint32_t color)
 {
@@ -169,7 +159,6 @@ void graphics_clear(uint32_t color)
         fb64[i] = c64;
     }
 
-    /* Handle remainder if size is not a multiple of 8 */
     if (fb_info.size & 4) {
         uint32_t *fb32 = (uint32_t *)fb_info.ptr;
         fb32[fb_info.size / 4 - 1] = color;

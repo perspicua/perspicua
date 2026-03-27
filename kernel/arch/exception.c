@@ -9,6 +9,7 @@
 #include "arch/exception.h"
 
 #include "stdio.h"
+#include "io.h"
 #include "panic.h"
 
 #include "arch/uaccess.h"

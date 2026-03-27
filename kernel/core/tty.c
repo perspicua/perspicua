@@ -16,6 +16,7 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 #include "driver/fb_console.h"
+#include "io.h"
 
 struct tty console_tty;
 
