@@ -1,42 +1,79 @@
+/*
+ * pipe.c - Implementation of anonymous pipes (IPC).
+ *
+ * This module manages the circular buffer and task synchronization required
+ * for unidirectional inter-process communication.
+ */
+
 #include "fs/pipe.h"
-#include "core/lock.h"
-#include "sched/process.h"
-#include "mm/slab.h"
-#include "core/timer.h"
-#include "uapi/errors.h"
+
 #include "stdio.h"
 #include "string.h"
-#include "mm/heap.h"
 
-/* Helper to block the current task on a pipe queue */
+#include "uapi/errors.h"
+
+#include "core/lock.h"
+#include "core/timer.h"
+#include "mm/slab.h"
+#include "mm/heap.h"
+#include "fs/vfs.h"
+#include "sched/sched.h"
+#include "sched/process.h"
+
+/* --- Private Macros --- */
+
+#define PIPE_BUF_SIZE 4096
+
+/* --- Private Data Structures --- */
+
+/*
+ * struct pipe - Shared IPC buffer and synchronization state.
+ */
+struct pipe {
+    char buffer[PIPE_BUF_SIZE];
+    size_t head;
+    size_t tail;
+    size_t count;
+
+    int readers;
+    int writers;
+
+    spinlock_t lock;
+
+    struct task *read_wait_queue;
+    struct task *write_wait_queue;
+};
+
+/* --- Private Helper Functions --- */
+
+/*
+ * pipe_wait - Blocks the current task on a pipe's specific wait queue.
+ */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
     struct task *self = sched_get_current();
     unsigned long flags = irq_save();
 
-    /* Set state to BLOCKED before releasing the lock to avoid lost wake-up */
+    /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
     self->state = SCHED_TASK_BLOCKED;
-
-    /* Add self to the wait queue (simple linked list) */
     self->next = *queue;
     *queue = self;
 
-    /* Release the pipe lock and the CPU */
     spin_unlock(lock);
     schedule();
 
-    /* After waking up, we need to re-acquire the pipe lock to continue safely.
-     * Note: schedule() restored IRQs, so we use spin_lock instead of irqsave here.
-     */
+    /* schedule() restored IRQs; re-acquire lock and restore original mask */
     irq_restore(flags);
     spin_lock(lock);
 }
 
-/* Helper to wake up all tasks on a pipe queue */
+/*
+ * pipe_wake - Ready all tasks waiting on a pipe event.
+ */
 static void pipe_wake(struct task **queue)
 {
     struct task *t = *queue;
-    *queue = NULL; /* Clear queue FIRST to avoid race with new waiters */
+    *queue = NULL; /* Prevent races with new waiters during unblocking */
 
     while (t) {
         struct task *next = t->next;
@@ -47,40 +84,29 @@ static void pipe_wake(struct task **queue)
 
 static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_vnode *node = file->node;
-    struct pipe *pipe = (struct pipe *)node->internal_info;
+    struct pipe *pipe = (struct pipe *)file->node->internal_info;
     char *buf = (char *)buffer;
     size_t read = 0;
 
-    if (!pipe)
+    if (!pipe) {
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
 
     spin_lock(&pipe->lock);
 
     while (read < count) {
         if (pipe->count > 0) {
-            /* Copy data from circular buffer */
             buf[read++] = pipe->buffer[pipe->tail];
             pipe->tail = (pipe->tail + 1) % PIPE_BUF_SIZE;
             pipe->count--;
         } else {
-            /* Buffer is empty */
-            if (read > 0) {
-                /* Already read some data, return what we have */
+            if (read > 0 || pipe->writers == 0) {
                 break;
             }
-
-            if (pipe->writers == 0) {
-                /* EOF: No more writers and buffer is empty */
-                break;
-            }
-
-            /* Block until data is available */
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
     }
 
-    /* Wake up writers as space is now available */
     if (pipe->write_wait_queue) {
         pipe_wake(&pipe->write_wait_queue);
     }
@@ -91,35 +117,31 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
 
 static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
 {
-    struct vfs_vnode *node = file->node;
-    struct pipe *pipe = (struct pipe *)node->internal_info;
+    struct pipe *pipe = (struct pipe *)file->node->internal_info;
     const char *buf = (const char *)buffer;
     size_t written = 0;
 
-    if (!pipe)
+    if (!pipe) {
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
 
     spin_lock(&pipe->lock);
 
     while (written < count) {
         if (pipe->readers == 0) {
-            /* Broken pipe */
             spin_unlock(&pipe->lock);
             return -PERS_ERR_BROKEN_PIPE;
         }
 
         if (pipe->count < PIPE_BUF_SIZE) {
-            /* Copy data to circular buffer */
             pipe->buffer[pipe->head] = buf[written++];
             pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
         } else {
-            /* Buffer is full, block until space is available */
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
 
-    /* Wake up readers as data is now available */
     if (pipe->read_wait_queue) {
         pipe_wake(&pipe->read_wait_queue);
     }
@@ -130,20 +152,20 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
 
 static int pipe_close(struct vfs_file *file)
 {
-    struct vfs_vnode *node = file->node;
-    struct pipe *pipe = (struct pipe *)node->internal_info;
-    if (!pipe)
+    struct pipe *pipe = (struct pipe *)file->node->internal_info;
+    if (!pipe) {
         return PERS_SUCCESS;
+    }
 
     int is_write = (file->flags & VFS_O_ACCMODE) != VFS_O_RDONLY;
 
     spin_lock(&pipe->lock);
-    if (is_write)
+    if (is_write) {
         pipe->writers--;
-    else
+    } else {
         pipe->readers--;
+    }
 
-    /* Wake up everyone because someone closed an end */
     pipe_wake(&pipe->read_wait_queue);
     pipe_wake(&pipe->write_wait_queue);
 
@@ -152,38 +174,38 @@ static int pipe_close(struct vfs_file *file)
 
     if (destroy) {
         heap_free(pipe);
-        node->internal_info = NULL;
+        file->node->internal_info = NULL;
     }
 
     return PERS_SUCCESS;
 }
 
-/* Pipe operations table */
-struct vfs_vnode_ops pipe_ops = {
-    .read = pipe_read, .write = pipe_write, .lookup = NULL, .close = pipe_close};
+static struct vfs_vnode_ops pipe_ops = {
+    .read = pipe_read, .write = pipe_write, .close = pipe_close};
+
+/* --- Public API Implementations --- */
 
 /*
- * kernel_pipe - Internal implementation of the pipe() system call.
+ * pipe_create - Allocates a pipe and installs descriptors in the process table.
  */
-int kernel_pipe(int pipefd[2])
+int pipe_create(int pipefd[2])
 {
     int pid = process_find_current();
-    if (pid < 0)
+    if (pid < 0) {
         return pid;
+    }
 
     struct process *p = &process_table[pid];
 
-    /* 1. Allocate the shared pipe structure */
     struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
-    if (!pipe)
+    if (!pipe) {
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     memset(pipe, 0, sizeof(struct pipe));
     pipe->readers = 1;
     pipe->writers = 1;
-    pipe->lock.locked = 0;
 
-    /* 2. Allocate the vnode that represents this pipe */
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     if (!node) {
         heap_free(pipe);
@@ -191,20 +213,21 @@ int kernel_pipe(int pipefd[2])
     }
 
     memset(node, 0, sizeof(struct vfs_vnode));
-    node->type = VFS_VNODE_TYPE_REGULAR; /* Pipes are "files" */
+    node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &pipe_ops;
     node->internal_info = pipe;
-    node->refcount.counter = 2; /* One for each file descriptor */
+    node->refcount.counter = 2;
 
-    /* 3. Create the two file objects */
     struct vfs_file *f_read = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
     struct vfs_file *f_write = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
 
     if (!f_read || !f_write) {
-        if (f_read)
+        if (f_read) {
             slab_free(f_read);
-        if (f_write)
+        }
+        if (f_write) {
             slab_free(f_write);
+        }
         slab_free(node);
         heap_free(pipe);
         return -PERS_ERR_OUT_OF_MEMORY;
@@ -220,15 +243,14 @@ int kernel_pipe(int pipefd[2])
     f_write->offset = 0;
     f_write->refcount.counter = 1;
 
-    /* 4. Assign file descriptors in the process table */
     int fd_r = -1, fd_w = -1;
     spin_lock(&p->fd_lock);
 
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
-            if (fd_r == -1)
+            if (fd_r == -1) {
                 fd_r = i;
-            else if (fd_w == -1) {
+            } else if (fd_w == -1) {
                 fd_w = i;
                 break;
             }
@@ -242,7 +264,6 @@ int kernel_pipe(int pipefd[2])
     spin_unlock(&p->fd_lock);
 
     if (fd_r == -1 || fd_w == -1) {
-        /* Cleanup on failure to find slots */
         slab_free(f_read);
         slab_free(f_write);
         slab_free(node);

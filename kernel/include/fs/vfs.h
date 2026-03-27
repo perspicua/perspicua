@@ -1,34 +1,24 @@
 /*
  * vfs.h - Public API for the Virtual Filesystem (VFS) layer.
  *
- * This file defines the core filesystem abstractions, including vnodes,
- * file descriptors, mount points, and the standard filesystem operations.
+ * This header defines the core filesystem abstractions, including vnodes,
+ * file objects, and the functional interface for filesystem drivers.
  */
 
-#ifndef PERSPICUA_KERNEL_VFS_H
-#define PERSPICUA_KERNEL_VFS_H
+#ifndef PERSPICUA_FS_VFS_H
+#define PERSPICUA_FS_VFS_H
 
-#include "core/lock.h"
 #include "types.h"
+
 #include "uapi/stat.h"
 
-/* Forward declarations for core VFS structures */
-struct vfs_vnode;
-struct vfs_file;
+#include "core/lock.h"
 
-/* VFS Limits */
+/* --- Constants and Macros --- */
+
 #define VFS_MAX_PATH_LEN 4096
 #define VFS_MAX_FDS      32
 #define VFS_MAX_MOUNTS   8
-
-/*
- * vfs_vnode_type - Enumeration of supported vnode types.
- */
-enum vfs_vnode_type {
-    VFS_VNODE_TYPE_REGULAR,
-    VFS_VNODE_TYPE_DIR,
-    VFS_VNODE_TYPE_DEVICE
-};
 
 /* Standard file open flags */
 #define VFS_O_RDONLY  0x0000
@@ -41,19 +31,31 @@ enum vfs_vnode_type {
 #define VFS_O_APPEND  0x0400
 #define VFS_O_CLOEXEC 0x0800
 
-/*
- * vfs_mount_entry - Represents a mounted filesystem instance.
- */
-struct vfs_mount_entry {
-    char path[VFS_MAX_PATH_LEN];
-    struct vfs_vnode *root;
-};
+/* Seek mode constants */
+#define VFS_SEEK_SET 0
+#define VFS_SEEK_CUR 1
+#define VFS_SEEK_END 2
 
-/* Type definition for file offsets and sizes */
+/* --- Enums and Types --- */
+
 typedef int64_t vfs_off_t;
 
 /*
- * vfs_dirent - Directory entry structure returned to userspace.
+ * enum vfs_vnode_type - Categories of filesystem objects.
+ */
+enum vfs_vnode_type {
+    VFS_VNODE_TYPE_REGULAR,
+    VFS_VNODE_TYPE_DIR,
+    VFS_VNODE_TYPE_DEVICE
+};
+
+/* --- Data Structures --- */
+
+struct vfs_vnode;
+struct vfs_file;
+
+/*
+ * struct vfs_dirent - Directory entry format returned to userspace.
  */
 struct vfs_dirent {
     uint32_t ino;
@@ -61,7 +63,7 @@ struct vfs_dirent {
 };
 
 /*
- * vfs_vnode_ops - Functional interface for filesystem-specific operations.
+ * struct vfs_vnode_ops - Functional interface for filesystem-specific operations.
  */
 struct vfs_vnode_ops {
     int (*read)(struct vfs_file *file, void *buffer, size_t size);
@@ -74,7 +76,7 @@ struct vfs_vnode_ops {
 };
 
 /*
- * vfs_vnode - The primary VFS abstraction representing an inode/file.
+ * struct vfs_vnode - The primary VFS object representing a file or directory.
  */
 struct vfs_vnode {
     enum vfs_vnode_type type;
@@ -87,7 +89,7 @@ struct vfs_vnode {
 };
 
 /*
- * vfs_file - Represents an open file instance (file descriptor).
+ * struct vfs_file - An open instance of a vnode (file descriptor state).
  */
 struct vfs_file {
     struct vfs_vnode *node;
@@ -96,86 +98,86 @@ struct vfs_file {
     atomic_t refcount;
 };
 
-/* Seek mode constants */
-#define VFS_SEEK_SET 0
-#define VFS_SEEK_CUR 1
-#define VFS_SEEK_END 2
+/* --- Function Prototypes --- */
 
 /*
- * vfs_init - Initializes the virtual filesystem structures and mount table.
+ * vfs_init - Initializes the mount table and VFS synchronization.
  */
 void vfs_init(void);
 
 /*
- * vfs_resolve_path - Traverses the directory tree to find the vnode
- * corresponding to the given path.
+ * vfs_resolve_path - Traverses the directory tree to find a specific vnode.
  */
 struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int *error);
 
 /*
- * vfs_vnode_put - Decrements the reference count of a vnode and frees it
- * if the count reaches zero.
+ * vfs_vnode_put - Safely releases a vnode reference.
  */
 void vfs_vnode_put(struct vfs_vnode *node);
 
 /*
- * vfs_open - Opens a file for the current process. Returns a file descriptor
- * on success or a negative error code.
+ * vfs_open - Standard process-relative file open.
  */
 int vfs_open(const char *path, int flags);
 
 /*
- * vfs_open_pid - Opens a file on behalf of a specific process.
+ * vfs_open_pid - Kernel-internal open for a specific process context.
  */
 int vfs_open_pid(const char *path, int flags, uint32_t pid);
 
 /*
- * vfs_close - Closes an open file descriptor.
+ * vfs_close - Closes a file descriptor and performs cleanup.
  */
 int vfs_close(int fd);
 
 /*
- * vfs_lseek - Repositions the read/write offset of a file descriptor.
+ * vfs_lseek - Repositions the read/write cursor.
  */
 vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
 
 /*
- * vfs_read - Reads data from a file descriptor into a buffer.
+ * vfs_read - Synchronous data retrieval from a descriptor.
  */
 int vfs_read(int fd, void *buffer, size_t count);
 
 /*
- * vfs_readdir - Reads directory entries from a directory file descriptor.
- */
-int vfs_readdir(int fd, void *buffer, size_t count);
-
-/*
- * vfs_write - Writes data from a buffer to a file descriptor.
+ * vfs_write - Synchronous data submission to a descriptor.
  */
 int vfs_write(int fd, const void *buffer, size_t count);
 
 /*
- * vfs_stat - Retrieves metadata for a specific file.
+ * vfs_readdir - Retrieves directory entries from a descriptor.
+ */
+int vfs_readdir(int fd, void *buffer, size_t count);
+
+/*
+ * vfs_stat - Retrieves metadata for a file by path.
  */
 int vfs_stat(const char *path, struct stat *buf);
 
 /*
- * vfs_dup2 - Duplicates a file descriptor.
+ * vfs_dup2 - Duplicates a descriptor to a specific target slot.
  */
 int vfs_dup2(int oldfd, int newfd);
 
 /*
- * vfs_mount - Attaches a filesystem root vnode to the global namespace
- * at the specified path.
+ * vfs_mount - Attaches a filesystem root to the global namespace.
  */
 int vfs_mount(const char *path, struct vfs_vnode *root);
 
 /*
- * vfs_unmount - Detaches a filesystem from the global namespace.
+ * vfs_unmount - Detaches a mount point by its path.
  */
 int vfs_unmount(const char *path);
 
+/*
+ * vfs_chdir - Updates the current process working directory.
+ */
 int vfs_chdir(const char *path);
 
+/*
+ * vfs_getcwd - Returns the absolute path of the current working directory.
+ */
 int vfs_getcwd(char *buf, size_t size);
-#endif /* PERSPICUA_KERNEL_VFS_H */
+
+#endif /* PERSPICUA_FS_VFS_H */

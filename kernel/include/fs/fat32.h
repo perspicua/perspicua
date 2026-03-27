@@ -1,10 +1,23 @@
-#ifndef PERSPICUA_KERNEL_FAT32_H
-#define PERSPICUA_KERNEL_FAT32_H
+/*
+ * fat32.h - Public API for the FAT32 filesystem driver.
+ *
+ * This header defines the structures for MBR, BPB, and directory entries
+ * used to interact with FAT32 formatted block devices.
+ */
+
+#ifndef PERSPICUA_FS_FAT32_H
+#define PERSPICUA_FS_FAT32_H
 
 #include "types.h"
+
 #include "driver/block.h"
 #include "fs/vfs.h"
 
+/* --- Data Structures --- */
+
+/*
+ * struct partition_entry - MBR partition table entry.
+ */
 struct partition_entry {
     uint8_t boot_flag;
     uint8_t chs_start[3];
@@ -14,12 +27,18 @@ struct partition_entry {
     uint32_t num_sectors;
 } __attribute__((packed));
 
+/*
+ * struct mbr - Master Boot Record sector layout.
+ */
 struct mbr {
     uint8_t bootstrap[446];
     struct partition_entry partitions[4];
     uint16_t signature;
 } __attribute__((packed));
 
+/*
+ * struct fat32_bpb - FAT32 BIOS Parameter Block.
+ */
 struct fat32_bpb {
     uint8_t jmp[3];
     uint8_t oem[8];
@@ -50,6 +69,9 @@ struct fat32_bpb {
     uint8_t system_id[8];
 } __attribute__((packed));
 
+/*
+ * struct fat32_dir_entry - Standard 32-byte FAT directory entry.
+ */
 struct fat32_dir_entry {
     uint8_t name[8];
     uint8_t ext[3];
@@ -66,6 +88,9 @@ struct fat32_dir_entry {
     uint32_t size;
 } __attribute__((packed));
 
+/*
+ * struct fat32_fs - Runtime state of a mounted FAT32 filesystem.
+ */
 struct fat32_fs {
     struct block_device *dev;
     uint32_t partition_lba_start;
@@ -81,13 +106,16 @@ struct fat32_fs {
     uint32_t data_lba_start;
 };
 
+/* --- Function Prototypes --- */
+
+/*
+ * fat32_init - Discovers and mounts a FAT32 partition on the given device.
+ */
 int fat32_init(const char *device_name);
-void fat32_ls();
-void fat32_cat(const char *filename);
 
-// VFS Interface
+/*
+ * fat32_get_root_node - Returns a vnode representing the root directory.
+ */
 struct vfs_vnode *fat32_get_root_node(void);
-int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size);
-struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *filename);
 
-#endif // PERSPICUA_KERNEL_FAT32_H
+#endif /* PERSPICUA_FS_FAT32_H */

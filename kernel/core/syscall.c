@@ -312,7 +312,7 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            int res = kernel_pipe(kpipefd);
+            int res = pipe_create(kpipefd);
             if (res == PERS_SUCCESS) {
                 if (copy_to_user(upipefd, kpipefd, sizeof(int) * 2) != 0) {
                     tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;

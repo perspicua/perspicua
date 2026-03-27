@@ -1,25 +1,28 @@
 /*
  * devfs.c - Implementation of the device filesystem (devfs).
  *
- * This file handles the registration and lookup of device nodes within
- * the virtual filesystem, providing a standardized path for device access.
+ * This module manages the registration and lookup of device nodes within
+ * the virtual filesystem, acting as a bridge between VFS calls and drivers.
  */
 
 #include "fs/devfs.h"
 
-#include "uapi/errors.h"
-
-#include "fs/vfs.h"
-#include "core/tty.h"
-#include "mm/slab.h"
-#include "mm/heap.h"
-#include "core/lock.h"
-#include "string.h"
 #include "stdio.h"
+#include "string.h"
 #include "panic.h"
 
+#include "uapi/errors.h"
+
+#include "core/tty.h"
+#include "core/lock.h"
+#include "mm/slab.h"
+#include "mm/heap.h"
+#include "fs/vfs.h"
+
+/* --- Private Data Structures --- */
+
 /*
- * devfs_node - Represents an entry in the devfs directory structure.
+ * struct devfs_node - Internal entry in the devfs directory linked-list.
  */
 struct devfs_node {
     char name[32];
@@ -27,17 +30,18 @@ struct devfs_node {
     struct devfs_node *next;
 };
 
-/* Internal filesystem state and synchronization */
+/* --- Private Variables --- */
+
 static struct vfs_vnode *devfs_root_vnode = NULL;
 static struct devfs_node *devfs_devices = NULL;
 static spinlock_t devfs_lock = SPINLOCK_INIT;
 
-/* Extern console TTY from the TTY subsystem */
 extern struct tty console_tty;
 
+/* --- Private Helper Functions --- */
+
 /*
- * devfs_root_lookup - Searches the devfs device list for a node matching
- * the requested filename. Returns the vnode if found, or NULL otherwise.
+ * devfs_root_lookup - Scans the device list for a matching name.
  */
 static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *filename)
 {
@@ -62,7 +66,7 @@ static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *fi
 }
 
 /*
- * devfs_root_readdir - Implementation of the readdir operation for the devfs root.
+ * devfs_root_readdir - Populates a dirent buffer with registered devices.
  */
 static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
@@ -78,7 +82,7 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
             struct vfs_dirent *dirent = &dirent_buf[entries_read];
             strncpy(dirent->name, curr->name, 255);
             dirent->name[255] = '\0';
-            dirent->ino = 0; // Device nodes don't have inodes in devfs
+            dirent->ino = 0;
             file->offset++;
             entries_read++;
         }
@@ -90,17 +94,28 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     return entries_read;
 }
 
-/* Operation mapping for the devfs root directory */
-static struct vfs_vnode_ops devfs_root_ops = {
-    .lookup = devfs_root_lookup,
-    .readdir = devfs_root_readdir,
-    .read = NULL,
-    .write = NULL,
-};
+static int devfs_tty_read(struct vfs_file *file, void *buffer, size_t size)
+{
+    struct tty *tty = (struct tty *)file->node->internal_info;
+    return tty_read(tty, (char *)buffer, size);
+}
+
+static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t size)
+{
+    struct tty *tty = (struct tty *)file->node->internal_info;
+    return tty_write(tty, (const char *)buffer, size);
+}
+
+/* Operation tables */
+static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
+                                              .readdir = devfs_root_readdir};
+
+static struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
+
+/* --- Public API Implementations --- */
 
 /*
- * devfs_register_device - Allocates a vnode and registers a new device
- * in the devfs linked list.
+ * devfs_register_device - Creates a vnode and links it to the device list.
  */
 int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *internal_info)
 {
@@ -135,7 +150,7 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
 }
 
 /*
- * devfs_get_root - Returns the root directory of the device filesystem.
+ * devfs_get_root - Exposes the root vnode for mounting into the global VFS.
  */
 struct vfs_vnode *devfs_get_root(void)
 {
@@ -143,35 +158,13 @@ struct vfs_vnode *devfs_get_root(void)
 }
 
 /*
- * devfs_tty_read - Proxies VFS read calls to the TTY driver.
- */
-static int devfs_tty_read(struct vfs_file *file, void *buffer, size_t size)
-{
-    struct tty *tty = (struct tty *)file->node->internal_info;
-    return tty_read(tty, (char *)buffer, size);
-}
-
-/*
- * devfs_tty_write - Proxies VFS write calls to the TTY driver.
- */
-static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t size)
-{
-    struct tty *tty = (struct tty *)file->node->internal_info;
-    return tty_write(tty, (const char *)buffer, size);
-}
-
-/* Operation mapping for TTY device nodes */
-static struct vfs_vnode_ops devfs_tty_ops = {
-    .read = devfs_tty_read, .write = devfs_tty_write, .lookup = NULL};
-
-/*
- * devfs_init - Boot-time initialization for the device filesystem.
+ * devfs_init - Initializes the root vnode and registers the primary console.
  */
 void devfs_init(void)
 {
     devfs_root_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     if (!devfs_root_vnode) {
-        PANIC("Failed to allocate devfs root");
+        PANIC("devfs: root allocation failed");
     }
 
     devfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
@@ -181,9 +174,8 @@ void devfs_init(void)
     devfs_root_vnode->file_size = 0;
     devfs_root_vnode->refcount.counter = 1;
 
-    // Register UART console as the first device in /dev
     if (devfs_register_device("uart", &devfs_tty_ops, &console_tty) != 0) {
-        PANIC("Failed to register /dev/uart");
+        PANIC("devfs: console registration failed");
     }
 
     pr_info("devfs: Device File System initialized\n");
