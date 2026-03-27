@@ -188,7 +188,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Initialize and mount procfs */
     procfs_init();
 
-    // run_all_tests();
+    run_all_tests();
     enable_interrupts();
     run_scheduler_tests();
 

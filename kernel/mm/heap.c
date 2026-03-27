@@ -1,46 +1,50 @@
 /*
  * heap.c - Implementation of the kernel heap allocator.
  *
- * This file manages dynamic memory allocation using a hybrid approach
- * with a fast slab layer for small objects and a first-fit buddy fallback
- * for larger requests.
+ * This module manages dynamic memory using a hybrid fast-slab and first-fit
+ * buddy fallback. It uses contiguous PMM pages to grow the first-fit pool.
  */
 
 #include "mm/heap.h"
 
+#include "stdio.h"
+#include "panic.h"
+
+#include "core/lock.h"
+#include "core/timer.h"
 #include "mm/slab.h"
 #include "mm/pmm.h"
 
-#include "core/lock.h"
-#include "stdio.h"
-#include "panic.h"
-#include "core/timer.h"
+/* --- Private Macros --- */
 
-/* Allocations <= this value are handled by the slab allocator */
-#define HEAP_SLAB_MAX 1024
-
-/* Maximum size for a single heap allocation (8 MB) */
+#define HEAP_SLAB_MAX  1024
 #define HEAP_MAX_ALLOC (8 * 1024 * 1024)
+#define HEAP_ALIGN(x)  (((x) + 15) & ~15UL)
 
-/* Block header preceding every allocation in the first-fit pool */
+/* --- Private Data Structures --- */
+
+/*
+ * struct heap_block_header - Prefix for first-fit pool allocations.
+ */
 struct heap_block_header {
-    unsigned long size;             /* Usable size excluding the header */
-    struct heap_block_header *next; /* Next block in the free list */
-    unsigned char is_free;          /* Flag indicating if block is free */
+    unsigned long size;
+    struct heap_block_header *next;
+    unsigned char is_free;
 } __attribute__((aligned(16)));
 
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
-#define HEAP_ALIGN(x)    (((x) + 15) & ~15UL)
 
-/* Heap state and synchronization */
+/* --- Private Variables --- */
+
 static struct heap_block_header *heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
 static unsigned long heap_used_size = 0;
 
+/* --- Private Helper Functions --- */
+
 /*
- * heap_expand - Requests contiguous pages from the PMM to grow the heap.
- * Returns a free block header for the new region, or NULL on failure.
+ * heap_expand - Requests contiguous pages from PMM to grow the pool.
  */
 static struct heap_block_header *heap_expand(unsigned long min_size)
 {
@@ -63,20 +67,15 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
 }
 
 /*
- * heap_insert_free - Inserts a free block into the free list in address
- * order and coalesces it with any physically adjacent free neighbours.
+ * heap_insert_free - Inserts a block into the address-ordered free list.
  *
- * Keeping the list sorted by address is what makes O(n) coalescing correct:
- * a block can only be physically adjacent to its immediate predecessor and
- * successor in address order, so a single forward pass is sufficient.
- *
- * Must be called with heap_lock held.
+ * Address ordering allows for O(n) coalescing by checking only the
+ * immediate predecessor and successor in the list.
  */
 static void heap_insert_free(struct heap_block_header *block)
 {
     block->is_free = 1;
 
-    /* Find the insertion point: prev->next > block > prev */
     struct heap_block_header *prev = NULL;
     struct heap_block_header *next = heap_free_list;
     while (next && (unsigned long)next < (unsigned long)block) {
@@ -84,7 +83,6 @@ static void heap_insert_free(struct heap_block_header *block)
         next = next->next;
     }
 
-    /* Link block into the list */
     block->next = next;
     if (prev) {
         prev->next = block;
@@ -92,10 +90,7 @@ static void heap_insert_free(struct heap_block_header *block)
         heap_free_list = block;
     }
 
-    /*
-     * Coalesce with successor: if block's usable region runs right up to
-     * the start of next, merge them. Only merge if next is actually free.
-     */
+    /* Coalesce with successor */
     if (next && next->is_free) {
         unsigned char *block_end = (unsigned char *)block + HEAP_HEADER_SIZE + block->size;
         if (block_end == (unsigned char *)next) {
@@ -104,10 +99,7 @@ static void heap_insert_free(struct heap_block_header *block)
         }
     }
 
-    /*
-     * Coalesce with predecessor: if prev's usable region runs right up to
-     * the start of block, merge them. Only merge if prev is actually free.
-     */
+    /* Coalesce with predecessor */
     if (prev && prev->is_free) {
         unsigned char *prev_end = (unsigned char *)prev + HEAP_HEADER_SIZE + prev->size;
         if (prev_end == (unsigned char *)block) {
@@ -117,8 +109,10 @@ static void heap_insert_free(struct heap_block_header *block)
     }
 }
 
+/* --- Public API Implementations --- */
+
 /*
- * heap_init - Boot-time initialization of all heap layers.
+ * heap_init - Initializes slab layer and the first-fit pool.
  */
 void heap_init(void)
 {
@@ -126,15 +120,14 @@ void heap_init(void)
 
     heap_free_list = heap_expand(PAGE_SIZE);
     if (!heap_free_list) {
-        PANIC("HEAP: Failed to initialize pool.");
+        PANIC("heap: failed to initialize pool");
     }
 
     pr_info("heap: %lu bytes aligned to 16 bytes\n", heap_free_list->size);
 }
 
 /*
- * heap_malloc - Allocates a memory block from the appropriate layer.
- * Returns NULL on failure; never panics.
+ * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
  */
 void *heap_malloc(unsigned long size)
 {
@@ -142,7 +135,6 @@ void *heap_malloc(unsigned long size)
         return NULL;
     }
 
-    /* Use the O(1) slab path for small objects */
     if (size <= HEAP_SLAB_MAX) {
         return slab_alloc(size);
     }
@@ -152,19 +144,17 @@ void *heap_malloc(unsigned long size)
     while (1) {
         unsigned long flags = spin_lock_irqsave(&heap_lock);
 
-        /* First-fit search in the free list */
         struct heap_block_header *prev = NULL;
         struct heap_block_header *curr = heap_free_list;
         while (curr) {
             if (curr->size >= size) {
-                /* Found a suitable block. Unlink it from the free list. */
                 if (prev) {
                     prev->next = curr->next;
                 } else {
                     heap_free_list = curr->next;
                 }
 
-                /* Split if there is enough room for a usable remainder */
+                /* Split if remainder is large enough for a header and usable space */
                 if (curr->size >= size + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
                         (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
@@ -173,9 +163,7 @@ void *heap_malloc(unsigned long size)
                     split->is_free = 1;
                     split->next = NULL;
 
-                    /* Re-insert the remainder back into the free list */
                     heap_insert_free(split);
-
                     curr->size = size;
                 }
 
@@ -190,7 +178,6 @@ void *heap_malloc(unsigned long size)
             curr = curr->next;
         }
 
-        /* No suitable block found — drop lock and expand the heap */
         spin_unlock_irqrestore(&heap_lock, flags);
 
         struct heap_block_header *new_block = heap_expand(size);
@@ -198,7 +185,6 @@ void *heap_malloc(unsigned long size)
             return NULL;
         }
 
-        /* Re-lock and insert the new region. It will be found in the next iteration. */
         flags = spin_lock_irqsave(&heap_lock);
         heap_insert_free(new_block);
         spin_unlock_irqrestore(&heap_lock, flags);
@@ -206,7 +192,7 @@ void *heap_malloc(unsigned long size)
 }
 
 /*
- * heap_free - Returns memory to the pool.
+ * heap_free - Returns memory to pool; detects double-frees in first-fit pool.
  */
 void heap_free(void *ptr)
 {
@@ -214,7 +200,6 @@ void heap_free(void *ptr)
         return;
     }
 
-    /* Redirect to slab if it owns this pointer */
     if (slab_owns(ptr)) {
         slab_free(ptr);
         return;
@@ -225,7 +210,7 @@ void heap_free(void *ptr)
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
     if (block->is_free) {
-        PANIC("HEAP: Double free detected.");
+        PANIC("heap: double free detected");
     }
 
     heap_used_size -= block->size + HEAP_HEADER_SIZE;
@@ -235,7 +220,7 @@ void heap_free(void *ptr)
 }
 
 /*
- * heap_get_used - Combined used memory count.
+ * heap_get_used - Returns combined usage from both layers.
  */
 unsigned long heap_get_used(void)
 {
@@ -243,7 +228,7 @@ unsigned long heap_get_used(void)
 }
 
 /*
- * heap_get_total - Combined total memory count.
+ * heap_get_total - Returns combined total from both layers.
  */
 unsigned long heap_get_total(void)
 {
