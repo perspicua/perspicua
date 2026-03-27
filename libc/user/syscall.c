@@ -1,17 +1,16 @@
 /*
  * syscall.c - Userspace system call wrapper implementations.
  *
- * This file contains the AArch64 assembly wrappers for the system calls
- * defined in the libc API, using the SVC instruction to transition to EL1.
+ * This file provides the AArch64 assembly wrappers for the libc API,
+ * using the SVC instruction to transition to the kernel.
  */
 
 #include "syscall.h"
 
 #include "uapi/syscalls.h"
 
-/*
- * sys_exit - Terminates the current process with an exit status.
- */
+/* --- Public API Implementations --- */
+
 void sys_exit(int status)
 {
     asm volatile("mov x0, %0\n"
@@ -22,10 +21,7 @@ void sys_exit(int status)
                  : "x0", "x8", "memory");
 }
 
-/*
- * sys_write - Writes data to a file descriptor.
- */
-void sys_write(int fd, const char* buf, size_t len)
+void sys_write(int fd, const char *buf, size_t len)
 {
     asm volatile("mov x0, %0\n"
                  "mov x1, %1\n"
@@ -37,9 +33,6 @@ void sys_write(int fd, const char* buf, size_t len)
                  : "x0", "x1", "x2", "x8", "memory");
 }
 
-/*
- * sys_getpid - Retrieves the current process identifier.
- */
 int sys_getpid(void)
 {
     long pid;
@@ -52,9 +45,6 @@ int sys_getpid(void)
     return (int)pid;
 }
 
-/*
- * sys_yield - Voluntarily yields the CPU to the scheduler.
- */
 void sys_yield(void)
 {
     asm volatile("mov x8, %0\n"
@@ -64,9 +54,6 @@ void sys_yield(void)
                  : "x8", "memory");
 }
 
-/*
- * sys_sleep - Puts the current process to sleep for a number of milliseconds.
- */
 void sys_sleep(unsigned long ms)
 {
     asm volatile("mov x0, %0\n"
@@ -77,10 +64,7 @@ void sys_sleep(unsigned long ms)
                  : "x0", "x8", "memory");
 }
 
-/*
- * sys_open - Opens a file and returns a file descriptor.
- */
-int sys_open(const char* path, int flags)
+int sys_open(const char *path, int flags)
 {
     long fd;
     asm volatile("mov x0, %1\n"
@@ -94,10 +78,7 @@ int sys_open(const char* path, int flags)
     return (int)fd;
 }
 
-/*
- * sys_read - Reads data from a file descriptor.
- */
-int sys_read(int fd, void* buf, size_t len)
+int sys_read(int fd, void *buf, size_t len)
 {
     long bytes;
     asm volatile("mov x0, %1\n"
@@ -112,10 +93,7 @@ int sys_read(int fd, void* buf, size_t len)
     return (int)bytes;
 }
 
-/*
- * sys_getdents - Reads directory entries from a directory file descriptor.
- */
-int sys_getdents(int fd, void* buf, size_t count)
+int sys_getdents(int fd, void *buf, size_t count)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -130,9 +108,6 @@ int sys_getdents(int fd, void* buf, size_t count)
     return (int)res;
 }
 
-/*
- * sys_close - Closes an open file descriptor.
- */
 int sys_close(int fd)
 {
     long res;
@@ -146,10 +121,7 @@ int sys_close(int fd)
     return (int)res;
 }
 
-/*
- * sys_exec - Replaces the current process image with a new executable.
- */
-int sys_exec(const char* path, char* const argv[])
+int sys_exec(const char *path, char *const argv[])
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -163,9 +135,6 @@ int sys_exec(const char* path, char* const argv[])
     return (int)res;
 }
 
-/*
- * sys_fork - Creates a duplicate of the current process.
- */
 int sys_fork(void)
 {
     long res;
@@ -178,10 +147,7 @@ int sys_fork(void)
     return (int)res;
 }
 
-/*
- * sys_waitpid - Waits for a specific child process to terminate.
- */
-int sys_waitpid(int pid, int* status, int options)
+int sys_waitpid(int pid, int *status, int options)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -196,9 +162,6 @@ int sys_waitpid(int pid, int* status, int options)
     return (int)res;
 }
 
-/*
- * sys_pipe - Creates an anonymous pipe.
- */
 int sys_pipe(int pipefd[2])
 {
     long res;
@@ -212,9 +175,6 @@ int sys_pipe(int pipefd[2])
     return (int)res;
 }
 
-/*
- * sys_dup2 - Duplicates a file descriptor to a specific new descriptor.
- */
 int sys_dup2(int oldfd, int newfd)
 {
     long res;
@@ -229,9 +189,6 @@ int sys_dup2(int oldfd, int newfd)
     return (int)res;
 }
 
-/*
- * sys_signal - Sets the handler for a specific signal.
- */
 int sys_signal(int sig, signal_handler_t handler)
 {
     long res;
@@ -246,9 +203,6 @@ int sys_signal(int sig, signal_handler_t handler)
     return (int)res;
 }
 
-/*
- * sys_kill - Sends a signal to a process.
- */
 int sys_kill(int pid, int sig)
 {
     long res;
@@ -263,9 +217,6 @@ int sys_kill(int pid, int sig)
     return (int)res;
 }
 
-/*
- * sys_sigreturn - Returns from a signal handler, restoring the context.
- */
 void sys_sigreturn(void)
 {
     asm volatile("mov x8, %0\n"
@@ -275,9 +226,6 @@ void sys_sigreturn(void)
                  : "x8", "memory");
 }
 
-/*
- * sys_sigrestore - Registers the restorer for a signal handler.
- */
 void sys_sigrestore(uintptr_t restorer)
 {
     asm volatile("mov x0, %0\n"
@@ -288,7 +236,7 @@ void sys_sigrestore(uintptr_t restorer)
                  : "x0", "x8", "memory");
 }
 
-int sys_sigaction(int sig, const struct sigaction* act, struct sigaction* oact)
+int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -303,7 +251,7 @@ int sys_sigaction(int sig, const struct sigaction* act, struct sigaction* oact)
     return (int)res;
 }
 
-int sys_sigprocmask(int how, const sigset_t* set, sigset_t* oset)
+int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -318,7 +266,7 @@ int sys_sigprocmask(int how, const sigset_t* set, sigset_t* oset)
     return (int)res;
 }
 
-int sys_sigpending(sigset_t* set)
+int sys_sigpending(sigset_t *set)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -331,7 +279,7 @@ int sys_sigpending(sigset_t* set)
     return (int)res;
 }
 
-int sys_sigsuspend(const sigset_t* mask)
+int sys_sigsuspend(const sigset_t *mask)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -344,7 +292,7 @@ int sys_sigsuspend(const sigset_t* mask)
     return (int)res;
 }
 
-int sys_chdir(const char* path)
+int sys_chdir(const char *path)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -357,7 +305,7 @@ int sys_chdir(const char* path)
     return (int)res;
 }
 
-int sys_getcwd(char* buf, size_t size)
+int sys_getcwd(char *buf, size_t size)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -371,7 +319,7 @@ int sys_getcwd(char* buf, size_t size)
     return (int)res;
 }
 
-int sys_stat(const char* path, struct stat* buf)
+int sys_stat(const char *path, struct stat *buf)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -385,10 +333,7 @@ int sys_stat(const char* path, struct stat* buf)
     return (int)res;
 }
 
-/*
- * sys_mmap - Maps files or devices into memory.
- */
-void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset)
+void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
 {
     long res;
     asm volatile("mov x0, %1\n"
@@ -401,7 +346,8 @@ void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t off
                  "svc #0\n"
                  "mov %0, x0"
                  : "=r"(res)
-                 : "r"(addr), "r"(length), "r"((long)prot), "r"((long)flags), "r"((long)fd), "r"(offset), "i"(SYS_MMAP)
+                 : "r"(addr), "r"(length), "r"((long)prot), "r"((long)flags), "r"((long)fd),
+                   "r"(offset), "i"(SYS_MMAP)
                  : "x0", "x1", "x2", "x3", "x4", "x5", "x8", "memory");
-    return (void*)res;
+    return (void *)res;
 }

@@ -9,9 +9,9 @@
 #include "mm/heap.h"
 
 /* Helper to block the current task on a pipe queue */
-static void pipe_wait(struct task** queue, spinlock_t* lock)
+static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
-    struct task* self = sched_get_current();
+    struct task *self = sched_get_current();
     unsigned long flags = irq_save();
 
     /* Set state to BLOCKED before releasing the lock to avoid lost wake-up */
@@ -33,24 +33,23 @@ static void pipe_wait(struct task** queue, spinlock_t* lock)
 }
 
 /* Helper to wake up all tasks on a pipe queue */
-static void pipe_wake(struct task** queue)
+static void pipe_wake(struct task **queue)
 {
-    struct task* t = *queue;
+    struct task *t = *queue;
     *queue = NULL; /* Clear queue FIRST to avoid race with new waiters */
 
-    while (t)
-    {
-        struct task* next = t->next;
+    while (t) {
+        struct task *next = t->next;
         sched_unblock(t);
         t = next;
     }
 }
 
-static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
+static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_vnode* node = file->node;
-    struct pipe* pipe = (struct pipe*)node->internal_info;
-    char* buf = (char*)buffer;
+    struct vfs_vnode *node = file->node;
+    struct pipe *pipe = (struct pipe *)node->internal_info;
+    char *buf = (char *)buffer;
     size_t read = 0;
 
     if (!pipe)
@@ -58,26 +57,20 @@ static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
 
     spin_lock(&pipe->lock);
 
-    while (read < count)
-    {
-        if (pipe->count > 0)
-        {
+    while (read < count) {
+        if (pipe->count > 0) {
             /* Copy data from circular buffer */
             buf[read++] = pipe->buffer[pipe->tail];
             pipe->tail = (pipe->tail + 1) % PIPE_BUF_SIZE;
             pipe->count--;
-        }
-        else
-        {
+        } else {
             /* Buffer is empty */
-            if (read > 0)
-            {
+            if (read > 0) {
                 /* Already read some data, return what we have */
                 break;
             }
 
-            if (pipe->writers == 0)
-            {
+            if (pipe->writers == 0) {
                 /* EOF: No more writers and buffer is empty */
                 break;
             }
@@ -88,8 +81,7 @@ static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
     }
 
     /* Wake up writers as space is now available */
-    if (pipe->write_wait_queue)
-    {
+    if (pipe->write_wait_queue) {
         pipe_wake(&pipe->write_wait_queue);
     }
 
@@ -97,11 +89,11 @@ static int pipe_read(struct vfs_file* file, void* buffer, size_t count)
     return (int)read;
 }
 
-static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
+static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
 {
-    struct vfs_vnode* node = file->node;
-    struct pipe* pipe = (struct pipe*)node->internal_info;
-    const char* buf = (const char*)buffer;
+    struct vfs_vnode *node = file->node;
+    struct pipe *pipe = (struct pipe *)node->internal_info;
+    const char *buf = (const char *)buffer;
     size_t written = 0;
 
     if (!pipe)
@@ -109,32 +101,26 @@ static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
 
     spin_lock(&pipe->lock);
 
-    while (written < count)
-    {
-        if (pipe->readers == 0)
-        {
+    while (written < count) {
+        if (pipe->readers == 0) {
             /* Broken pipe */
             spin_unlock(&pipe->lock);
             return -PERS_ERR_BROKEN_PIPE;
         }
 
-        if (pipe->count < PIPE_BUF_SIZE)
-        {
+        if (pipe->count < PIPE_BUF_SIZE) {
             /* Copy data to circular buffer */
             pipe->buffer[pipe->head] = buf[written++];
             pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
-        }
-        else
-        {
+        } else {
             /* Buffer is full, block until space is available */
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
 
     /* Wake up readers as data is now available */
-    if (pipe->read_wait_queue)
-    {
+    if (pipe->read_wait_queue) {
         pipe_wake(&pipe->read_wait_queue);
     }
 
@@ -142,10 +128,10 @@ static int pipe_write(struct vfs_file* file, const void* buffer, size_t count)
     return (int)written;
 }
 
-static int pipe_close(struct vfs_file* file)
+static int pipe_close(struct vfs_file *file)
 {
-    struct vfs_vnode* node = file->node;
-    struct pipe* pipe = (struct pipe*)node->internal_info;
+    struct vfs_vnode *node = file->node;
+    struct pipe *pipe = (struct pipe *)node->internal_info;
     if (!pipe)
         return PERS_SUCCESS;
 
@@ -164,8 +150,7 @@ static int pipe_close(struct vfs_file* file)
     int destroy = (pipe->readers == 0 && pipe->writers == 0);
     spin_unlock(&pipe->lock);
 
-    if (destroy)
-    {
+    if (destroy) {
         heap_free(pipe);
         node->internal_info = NULL;
     }
@@ -174,7 +159,8 @@ static int pipe_close(struct vfs_file* file)
 }
 
 /* Pipe operations table */
-struct vfs_vnode_ops pipe_ops = {.read = pipe_read, .write = pipe_write, .lookup = NULL, .close = pipe_close};
+struct vfs_vnode_ops pipe_ops = {
+    .read = pipe_read, .write = pipe_write, .lookup = NULL, .close = pipe_close};
 
 /*
  * kernel_pipe - Internal implementation of the pipe() system call.
@@ -185,10 +171,10 @@ int kernel_pipe(int pipefd[2])
     if (pid < 0)
         return pid;
 
-    struct process* p = &process_table[pid];
+    struct process *p = &process_table[pid];
 
     /* 1. Allocate the shared pipe structure */
-    struct pipe* pipe = (struct pipe*)heap_malloc(sizeof(struct pipe));
+    struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
     if (!pipe)
         return -PERS_ERR_OUT_OF_MEMORY;
 
@@ -198,9 +184,8 @@ int kernel_pipe(int pipefd[2])
     pipe->lock.locked = 0;
 
     /* 2. Allocate the vnode that represents this pipe */
-    struct vfs_vnode* node = (struct vfs_vnode*)slab_alloc(sizeof(struct vfs_vnode));
-    if (!node)
-    {
+    struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+    if (!node) {
         heap_free(pipe);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
@@ -212,11 +197,10 @@ int kernel_pipe(int pipefd[2])
     node->refcount.counter = 2; /* One for each file descriptor */
 
     /* 3. Create the two file objects */
-    struct vfs_file* f_read = (struct vfs_file*)slab_alloc(sizeof(struct vfs_file));
-    struct vfs_file* f_write = (struct vfs_file*)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file *f_read = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file *f_write = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
 
-    if (!f_read || !f_write)
-    {
+    if (!f_read || !f_write) {
         if (f_read)
             slab_free(f_read);
         if (f_write)
@@ -240,29 +224,24 @@ int kernel_pipe(int pipefd[2])
     int fd_r = -1, fd_w = -1;
     spin_lock(&p->fd_lock);
 
-    for (int i = 0; i < VFS_MAX_FDS; i++)
-    {
-        if (!p->fd_table[i])
-        {
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (!p->fd_table[i]) {
             if (fd_r == -1)
                 fd_r = i;
-            else if (fd_w == -1)
-            {
+            else if (fd_w == -1) {
                 fd_w = i;
                 break;
             }
         }
     }
 
-    if (fd_r != -1 && fd_w != -1)
-    {
+    if (fd_r != -1 && fd_w != -1) {
         p->fd_table[fd_r] = f_read;
         p->fd_table[fd_w] = f_write;
     }
     spin_unlock(&p->fd_lock);
 
-    if (fd_r == -1 || fd_w == -1)
-    {
+    if (fd_r == -1 || fd_w == -1) {
         /* Cleanup on failure to find slots */
         slab_free(f_read);
         slab_free(f_write);

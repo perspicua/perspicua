@@ -12,13 +12,13 @@
  *   \n is translated to \r\n automatically.
  *   Thread-safe under __KERNEL__ via printf_lock.
  */
-int printf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /*
  * printk - Kernel-specific logging that prepends a system timestamp.
  */
 #ifdef __KERNEL__
-int printk(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+int printk(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
     #define pr_info(fmt, ...)  printk(fmt, ##__VA_ARGS__)
     #define pr_err(fmt, ...)   printk("ERROR: " fmt, ##__VA_ARGS__)
@@ -29,7 +29,7 @@ int printk(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 /*
  * vprintf - va_list variant of printf.
  */
-int vprintf(const char* fmt, va_list args);
+int vprintf(const char *fmt, va_list args);
 
 /*
  * snprintf - Formatted output into a size-bounded buffer.
@@ -37,11 +37,11 @@ int vprintf(const char* fmt, va_list args);
  *   written if the buffer were unlimited (C99 semantics).
  *   Does NOT translate \n to \r\n — produces clean strings.
  */
-int snprintf(char* buf, size_t size, const char* fmt, ...) __attribute__((format(printf, 3, 4)));
+int snprintf(char *buf, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
 /*
  * vsnprintf - va_list variant of snprintf.
  */
-int vsnprintf(char* buf, size_t size, const char* fmt, va_list args);
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 
 #endif /* PERSPICUA_LIBC_STDIO_H */

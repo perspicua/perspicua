@@ -1,17 +1,18 @@
 /*
  * timer.c - Implementation of system time and interrupt control.
  *
- * This file handles interaction with the AArch64 generic physical timer
- * and provides primitives for millisecond-precision delays and
- * low-level interrupt state management.
+ * This module handles the AArch64 generic physical timer and provides
+ * delay primitives and low-level interrupt state management.
  */
 
 #include "core/timer.h"
 
 #include "stdio.h"
 
+/* --- Private Helper Functions --- */
+
 /*
- * read_cntfrq - Internal helper to read the system counter frequency register.
+ * read_cntfrq - Reads the system counter frequency register (CNTFRQ_EL0).
  */
 static inline unsigned int read_cntfrq(void)
 {
@@ -21,7 +22,7 @@ static inline unsigned int read_cntfrq(void)
 }
 
 /*
- * read_cntpct - Internal helper to read the physical counter register.
+ * read_cntpct - Reads the physical counter register (CNTPCT_EL0).
  */
 static inline unsigned long read_cntpct(void)
 {
@@ -30,16 +31,17 @@ static inline unsigned long read_cntpct(void)
     return val;
 }
 
+/* --- Public API Implementations --- */
+
 /*
- * get_system_time - Returns the uptime in milliseconds.
+ * get_system_time - Converts raw counter ticks to milliseconds of uptime.
  */
 unsigned long get_system_time(void)
 {
     unsigned long freq = read_cntfrq();
     unsigned long count = read_cntpct();
 
-    if (freq < 1000)
-    {
+    if (freq < 1000) {
         return 0;
     }
 
@@ -47,13 +49,12 @@ unsigned long get_system_time(void)
 }
 
 /*
- * sleep_ms - Performs a busy-wait delay for the specified duration.
+ * sleep_ms - Blocks the current core for a specific duration.
  */
 void sleep_ms(unsigned long ms)
 {
     unsigned long freq = read_cntfrq();
-    if (freq == 0)
-    {
+    if (freq == 0) {
         return;
     }
 
@@ -61,14 +62,13 @@ void sleep_ms(unsigned long ms)
     unsigned long current_count = read_cntpct();
     unsigned long target_count = current_count + (ms * ticks_per_ms);
 
-    while (read_cntpct() < target_count)
-    {
+    while (read_cntpct() < target_count) {
         asm volatile("yield");
     }
 }
 
 /*
- * enable_interrupts - Unmasks IRQs in the current CPU core's DAIF register.
+ * enable_interrupts - Unmasks IRQs (DAIF bit 2).
  */
 void enable_interrupts(void)
 {
@@ -76,7 +76,7 @@ void enable_interrupts(void)
 }
 
 /*
- * disable_interrupts - Masks IRQs in the current CPU core's DAIF register.
+ * disable_interrupts - Masks IRQs (DAIF bit 2).
  */
 void disable_interrupts(void)
 {
@@ -84,7 +84,7 @@ void disable_interrupts(void)
 }
 
 /*
- * timer_interrupt_init - Configures the generic timer for the local CPU core.
+ * timer_interrupt_init - Configures the generic timer for 100Hz periodic ticks.
  */
 void timer_interrupt_init(void)
 {
@@ -92,26 +92,26 @@ void timer_interrupt_init(void)
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
     core_id &= 3;
 
-    /* The Raspberry Pi 4 local interrupt controller base for core timers */
+    /* Base address for RPi4 local interrupt routing (QA7) */
     unsigned long base_addr = 0xFFFFFF80FF800040 + (core_id * 4);
-    volatile unsigned int* core_timer_irq_ctrl = (unsigned int*)base_addr;
+    volatile unsigned int *core_timer_irq_ctrl = (unsigned int *)base_addr;
 
-    /* Enable physical timer interrupt routing for this core */
+    /* Route physical timer interrupts to this core */
     *core_timer_irq_ctrl = (1 << 1);
 
     unsigned int freq = read_cntfrq();
-    /* Set timer to fire at 100Hz (every 10ms) */
+
+    /* Set TVAL to fire in 1/100th of a second (10ms) */
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
-    if (core_id == 0)
-    {
+    if (core_id == 0) {
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }
 
 /*
- * timer_interrupt_reset - Reloads the timer value for the next tick.
+ * timer_interrupt_reset - Reloads TVAL for the next periodic tick.
  */
 void timer_interrupt_reset(void)
 {
@@ -120,7 +120,7 @@ void timer_interrupt_reset(void)
 }
 
 /*
- * irq_save - Disables interrupts and returns the previous state mask.
+ * irq_save - Atomically reads and masks IRQs.
  */
 unsigned long irq_save(void)
 {
@@ -131,7 +131,7 @@ unsigned long irq_save(void)
 }
 
 /*
- * irq_restore - Restores the core's interrupt state from a saved mask.
+ * irq_restore - Restores DAIF to a previous state.
  */
 void irq_restore(unsigned long flags)
 {

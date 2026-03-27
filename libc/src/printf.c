@@ -48,7 +48,7 @@
 static spinlock_t printf_lock = SPINLOCK_INIT;
 #endif
 
-extern void __libc_write(const char* buf, size_t len);
+extern void __libc_write(const char *buf, size_t len);
 
 /* Output buffer size for printf's stack buffer.
  * Increase if you routinely format very long lines. */
@@ -66,9 +66,8 @@ extern void __libc_write(const char* buf, size_t len);
  * For snprintf/vsnprintf: writes into the caller-supplied buffer, capping at
  *                      the given size and always NUL-terminating.
  */
-struct fmt_buf
-{
-    char* buf;   /* destination buffer (NULL = use internal flush path) */
+struct fmt_buf {
+    char *buf;   /* destination buffer (NULL = use internal flush path) */
     size_t size; /* capacity including the NUL terminator */
     size_t pos;  /* bytes written so far (excluding NUL) */
     int crlf;    /* 1 = translate \n to \r\n, 0 = pass through */
@@ -79,18 +78,15 @@ struct fmt_buf
  * For the printf path (buf == NULL) the character is accumulated in an
  * internal stack buffer; for the snprintf path it goes into buf directly.
  */
-static inline void fb_putc(struct fmt_buf* fb, char c)
+static inline void fb_putc(struct fmt_buf *fb, char c)
 {
-    if (fb->buf)
-    {
+    if (fb->buf) {
         /* snprintf path: write into caller buffer up to size-1 bytes */
         if (fb->pos < fb->size - 1)
             fb->buf[fb->pos] = c;
         /* Always increment pos so the caller can detect truncation */
         fb->pos++;
-    }
-    else
-    {
+    } else {
         /* printf path: accumulate in the internal stack buffer.
          * The caller holds a separate stack buffer and flushes at the end;
          * here we call __libc_write directly one char at a time only as a
@@ -112,18 +108,16 @@ static inline void fb_putc(struct fmt_buf* fb, char c)
  * @uppercase:  use A-F instead of a-f
  * @out:        caller-supplied buffer of at least 66 bytes (binary needs 64)
  */
-static int fmt_uint(uint64_t val, int base, int uppercase, char* out)
+static int fmt_uint(uint64_t val, int base, int uppercase, char *out)
 {
-    if (val == 0)
-    {
+    if (val == 0) {
         out[0] = '0';
         return 1;
     }
 
     char tmp[66];
     int i = 0;
-    while (val)
-    {
+    while (val) {
         unsigned int d = (unsigned int)(val % (unsigned)base);
         if (d < 10)
             tmp[i++] = (char)('0' + d);
@@ -150,12 +144,10 @@ static int fmt_uint(uint64_t val, int base, int uppercase, char* out)
  * Returns the total number of characters that would have been written
  * (excluding NUL), even if the buffer was too small (snprintf semantics).
  */
-static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
+static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
 {
-    for (const char* p = fmt; *p != '\0'; p++)
-    {
-        if (*p != '%')
-        {
+    for (const char *p = fmt; *p != '\0'; p++) {
+        if (*p != '%') {
             /* Translate \n to \r\n on the UART printf path */
             if (*p == '\n' && fb->crlf)
                 fb_putc(fb, '\r');
@@ -172,29 +164,20 @@ static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
         int flag_plus = 0;  /* '+': force sign  */
         int flag_space = 0; /* ' ': space sign  */
 
-        while (1)
-        {
-            if (*p == '-')
-            {
+        while (1) {
+            if (*p == '-') {
                 flag_left = 1;
                 p++;
-            }
-            else if (*p == '0')
-            {
+            } else if (*p == '0') {
                 flag_zero = 1;
                 p++;
-            }
-            else if (*p == '+')
-            {
+            } else if (*p == '+') {
                 flag_plus = 1;
                 p++;
-            }
-            else if (*p == ' ')
-            {
+            } else if (*p == ' ') {
                 flag_space = 1;
                 p++;
-            }
-            else
+            } else
                 break;
         }
         /* Left-align overrides zero-pad */
@@ -203,19 +186,15 @@ static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
 
         /* Width */
         int width = 0;
-        if (*p == '*')
-        {
+        if (*p == '*') {
             width = va_arg(args, int);
-            if (width < 0)
-            {
+            if (width < 0) {
                 flag_left = 1;
                 flag_zero = 0;
                 width = -width;
             }
             p++;
-        }
-        else
-        {
+        } else {
             while (*p >= '0' && *p <= '9')
                 width = width * 10 + (*p++ - '0');
         }
@@ -223,20 +202,16 @@ static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
         /* Precision */
         int prec = -1; /* -1 = not specified */
         int has_prec = 0;
-        if (*p == '.')
-        {
+        if (*p == '.') {
             p++;
             has_prec = 1;
             prec = 0;
-            if (*p == '*')
-            {
+            if (*p == '*') {
                 prec = va_arg(args, int);
                 if (prec < 0)
                     prec = 0;
                 p++;
-            }
-            else
-            {
+            } else {
                 while (*p >= '0' && *p <= '9')
                     prec = prec * 10 + (*p++ - '0');
             }
@@ -248,19 +223,14 @@ static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
         int is_longlong = 0; /* 'll' */
         int is_size = 0;     /* 'z'  */
 
-        if (*p == 'l')
-        {
+        if (*p == 'l') {
             p++;
-            if (*p == 'l')
-            {
+            if (*p == 'l') {
                 is_longlong = 1;
                 p++;
-            }
-            else
+            } else
                 is_long = 1;
-        }
-        else if (*p == 'z')
-        {
+        } else if (*p == 'z') {
             is_size = 1;
             p++;
         }
@@ -272,62 +242,56 @@ static int fmt_core(struct fmt_buf* fb, const char* fmt, va_list args)
         int base = 10;
         int uppercase = 0;
 
-        switch (*p)
-        {
-        /* ---- Signed integers ---- */
-        case 'd':
-        case 'i':
-        {
-            int64_t val;
-            if (is_longlong)
-                val = (int64_t)va_arg(args, long long);
-            else if (is_long)
-                val = (int64_t)va_arg(args, long);
-            else if (is_size)
-                val = (int64_t)va_arg(args, ssize_t);
-            else
-                val = (int64_t)va_arg(args, int);
+        switch (*p) {
+            /* ---- Signed integers ---- */
+            case 'd':
+            case 'i': {
+                int64_t val;
+                if (is_longlong)
+                    val = (int64_t)va_arg(args, long long);
+                else if (is_long)
+                    val = (int64_t)va_arg(args, long);
+                else if (is_size)
+                    val = (int64_t)va_arg(args, ssize_t);
+                else
+                    val = (int64_t)va_arg(args, int);
 
-            uint64_t uval;
-            if (val < 0)
-            {
-                sign_char = '-';
-                /* Safe negation of INT64_MIN */
-                uval = (uint64_t)(-(val + 1)) + 1ULL;
+                uint64_t uval;
+                if (val < 0) {
+                    sign_char = '-';
+                    /* Safe negation of INT64_MIN */
+                    uval = (uint64_t)(-(val + 1)) + 1ULL;
+                } else {
+                    if (flag_plus)
+                        sign_char = '+';
+                    else if (flag_space)
+                        sign_char = ' ';
+                    uval = (uint64_t)val;
+                }
+                num_len = fmt_uint(uval, 10, 0, num_buf);
+                goto emit_number;
             }
-            else
-            {
-                if (flag_plus)
-                    sign_char = '+';
-                else if (flag_space)
-                    sign_char = ' ';
-                uval = (uint64_t)val;
-            }
-            num_len = fmt_uint(uval, 10, 0, num_buf);
-            goto emit_number;
-        }
 
-        /* ---- Unsigned integers ---- */
-        case 'u':
-            base = 10;
-            goto unsigned_common;
-        case 'x':
-            base = 16;
-            uppercase = 0;
-            goto unsigned_common;
-        case 'X':
-            base = 16;
-            uppercase = 1;
-            goto unsigned_common;
-        case 'o':
-            base = 8;
-            goto unsigned_common;
-        case 'b':
-            base = 2;
-            goto unsigned_common;
+            /* ---- Unsigned integers ---- */
+            case 'u':
+                base = 10;
+                goto unsigned_common;
+            case 'x':
+                base = 16;
+                uppercase = 0;
+                goto unsigned_common;
+            case 'X':
+                base = 16;
+                uppercase = 1;
+                goto unsigned_common;
+            case 'o':
+                base = 8;
+                goto unsigned_common;
+            case 'b':
+                base = 2;
+                goto unsigned_common;
 
-unsigned_common:
-{
+unsigned_common: {
     uint64_t uval;
     if (is_longlong)
         uval = (uint64_t)va_arg(args, unsigned long long);
@@ -341,8 +305,7 @@ unsigned_common:
     goto emit_number;
 }
 
-emit_number:
-{
+emit_number: {
     /*
      * Padding layout:
      *   [left-pad spaces] [sign] [zero-pad] [digits] [right-pad spaces]
@@ -352,116 +315,108 @@ emit_number:
     int field = num_len + (sign_char ? 1 : 0);
     int pad = (width > field) ? width - field : 0;
 
-    if (!flag_left && !flag_zero)
-    {
+    if (!flag_left && !flag_zero) {
         for (int i = 0; i < pad; i++)
             fb_putc(fb, ' ');
     }
     if (sign_char)
         fb_putc(fb, sign_char);
-    if (!flag_left && flag_zero)
-    {
+    if (!flag_left && flag_zero) {
         for (int i = 0; i < pad; i++)
             fb_putc(fb, '0');
     }
     for (int i = 0; i < num_len; i++)
         fb_putc(fb, num_buf[i]);
-    if (flag_left)
-    {
+    if (flag_left) {
         for (int i = 0; i < pad; i++)
             fb_putc(fb, ' ');
     }
     break;
 }
 
-        /* ---- Pointer ---- */
-        case 'p':
-        {
-            unsigned long val = va_arg(args, unsigned long);
-            /* Always print as 0x + 16 hex digits (zero-padded) */
-            fb_putc(fb, '0');
-            fb_putc(fb, 'x');
-            char tmp[17];
-            int n = fmt_uint((uint64_t)val, 16, 0, tmp);
-            /* Zero-pad to exactly 16 digits */
-            for (int i = n; i < 16; i++)
+            /* ---- Pointer ---- */
+            case 'p': {
+                unsigned long val = va_arg(args, unsigned long);
+                /* Always print as 0x + 16 hex digits (zero-padded) */
                 fb_putc(fb, '0');
-            for (int i = 0; i < n; i++)
-                fb_putc(fb, tmp[i]);
-            break;
-        }
-
-        /* ---- String ---- */
-        case 's':
-        {
-            const char* s = va_arg(args, const char*);
-            if (!s)
-                s = "(null)";
-
-            /* Compute printable length, respecting precision if set */
-            int slen = 0;
-            const char* t = s;
-            while (*t)
-            {
-                if (prec >= 0 && slen >= prec)
-                    break;
-                slen++;
-                t++;
+                fb_putc(fb, 'x');
+                char tmp[17];
+                int n = fmt_uint((uint64_t)val, 16, 0, tmp);
+                /* Zero-pad to exactly 16 digits */
+                for (int i = n; i < 16; i++)
+                    fb_putc(fb, '0');
+                for (int i = 0; i < n; i++)
+                    fb_putc(fb, tmp[i]);
+                break;
             }
 
-            int pad = (width > slen) ? width - slen : 0;
+            /* ---- String ---- */
+            case 's': {
+                const char *s = va_arg(args, const char *);
+                if (!s)
+                    s = "(null)";
 
-            if (!flag_left)
-                for (int i = 0; i < pad; i++)
-                    fb_putc(fb, ' ');
+                /* Compute printable length, respecting precision if set */
+                int slen = 0;
+                const char *t = s;
+                while (*t) {
+                    if (prec >= 0 && slen >= prec)
+                        break;
+                    slen++;
+                    t++;
+                }
 
-            for (int i = 0; i < slen; i++)
-            {
-                if (s[i] == '\n' && fb->crlf)
-                    fb_putc(fb, '\r');
-                fb_putc(fb, s[i]);
+                int pad = (width > slen) ? width - slen : 0;
+
+                if (!flag_left)
+                    for (int i = 0; i < pad; i++)
+                        fb_putc(fb, ' ');
+
+                for (int i = 0; i < slen; i++) {
+                    if (s[i] == '\n' && fb->crlf)
+                        fb_putc(fb, '\r');
+                    fb_putc(fb, s[i]);
+                }
+
+                if (flag_left)
+                    for (int i = 0; i < pad; i++)
+                        fb_putc(fb, ' ');
+
+                break;
             }
 
-            if (flag_left)
-                for (int i = 0; i < pad; i++)
-                    fb_putc(fb, ' ');
+            /* ---- Character ---- */
+            case 'c': {
+                char c = (char)va_arg(args, int);
+                int pad = (width > 1) ? width - 1 : 0;
 
-            break;
-        }
+                if (!flag_left)
+                    for (int i = 0; i < pad; i++)
+                        fb_putc(fb, ' ');
 
-        /* ---- Character ---- */
-        case 'c':
-        {
-            char c = (char)va_arg(args, int);
-            int pad = (width > 1) ? width - 1 : 0;
+                fb_putc(fb, c);
 
-            if (!flag_left)
-                for (int i = 0; i < pad; i++)
-                    fb_putc(fb, ' ');
+                if (flag_left)
+                    for (int i = 0; i < pad; i++)
+                        fb_putc(fb, ' ');
 
-            fb_putc(fb, c);
+                break;
+            }
 
-            if (flag_left)
-                for (int i = 0; i < pad; i++)
-                    fb_putc(fb, ' ');
+            case '%':
+                fb_putc(fb, '%');
+                break;
 
-            break;
-        }
+            case '\0':
+                /* Trailing lone '%' — back up so the outer loop sees '\0' */
+                p--;
+                break;
 
-        case '%':
-            fb_putc(fb, '%');
-            break;
-
-        case '\0':
-            /* Trailing lone '%' — back up so the outer loop sees '\0' */
-            p--;
-            break;
-
-        default:
-            /* Unknown specifier: pass through literally */
-            fb_putc(fb, '%');
-            fb_putc(fb, *p);
-            break;
+            default:
+                /* Unknown specifier: pass through literally */
+                fb_putc(fb, '%');
+                fb_putc(fb, *p);
+                break;
         }
     }
 
@@ -477,16 +432,13 @@ emit_number:
  * NUL-terminates. Returns the number of bytes that would have been written
  * if size were unlimited (C99 snprintf semantics).
  */
-int vsnprintf(char* buf, size_t size, const char* fmt, va_list args)
+int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
     if (!buf || size == 0)
         return 0;
 
     struct fmt_buf fb = {
-        .buf = buf,
-        .size = size,
-        .pos = 0,
-        .crlf = 0, /* no CRLF translation in string buffers */
+        .buf = buf, .size = size, .pos = 0, .crlf = 0, /* no CRLF translation in string buffers */
     };
 
     int ret = fmt_core(&fb, fmt, args);
@@ -499,7 +451,7 @@ int vsnprintf(char* buf, size_t size, const char* fmt, va_list args)
 /*
  * snprintf - Formatted print into a size-bounded buffer.
  */
-int snprintf(char* buf, size_t size, const char* fmt, ...)
+int snprintf(char *buf, size_t size, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
@@ -517,7 +469,7 @@ int snprintf(char* buf, size_t size, const char* fmt, ...)
  * truncated in the buffer — the PANIC path should use snprintf for
  * arbitrarily long messages.
  */
-int vprintf(const char* fmt, va_list args)
+int vprintf(const char *fmt, va_list args)
 {
     char stack_buf[PRINTF_BUF_SIZE];
 
@@ -543,7 +495,7 @@ int vprintf(const char* fmt, va_list args)
 /*
  * printf - Formatted console output.
  */
-int printf(const char* fmt, ...)
+int printf(const char *fmt, ...)
 {
 #ifdef __KERNEL__
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
@@ -565,7 +517,7 @@ int printf(const char* fmt, ...)
 /*
  * printk - Kernel logging with system timestamps.
  */
-int printk(const char* fmt, ...)
+int printk(const char *fmt, ...)
 {
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
 

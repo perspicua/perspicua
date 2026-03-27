@@ -58,7 +58,7 @@
 #define C_ZOMBIE     ESC "38;5;196m"
 
 /* ── tiny string helpers (no libc dependency beyond what you listed) */
-static size_t ptop_strlen(const char* s)
+static size_t ptop_strlen(const char *s)
 {
     size_t n = 0;
     while (s[n])
@@ -66,13 +66,13 @@ static size_t ptop_strlen(const char* s)
     return n;
 }
 
-static void ptop_write(const char* s)
+static void ptop_write(const char *s)
 {
     sys_write(1, s, ptop_strlen(s));
 }
 
 /* Write exactly `width` chars of `s`, padding with spaces on the right. */
-static void ptop_write_padded(const char* s, int width)
+static void ptop_write_padded(const char *s, int width)
 {
     char buf[128];
     int slen = (int)ptop_strlen(s);
@@ -84,7 +84,7 @@ static void ptop_write_padded(const char* s, int width)
 }
 
 /* Right-align a string in a field of `width`. */
-static void ptop_write_right(const char* s, int width)
+static void ptop_write_right(const char *s, int width)
 {
     char buf[64];
     int slen = (int)ptop_strlen(s);
@@ -101,8 +101,7 @@ static void ptop_write_right(const char* s, int width)
 /* ── memory bar renderer ─────────────────────────────────────────── */
 static void draw_bar(unsigned long used, unsigned long total, int bar_width)
 {
-    if (total == 0)
-    {
+    if (total == 0) {
         ptop_write("[" C_BAR_EMPTY "----------" C_RESET "]");
         return;
     }
@@ -136,7 +135,7 @@ static void draw_bar(unsigned long used, unsigned long total, int bar_width)
  * Read a small file from /proc entirely into buf (null-terminated).
  * Returns number of bytes read, or -1 on error.
  */
-static int read_proc_file(const char* path, char* buf, size_t bufsz)
+static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
     int fd = sys_open(path, VFS_O_RDONLY);
     if (fd < 0)
@@ -144,8 +143,7 @@ static int read_proc_file(const char* path, char* buf, size_t bufsz)
 
     int total = 0;
     int n;
-    while ((size_t)total < bufsz - 1)
-    {
+    while ((size_t)total < bufsz - 1) {
         n = sys_read(fd, buf + total, bufsz - 1 - total);
         if (n <= 0)
             break;
@@ -160,16 +158,14 @@ static int read_proc_file(const char* path, char* buf, size_t bufsz)
  * Extract the value of a "Key:   value\n" line from a /proc/pid/status buffer.
  * Writes result into `out` (null-terminated). Returns 1 on success.
  */
-static int parse_status_field(const char* buf, const char* key, char* out, size_t outsz)
+static int parse_status_field(const char *buf, const char *key, char *out, size_t outsz)
 {
-    const char* p = buf;
+    const char *p = buf;
     size_t klen = ptop_strlen(key);
 
-    while (*p)
-    {
+    while (*p) {
         /* find the key at the start of a line */
-        if (strncmp(p, key, klen) == 0 && p[klen] == ':')
-        {
+        if (strncmp(p, key, klen) == 0 && p[klen] == ':') {
             p += klen + 1;
             while (*p == ' ' || *p == '\t')
                 p++;
@@ -191,7 +187,7 @@ static int parse_status_field(const char* buf, const char* key, char* out, size_
 /*
  * Simple decimal string to unsigned long.
  */
-static unsigned long ptop_atoul(const char* s)
+static unsigned long ptop_atoul(const char *s)
 {
     unsigned long v = 0;
     while (*s >= '0' && *s <= '9')
@@ -200,8 +196,7 @@ static unsigned long ptop_atoul(const char* s)
 }
 
 /* ── process record ──────────────────────────────────────────────── */
-struct proc_info
-{
+struct proc_info {
     int pid;
     char name[64];
     char state[16];
@@ -231,8 +226,7 @@ static void draw_meminfo(void)
     char buf[READ_BUF_SIZE];
     char val[32];
 
-    if (read_proc_file("/proc/meminfo", buf, sizeof(buf)) < 0)
-    {
+    if (read_proc_file("/proc/meminfo", buf, sizeof(buf)) < 0) {
         ptop_write(C_WARN "  [meminfo unavailable]\n" C_RESET);
         return;
     }
@@ -278,7 +272,7 @@ static void draw_meminfo(void)
     ptop_write("\n");
 }
 
-static void draw_proc_table(struct proc_info* procs, int count)
+static void draw_proc_table(struct proc_info *procs, int count)
 {
     char tmp[64];
 
@@ -297,9 +291,8 @@ static void draw_proc_table(struct proc_info* procs, int count)
         sys_write(1, "─", 3); /* UTF-8 box char */
     ptop_write(C_RESET "\n");
 
-    for (int i = 0; i < count; i++)
-    {
-        struct proc_info* p = &procs[i];
+    for (int i = 0; i < count; i++) {
+        struct proc_info *p = &procs[i];
 
         /* alternating row colour; zombies always red */
         int is_zombie = (strcmp(p->state, "zombie") == 0);
@@ -350,7 +343,7 @@ static void draw_footer(void)
 }
 
 /* ── enumerate /proc ─────────────────────────────────────────────── */
-static int collect_procs(struct proc_info* out, int max)
+static int collect_procs(struct proc_info *out, int max)
 {
     struct vfs_dirent dent;
     char status_path[PATH_BUF_SIZE];
@@ -362,25 +355,24 @@ static int collect_procs(struct proc_info* out, int max)
     if (fd < 0)
         return 0;
 
-    while (count < max)
-    {
+    while (count < max) {
         int n = sys_getdents(fd, &dent, sizeof(dent));
         if (n <= 0)
             break;
 
         /* skip "." ".." and non-numeric names (version, meminfo, etc.) */
-        const char* nm = dent.name;
+        const char *nm = dent.name;
         if (nm[0] == '.' || nm[0] < '0' || nm[0] > '9')
             continue;
 
         int pid = 0;
-        const char* p = nm;
+        const char *p = nm;
         while (*p >= '0' && *p <= '9')
             pid = pid * 10 + (*p++ - '0');
         if (*p != '\0')
             continue;
 
-        struct proc_info* info = &out[count];
+        struct proc_info *info = &out[count];
         info->pid = pid;
         info->ppid = 0;
         info->vmsize_kb = 0;
@@ -388,8 +380,7 @@ static int collect_procs(struct proc_info* out, int max)
         info->state[0] = '\0';
 
         snprintf(status_path, sizeof(status_path), "/proc/%d/status", pid);
-        if (read_proc_file(status_path, status_buf, sizeof(status_buf)) > 0)
-        {
+        if (read_proc_file(status_path, status_buf, sizeof(status_buf)) > 0) {
             if (parse_status_field(status_buf, "Name", field, sizeof(field)))
                 strncpy(info->name, field, sizeof(info->name) - 1);
             if (parse_status_field(status_buf, "State", field, sizeof(field)))
@@ -401,8 +392,7 @@ static int collect_procs(struct proc_info* out, int max)
         }
 
         /* fallback name from cmdline if status gave nothing */
-        if (info->name[0] == '\0')
-        {
+        if (info->name[0] == '\0') {
             snprintf(status_path, sizeof(status_path), "/proc/%d/cmdline", pid);
             if (read_proc_file(status_path, status_buf, sizeof(status_buf)) > 0)
                 strncpy(info->name, status_buf, sizeof(info->name) - 1);
@@ -436,15 +426,13 @@ static int collect_procs(struct proc_info* out, int max)
 static void launch_demo(void)
 {
     int pid = sys_fork();
-    if (pid < 0)
-    {
+    if (pid < 0) {
         ptop_write(C_WARN "ptop: failed to fork demo\n" C_RESET);
         return;
     }
-    if (pid == 0)
-    {
+    if (pid == 0) {
         /* child — replace image with demo binary */
-        char* argv[] = {DEMO_PATH, NULL};
+        char *argv[] = {DEMO_PATH, NULL};
         sys_exec(DEMO_PATH, argv);
         /* if exec returns, the binary wasn't found */
         ptop_write(C_WARN "ptop: exec(" DEMO_PATH ") failed\n" C_RESET);
@@ -464,8 +452,7 @@ int main(void)
 
     ptop_write(ANSI_HIDE_CURSOR);
 
-    for (int iter = 1; iter <= MAX_ITERATIONS; iter++)
-    {
+    for (int iter = 1; iter <= MAX_ITERATIONS; iter++) {
         int count = collect_procs(procs, MAX_PROCS);
 
         ptop_write(ANSI_CLEAR);

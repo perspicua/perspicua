@@ -1,21 +1,24 @@
 /*
  * initrd.h - Public API for the Initial RAM Disk (InitRD) parser.
  *
- * This file defines the structures and functions used to parse the CPIO
- * archive containing the initial filesystem and system programs.
+ * Defines the CPIO archive structures and entry point for registering
+ * the boot-time filesystem.
  */
 
-#ifndef PERSPICUA_KERNEL_INITRD_H
-#define PERSPICUA_KERNEL_INITRD_H
+#ifndef PERSPICUA_CORE_INITRD_H
+#define PERSPICUA_CORE_INITRD_H
 
 #include "types.h"
 
+/* --- Data Structures --- */
+
 /*
- * cpio_newc_header - Represents a header in the CPIO 'newc' format.
- * All fields are 8-byte hexadecimal ASCII strings, except magic which is 6-byte.
+ * struct cpio_newc_header - Standard header for the CPIO 'newc' format.
+ *
+ * All fields are fixed-width hexadecimal ASCII strings. This format is
+ * used for its portability and simplicity during early boot.
  */
-struct cpio_newc_header
-{
+struct cpio_newc_header {
     char magic[6];
     char inode[8];
     char mode[8];
@@ -32,10 +35,11 @@ struct cpio_newc_header
     char checksum[8];
 } __attribute__((packed));
 
-/*
- * initrd_init - Parses the CPIO archive at the given memory address and
- * registers all files found within it into the RAMFS.
- */
-void initrd_init(void* initrd_start);
+/* --- Function Prototypes --- */
 
-#endif /* PERSPICUA_KERNEL_INITRD_H */
+/*
+ * initrd_init - Parses the CPIO archive and registers files into RAMFS.
+ */
+void initrd_init(void *initrd_start);
+
+#endif /* PERSPICUA_CORE_INITRD_H */

@@ -18,22 +18,21 @@
 #include "devicetree/fdt.h"
 #include "uapi/errors.h"
 
-typedef struct
-{
-    volatile uint32_t arg2;             // 0x00: Argument 2
-    volatile uint32_t blk_size_cnt;     // 0x04: Block Size & Block Count
-    volatile uint32_t arg1;             // 0x08: Argument 1
-    volatile uint32_t xfer_mode_cmd;    // 0x0C: Transfer Mode & Command
-    volatile uint32_t resp[4];          // 0x10: Response 0-3
-    volatile uint32_t data;             // 0x20: Data Port
-    volatile uint32_t status;           // 0x24: Present State
-    volatile uint32_t host_control;     // 0x28: Host/Power/Block Gap/Wakeup Control
-    volatile uint32_t clk_control;      // 0x2C: Clock/Timeout/Software Reset Control
-    volatile uint32_t interrupt;        // 0x30: Interrupt Status
-    volatile uint32_t int_mask;         // 0x34: Interrupt Status Enable
-    volatile uint32_t int_en;           // 0x38: Interrupt Signal Enable
-    volatile uint32_t host_control2;    // 0x3C: Host Control 2
-    volatile uint32_t capabilities[2];  // 0x40: Capabilities 0-1
+typedef struct {
+    volatile uint32_t arg2;            // 0x00: Argument 2
+    volatile uint32_t blk_size_cnt;    // 0x04: Block Size & Block Count
+    volatile uint32_t arg1;            // 0x08: Argument 1
+    volatile uint32_t xfer_mode_cmd;   // 0x0C: Transfer Mode & Command
+    volatile uint32_t resp[4];         // 0x10: Response 0-3
+    volatile uint32_t data;            // 0x20: Data Port
+    volatile uint32_t status;          // 0x24: Present State
+    volatile uint32_t host_control;    // 0x28: Host/Power/Block Gap/Wakeup Control
+    volatile uint32_t clk_control;     // 0x2C: Clock/Timeout/Software Reset Control
+    volatile uint32_t interrupt;       // 0x30: Interrupt Status
+    volatile uint32_t int_mask;        // 0x34: Interrupt Status Enable
+    volatile uint32_t int_en;          // 0x38: Interrupt Signal Enable
+    volatile uint32_t host_control2;   // 0x3C: Host Control 2
+    volatile uint32_t capabilities[2]; // 0x40: Capabilities 0-1
 } sdhci_regs_t;
 
 /* Status Register Bits */
@@ -76,15 +75,14 @@ typedef struct
 #define CMD55  CMD_IDX(55) | CMD_RESP_48 | CMD_CRC_CHECK_EN
 #define ACMD41 CMD_IDX(41) | CMD_RESP_48
 
-static sdhci_regs_t* regs = NULL;
+static sdhci_regs_t *regs = NULL;
 static struct block_device sd_block_dev;
 static uint32_t sd_rca = 0;
 static int sd_is_sdhc = 0;
 
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
-    while (((regs->status & mask) != expected) && timeout_ms--)
-    {
+    while (((regs->status & mask) != expected) && timeout_ms--) {
         sleep_ms(1);
     }
     return timeout_ms >= 0 ? PERS_SUCCESS : -PERS_ERR_TIMED_OUT;
@@ -93,20 +91,18 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 static int sd_wait_interrupt(uint32_t mask)
 {
     int timeout_ms = 1000;
-    while (!(regs->interrupt & (mask | INT_ERROR_MASK)) && timeout_ms--)
-    {
+    while (!(regs->interrupt & (mask | INT_ERROR_MASK)) && timeout_ms--) {
         sleep_ms(1);
     }
 
     uint32_t status = regs->interrupt;
-    regs->interrupt = status & (mask | INT_ERROR_MASK);  // Acknowledge ONLY what we waited for or errors
+    regs->interrupt =
+        status & (mask | INT_ERROR_MASK); // Acknowledge ONLY what we waited for or errors
 
-    if (timeout_ms < 0)
-    {
+    if (timeout_ms < 0) {
         return -PERS_ERR_TIMED_OUT;
     }
-    if (status & INT_ERROR_MASK)
-    {
+    if (status & INT_ERROR_MASK) {
         return -PERS_ERR_IO_ERROR;
     }
     return PERS_SUCCESS;
@@ -115,13 +111,11 @@ static int sd_wait_interrupt(uint32_t mask)
 static int sd_send_cmd(uint32_t cmd, uint32_t arg)
 {
     int res = sd_wait_status(STATUS_CMD_INHIBIT, 0, 100);
-    if (res != PERS_SUCCESS)
-    {
+    if (res != PERS_SUCCESS) {
         return res;
     }
 
-    if (cmd & CMD_HAS_DATA)
-    {
+    if (cmd & CMD_HAS_DATA) {
         res = sd_wait_status(STATUS_DAT_INHIBIT, 0, 100);
         if (res != PERS_SUCCESS)
             return res;
@@ -135,43 +129,38 @@ static int sd_send_cmd(uint32_t cmd, uint32_t arg)
 
 /* --- Block Device Interface --- */
 
-int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, size_t num_blocks)
+int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, size_t num_blocks)
 {
     if (!dev->present)
         return -PERS_ERR_NOT_FOUND;
-    uint32_t* buf = (uint32_t*)buffer;
+    uint32_t *buf = (uint32_t *)buffer;
 
-    for (size_t i = 0; i < num_blocks; i++)
-    {
+    for (size_t i = 0; i < num_blocks; i++) {
         uint32_t addr = (uint32_t)(start_block + i);
-        if (!sd_is_sdhc)
-        {
+        if (!sd_is_sdhc) {
             addr *= 512;
         }
 
-        regs->blk_size_cnt = (1 << 16) | 512;  // 1 block of 512 bytes
+        regs->blk_size_cnt = (1 << 16) | 512; // 1 block of 512 bytes
         int res = sd_send_cmd(CMD17, addr);
-        if (res != PERS_SUCCESS)
-        {
+        if (res != PERS_SUCCESS) {
             pr_err("sd: Read CMD17 failed at block %lu\n", start_block + i);
             return res;
         }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
-        if (res != PERS_SUCCESS)
-        {
+        if (res != PERS_SUCCESS) {
             pr_err("sd: Read Ready timeout at block %lu\n", start_block + i);
             return res;
         }
 
-        for (int j = 0; j < 128; j++)  // 512 / 4
+        for (int j = 0; j < 128; j++) // 512 / 4
         {
             buf[i * 128 + j] = regs->data;
         }
 
         res = sd_wait_interrupt(INT_DATA_DONE);
-        if (res != PERS_SUCCESS)
-        {
+        if (res != PERS_SUCCESS) {
             pr_err("sd: Data Done timeout at block %lu\n", start_block + i);
             return res;
         }
@@ -180,14 +169,14 @@ int sd_read_blocks(struct block_device* dev, void* buffer, size_t start_block, s
     return PERS_SUCCESS;
 }
 
-int sd_write_blocks(struct block_device* dev, const void* buffer, size_t start_block, size_t num_blocks)
+int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_block,
+                    size_t num_blocks)
 {
     if (!dev->present)
         return -PERS_ERR_NOT_FOUND;
-    const uint32_t* buf = (const uint32_t*)buffer;
+    const uint32_t *buf = (const uint32_t *)buffer;
 
-    for (size_t i = 0; i < num_blocks; i++)
-    {
+    for (size_t i = 0; i < num_blocks; i++) {
         regs->blk_size_cnt = (1 << 16) | 512;
         int res = sd_send_cmd(CMD24, (uint32_t)(start_block + i));
         if (res != PERS_SUCCESS)
@@ -197,8 +186,7 @@ int sd_write_blocks(struct block_device* dev, const void* buffer, size_t start_b
         if (res != PERS_SUCCESS)
             return res;
 
-        for (int j = 0; j < 128; j++)
-        {
+        for (int j = 0; j < 128; j++) {
             regs->data = buf[i * 128 + j];
         }
 
@@ -217,13 +205,13 @@ static int sd_set_clock(uint32_t clock)
     unsigned int __attribute__((aligned(16))) mbox[10];
     mbox[0] = 10 * 4;
     mbox[1] = 0;
-    mbox[2] = 0x00038002;  // Set clock rate
+    mbox[2] = 0x00038002; // Set clock rate
     mbox[3] = 12;
     mbox[4] = 8;
-    mbox[5] = 1;      // EMMC clock ID
-    mbox[6] = clock;  // Rate
+    mbox[5] = 1;     // EMMC clock ID
+    mbox[6] = clock; // Rate
     mbox[7] = 0;
-    mbox[8] = 0;  // End tag
+    mbox[8] = 0; // End tag
     mbox[9] = 0;
 
     mbox_call(mbox);
@@ -240,7 +228,7 @@ static int sd_init_host(void)
     regs->int_en = 0xFFFFFFFF;
     regs->int_mask = 0xFFFFFFFF;
 
-    regs->host_control = (regs->host_control & ~0xF00) | 0xE00;  // 3.3V
+    regs->host_control = (regs->host_control & ~0xF00) | 0xE00; // 3.3V
     sleep_ms(100);
     regs->host_control |= 0x100;
 
@@ -261,12 +249,10 @@ static int sd_init_card(void)
         return -PERS_ERR_IO_ERROR;
 
     int timeout = 1000;
-    while (timeout--)
-    {
+    while (timeout--) {
         sd_send_cmd(CMD55, 0);
         sd_send_cmd(ACMD41, 0x40FF8000);
-        if (regs->resp[0] & 0x80000000)
-        {
+        if (regs->resp[0] & 0x80000000) {
             sd_is_sdhc = (regs->resp[0] & 0x40000000) ? 1 : 0;
             break;
         }
@@ -281,8 +267,7 @@ static int sd_init_card(void)
         return -PERS_ERR_IO_ERROR;
     sd_rca = regs->resp[0] & 0xFFFF0000;
 
-    if (sd_send_cmd(CMD9, sd_rca) == PERS_SUCCESS)
-    {
+    if (sd_send_cmd(CMD9, sd_rca) == PERS_SUCCESS) {
         uint32_t c_size = ((regs->resp[2] & 0x3F) << 16) | (regs->resp[1] >> 16);
         sd_block_dev.block_count = (c_size + 1) * 1024;
     }
@@ -297,13 +282,12 @@ static int sd_init_card(void)
 
 void sd_init(void)
 {
-    const char* compatibles[] = {"brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci", NULL};
-    const uint32_t* node = NULL;
-    const char* matched_compatible = NULL;
+    const char *compatibles[] = {"brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci", NULL};
+    const uint32_t *node = NULL;
+    const char *matched_compatible = NULL;
 
-    for (int i = 0; compatibles[i]; i++)
-    {
-        const uint32_t* n = fdt_find_node_by_compatible(compatibles[i]);
+    for (int i = 0; compatibles[i]; i++) {
+        const uint32_t *n = fdt_find_node_by_compatible(compatibles[i]);
         if (!n)
             continue;
 
@@ -311,26 +295,21 @@ void sd_init(void)
         if (fdt_get_property(n, "reg", &reg_prop) != 0)
             continue;
 
-        const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+        const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
         uint32_t phys_base;
 
-        if (reg_prop.size >= 12)
-        {
+        if (reg_prop.size >= 12) {
             phys_base = fdt32_to_cpu(reg_data[1]);
-        }
-        else
-        {
+        } else {
             phys_base = fdt32_to_cpu(reg_data[0]);
         }
 
-        if (phys_base < 0xFC000000)
-        {
+        if (phys_base < 0xFC000000) {
             phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
         }
 
-        sdhci_regs_t* r = (sdhci_regs_t*)P2V(phys_base);
-        if (r->status & STATUS_CARD_INSERT)
-        {
+        sdhci_regs_t *r = (sdhci_regs_t *)P2V(phys_base);
+        if (r->status & STATUS_CARD_INSERT) {
             node = n;
             regs = r;
             matched_compatible = compatibles[i];
@@ -338,17 +317,13 @@ void sd_init(void)
         }
     }
 
-    if (!node)
-    {
-        for (int i = 0; compatibles[i]; i++)
-        {
-            const uint32_t* n = fdt_find_node_by_compatible(compatibles[i]);
-            if (n)
-            {
+    if (!node) {
+        for (int i = 0; compatibles[i]; i++) {
+            const uint32_t *n = fdt_find_node_by_compatible(compatibles[i]);
+            if (n) {
                 struct fdt_property reg_prop;
-                if (fdt_get_property(n, "reg", &reg_prop) == 0)
-                {
-                    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+                if (fdt_get_property(n, "reg", &reg_prop) == 0) {
+                    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
                     uint32_t phys_base;
                     if (reg_prop.size >= 12)
                         phys_base = fdt32_to_cpu(reg_data[1]);
@@ -359,7 +334,7 @@ void sd_init(void)
                         phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
 
                     node = n;
-                    regs = (sdhci_regs_t*)P2V(phys_base);
+                    regs = (sdhci_regs_t *)P2V(phys_base);
                     matched_compatible = compatibles[i];
                     break;
                 }
@@ -370,14 +345,12 @@ void sd_init(void)
     if (!node)
         return;
 
-    if (sd_set_clock(100000000) < 0)
-    {
+    if (sd_set_clock(100000000) < 0) {
         pr_err("sd: Clock initialization failed\n");
         return;
     }
 
-    if (sd_init_host() == PERS_SUCCESS && sd_init_card() == PERS_SUCCESS)
-    {
+    if (sd_init_host() == PERS_SUCCESS && sd_init_card() == PERS_SUCCESS) {
         sd_block_dev.block_size = 512;
         sd_block_dev.read_blocks = sd_read_blocks;
         sd_block_dev.write_blocks = sd_write_blocks;
@@ -388,9 +361,7 @@ void sd_init(void)
 
         size_t mb = (sd_block_dev.block_count * 512) / (1024 * 1024);
         pr_info("sd: SDHC card found: %lu MB\n", mb);
-    }
-    else
-    {
+    } else {
         pr_err("sd: Card initialization failed\n");
     }
 }

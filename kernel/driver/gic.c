@@ -19,17 +19,17 @@
 #include "driver/uart.h"
 
 /* Distributor registers */
-volatile unsigned int* gic_d_ctlr = NULL;
-volatile unsigned int* gic_d_isenablern = NULL;
-volatile unsigned char* gic_d_ipriorityr = NULL;
-volatile unsigned char* gic_d_itargetsr = NULL;
-volatile unsigned int* gic_d_sgir = NULL;
+volatile unsigned int *gic_d_ctlr = NULL;
+volatile unsigned int *gic_d_isenablern = NULL;
+volatile unsigned char *gic_d_ipriorityr = NULL;
+volatile unsigned char *gic_d_itargetsr = NULL;
+volatile unsigned int *gic_d_sgir = NULL;
 
 /* CPU Interface registers */
-volatile unsigned int* gic_c_ctlr = NULL;
-volatile unsigned int* gic_c_pmr = NULL;
-volatile unsigned int* gic_c_iar = NULL;
-volatile unsigned int* gic_c_eoir = NULL;
+volatile unsigned int *gic_c_ctlr = NULL;
+volatile unsigned int *gic_c_pmr = NULL;
+volatile unsigned int *gic_c_iar = NULL;
+volatile unsigned int *gic_c_eoir = NULL;
 
 static unsigned int cached_uart_irq = 0;
 
@@ -47,24 +47,21 @@ void gic_send_panic_ipi(void)
  */
 void gic_init(void)
 {
-    const uint32_t* gic_node = fdt_find_node_by_compatible("arm,gic-400");
-    if (!gic_node)
-    {
+    const uint32_t *gic_node = fdt_find_node_by_compatible("arm,gic-400");
+    if (!gic_node) {
         // Try alternate compatible string used on some RPi4 DTBs
         gic_node = fdt_find_node_by_compatible("arm,cortex-a15-gic");
-        if (!gic_node)
-        {
+        if (!gic_node) {
             PANIC("[  GIC ] Device node not found in DTB!\n");
         }
     }
 
     struct fdt_property reg_prop;
-    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0)
-    {
+    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0) {
         PANIC("[  GIC ] Missing 'reg' property in DTB!\n");
     }
 
-    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
 
     // GIC usually has two memory regions defined in `reg`:
     // reg = <gicd_base size gicc_base size> or similar depending on #address-cells = 2 or 1
@@ -75,14 +72,12 @@ void gic_init(void)
 
     // Some RPi4 firmware DTB maps it correctly. Usually GICD is 0xff841000 and GICC is 0xff842000
     // But since the Broadcom legacy map uses 0x40000000 in DTB, handle it:
-    if (gicd_phys == 0x40041000)
-    {
+    if (gicd_phys == 0x40041000) {
         gicd_phys = 0xFF841000;
         gicc_phys = 0xFF842000;
     }
     // Workaround for BCM legacy address translation for GIC (ARM local peripherals)
-    else if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000)
-    {
+    else if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000) {
         gicd_phys = (gicd_phys & 0x01FFFFFF) | 0xFF800000;
         gicc_phys = (gicc_phys & 0x01FFFFFF) | 0xFF800000;
     }
@@ -91,16 +86,16 @@ void gic_init(void)
     uintptr_t gicc_vbase = P2V(gicc_phys);
 
     // Map register addresses to the global pointers
-    gic_d_ctlr = (volatile unsigned int*)(gicd_vbase + 0x000);
-    gic_d_isenablern = (volatile unsigned int*)(gicd_vbase + 0x100);
-    gic_d_ipriorityr = (volatile unsigned char*)(gicd_vbase + 0x400);
-    gic_d_itargetsr = (volatile unsigned char*)(gicd_vbase + 0x800);
-    gic_d_sgir = (volatile unsigned int*)(gicd_vbase + 0xF00);
+    gic_d_ctlr = (volatile unsigned int *)(gicd_vbase + 0x000);
+    gic_d_isenablern = (volatile unsigned int *)(gicd_vbase + 0x100);
+    gic_d_ipriorityr = (volatile unsigned char *)(gicd_vbase + 0x400);
+    gic_d_itargetsr = (volatile unsigned char *)(gicd_vbase + 0x800);
+    gic_d_sgir = (volatile unsigned int *)(gicd_vbase + 0xF00);
 
-    gic_c_ctlr = (volatile unsigned int*)(gicc_vbase + 0x000);
-    gic_c_pmr = (volatile unsigned int*)(gicc_vbase + 0x004);
-    gic_c_iar = (volatile unsigned int*)(gicc_vbase + 0x00C);
-    gic_c_eoir = (volatile unsigned int*)(gicc_vbase + 0x010);
+    gic_c_ctlr = (volatile unsigned int *)(gicc_vbase + 0x000);
+    gic_c_pmr = (volatile unsigned int *)(gicc_vbase + 0x004);
+    gic_c_iar = (volatile unsigned int *)(gicc_vbase + 0x00C);
+    gic_c_eoir = (volatile unsigned int *)(gicc_vbase + 0x010);
 
     // Enable Distributor
     mmio_write(gic_d_ctlr, 1);
@@ -119,7 +114,8 @@ void gic_init(void)
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
 
-    pr_info("gic: GIC-400 distributor @ 0x%lx, CPU @ 0x%lx\n", (unsigned long)gicd_vbase, (unsigned long)gicc_vbase);
+    pr_info("gic: GIC-400 distributor @ 0x%lx, CPU @ 0x%lx\n", (unsigned long)gicd_vbase,
+            (unsigned long)gicc_vbase);
     pr_info("gic: Timer IRQ %d, UART IRQ %d enabled\n", GIC_TIMER_IRQ, cached_uart_irq);
 }
 

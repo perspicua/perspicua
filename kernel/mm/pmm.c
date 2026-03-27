@@ -21,9 +21,8 @@ unsigned long pmm_metadata_end = 0;
 #undef PMM_MAX_RESERVED_RANGES
 #define PMM_MAX_RESERVED_RANGES 64
 
-struct pmm_page
-{
-    struct pmm_page* next; /* Next free block in the buddy list */
+struct pmm_page {
+    struct pmm_page *next; /* Next free block in the buddy list */
     uint16_t refcount;     /* Active reference count */
     uint8_t order;         /* Allocation order */
     uint8_t is_free;       /* 1 if on free list, 0 if allocated */
@@ -32,11 +31,10 @@ struct pmm_page
 
 _Static_assert(sizeof(struct pmm_page) == 16, "pmm_page must be 16 bytes");
 
-struct pmm_reserved_range
-{
+struct pmm_reserved_range {
     unsigned long start_phys;
     unsigned long end_phys;
-    const char* tag;
+    const char *tag;
 };
 
 extern char __kernel_end[];
@@ -46,8 +44,8 @@ static unsigned long pmm_num_pages = 0;
 static unsigned long pmm_managed_pages = 0;
 static unsigned long pmm_free_pages_count = 0;
 
-static struct pmm_page* pmm_page_array = NULL;
-static struct pmm_page* pmm_free_lists[PMM_MAX_ORDER + 1];
+static struct pmm_page *pmm_page_array = NULL;
+static struct pmm_page *pmm_free_lists[PMM_MAX_ORDER + 1];
 static struct pmm_reserved_range pmm_reserved_ranges[PMM_MAX_RESERVED_RANGES];
 static unsigned int pmm_reserved_range_count = 0;
 
@@ -63,8 +61,7 @@ static inline unsigned int get_order(unsigned long count)
     unsigned int order = 0;
     unsigned long size = 1UL;
 
-    while (size < count)
-    {
+    while (size < count) {
         if (order >= PMM_MAX_ORDER)
             return PMM_MAX_ORDER + 1;
         size <<= 1;
@@ -73,18 +70,18 @@ static inline unsigned int get_order(unsigned long count)
     return order;
 }
 
-static inline struct pmm_page* pfn_to_page(unsigned long pfn)
+static inline struct pmm_page *pfn_to_page(unsigned long pfn)
 {
     return &pmm_page_array[pfn];
 }
 
-static inline unsigned long page_to_pfn(const struct pmm_page* p)
+static inline unsigned long page_to_pfn(const struct pmm_page *p)
 {
     return (unsigned long)(p - pmm_page_array);
 }
 
-static int
-reserved_range_overlaps(unsigned long a_start, unsigned long a_end, unsigned long b_start, unsigned long b_end)
+static int reserved_range_overlaps(unsigned long a_start, unsigned long a_end,
+                                   unsigned long b_start, unsigned long b_end)
 {
     return a_start < b_end && b_start < a_end;
 }
@@ -92,8 +89,7 @@ reserved_range_overlaps(unsigned long a_start, unsigned long a_end, unsigned lon
 /* Check if PFN range overlaps any reserved range */
 static int range_overlaps_reserved_pfns(unsigned long start_pfn, unsigned long end_pfn)
 {
-    for (unsigned int i = 0; i < pmm_reserved_range_count; i++)
-    {
+    for (unsigned int i = 0; i < pmm_reserved_range_count; i++) {
         unsigned long rstart = pmm_reserved_ranges[i].start_phys;
         unsigned long rend = pmm_reserved_ranges[i].end_phys;
 
@@ -110,8 +106,7 @@ static int range_overlaps_reserved_pfns(unsigned long start_pfn, unsigned long e
         if (r_pfn_end > pmm_num_pages)
             r_pfn_end = pmm_num_pages;
 
-        if (r_pfn_start < r_pfn_end && start_pfn < r_pfn_end && r_pfn_start < end_pfn)
-        {
+        if (r_pfn_start < r_pfn_end && start_pfn < r_pfn_end && r_pfn_start < end_pfn) {
             return 1;
         }
     }
@@ -123,14 +118,14 @@ static inline int pfn_is_reserved(unsigned long pfn)
     return range_overlaps_reserved_pfns(pfn, pfn + 1);
 }
 
-void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char* tag)
+void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag)
 {
     if (size == 0)
         return;
 
-    if (pmm_reserved_range_count >= PMM_MAX_RESERVED_RANGES)
-    {
-        pr_err("pmm: Too many reserved ranges! Limit %d exceeded (tag: %s)\n", PMM_MAX_RESERVED_RANGES, tag);
+    if (pmm_reserved_range_count >= PMM_MAX_RESERVED_RANGES) {
+        pr_err("pmm: Too many reserved ranges! Limit %d exceeded (tag: %s)\n",
+               PMM_MAX_RESERVED_RANGES, tag);
         PANIC("PMM: PMM_MAX_RESERVED_RANGES is too small");
     }
 
@@ -145,16 +140,13 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char*
 
     // Merge with existing ranges
     int merged;
-    do
-    {
+    do {
         merged = 0;
-        for (unsigned int i = 0; i < pmm_reserved_range_count; i++)
-        {
+        for (unsigned int i = 0; i < pmm_reserved_range_count; i++) {
             unsigned long cs = pmm_reserved_ranges[i].start_phys;
             unsigned long ce = pmm_reserved_ranges[i].end_phys;
 
-            if (reserved_range_overlaps(start, end, cs, ce) || end == cs || start == ce)
-            {
+            if (reserved_range_overlaps(start, end, cs, ce) || end == cs || start == ce) {
                 if (cs < start)
                     start = cs;
                 if (ce > end)
@@ -181,31 +173,27 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char*
 /* Internal: insert block into buddy system and merge upwards */
 static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
 {
-    while (order < PMM_MAX_ORDER)
-    {
+    while (order < PMM_MAX_ORDER) {
         unsigned long buddy_pfn = pfn ^ (1UL << order);
         if (buddy_pfn >= pmm_num_pages)
             break;
 
-        struct pmm_page* buddy = pfn_to_page(buddy_pfn);
+        struct pmm_page *buddy = pfn_to_page(buddy_pfn);
         if (!buddy->is_free || buddy->order != order)
             break;
 
         // Remove buddy from free list
-        struct pmm_page** curr = &pmm_free_lists[order];
+        struct pmm_page **curr = &pmm_free_lists[order];
         unsigned long scan = 0;
-        while (*curr && *curr != buddy)
-        {
+        while (*curr && *curr != buddy) {
             curr = &(*curr)->next;
             scan++;
-            if (scan > PMM_MAX_FREE_LIST_SCAN)
-            {
+            if (scan > PMM_MAX_FREE_LIST_SCAN) {
                 PANIC("PMM: free-list corruption detected");
             }
         }
 
-        if (!*curr)
-        {
+        if (!*curr) {
             PANIC("PMM: buddy is_free=1 but not on free list");
         }
 
@@ -218,7 +206,7 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
         order++;
     }
 
-    struct pmm_page* p = pfn_to_page(pfn);
+    struct pmm_page *p = pfn_to_page(pfn);
     p->is_free = 1;
     p->order = (uint8_t)order;
     p->next = pmm_free_lists[order];
@@ -228,13 +216,11 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
 void pmm_init(void)
 {
     // Step 1: Discover memory from DTB
-    const uint32_t* mem_node = fdt_find_node_by_path("/memory@0");
-    if (mem_node)
-    {
+    const uint32_t *mem_node = fdt_find_node_by_path("/memory@0");
+    if (mem_node) {
         struct fdt_property reg_prop;
-        if (fdt_get_property(mem_node, "reg", &reg_prop) == 0)
-        {
-            const uint32_t* reg = (const uint32_t*)reg_prop.value;
+        if (fdt_get_property(mem_node, "reg", &reg_prop) == 0) {
+            const uint32_t *reg = (const uint32_t *)reg_prop.value;
             uint32_t mem_size_cells = fdt32_to_cpu(reg[2]);
 
             if (mem_size_cells == 0)
@@ -243,9 +229,7 @@ void pmm_init(void)
             pmm_phys_mem_size = (unsigned long)mem_size_cells;
             pr_info("pmm: Memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
         }
-    }
-    else
-    {
+    } else {
         PANIC("PMM: could not find memory node");
     }
 
@@ -261,16 +245,17 @@ void pmm_init(void)
     if (array_bytes / sizeof(struct pmm_page) != pmm_num_pages)
         PANIC("PMM: array size overflow");
 
-    pmm_page_array = (struct pmm_page*)array_start;
-    unsigned long usable_start_va = (array_start + array_bytes + PAGE_SIZE - 1) & ~(unsigned long)(PAGE_SIZE - 1);
+    pmm_page_array = (struct pmm_page *)array_start;
+    unsigned long usable_start_va =
+        (array_start + array_bytes + PAGE_SIZE - 1) & ~(unsigned long)(PAGE_SIZE - 1);
     pmm_metadata_end = usable_start_va;
 
-    pr_info("pmm: Metadata: %lu KB at %p, ends at %p\n", array_bytes / 1024, pmm_page_array, (void*)pmm_metadata_end);
+    pr_info("pmm: Metadata: %lu KB at %p, ends at %p\n", array_bytes / 1024, pmm_page_array,
+            (void *)pmm_metadata_end);
 
     // Step 3: Reserve kernel + metadata
     unsigned long usable_start_phys = V2P(usable_start_va);
-    if (usable_start_phys >= pmm_phys_mem_size)
-    {
+    if (usable_start_phys >= pmm_phys_mem_size) {
         PANIC("PMM: metadata exceeds RAM");
     }
     pmm_reserve_range(0, usable_start_phys, "kernel+metadata");
@@ -285,21 +270,17 @@ void pmm_init(void)
 
     // Step 5: Populate free lists
     unsigned long pfn = 0;
-    while (pfn < pmm_num_pages)
-    {
-        if (pfn_is_reserved(pfn))
-        {
+    while (pfn < pmm_num_pages) {
+        if (pfn_is_reserved(pfn)) {
             pfn++;
             continue;
         }
 
         unsigned int order = PMM_MAX_ORDER;
-        while (order > 0)
-        {
+        while (order > 0) {
             unsigned long block_size = 1UL << order;
             if ((pfn & (block_size - 1)) == 0 && pfn + block_size <= pmm_num_pages
-                && !range_overlaps_reserved_pfns(pfn, pfn + block_size))
-            {
+                && !range_overlaps_reserved_pfns(pfn, pfn + block_size)) {
                 break;
             }
             order--;
@@ -312,10 +293,11 @@ void pmm_init(void)
 
     pmm_managed_pages = pmm_free_pages_count;
     pmm_ready = 1;
-    pr_info("pmm: %lu MB free - buddy system ready\n", (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
+    pr_info("pmm: %lu MB free - buddy system ready\n",
+            (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
-void* pmm_alloc_pages(unsigned long count)
+void *pmm_alloc_pages(unsigned long count)
 {
     if (count == 0)
         return NULL;
@@ -330,13 +312,12 @@ void* pmm_alloc_pages(unsigned long count)
     while (current_order <= PMM_MAX_ORDER && !pmm_free_lists[current_order])
         current_order++;
 
-    if (current_order > PMM_MAX_ORDER)
-    {
+    if (current_order > PMM_MAX_ORDER) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         return NULL;
     }
 
-    struct pmm_page* p = pmm_free_lists[current_order];
+    struct pmm_page *p = pmm_free_lists[current_order];
     pmm_free_lists[current_order] = p->next;
     p->is_free = 0;
     p->next = NULL;
@@ -345,11 +326,10 @@ void* pmm_alloc_pages(unsigned long count)
     unsigned long pfn = page_to_pfn(p);
 
     // Split down to target order
-    while (current_order > target_order)
-    {
+    while (current_order > target_order) {
         current_order--;
         unsigned long buddy_pfn = pfn + (1UL << current_order);
-        struct pmm_page* buddy = pfn_to_page(buddy_pfn);
+        struct pmm_page *buddy = pfn_to_page(buddy_pfn);
 
         buddy->is_free = 1;
         buddy->order = (uint8_t)current_order;
@@ -364,56 +344,50 @@ void* pmm_alloc_pages(unsigned long count)
 
     spin_unlock_irqrestore(&pmm_lock, irq);
 
-    void* vaddr = (void*)P2V(pfn * PAGE_SIZE);
+    void *vaddr = (void *)P2V(pfn * PAGE_SIZE);
     // pr_debug("pmm: alloc: pfn=%lx, vaddr=%p, order=%u\n", pfn, vaddr, target_order);
     memset(vaddr, 0, (size_t)(1UL << target_order) * PAGE_SIZE);
 
     return vaddr;
 }
 
-void pmm_free_pages(void* ptr, unsigned long count)
+void pmm_free_pages(void *ptr, unsigned long count)
 {
     (void)count;
     if (!ptr)
         return;
 
-    if ((unsigned long)ptr < KERNEL_VMA)
-    {
+    if ((unsigned long)ptr < KERNEL_VMA) {
         pr_err("pmm: pmm_free_pages called with non-kernel VA: %p\n", ptr);
         PANIC("PMM: invalid pointer in free");
     }
 
     unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
-    if (pfn >= pmm_num_pages || pfn_is_reserved(pfn))
-    {
+    if (pfn >= pmm_num_pages || pfn_is_reserved(pfn)) {
         pr_err("pmm: pmm_free_pages: PFN %lu is unmanaged or reserved (ptr %p)\n", pfn, ptr);
         return;
     }
 
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
-    struct pmm_page* p = pfn_to_page(pfn);
+    struct pmm_page *p = pfn_to_page(pfn);
 
-    if (p->is_free)
-    {
+    if (p->is_free) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         PANIC("PMM: double-free");
     }
-    if (p->refcount == 0)
-    {
+    if (p->refcount == 0) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         PANIC("PMM: free refcount 0");
     }
 
     p->refcount--;
-    if (p->refcount > 0)
-    {
+    if (p->refcount > 0) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         return;
     }
 
     unsigned int order = p->order;
-    if (order > PMM_MAX_ORDER)
-    {
+    if (order > PMM_MAX_ORDER) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         PANIC("PMM: corrupt page order");
     }
@@ -424,7 +398,7 @@ void pmm_free_pages(void* ptr, unsigned long count)
     spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
-void pmm_hold_page(void* ptr)
+void pmm_hold_page(void *ptr)
 {
     if (!ptr)
         return;
@@ -434,16 +408,14 @@ void pmm_hold_page(void* ptr)
         return;
 
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
-    struct pmm_page* p = &pmm_page_array[pfn];
+    struct pmm_page *p = &pmm_page_array[pfn];
 
-    if (p->is_free)
-    {
+    if (p->is_free) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         PANIC("PMM: hold on free page");
     }
 
-    if (p->refcount == (uint16_t)-1)
-    {
+    if (p->refcount == (uint16_t)-1) {
         spin_unlock_irqrestore(&pmm_lock, irq);
         PANIC("PMM: refcount overflow");
     }
@@ -452,7 +424,7 @@ void pmm_hold_page(void* ptr)
     spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
-int pmm_is_managed(void* ptr)
+int pmm_is_managed(void *ptr)
 {
     if (!ptr)
         return 0;
@@ -460,12 +432,12 @@ int pmm_is_managed(void* ptr)
     return pfn < pmm_num_pages && !pfn_is_reserved(pfn);
 }
 
-void* pmm_alloc_page(void)
+void *pmm_alloc_page(void)
 {
     return pmm_alloc_pages(1);
 }
 
-void pmm_free_page(void* ptr)
+void pmm_free_page(void *ptr)
 {
     pmm_free_pages(ptr, 1);
 }

@@ -21,18 +21,18 @@ void slab_init(void);
  * specified size from the appropriate size class pool. Returns NULL
  * if the size exceeds the maximum slab size or if memory is exhausted.
  */
-void* slab_alloc(unsigned long size);
+void *slab_alloc(unsigned long size);
 
 /*
  * slab_free - Returns an object to its corresponding slab page freelist.
  */
-void slab_free(void* ptr);
+void slab_free(void *ptr);
 
 /*
  * slab_owns - Checks if the given pointer was originally allocated by
  * the slab allocator by verifying the slab magic number at the page boundary.
  */
-int slab_owns(void* ptr);
+int slab_owns(void *ptr);
 
 /*
  * slab_get_used - Calculates the total number of bytes currently

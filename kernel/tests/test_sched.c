@@ -45,8 +45,7 @@ static void task_inc_c(void)
 // increment counter_a n times
 static void task_inc_a_10x(void)
 {
-    for (int i = 0; i < 10; i++)
-    {
+    for (int i = 0; i < 10; i++) {
         unsigned long flags = spin_lock_irqsave(&test_lock);
         counter_a++;
         spin_unlock_irqrestore(&test_lock, flags);
@@ -56,8 +55,7 @@ static void task_inc_a_10x(void)
 // increment counter_a with small delay between increments
 static void task_inc_a_with_delay(void)
 {
-    for (int i = 0; i < 5; i++)
-    {
+    for (int i = 0; i < 5; i++) {
         unsigned long flags = spin_lock_irqsave(&test_lock);
         counter_a++;
         spin_unlock_irqrestore(&test_lock, flags);
@@ -184,22 +182,21 @@ static void task_long_sleep_ts(void)
 static volatile int yield_count = 0;
 static void task_yield_loop(void)
 {
-    for (int i = 0; i < 50; i++)
-    {
+    for (int i = 0; i < 50; i++) {
         unsigned long flags = spin_lock_irqsave(&test_lock);
         yield_count++;
         spin_unlock_irqrestore(&test_lock, flags);
-        schedule();  // yield to other tasks
+        schedule(); // yield to other tasks
     }
 }
 
 // task that simulates the pipe_wait race: set state to BLOCKED, then yield
 static volatile int race_task_ran = 0;
-static struct task* race_wait_queue = NULL;
+static struct task *race_wait_queue = NULL;
 
 static void task_race_waiter(void)
 {
-    struct task* self = sched_get_current();
+    struct task *self = sched_get_current();
     unsigned long flags = irq_save();
 
     /* 1. Pre-mark as BLOCKED (simulating pipe_wait) */
@@ -222,10 +219,9 @@ static void task_race_waiter(void)
 static void task_race_unblocker(void)
 {
     // Wait for the waiter to put itself in the queue
-    while (1)
-    {
+    while (1) {
         unsigned long flags = spin_lock_irqsave(&test_lock);
-        struct task* t = race_wait_queue;
+        struct task *t = race_wait_queue;
         spin_unlock_irqrestore(&test_lock, flags);
         if (t)
             break;
@@ -234,7 +230,7 @@ static void task_race_unblocker(void)
 
     // Unblock it
     unsigned long flags = spin_lock_irqsave(&test_lock);
-    struct task* t = race_wait_queue;
+    struct task *t = race_wait_queue;
     race_wait_queue = NULL;
     spin_unlock_irqrestore(&test_lock, flags);
 
@@ -366,8 +362,8 @@ void test_scheduler(void)
     {
         ts_short_done = 0;
         ts_long_done = 0;
-        sched_create_task(task_long_sleep_ts);   // sleeps 40ms
-        sched_create_task(task_short_sleep_ts);  // sleeps 20ms
+        sched_create_task(task_long_sleep_ts);  // sleeps 40ms
+        sched_create_task(task_short_sleep_ts); // sleeps 20ms
         sched_sleep_ms(80);
         TEST_ASSERT("short done", ts_short_done != 0);
         TEST_ASSERT("long done", ts_long_done != 0);
@@ -410,8 +406,8 @@ void test_scheduler(void)
     {
         counter_a = 0;
         counter_b = 0;
-        sched_create_task(task_sleep_then_inc);       // sleeps 20ms, inc a
-        sched_create_task(task_long_sleep_then_inc);  // sleeps 40ms, inc b
+        sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
+        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
         sched_sleep_ms(30);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
@@ -425,7 +421,7 @@ void test_scheduler(void)
     // parent task creates child tasks
     {
         counter_a = 0;
-        sched_create_task(task_spawner);  // creates 2 task_inc_a's
+        sched_create_task(task_spawner); // creates 2 task_inc_a's
         sched_sleep_ms(100);
         TEST_ASSERT("spawned children ran", counter_a == 2);
     }
@@ -470,8 +466,7 @@ void test_scheduler(void)
     // batch-and-wait ×3 rounds
     {
         counter_a = 0;
-        for (int round = 0; round < 3; round++)
-        {
+        for (int round = 0; round < 3; round++) {
             for (int i = 0; i < 3; i++)
                 sched_create_task(task_inc_a);
             sched_sleep_ms(50);
@@ -498,8 +493,8 @@ void test_scheduler(void)
     {
         counter_a = 0;
         counter_b = 0;
-        sched_create_task(task_inc_a);                // instant
-        sched_create_task(task_long_sleep_then_inc);  // sleeps 40ms, inc b
+        sched_create_task(task_inc_a);               // instant
+        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
         sched_sleep_ms(30);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);

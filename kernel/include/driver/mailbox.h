@@ -20,6 +20,6 @@ void mbox_init(void);
  * GPU, waits for the response, and then invalidates the cache so the
  * response data is visible to the CPU.
  */
-void mbox_call(unsigned int* buffer);
+void mbox_call(unsigned int *buffer);
 
 #endif /* PERSPICUA_DRIVER_MAILBOX_H */

@@ -1,60 +1,68 @@
 /*
  * lock.h - Public API for synchronization and atomic primitives.
  *
- * This file defines the spinlock and atomic types, as well as the
- * functions used to ensure thread safety across multiple CPU cores.
+ * This header defines spinlocks and atomic counters used to ensure
+ * thread-safety across multiple CPU cores.
  */
 
-#ifndef PERSPICUA_KERNEL_LOCK_H
-#define PERSPICUA_KERNEL_LOCK_H
+#ifndef PERSPICUA_CORE_LOCK_H
+#define PERSPICUA_CORE_LOCK_H
 
 #include "types.h"
 
+/* --- Constants and Macros --- */
+
+#define SPINLOCK_INIT  {0}
+#define ATOMIC_INIT(i) {(i)}
+
+/* --- Data Structures --- */
+
 /*
- * spinlock_t - A simple busy-wait lock for short critical sections.
+ * struct spinlock_t - Simple busy-wait lock for short critical sections.
+ *
+ * Uses AArch64 exclusive monitors to provide mutual exclusion.
  */
-typedef struct
-{
+typedef struct {
     volatile unsigned int locked;
 } spinlock_t;
 
-/* Macro for static initialization of a spinlock. */
-#define SPINLOCK_INIT {0}
+/*
+ * struct atomic_t - Thread-safe integer counter.
+ */
+typedef struct {
+    volatile int counter;
+} atomic_t;
+
+/* --- Function Prototypes --- */
 
 /*
- * spin_lock - Acquires a spinlock. This function will busy-wait (spin)
- * until the lock becomes available.
+ * spin_lock - Acquires a spinlock, busy-waiting if necessary.
  */
-void spin_lock(spinlock_t* lock);
+void spin_lock(spinlock_t *lock);
 
 /*
- * spin_unlock - Releases a previously acquired spinlock and signals
- * other waiting cores.
+ * spin_unlock - Releases a spinlock and signals waiting cores.
  */
-void spin_unlock(spinlock_t* lock);
+void spin_unlock(spinlock_t *lock);
 
 /*
- * spin_lock_irqsave - Disables interrupts on the local core and
- * then acquires the spinlock. It returns the previous interrupt state.
+ * spin_lock_irqsave - Disables local IRQs and acquires the lock.
  */
-unsigned long spin_lock_irqsave(spinlock_t* lock);
+unsigned long spin_lock_irqsave(spinlock_t *lock);
 
 /*
- * spin_unlock_irqrestore - Releases the spinlock and restores the
- * interrupt state to what it was before the lock was acquired.
+ * spin_unlock_irqrestore - Releases the lock and restores local IRQ state.
  */
-void spin_unlock_irqrestore(spinlock_t* lock, unsigned long flags);
+void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags);
 
 /*
- * atomic_inc - Atomically increments the value of the provided atomic
- * variable using load-exclusive/store-exclusive instructions.
+ * atomic_inc - Atomically increments an atomic variable.
  */
-void atomic_inc(atomic_t* a);
+void atomic_inc(atomic_t *a);
 
 /*
- * atomic_dec_and_test - Atomically decrements the value of the atomic
- * variable and returns non-zero if the resulting value is zero.
+ * atomic_dec_and_test - Atomically decrements and returns 1 if the result is 0.
  */
-int atomic_dec_and_test(atomic_t* a);
+int atomic_dec_and_test(atomic_t *a);
 
-#endif /* PERSPICUA_KERNEL_LOCK_H */
+#endif /* PERSPICUA_CORE_LOCK_H */

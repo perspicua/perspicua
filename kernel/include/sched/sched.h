@@ -15,15 +15,14 @@
 #define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
 #define SCHED_STACK_GUARD_PAGES  1
 #define SCHED_STACK_USABLE_PAGES 63
-#define SCHED_STACK_PAGES        64  // must be exact power of two for buddy allocator
+#define SCHED_STACK_PAGES        64 // must be exact power of two for buddy allocator
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
 /*
  * cpu_context - Saved processor state for context switching.
  * Contains all callee-saved registers, the stack pointer, and return address.
  */
-struct cpu_context
-{
+struct cpu_context {
     unsigned long x19;
     unsigned long x20;
     unsigned long x21;
@@ -42,8 +41,7 @@ struct cpu_context
 /*
  * sched_task_state - Possible execution states for a task.
  */
-enum sched_task_state
-{
+enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,
     SCHED_TASK_BLOCKED,
@@ -53,16 +51,15 @@ enum sched_task_state
 /*
  * task - The primary structure representing an execution thread.
  */
-struct task
-{
+struct task {
     struct cpu_context context;
     unsigned long ttbr0;         /* TTBR0 value containing user page table and ASID */
     enum sched_task_state state; /* Current execution state */
     unsigned long wake_time;     /* System time when a sleeping task should wake */
     unsigned long id;            /* Unique numeric task identifier */
     uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
-    unsigned char* stack;        /* Pointer to the allocated stack region */
-    struct task* next;           /* Link for ready and sleep queues */
+    unsigned char *stack;        /* Pointer to the allocated stack region */
+    struct task *next;           /* Link for ready and sleep queues */
     int skip_signals;            /* Flag to indicate if signal handling should be deferred */
     volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
@@ -80,7 +77,7 @@ static inline int get_core_id(void)
 /*
  * enqueue_ready - Appends a task to the end of a specific CPU's ready queue.
  */
-void enqueue_ready(int cpu, struct task* t);
+void enqueue_ready(int cpu, struct task *t);
 
 /*
  * sched_init - Initializes the scheduler on the primary CPU core.
@@ -101,8 +98,8 @@ void sched_create_task(void (*entry)(void));
 /*
  * sched_create_user_task - Initializes a task structure for a user-mode process.
  */
-struct task*
-sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr, uintptr_t kstack_base, uint32_t pid);
+struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
+                                    uintptr_t kstack_base, uint32_t pid);
 
 /*
  * sched_sleep_ms - Puts the current task to sleep for a minimum number of milliseconds.
@@ -124,13 +121,13 @@ void sched_block(void);
 /*
  * sched_unblock - Transitions a specific task from blocked to ready state.
  */
-void sched_unblock(struct task* t);
+void sched_unblock(struct task *t);
 
 /*
  * sched_get_current - Returns a pointer to the task currently running on
  * the calling CPU core.
  */
-struct task* sched_get_current(void);
+struct task *sched_get_current(void);
 
 /*
  * sched_get_core_pid - Returns the PID of the process currently occupying
@@ -142,6 +139,6 @@ int sched_get_core_pid(int cpu);
  * switch_context - Low-level assembly function to swap processor state.
  * Defined in switch.S.
  */
-extern void switch_context(struct cpu_context* prev, struct cpu_context* next);
+extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
 #endif /* PERSPICUA_KERNEL_SCHED_H */

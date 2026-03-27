@@ -11,7 +11,7 @@
 /*
  * __libc_write - Routes string data to the standard output file descriptor.
  */
-void __libc_write(const char* buf, size_t len)
+void __libc_write(const char *buf, size_t len)
 {
     sys_write(1, buf, len);
 }

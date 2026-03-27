@@ -9,7 +9,7 @@
 #define PERSPICUA_LIBC_TYPES_H
 
 /* NULL pointer definition */
-#define NULL ((void*)0)
+#define NULL ((void *)0)
 
 /* Fixed-width integer types */
 typedef signed char int8_t;
@@ -48,13 +48,5 @@ typedef int64_t off_t;
 #define UINT64_MAX (18446744073709551615ULL)
 
 #define SIZE_MAX UINT64_MAX
-
-/*
- * atomic_t - Structure for atomic integer operations.
- */
-typedef struct
-{
-    volatile int counter;
-} atomic_t;
 
 #endif /* PERSPICUA_LIBC_TYPES_H */

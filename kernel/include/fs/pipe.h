@@ -16,8 +16,7 @@
  * struct pipe - Represents an anonymous pipe.
  * This structure is typically pointed to by vnode->internal_info.
  */
-struct pipe
-{
+struct pipe {
     char buffer[PIPE_BUF_SIZE];
     size_t head;  /* Next write position */
     size_t tail;  /* Next read position */
@@ -28,8 +27,8 @@ struct pipe
 
     spinlock_t lock;
 
-    struct task* read_wait_queue;  /* Tasks waiting for data to read */
-    struct task* write_wait_queue; /* Tasks waiting for space to write */
+    struct task *read_wait_queue;  /* Tasks waiting for data to read */
+    struct task *write_wait_queue; /* Tasks waiting for space to write */
 };
 
 /* --- Public API --- */

@@ -21,7 +21,8 @@ void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color);
  * width and height. If fill is non-zero, the entire rectangle area is painted
  * with the specified color; otherwise, only the outline is drawn.
  */
-void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h, uint32_t color, int fill);
+void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h,
+                        uint32_t color, int fill);
 
 /*
  * graphics_draw_char - Renders a single 8x8 character from the font set at
@@ -34,7 +35,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
  * graphics_draw_string - Renders a null-terminated string starting at the
  * given coordinates using the specified foreground and background colors.
  */
-void graphics_draw_string(unsigned int x, unsigned int y, const char* s, uint32_t fg, uint32_t bg);
+void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_t fg, uint32_t bg);
 
 /*
  * graphics_clear - Fills the entire screen with a single specified color

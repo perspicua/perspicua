@@ -44,7 +44,7 @@ extern char __kernel_end[];
 extern unsigned long pmm_metadata_end;
 
 static unsigned long kernel_pgd_phys;
-static unsigned long* kernel_pgd_virt;
+static unsigned long *kernel_pgd_virt;
 static unsigned long empty_pgd_phys;
 
 static spinlock_t mmu_lock = SPINLOCK_INIT;
@@ -71,11 +71,10 @@ static inline void tlbi_all_is(void)
 }
 
 /* Allocate and zero a page for use as a page table (panics on OOM) */
-static unsigned long* alloc_table_page(void)
+static unsigned long *alloc_table_page(void)
 {
-    unsigned long* page = (unsigned long*)pmm_alloc_page();
-    if (!page)
-    {
+    unsigned long *page = (unsigned long *)pmm_alloc_page();
+    if (!page) {
         PANIC("MMU: out of memory for page table");
     }
     memset(page, 0, PAGE_SIZE);
@@ -83,11 +82,10 @@ static unsigned long* alloc_table_page(void)
 }
 
 /* Allocate and zero a page table for user space (returns NULL on OOM) */
-static unsigned long* alloc_user_table_page(void)
+static unsigned long *alloc_user_table_page(void)
 {
-    unsigned long* page = (unsigned long*)pmm_alloc_page();
-    if (!page)
-    {
+    unsigned long *page = (unsigned long *)pmm_alloc_page();
+    if (!page) {
         return NULL;
     }
     memset(page, 0, PAGE_SIZE);
@@ -96,11 +94,11 @@ static unsigned long* alloc_user_table_page(void)
 
 void mmu_init(void)
 {
-    unsigned long* pgd = alloc_table_page();
-    unsigned long* pmd_0 = alloc_table_page(); /* 0–1 GB  */
-    unsigned long* pmd_1 = alloc_table_page(); /* 1–2 GB  */
-    unsigned long* pmd_2 = alloc_table_page(); /* 2–3 GB  */
-    unsigned long* pmd_3 = alloc_table_page(); /* 3–4 GB  */
+    unsigned long *pgd = alloc_table_page();
+    unsigned long *pmd_0 = alloc_table_page(); /* 0–1 GB  */
+    unsigned long *pmd_1 = alloc_table_page(); /* 1–2 GB  */
+    unsigned long *pmd_2 = alloc_table_page(); /* 2–3 GB  */
+    unsigned long *pmd_3 = alloc_table_page(); /* 3–4 GB  */
 
     pgd[0] = V2P((uintptr_t)pmd_0) | PTE_VALID | PTE_TABLE;
     pgd[1] = V2P((uintptr_t)pmd_1) | PTE_VALID | PTE_TABLE;
@@ -108,26 +106,24 @@ void mmu_init(void)
     pgd[3] = V2P((uintptr_t)pmd_3) | PTE_VALID | PTE_TABLE;
 
     // First GB: fine-grained 4 KB pages
-    for (unsigned long i = 0; i < PT_ENTRIES; i++)
-    {
-        unsigned long* l3 = alloc_table_page();
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
+        unsigned long *l3 = alloc_table_page();
         pmd_0[i] = V2P((uintptr_t)l3) | PTE_VALID | PTE_TABLE;
 
-        for (unsigned long j = 0; j < PT_ENTRIES; j++)
-        {
+        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
             unsigned long pa = (i * (2UL * 1024 * 1024)) + (j * PAGE_SIZE);
-            l3[j] = pa | PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_N | PTE_AP_RW | PTE_PXN | PTE_UXN;
+            l3[j] = pa | PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_N | PTE_AP_RW
+                    | PTE_PXN | PTE_UXN;
         }
     }
 
     // GB 1-3: Device 2 MB blocks
-    unsigned long* pmd_others[3] = {pmd_1, pmd_2, pmd_3};
-    for (unsigned long p = 0; p < 3; p++)
-    {
-        for (unsigned long i = 0; i < PT_ENTRIES; i++)
-        {
+    unsigned long *pmd_others[3] = {pmd_1, pmd_2, pmd_3};
+    for (unsigned long p = 0; p < 3; p++) {
+        for (unsigned long i = 0; i < PT_ENTRIES; i++) {
             unsigned long pa = ((p + 1) * (1024UL * 1024 * 1024)) + (i * (2UL * 1024 * 1024));
-            pmd_others[p][i] = pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | PTE_ATTR_D;
+            pmd_others[p][i] =
+                pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | PTE_ATTR_D;
         }
     }
 
@@ -138,28 +134,22 @@ void mmu_init(void)
     unsigned long ks = (unsigned long)__text_start;
     unsigned long ke = (unsigned long)pmm_metadata_end;
 
-    for (unsigned long va = ks; va < ke; va += PAGE_SIZE)
-    {
+    for (unsigned long va = ks; va < ke; va += PAGE_SIZE) {
         unsigned long pa = V2P(va);
         unsigned long attr = PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_N;
 
-        if (va >= (unsigned long)__text_start && va < (unsigned long)__text_end)
-        {
+        if (va >= (unsigned long)__text_start && va < (unsigned long)__text_end) {
             attr |= PTE_AP_RO | PTE_UXN;
-        }
-        else if (va >= (unsigned long)__rodata_start && va < (unsigned long)__rodata_end)
-        {
+        } else if (va >= (unsigned long)__rodata_start && va < (unsigned long)__rodata_end) {
             attr |= PTE_AP_RO | PTE_PXN | PTE_UXN;
-        }
-        else
-        {
+        } else {
             attr |= PTE_AP_RW | PTE_PXN | PTE_UXN;
         }
 
         mmu_map_page(va, pa, attr);
     }
 
-    unsigned long* empty_pgd = alloc_table_page();
+    unsigned long *empty_pgd = alloc_table_page();
     empty_pgd_phys = V2P((uintptr_t)empty_pgd);
 
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys) : "memory");
@@ -178,16 +168,16 @@ void mmu_secondary_init(void)
 }
 
 /* Replace a 2 MB L2 block with 512 × 4 KB page descriptors (BBM) */
-static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned long l2_idx, unsigned long vaddr_base)
+static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned long l2_idx,
+                                           unsigned long vaddr_base)
 {
     unsigned long block_entry = l2_table[l2_idx];
     unsigned long block_phys = block_entry & PTE_ADDR;
     unsigned long block_attr = block_entry & ~PTE_ADDR & ~PTE_TABLE;
 
-    unsigned long* l3 = alloc_table_page();
+    unsigned long *l3 = alloc_table_page();
 
-    for (unsigned long i = 0; i < PT_ENTRIES; i++)
-    {
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
         unsigned long page_phys = block_phys + i * PAGE_SIZE;
         l3[i] = page_phys | PTE_VALID | PTE_PAGE | block_attr;
     }
@@ -195,8 +185,7 @@ static unsigned long* split_block_to_pages(unsigned long* l2_table, unsigned lon
     l2_table[l2_idx] = 0;
     asm volatile("dsb ishst" : : : "memory");
 
-    for (unsigned long v = vaddr_base; v < vaddr_base + (2UL * 1024 * 1024); v += PAGE_SIZE)
-    {
+    for (unsigned long v = vaddr_base; v < vaddr_base + (2UL * 1024 * 1024); v += PAGE_SIZE) {
         tlbi_va_is(v);
     }
 
@@ -216,40 +205,30 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     unsigned long l2 = L2_IDX(vaddr);
     unsigned long l3 = L3_IDX(vaddr);
 
-    unsigned long* l2t;
-    if (kernel_pgd_virt[l1] & PTE_VALID)
-    {
-        l2t = (unsigned long*)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
-    }
-    else
-    {
+    unsigned long *l2t;
+    if (kernel_pgd_virt[l1] & PTE_VALID) {
+        l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
+    } else {
         l2t = alloc_table_page();
         kernel_pgd_virt[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
 
-    unsigned long* l3t;
+    unsigned long *l3t;
     unsigned long l2e = l2t[l2];
 
-    if (l2e & PTE_VALID)
-    {
-        if (!(l2e & PTE_TABLE))
-        {
+    if (l2e & PTE_VALID) {
+        if (!(l2e & PTE_TABLE)) {
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
+        } else {
+            l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
         }
-        else
-        {
-            l3t = (unsigned long*)P2V(l2e & PTE_ADDR);
-        }
-    }
-    else
-    {
+    } else {
         l3t = alloc_table_page();
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
     }
 
-    if (l3t[l3] & PTE_VALID)
-    {
+    if (l3t[l3] & PTE_VALID) {
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
     }
@@ -271,25 +250,21 @@ void mmu_unmap_page(unsigned long vaddr)
     if (!(kernel_pgd_virt[l1] & PTE_VALID))
         goto out;
 
-    unsigned long* l2t = (unsigned long*)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
+    unsigned long *l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID))
         goto out;
 
-    unsigned long* l3t;
-    if (!(l2e & PTE_TABLE))
-    {
+    unsigned long *l3t;
+    if (!(l2e & PTE_TABLE)) {
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
-    }
-    else
-    {
-        l3t = (unsigned long*)P2V(l2e & PTE_ADDR);
+    } else {
+        l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     }
 
-    if (l3t[l3] & PTE_VALID)
-    {
+    if (l3t[l3] & PTE_VALID) {
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
     }
@@ -298,7 +273,7 @@ out:
     spin_unlock_irqrestore(&mmu_lock, irq);
 }
 
-int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
+int mmu_query(unsigned long vaddr, unsigned long *out_paddr, unsigned long *out_flags)
 {
     unsigned long irq = spin_lock_irqsave(&mmu_lock);
     int found = 0;
@@ -310,14 +285,13 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
     if (!(kernel_pgd_virt[l1] & PTE_VALID))
         goto out;
 
-    unsigned long* l2t = (unsigned long*)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
+    unsigned long *l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID))
         goto out;
 
-    if (!(l2e & PTE_TABLE))
-    {
+    if (!(l2e & PTE_TABLE)) {
         if (out_paddr)
             *out_paddr = (l2e & PTE_ADDR) + (vaddr & 0x1FFFFFUL);
         if (out_flags)
@@ -326,7 +300,7 @@ int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_
         goto out;
     }
 
-    unsigned long* l3t = (unsigned long*)P2V(l2e & PTE_ADDR);
+    unsigned long *l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     unsigned long l3e = l3t[l3];
 
     if (!(l3e & PTE_VALID))
@@ -343,45 +317,40 @@ out:
     return found;
 }
 
-unsigned long* mmu_create_user_pgd(void)
+unsigned long *mmu_create_user_pgd(void)
 {
     return alloc_user_table_page();
 }
 
-void mmu_destroy_user_pgd(unsigned long* pgd)
+void mmu_destroy_user_pgd(unsigned long *pgd)
 {
     if (!pgd)
         return;
 
-    for (unsigned long i = 0; i < PT_ENTRIES; i++)
-    {
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
         unsigned long l1e = pgd[i];
         if (!(l1e & PTE_VALID) || !(l1e & PTE_TABLE))
             continue;
 
-        unsigned long* l2 = (unsigned long*)P2V(l1e & PTE_ADDR);
+        unsigned long *l2 = (unsigned long *)P2V(l1e & PTE_ADDR);
 
-        for (unsigned long j = 0; j < PT_ENTRIES; j++)
-        {
+        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
             unsigned long l2e = l2[j];
             if (!(l2e & PTE_VALID))
                 continue;
 
-            if (!(l2e & PTE_TABLE))
-            {
-                void* vaddr = (void*)P2V(l2e & PTE_ADDR);
+            if (!(l2e & PTE_TABLE)) {
+                void *vaddr = (void *)P2V(l2e & PTE_ADDR);
                 if (pmm_is_managed(vaddr))
                     pmm_free_page(vaddr);
                 continue;
             }
 
-            unsigned long* l3 = (unsigned long*)P2V(l2e & PTE_ADDR);
-            for (unsigned long k = 0; k < PT_ENTRIES; k++)
-            {
+            unsigned long *l3 = (unsigned long *)P2V(l2e & PTE_ADDR);
+            for (unsigned long k = 0; k < PT_ENTRIES; k++) {
                 unsigned long l3e = l3[k];
-                if ((l3e & PTE_VALID) && (l3e & PTE_PAGE))
-                {
-                    void* vaddr = (void*)P2V(l3e & PTE_ADDR);
+                if ((l3e & PTE_VALID) && (l3e & PTE_PAGE)) {
+                    void *vaddr = (void *)P2V(l3e & PTE_ADDR);
                     if (pmm_is_managed(vaddr))
                         pmm_free_page(vaddr);
                 }
@@ -393,73 +362,67 @@ void mmu_destroy_user_pgd(unsigned long* pgd)
     pmm_free_page(pgd);
 }
 
-unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd)
+unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
 {
     if (!parent_pgd)
         return NULL;
 
-    unsigned long* child_pgd = mmu_create_user_pgd();
+    unsigned long *child_pgd = mmu_create_user_pgd();
     if (!child_pgd)
         return NULL;
 
     unsigned long irq = spin_lock_irqsave(&mmu_lock);
 
-    for (unsigned long i = 0; i < PT_ENTRIES; i++)
-    {
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
         unsigned long l1e = parent_pgd[i];
         if (!(l1e & MMU_PTE_VALID))
             continue;
 
-        unsigned long* parent_pmd = (unsigned long*)P2V(l1e & PTE_ADDR);
-        unsigned long* child_pmd = alloc_user_table_page();
+        unsigned long *parent_pmd = (unsigned long *)P2V(l1e & PTE_ADDR);
+        unsigned long *child_pmd = alloc_user_table_page();
         if (!child_pmd)
             goto oom;
 
         child_pgd[i] = V2P((uintptr_t)child_pmd) | MMU_PTE_VALID | MMU_PTE_TABLE;
 
-        for (unsigned long j = 0; j < PT_ENTRIES; j++)
-        {
+        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
             unsigned long l2e = parent_pmd[j];
             if (!(l2e & MMU_PTE_VALID))
                 continue;
 
-            if (!(l2e & MMU_PTE_TABLE))
-            {
+            if (!(l2e & MMU_PTE_TABLE)) {
                 unsigned long pte = l2e;
-                if (!(pte & MMU_AP_RO))
-                {
+                if (!(pte & MMU_AP_RO)) {
                     pte &= ~MMU_AP_RO;
                     pte |= MMU_AP_RO | MMU_PTE_COW;
                     parent_pmd[j] = pte;
                 }
                 child_pmd[j] = pte;
-                void* v_pa = (void*)P2V(pte & PTE_ADDR);
+                void *v_pa = (void *)P2V(pte & PTE_ADDR);
                 if (pmm_is_managed(v_pa))
                     pmm_hold_page(v_pa);
                 continue;
             }
 
-            unsigned long* parent_pte = (unsigned long*)P2V(l2e & PTE_ADDR);
-            unsigned long* child_pte = alloc_user_table_page();
+            unsigned long *parent_pte = (unsigned long *)P2V(l2e & PTE_ADDR);
+            unsigned long *child_pte = alloc_user_table_page();
             if (!child_pte)
                 goto oom;
 
             child_pmd[j] = V2P((uintptr_t)child_pte) | MMU_PTE_VALID | MMU_PTE_TABLE;
 
-            for (unsigned long k = 0; k < PT_ENTRIES; k++)
-            {
+            for (unsigned long k = 0; k < PT_ENTRIES; k++) {
                 unsigned long pte = parent_pte[k];
                 if (!(pte & MMU_PTE_VALID))
                     continue;
 
-                if (!(pte & MMU_AP_RO))
-                {
+                if (!(pte & MMU_AP_RO)) {
                     pte &= ~MMU_AP_RO;
                     pte |= MMU_AP_RO | MMU_PTE_COW;
                     parent_pte[k] = pte;
                 }
                 child_pte[k] = pte;
-                void* v_pa = (void*)P2V(pte & PTE_ADDR);
+                void *v_pa = (void *)P2V(pte & PTE_ADDR);
                 if (pmm_is_managed(v_pa))
                     pmm_hold_page(v_pa);
             }
@@ -476,10 +439,10 @@ oom:
     return NULL;
 }
 
-void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags)
+void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
+                       unsigned long flags)
 {
-    if (!pgd)
-    {
+    if (!pgd) {
         PANIC("mmu_user_map_page: NULL pgd");
     }
 
@@ -490,52 +453,40 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     unsigned long l2 = L2_IDX(vaddr);
     unsigned long l3 = L3_IDX(vaddr);
 
-    unsigned long* l2t;
-    if (pgd[l1] & PTE_VALID)
-    {
-        l2t = (unsigned long*)P2V(pgd[l1] & PTE_ADDR);
-    }
-    else
-    {
+    unsigned long *l2t;
+    if (pgd[l1] & PTE_VALID) {
+        l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
+    } else {
         l2t = alloc_user_table_page();
-        if (!l2t)
-        {
+        if (!l2t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
             return;
         }
         pgd[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
 
-    unsigned long* l3t;
-    if (l2t[l2] & PTE_VALID)
-    {
-        if (!(l2t[l2] & PTE_TABLE))
-        {
+    unsigned long *l3t;
+    if (l2t[l2] & PTE_VALID) {
+        if (!(l2t[l2] & PTE_TABLE)) {
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
+        } else {
+            l3t = (unsigned long *)P2V(l2t[l2] & PTE_ADDR);
         }
-        else
-        {
-            l3t = (unsigned long*)P2V(l2t[l2] & PTE_ADDR);
-        }
-    }
-    else
-    {
+    } else {
         l3t = alloc_user_table_page();
-        if (!l3t)
-        {
+        if (!l3t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
             return;
         }
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
     }
 
-    if (l3t[l3] & PTE_VALID)
-    {
+    if (l3t[l3] & PTE_VALID) {
         unsigned long old_pa = l3t[l3] & PTE_ADDR;
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
-        void* v_old_pa = (void*)P2V(old_pa);
+        void *v_old_pa = (void *)P2V(old_pa);
         if (pmm_is_managed(v_old_pa))
             pmm_free_page(v_old_pa);
     }
@@ -547,7 +498,7 @@ void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long pa
     spin_unlock_irqrestore(&mmu_lock, irq);
 }
 
-void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
+void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
 {
     if (!pgd)
         return;
@@ -561,29 +512,25 @@ void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr)
     if (!(pgd[l1] & PTE_VALID))
         goto out;
 
-    unsigned long* l2t = (unsigned long*)P2V(pgd[l1] & PTE_ADDR);
+    unsigned long *l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID))
         goto out;
 
-    unsigned long* l3t;
-    if (!(l2e & PTE_TABLE))
-    {
+    unsigned long *l3t;
+    if (!(l2e & PTE_TABLE)) {
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
-    }
-    else
-    {
-        l3t = (unsigned long*)P2V(l2e & PTE_ADDR);
+    } else {
+        l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     }
 
-    if (l3t[l3] & PTE_VALID)
-    {
+    if (l3t[l3] & PTE_VALID) {
         unsigned long old_pa = l3t[l3] & PTE_ADDR;
         l3t[l3] = 0;
         tlbi_va_is(vaddr);
-        void* v_old_pa = (void*)P2V(old_pa);
+        void *v_old_pa = (void *)P2V(old_pa);
         if (pmm_is_managed(v_old_pa))
             pmm_free_page(v_old_pa);
     }
@@ -592,7 +539,7 @@ out:
     spin_unlock_irqrestore(&mmu_lock, irq);
 }
 
-void mmu_switch_user(unsigned long* pgd, unsigned long asid)
+void mmu_switch_user(unsigned long *pgd, unsigned long asid)
 {
     unsigned long safe_asid = asid & 0xFFUL;
     unsigned long ttbr0 = V2P((uintptr_t)pgd) | (safe_asid << 48);
@@ -602,7 +549,8 @@ void mmu_switch_user(unsigned long* pgd, unsigned long asid)
     asm volatile("isb" : : : "memory");
 }
 
-int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags)
+int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
+                   unsigned long *out_flags)
 {
     if (!pgd)
         return 0;
@@ -617,14 +565,13 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
     if (!(pgd[l1] & PTE_VALID))
         goto out;
 
-    unsigned long* l2t = (unsigned long*)P2V(pgd[l1] & PTE_ADDR);
+    unsigned long *l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID))
         goto out;
 
-    if (!(l2e & PTE_TABLE))
-    {
+    if (!(l2e & PTE_TABLE)) {
         if (out_paddr)
             *out_paddr = (l2e & PTE_ADDR) + (vaddr & 0x1FFFFFUL);
         if (out_flags)
@@ -633,7 +580,7 @@ int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_p
         goto out;
     }
 
-    unsigned long* l3t = (unsigned long*)P2V(l2e & PTE_ADDR);
+    unsigned long *l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     unsigned long l3e = l3t[l3];
 
     if (!(l3e & PTE_VALID))
@@ -650,7 +597,7 @@ out:
     return found;
 }
 
-int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
+int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
 {
     vaddr &= ~0xFFFUL;
     unsigned long paddr, flags;
@@ -660,11 +607,11 @@ int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr)
     if (!(flags & MMU_PTE_COW))
         return -1;
 
-    void* new_page = pmm_alloc_page();
+    void *new_page = pmm_alloc_page();
     if (!new_page)
         return -1;
 
-    memcpy(new_page, (void*)P2V(paddr), PAGE_SIZE);
+    memcpy(new_page, (void *)P2V(paddr), PAGE_SIZE);
 
     unsigned long new_flags = flags & ~MMU_PTE_COW;
     new_flags &= ~MMU_AP_RO;

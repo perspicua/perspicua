@@ -21,13 +21,13 @@ void heap_init(void);
  * specified size. Small allocations are handled by the slab layer,
  * while larger ones use a first-fit strategy.
  */
-void* heap_malloc(unsigned long size);
+void *heap_malloc(unsigned long size);
 
 /*
  * heap_free - Returns a previously allocated block of memory to the
  * corresponding allocator (slab or first-fit heap).
  */
-void heap_free(void* ptr);
+void heap_free(void *ptr);
 
 /*
  * heap_get_used - Returns the total number of bytes currently allocated

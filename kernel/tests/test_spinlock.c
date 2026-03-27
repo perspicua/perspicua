@@ -111,8 +111,7 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         volatile int counter = 0;
 
-        for (int i = 0; i < 500; i++)
-        {
+        for (int i = 0; i < 500; i++) {
             spin_lock(&lock);
             counter++;
             spin_unlock(&lock);
@@ -126,8 +125,7 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         volatile int counter = 0;
 
-        for (int i = 0; i < 500; i++)
-        {
+        for (int i = 0; i < 500; i++) {
             unsigned long f = spin_lock_irqsave(&lock);
             counter++;
             spin_unlock_irqrestore(&lock, f);
@@ -139,8 +137,7 @@ void test_spinlock(void)
     // many sequential lock/unlock cycles
     {
         spinlock_t stress_lock = SPINLOCK_INIT;
-        for (int i = 0; i < 10000; i++)
-        {
+        for (int i = 0; i < 10000; i++) {
             spin_lock(&stress_lock);
             spin_unlock(&stress_lock);
         }
@@ -151,8 +148,7 @@ void test_spinlock(void)
     // irqsave stress
     {
         spinlock_t irq_lock = SPINLOCK_INIT;
-        for (int i = 0; i < 1000; i++)
-        {
+        for (int i = 0; i < 1000; i++) {
             unsigned long f = spin_lock_irqsave(&irq_lock);
             spin_unlock_irqrestore(&irq_lock, f);
         }
@@ -251,8 +247,7 @@ void test_spinlock(void)
         spin_lock(&lock);
         int ok = 1;
         for (int i = 0; i < 32; i++)
-            if (buf[i] != (char)(i + 1))
-            {
+            if (buf[i] != (char)(i + 1)) {
                 ok = 0;
                 break;
             }
@@ -266,8 +261,7 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         volatile unsigned long val = 0;
 
-        for (int i = 0; i < 200; i++)
-        {
+        for (int i = 0; i < 200; i++) {
             spin_lock(&lock);
             val = (unsigned long)i;
             TEST_ASSERT("alt value correct", val == (unsigned long)i);
@@ -282,8 +276,7 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         unsigned long t1 = get_system_time();
 
-        for (int i = 0; i < 5000; i++)
-        {
+        for (int i = 0; i < 5000; i++) {
             spin_lock(&lock);
             spin_unlock(&lock);
         }

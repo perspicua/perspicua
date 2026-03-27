@@ -1,30 +1,40 @@
 /*
- * signals.h - Kernel-internal API for signals.
+ * signals.h - Kernel-internal API for signal management.
  *
- * This file provides internal kernel structures and functions for signal
- * delivery and handling within the scheduler and exception layers.
+ * Handles the lifecycle of signal delivery, including context saving
+ * and stack frame preparation.
  */
 
-#ifndef PERSPICUA_KERNEL_SIGNALS_H
-#define PERSPICUA_KERNEL_SIGNALS_H
+#ifndef PERSPICUA_CORE_SIGNALS_H
+#define PERSPICUA_CORE_SIGNALS_H
 
 #include "uapi/signals.h"
 
 #include "arch/exception.h"
 
-/* Structure saved on the user stack during signal delivery */
-struct signal_frame
-{
+/* --- Data Structures --- */
+
+/*
+ * struct signal_frame - State saved on the user stack during signal delivery.
+ *
+ * This allows the kernel to restore the process state (including the
+ * register set and signal mask) once the signal handler returns.
+ */
+struct signal_frame {
     struct exception_trap_frame saved_tf;
     sigset_t saved_mask;
 };
 
-/* --- Signal Dispatch & Delivery --- */
+/* --- Function Prototypes --- */
 
-/* Processes pending signals for the current process before returning to user mode */
-void signal_handle_pending(struct exception_trap_frame* tf);
+/*
+ * signal_handle_pending - Dispatches pending signals before returning to user mode.
+ */
+void signal_handle_pending(struct exception_trap_frame *tf);
 
-/* Sends a signal to a process by its PID. Returns 0 on success, or a negative error. */
+/*
+ * signal_send - Posts a signal to a target process by its PID.
+ */
 int signal_send(uint32_t target_pid, int sig);
 
-#endif /* PERSPICUA_KERNEL_SIGNALS_H */
+#endif /* PERSPICUA_CORE_SIGNALS_H */

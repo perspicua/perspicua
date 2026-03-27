@@ -28,66 +28,60 @@ static unsigned int cached_uart_irq = 0;
 int uart_ready = 0;
 
 /* Public Register Pointers */
-volatile uint32_t* uart_dr = NULL;
-volatile uint32_t* uart_fr = NULL;
-volatile uint32_t* uart_mis = NULL;
-volatile uint32_t* uart_imsc = NULL;
+volatile uint32_t *uart_dr = NULL;
+volatile uint32_t *uart_fr = NULL;
+volatile uint32_t *uart_mis = NULL;
+volatile uint32_t *uart_imsc = NULL;
 
 /* Private Register Pointers (Static) */
-static volatile uint32_t* uart_ibrd = NULL;
-static volatile uint32_t* uart_fbrd = NULL;
-static volatile uint32_t* uart_lcrh = NULL;
-static volatile uint32_t* uart_cr = NULL;
-static volatile uint32_t* uart_ifls = NULL;
-static volatile uint32_t* uart_icr = NULL;
+static volatile uint32_t *uart_ibrd = NULL;
+static volatile uint32_t *uart_fbrd = NULL;
+static volatile uint32_t *uart_lcrh = NULL;
+static volatile uint32_t *uart_cr = NULL;
+static volatile uint32_t *uart_ifls = NULL;
+static volatile uint32_t *uart_icr = NULL;
 
 /*
  * uart_init - Configures the UART for standard serial communication.
  */
 void uart_init(void)
 {
-    const uint32_t* uart_node = fdt_find_node_by_compatible("arm,pl011-axi");
-    if (!uart_node)
-    {
+    const uint32_t *uart_node = fdt_find_node_by_compatible("arm,pl011-axi");
+    if (!uart_node) {
         PANIC("[ UART ] Device node not found in DTB!\n");
     }
 
     struct fdt_property reg_prop;
-    if (fdt_get_property(uart_node, "reg", &reg_prop) != 0)
-    {
+    if (fdt_get_property(uart_node, "reg", &reg_prop) != 0) {
         PANIC("[ UART ] Missing 'reg' property in DTB!\n");
     }
 
-    const uint32_t* reg_data = (const uint32_t*)reg_prop.value;
+    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
     uint32_t phys_base;
 
-    if (reg_prop.size >= 12)
-    {
+    if (reg_prop.size >= 12) {
         phys_base = fdt32_to_cpu(reg_data[1]);
-    }
-    else
-    {
+    } else {
         phys_base = fdt32_to_cpu(reg_data[0]);
     }
 
-    if (phys_base < 0xFC000000)
-    {
+    if (phys_base < 0xFC000000) {
         phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
     }
 
     uintptr_t vbase = P2V(phys_base);
 
     // Map hardware offsets to pointers
-    uart_dr = (uint32_t*)(vbase + 0x00);
-    uart_fr = (uint32_t*)(vbase + 0x18);
-    uart_ibrd = (uint32_t*)(vbase + 0x24);
-    uart_fbrd = (uint32_t*)(vbase + 0x28);
-    uart_lcrh = (uint32_t*)(vbase + 0x2C);
-    uart_cr = (uint32_t*)(vbase + 0x30);
-    uart_ifls = (uint32_t*)(vbase + 0x34);
-    uart_imsc = (uint32_t*)(vbase + 0x38);
-    uart_mis = (uint32_t*)(vbase + 0x40);
-    uart_icr = (uint32_t*)(vbase + 0x44);
+    uart_dr = (uint32_t *)(vbase + 0x00);
+    uart_fr = (uint32_t *)(vbase + 0x18);
+    uart_ibrd = (uint32_t *)(vbase + 0x24);
+    uart_fbrd = (uint32_t *)(vbase + 0x28);
+    uart_lcrh = (uint32_t *)(vbase + 0x2C);
+    uart_cr = (uint32_t *)(vbase + 0x30);
+    uart_ifls = (uint32_t *)(vbase + 0x34);
+    uart_imsc = (uint32_t *)(vbase + 0x38);
+    uart_mis = (uint32_t *)(vbase + 0x40);
+    uart_icr = (uint32_t *)(vbase + 0x44);
 
     mmio_write(uart_cr, 0);
 
@@ -108,22 +102,16 @@ void uart_init(void)
     uart_ready = 1;
 
     struct fdt_property irq_prop;
-    if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0)
-    {
-        const uint32_t* irq_data = (const uint32_t*)irq_prop.value;
+    if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0) {
+        const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
         uint32_t type = fdt32_to_cpu(irq_data[0]);
         uint32_t num = fdt32_to_cpu(irq_data[1]);
-        if (type == 0)
-        {
+        if (type == 0) {
             cached_uart_irq = num + 32;
-        }
-        else
-        {
+        } else {
             cached_uart_irq = num;
         }
-    }
-    else
-    {
+    } else {
         cached_uart_irq = 153;
     }
 
@@ -133,7 +121,7 @@ void uart_init(void)
 /*
  * uart_write - Proxies write calls to the console TTY.
  */
-void uart_write(const char* buf, size_t len)
+void uart_write(const char *buf, size_t len)
 {
     tty_write(&console_tty, buf, len);
 }
@@ -144,8 +132,7 @@ void uart_write(const char* buf, size_t len)
  */
 void uart_send_raw(char c)
 {
-    while (mmio_read(uart_fr) & UART_FR_TXFF)
-    {
+    while (mmio_read(uart_fr) & UART_FR_TXFF) {
         asm volatile("nop");
     }
     mmio_write(uart_dr, (unsigned int)c);
@@ -164,11 +151,10 @@ void uart_send(char c)
 /*
  * uart_puts_locked - Atomically transmits a string with IRQs disabled.
  */
-void uart_puts_locked(const char* str)
+void uart_puts_locked(const char *str)
 {
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-    while (*str)
-    {
+    while (*str) {
         uart_send_raw(*str++);
     }
     spin_unlock_irqrestore(&uart_tx_lock, flags);
@@ -179,8 +165,7 @@ void uart_puts_locked(const char* str)
  */
 char uart_getc(void)
 {
-    while (mmio_read(uart_fr) & UART_FR_RXFE)
-    {
+    while (mmio_read(uart_fr) & UART_FR_RXFE) {
         asm volatile("nop");
     }
     return (char)(mmio_read(uart_dr) & 0xFF);
@@ -189,10 +174,9 @@ char uart_getc(void)
 /*
  * uart_puts - Transmits a null-terminated string.
  */
-void uart_puts(const char* str)
+void uart_puts(const char *str)
 {
-    while (*str)
-    {
+    while (*str) {
         uart_send(*str++);
     }
 }

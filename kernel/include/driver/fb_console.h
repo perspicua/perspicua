@@ -25,6 +25,6 @@ void fb_console_putc(char c);
  * fb_console_puts - Prints a null-terminated string to the console.
  * @s: The string to print.
  */
-void fb_console_puts(const char* s);
+void fb_console_puts(const char *s);
 
 #endif /* PERSPICUA_DRIVER_FB_CONSOLE_H */

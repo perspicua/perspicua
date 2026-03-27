@@ -10,7 +10,7 @@ void test_pmm(void)
 
     // single page alloc
     {
-        void* p = pmm_alloc_page();
+        void *p = pmm_alloc_page();
         TEST_ASSERT("alloc non-null", p != NULL);
         TEST_ASSERT("page aligned", ((unsigned long)p & (PAGE_SIZE - 1)) == 0);
         pmm_free_page(p);
@@ -19,7 +19,7 @@ void test_pmm(void)
 
     // pmm_alloc_pages(1) equivalent
     {
-        void* p = pmm_alloc_pages(1);
+        void *p = pmm_alloc_pages(1);
         TEST_ASSERT("alloc_pages(1) non-null", p != NULL);
         TEST_ASSERT("alloc_pages(1) aligned", ((unsigned long)p & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(p, 1);
@@ -34,7 +34,7 @@ void test_pmm(void)
 
     // excessive order (beyond max order 10)
     {
-        void* p = pmm_alloc_pages(2048);  // order 11 is 2048 pages
+        void *p = pmm_alloc_pages(2048); // order 11 is 2048 pages
         TEST_ASSERT("alloc_pages(2048) beyond max order", p == NULL);
     }
     TEST_PASS("excessive order returns NULL");
@@ -46,11 +46,11 @@ void test_pmm(void)
 
     // writable page
     {
-        volatile unsigned long* p = (volatile unsigned long*)pmm_alloc_page();
+        volatile unsigned long *p = (volatile unsigned long *)pmm_alloc_page();
         TEST_ASSERT("write alloc", p != NULL);
         *p = 0xDEADBEEFCAFEBABEUL;
         TEST_ASSERT("write verify", *p == 0xDEADBEEFCAFEBABEUL);
-        pmm_free_page((void*)p);
+        pmm_free_page((void *)p);
     }
     TEST_PASS("page writable");
 
@@ -58,8 +58,8 @@ void test_pmm(void)
 
     // two single pages are distinct
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
         TEST_ASSERT("a non-null", a != NULL);
         TEST_ASSERT("b non-null", b != NULL);
         TEST_ASSERT("a != b", a != b);
@@ -72,9 +72,8 @@ void test_pmm(void)
 
     // many single pages all distinct
     {
-        void* pages[64];
-        for (int i = 0; i < 64; i++)
-        {
+        void *pages[64];
+        for (int i = 0; i < 64; i++) {
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("64x alloc", pages[i] != NULL);
             TEST_ASSERT("64x aligned", ((unsigned long)pages[i] & (PAGE_SIZE - 1)) == 0);
@@ -92,8 +91,8 @@ void test_pmm(void)
 
     // multi-page blocks don't overlap
     {
-        void* a = pmm_alloc_pages(4);
-        void* b = pmm_alloc_pages(4);
+        void *a = pmm_alloc_pages(4);
+        void *b = pmm_alloc_pages(4);
         TEST_ASSERT("4p a ok", a != NULL);
         TEST_ASSERT("4p b ok", b != NULL);
         unsigned long a_start = (unsigned long)a;
@@ -110,9 +109,9 @@ void test_pmm(void)
 
     // freed page can be re-allocated
     {
-        void* p = pmm_alloc_page();
+        void *p = pmm_alloc_page();
         pmm_free_page(p);
-        void* q = pmm_alloc_page();
+        void *q = pmm_alloc_page();
         TEST_ASSERT("reuse after free", q != NULL);
         pmm_free_page(q);
     }
@@ -120,12 +119,12 @@ void test_pmm(void)
 
     // rapid alloc/free cycle ×50
     {
-        for (int i = 0; i < 50; i++)
-        {
-            void* pg = pmm_alloc_page();
+        for (int i = 0; i < 50; i++) {
+            void *pg = pmm_alloc_page();
             TEST_ASSERT("rapid alloc", pg != NULL);
-            *(volatile unsigned long*)pg = 0xCAFEBABE00000000UL | (unsigned long)i;
-            TEST_ASSERT("rapid canary", *(volatile unsigned long*)pg == (0xCAFEBABE00000000UL | (unsigned long)i));
+            *(volatile unsigned long *)pg = 0xCAFEBABE00000000UL | (unsigned long)i;
+            TEST_ASSERT("rapid canary",
+                        *(volatile unsigned long *)pg == (0xCAFEBABE00000000UL | (unsigned long)i));
             pmm_free_page(pg);
         }
     }
@@ -133,13 +132,13 @@ void test_pmm(void)
 
     // free in reverse order
     {
-        void* pages[8];
+        void *pages[8];
         for (int i = 0; i < 8; i++)
             pages[i] = pmm_alloc_page();
         for (int i = 7; i >= 0; i--)
             pmm_free_page(pages[i]);
         // Should still work fine after reverse-order free
-        void* p = pmm_alloc_page();
+        void *p = pmm_alloc_page();
         TEST_ASSERT("post-reverse alloc ok", p != NULL);
         pmm_free_page(p);
     }
@@ -149,16 +148,14 @@ void test_pmm(void)
 
     // order 0 through order 5 (1, 2, 4, 8, 16, 32 pages)
     {
-        for (int order = 0; order <= 5; order++)
-        {
+        for (int order = 0; order <= 5; order++) {
             unsigned long count = 1UL << order;
-            void* blk = pmm_alloc_pages(count);
+            void *blk = pmm_alloc_pages(count);
             TEST_ASSERT("order alloc", blk != NULL);
             TEST_ASSERT("order aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
             // Write first and last byte of each page
-            for (unsigned long i = 0; i < count; i++)
-            {
-                volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
+            for (unsigned long i = 0; i < count; i++) {
+                volatile unsigned char *pg = (unsigned char *)blk + i * PAGE_SIZE;
                 *pg = (unsigned char)(i & 0xFF);
                 TEST_ASSERT("order writable", *pg == (unsigned char)(i & 0xFF));
             }
@@ -169,34 +166,35 @@ void test_pmm(void)
 
     // order 6 = 64 pages (256 kb)
     {
-        void* blk = pmm_alloc_pages(64);
+        void *blk = pmm_alloc_pages(64);
         TEST_ASSERT("64-page alloc", blk != NULL);
         TEST_ASSERT("64-page aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
         // Touch first, middle, last pages
-        *(volatile unsigned char*)blk = 0xAA;
-        *((volatile unsigned char*)blk + 32 * PAGE_SIZE) = 0xBB;
-        *((volatile unsigned char*)blk + 63 * PAGE_SIZE) = 0xCC;
-        TEST_ASSERT("64p first", *(volatile unsigned char*)blk == 0xAA);
-        TEST_ASSERT("64p mid", *((volatile unsigned char*)blk + 32 * PAGE_SIZE) == 0xBB);
-        TEST_ASSERT("64p last", *((volatile unsigned char*)blk + 63 * PAGE_SIZE) == 0xCC);
+        *(volatile unsigned char *)blk = 0xAA;
+        *((volatile unsigned char *)blk + 32 * PAGE_SIZE) = 0xBB;
+        *((volatile unsigned char *)blk + 63 * PAGE_SIZE) = 0xCC;
+        TEST_ASSERT("64p first", *(volatile unsigned char *)blk == 0xAA);
+        TEST_ASSERT("64p mid", *((volatile unsigned char *)blk + 32 * PAGE_SIZE) == 0xBB);
+        TEST_ASSERT("64p last", *((volatile unsigned char *)blk + 63 * PAGE_SIZE) == 0xCC);
         pmm_free_pages(blk, 64);
     }
     TEST_PASS("64-page alloc (256KB)");
 
     // order 8 = 256 pages (1 mb)
     {
-        void* blk = pmm_alloc_pages(256);
+        void *blk = pmm_alloc_pages(256);
         TEST_ASSERT("256-page alloc", blk != NULL);
-        *(volatile unsigned long*)blk = 0x1234567890ABCDEFULL;
-        *((volatile unsigned long*)blk + 255 * (PAGE_SIZE / sizeof(unsigned long))) = 0xFEDCBA0987654321ULL;
-        TEST_ASSERT("1MB first", *(volatile unsigned long*)blk == 0x1234567890ABCDEFULL);
+        *(volatile unsigned long *)blk = 0x1234567890ABCDEFULL;
+        *((volatile unsigned long *)blk + 255 * (PAGE_SIZE / sizeof(unsigned long))) =
+            0xFEDCBA0987654321ULL;
+        TEST_ASSERT("1MB first", *(volatile unsigned long *)blk == 0x1234567890ABCDEFULL);
         pmm_free_pages(blk, 256);
     }
     TEST_PASS("256-page alloc (1MB)");
 
     // order 10 = 1024 pages (4 mb) — max order
     {
-        void* blk = pmm_alloc_pages(1024);
+        void *blk = pmm_alloc_pages(1024);
         TEST_ASSERT("max-order alloc", blk != NULL);
         TEST_ASSERT("max-order aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(blk, 1024);
@@ -207,13 +205,12 @@ void test_pmm(void)
 
     // 3 pages -> rounds up to order 2 = 4 pages
     {
-        void* blk = pmm_alloc_pages(3);
+        void *blk = pmm_alloc_pages(3);
         TEST_ASSERT("3-page alloc", blk != NULL);
         TEST_ASSERT("3-page aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
         // Should be safe to write all 3 requested pages
-        for (int i = 0; i < 3; i++)
-        {
-            volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
+        for (int i = 0; i < 3; i++) {
+            volatile unsigned char *pg = (unsigned char *)blk + i * PAGE_SIZE;
             *pg = (unsigned char)i;
         }
         pmm_free_pages(blk, 3);
@@ -222,11 +219,10 @@ void test_pmm(void)
 
     // 5 pages -> order 3 = 8 pages
     {
-        void* blk = pmm_alloc_pages(5);
+        void *blk = pmm_alloc_pages(5);
         TEST_ASSERT("5-page alloc", blk != NULL);
-        for (int i = 0; i < 5; i++)
-        {
-            volatile unsigned char* pg = (unsigned char*)blk + i * PAGE_SIZE;
+        for (int i = 0; i < 5; i++) {
+            volatile unsigned char *pg = (unsigned char *)blk + i * PAGE_SIZE;
             *pg = (unsigned char)(0x50 + i);
             TEST_ASSERT("5p write", *pg == (unsigned char)(0x50 + i));
         }
@@ -237,9 +233,8 @@ void test_pmm(void)
     // 7, 9, 15, 17 pages
     {
         unsigned long counts[] = {7, 9, 15, 17};
-        for (int c = 0; c < 4; c++)
-        {
-            void* blk = pmm_alloc_pages(counts[c]);
+        for (int c = 0; c < 4; c++) {
+            void *blk = pmm_alloc_pages(counts[c]);
             TEST_ASSERT("odd-count alloc", blk != NULL);
             TEST_ASSERT("odd-count aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
             pmm_free_pages(blk, counts[c]);
@@ -251,11 +246,11 @@ void test_pmm(void)
 
     // two single pages free -> can alloc 2-page block
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
         pmm_free_page(a);
         pmm_free_page(b);
-        void* pair = pmm_alloc_pages(2);
+        void *pair = pmm_alloc_pages(2);
         TEST_ASSERT("buddy merge 2p", pair != NULL);
         TEST_ASSERT("buddy merge aligned", ((unsigned long)pair & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(pair, 2);
@@ -264,12 +259,12 @@ void test_pmm(void)
 
     // four pages free -> should merge up to order 2
     {
-        void* pages[4];
+        void *pages[4];
         for (int i = 0; i < 4; i++)
             pages[i] = pmm_alloc_page();
         for (int i = 0; i < 4; i++)
             pmm_free_page(pages[i]);
-        void* quad = pmm_alloc_pages(4);
+        void *quad = pmm_alloc_pages(4);
         TEST_ASSERT("buddy merge 4p", quad != NULL);
         pmm_free_pages(quad, 4);
     }
@@ -277,12 +272,12 @@ void test_pmm(void)
 
     // eight pages free -> merge to order 3
     {
-        void* pages[8];
+        void *pages[8];
         for (int i = 0; i < 8; i++)
             pages[i] = pmm_alloc_page();
         for (int i = 0; i < 8; i++)
             pmm_free_page(pages[i]);
-        void* octet = pmm_alloc_pages(8);
+        void *octet = pmm_alloc_pages(8);
         TEST_ASSERT("buddy merge 8p", octet != NULL);
         pmm_free_pages(octet, 8);
     }
@@ -290,15 +285,15 @@ void test_pmm(void)
 
     // ── 6d. partial merge: free 2, keep 1 between -> no merge past held page
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
-        void* c = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
+        void *c = pmm_alloc_page();
         // Free a and c but keep b -> buddies of a and c may merge with
         // other blocks but a and c cannot merge with each other (b blocks)
         pmm_free_page(a);
         pmm_free_page(c);
         // Allocate 2 pages — should still succeed from elsewhere
-        void* pair = pmm_alloc_pages(2);
+        void *pair = pmm_alloc_pages(2);
         TEST_ASSERT("partial merge alloc 2p", pair != NULL);
         pmm_free_pages(pair, 2);
         pmm_free_page(b);
@@ -307,11 +302,11 @@ void test_pmm(void)
 
     // free a 2-page block, then re-alloc as 2 singles
     {
-        void* blk = pmm_alloc_pages(2);
+        void *blk = pmm_alloc_pages(2);
         pmm_free_pages(blk, 2);
         // The freed order-1 block should be splittable into two order-0's
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
         TEST_ASSERT("split after free a", a != NULL);
         TEST_ASSERT("split after free b", b != NULL);
         TEST_ASSERT("split distinct", a != b);
@@ -324,13 +319,13 @@ void test_pmm(void)
 
     // alloc large, free, then alloc small from split
     {
-        void* big = pmm_alloc_pages(8);
+        void *big = pmm_alloc_pages(8);
         pmm_free_pages(big, 8);
         // Allocating 1 page should split the order-3 block down
-        void* small = pmm_alloc_page();
+        void *small = pmm_alloc_page();
         TEST_ASSERT("split-down alloc", small != NULL);
         // Can still alloc more pages from the remainders
-        void* small2 = pmm_alloc_page();
+        void *small2 = pmm_alloc_page();
         TEST_ASSERT("split-down second", small2 != NULL);
         TEST_ASSERT("split down distinct", small != small2);
         pmm_free_page(small);
@@ -340,10 +335,10 @@ void test_pmm(void)
 
     // progressive splitting: alloc 16p, free, alloc 1p
     {
-        void* big = pmm_alloc_pages(16);
+        void *big = pmm_alloc_pages(16);
         pmm_free_pages(big, 16);
         // order-4 block should split 4 times: 16->8->4->2->1
-        void* tiny = pmm_alloc_page();
+        void *tiny = pmm_alloc_page();
         TEST_ASSERT("deep split", tiny != NULL);
         pmm_free_page(tiny);
     }
@@ -354,7 +349,7 @@ void test_pmm(void)
     // multi-page block is truly contiguous
     {
         unsigned long count = 8;
-        unsigned char* blk = (unsigned char*)pmm_alloc_pages(count);
+        unsigned char *blk = (unsigned char *)pmm_alloc_pages(count);
         TEST_ASSERT("contig alloc", blk != NULL);
         // Write a different byte at the start of each page
         for (unsigned long i = 0; i < count; i++)
@@ -372,7 +367,7 @@ void test_pmm(void)
     // fill entire multi-page block
     {
         unsigned long count = 4;
-        unsigned char* blk = (unsigned char*)pmm_alloc_pages(count);
+        unsigned char *blk = (unsigned char *)pmm_alloc_pages(count);
         TEST_ASSERT("fill4p alloc", blk != NULL);
         // Fill entire 16KB with pattern
         unsigned long total = count * PAGE_SIZE;
@@ -391,17 +386,15 @@ void test_pmm(void)
 
     // writes to one page don't affect another
     {
-        unsigned long* a = (unsigned long*)pmm_alloc_page();
-        unsigned long* b = (unsigned long*)pmm_alloc_page();
+        unsigned long *a = (unsigned long *)pmm_alloc_page();
+        unsigned long *b = (unsigned long *)pmm_alloc_page();
         // Fill a with 0x1111... and b with 0x2222...
-        for (int i = 0; i < (int)(PAGE_SIZE / sizeof(unsigned long)); i++)
-        {
+        for (int i = 0; i < (int)(PAGE_SIZE / sizeof(unsigned long)); i++) {
             a[i] = 0x1111111111111111UL;
             b[i] = 0x2222222222222222UL;
         }
         int a_ok = 1, b_ok = 1;
-        for (int i = 0; i < (int)(PAGE_SIZE / sizeof(unsigned long)); i++)
-        {
+        for (int i = 0; i < (int)(PAGE_SIZE / sizeof(unsigned long)); i++) {
             if (a[i] != 0x1111111111111111UL)
                 a_ok = 0;
             if (b[i] != 0x2222222222222222UL)
@@ -416,14 +409,13 @@ void test_pmm(void)
 
     // multi-page blocks don't corrupt each other
     {
-        unsigned char* a = (unsigned char*)pmm_alloc_pages(4);
-        unsigned char* b = (unsigned char*)pmm_alloc_pages(4);
+        unsigned char *a = (unsigned char *)pmm_alloc_pages(4);
+        unsigned char *b = (unsigned char *)pmm_alloc_pages(4);
         memset(a, 0xAA, 4 * PAGE_SIZE);
         memset(b, 0xBB, 4 * PAGE_SIZE);
         // Spot-check pages
         int ok = 1;
-        for (int pg = 0; pg < 4; pg++)
-        {
+        for (int pg = 0; pg < 4; pg++) {
             if (a[pg * PAGE_SIZE] != 0xAA)
                 ok = 0;
             if (a[pg * PAGE_SIZE + PAGE_SIZE - 1] != 0xAA)
@@ -443,12 +435,12 @@ void test_pmm(void)
 
     // interleaved single and multi-page allocs
     {
-        void* s1 = pmm_alloc_page();
-        void* m1 = pmm_alloc_pages(4);
-        void* s2 = pmm_alloc_page();
-        void* m2 = pmm_alloc_pages(8);
-        void* s3 = pmm_alloc_page();
-        void* m3 = pmm_alloc_pages(2);
+        void *s1 = pmm_alloc_page();
+        void *m1 = pmm_alloc_pages(4);
+        void *s2 = pmm_alloc_page();
+        void *m2 = pmm_alloc_pages(8);
+        void *s3 = pmm_alloc_page();
+        void *m3 = pmm_alloc_pages(2);
 
         TEST_ASSERT("mixed s1", s1 != NULL);
         TEST_ASSERT("mixed m1", m1 != NULL);
@@ -469,12 +461,11 @@ void test_pmm(void)
 
     // alloc multi, free, alloc singles from it
     {
-        void* blk = pmm_alloc_pages(4);
+        void *blk = pmm_alloc_pages(4);
         pmm_free_pages(blk, 4);
         // Should be able to alloc 4 individual pages now
-        void* pages[4];
-        for (int i = 0; i < 4; i++)
-        {
+        void *pages[4];
+        for (int i = 0; i < 4; i++) {
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("split-multi alloc", pages[i] != NULL);
         }
@@ -487,15 +478,14 @@ void test_pmm(void)
 
     // alternating free pattern
     {
-        void* pages[16];
+        void *pages[16];
         for (int i = 0; i < 16; i++)
             pages[i] = pmm_alloc_page();
         // Free even indices
         for (int i = 0; i < 16; i += 2)
             pmm_free_page(pages[i]);
         // Re-alloc into freed slots
-        for (int i = 0; i < 16; i += 2)
-        {
+        for (int i = 0; i < 16; i += 2) {
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("frag re-alloc", pages[i] != NULL);
         }
@@ -506,7 +496,7 @@ void test_pmm(void)
 
     // swiss-cheese: free scattered pages
     {
-        void* pages[20];
+        void *pages[20];
         for (int i = 0; i < 20; i++)
             pages[i] = pmm_alloc_page();
         // Free a scattered pattern
@@ -514,8 +504,7 @@ void test_pmm(void)
         for (int i = 0; i < 7; i++)
             pmm_free_page(pages[free_idx[i]]);
         // Re-alloc the freed ones
-        for (int i = 0; i < 7; i++)
-        {
+        for (int i = 0; i < 7; i++) {
             pages[free_idx[i]] = pmm_alloc_page();
             TEST_ASSERT("swiss realloc", pages[free_idx[i]] != NULL);
         }
@@ -528,14 +517,14 @@ void test_pmm(void)
     //    Fragment the allocator, then request a multi-page block to
     //    verify buddy merging still works in a fragmented state.
     {
-        void* pages[8];
+        void *pages[8];
         for (int i = 0; i < 8; i++)
             pages[i] = pmm_alloc_page();
         // Free all -> buddies should merge back up
         for (int i = 0; i < 8; i++)
             pmm_free_page(pages[i]);
         // Now alloc 8-page block — requires full merge to order 3
-        void* big = pmm_alloc_pages(8);
+        void *big = pmm_alloc_pages(8);
         TEST_ASSERT("post-frag 8p alloc", big != NULL);
         pmm_free_pages(big, 8);
     }
@@ -545,16 +534,15 @@ void test_pmm(void)
 
     // alloc 128 pages, free all
     {
-        void* pages[128];
-        for (int i = 0; i < 128; i++)
-        {
+        void *pages[128];
+        for (int i = 0; i < 128; i++) {
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("128x alloc", pages[i] != NULL);
         }
         for (int i = 0; i < 128; i++)
             pmm_free_page(pages[i]);
         // Allocator should recover
-        void* p = pmm_alloc_page();
+        void *p = pmm_alloc_page();
         TEST_ASSERT("post-128 alloc ok", p != NULL);
         pmm_free_page(p);
     }
@@ -562,11 +550,9 @@ void test_pmm(void)
 
     // sawtooth: batch alloc/free ×5
     {
-        for (int round = 0; round < 5; round++)
-        {
-            void* pages[32];
-            for (int i = 0; i < 32; i++)
-            {
+        for (int round = 0; round < 5; round++) {
+            void *pages[32];
+            for (int i = 0; i < 32; i++) {
                 pages[i] = pmm_alloc_page();
                 TEST_ASSERT("sawtooth alloc", pages[i] != NULL);
             }
@@ -578,18 +564,15 @@ void test_pmm(void)
 
     // wave pattern: alloc 4, free 2, repeat
     {
-        void* pages[40];
+        void *pages[40];
         int count = 0;
-        for (int wave = 0; wave < 10; wave++)
-        {
-            for (int i = 0; i < 4; i++)
-            {
+        for (int wave = 0; wave < 10; wave++) {
+            for (int i = 0; i < 4; i++) {
                 pages[count] = pmm_alloc_page();
                 TEST_ASSERT("wave alloc", pages[count] != NULL);
                 count++;
             }
-            for (int i = 0; i < 2 && count > 0; i++)
-            {
+            for (int i = 0; i < 2 && count > 0; i++) {
                 count--;
                 pmm_free_page(pages[count]);
             }
@@ -601,9 +584,8 @@ void test_pmm(void)
 
     // multi-page stress: alloc/free 4p blocks ×16
     {
-        void* blocks[16];
-        for (int i = 0; i < 16; i++)
-        {
+        void *blocks[16];
+        for (int i = 0; i < 16; i++) {
             blocks[i] = pmm_alloc_pages(4);
             TEST_ASSERT("4p stress alloc", blocks[i] != NULL);
         }
@@ -617,10 +599,10 @@ void test_pmm(void)
 
     // fifo free
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
-        void* c = pmm_alloc_page();
-        void* d = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
+        void *c = pmm_alloc_page();
+        void *d = pmm_alloc_page();
         pmm_free_page(a);
         pmm_free_page(b);
         pmm_free_page(c);
@@ -630,10 +612,10 @@ void test_pmm(void)
 
     // lifo free
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
-        void* c = pmm_alloc_page();
-        void* d = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
+        void *c = pmm_alloc_page();
+        void *d = pmm_alloc_page();
         pmm_free_page(d);
         pmm_free_page(c);
         pmm_free_page(b);
@@ -643,10 +625,10 @@ void test_pmm(void)
 
     // scrambled free
     {
-        void* a = pmm_alloc_page();
-        void* b = pmm_alloc_page();
-        void* c = pmm_alloc_page();
-        void* d = pmm_alloc_page();
+        void *a = pmm_alloc_page();
+        void *b = pmm_alloc_page();
+        void *c = pmm_alloc_page();
+        void *d = pmm_alloc_page();
         pmm_free_page(c);
         pmm_free_page(a);
         pmm_free_page(d);
@@ -658,14 +640,13 @@ void test_pmm(void)
 
     // write full 4kb page
     {
-        unsigned char* p = (unsigned char*)pmm_alloc_page();
+        unsigned char *p = (unsigned char *)pmm_alloc_page();
         TEST_ASSERT("fullpage alloc", p != NULL);
         for (int i = 0; i < PAGE_SIZE; i++)
             p[i] = (unsigned char)(i & 0xFF);
         int ok = 1;
         for (int i = 0; i < PAGE_SIZE; i++)
-            if (p[i] != (unsigned char)(i & 0xFF))
-            {
+            if (p[i] != (unsigned char)(i & 0xFF)) {
                 ok = 0;
                 break;
             }
@@ -677,18 +658,16 @@ void test_pmm(void)
     // write boundary words of each page in multi-page block
     {
         unsigned long count = 16;
-        unsigned long* blk = (unsigned long*)pmm_alloc_pages(count);
+        unsigned long *blk = (unsigned long *)pmm_alloc_pages(count);
         TEST_ASSERT("16p word alloc", blk != NULL);
         unsigned long words_per_page = PAGE_SIZE / sizeof(unsigned long);
-        for (unsigned long pg = 0; pg < count; pg++)
-        {
+        for (unsigned long pg = 0; pg < count; pg++) {
             // Write first and last word of each page
             blk[pg * words_per_page] = 0xAAAAAAAA00000000UL | pg;
             blk[pg * words_per_page + words_per_page - 1] = 0xBBBBBBBB00000000UL | pg;
         }
         int ok = 1;
-        for (unsigned long pg = 0; pg < count; pg++)
-        {
+        for (unsigned long pg = 0; pg < count; pg++) {
             if (blk[pg * words_per_page] != (0xAAAAAAAA00000000UL | pg))
                 ok = 0;
             if (blk[pg * words_per_page + words_per_page - 1] != (0xBBBBBBBB00000000UL | pg))
@@ -703,9 +682,8 @@ void test_pmm(void)
 
     // growing: 1p -> 2p -> 4p -> 8p -> 16p -> 32p
     {
-        void* ptrs[6];
-        for (int i = 0; i < 6; i++)
-        {
+        void *ptrs[6];
+        for (int i = 0; i < 6; i++) {
             unsigned long count = 1UL << i;
             ptrs[i] = pmm_alloc_pages(count);
             TEST_ASSERT("growing alloc", ptrs[i] != NULL);
@@ -717,9 +695,8 @@ void test_pmm(void)
 
     // shrinking: 32p -> 16p -> 8p -> 4p -> 2p -> 1p
     {
-        void* ptrs[6];
-        for (int i = 0; i < 6; i++)
-        {
+        void *ptrs[6];
+        for (int i = 0; i < 6; i++) {
             unsigned long count = 32UL >> i;
             ptrs[i] = pmm_alloc_pages(count);
             TEST_ASSERT("shrinking alloc", ptrs[i] != NULL);
@@ -733,11 +710,11 @@ void test_pmm(void)
 
     // multi-page lifecycle: alloc -> write -> free -> re-alloc
     {
-        unsigned char* blk = (unsigned char*)pmm_alloc_pages(4);
+        unsigned char *blk = (unsigned char *)pmm_alloc_pages(4);
         for (int i = 0; i < 4; i++)
             blk[i * PAGE_SIZE] = (unsigned char)(0xF0 | i);
         pmm_free_pages(blk, 4);
-        unsigned char* blk2 = (unsigned char*)pmm_alloc_pages(4);
+        unsigned char *blk2 = (unsigned char *)pmm_alloc_pages(4);
         TEST_ASSERT("lifecycle re-alloc", blk2 != NULL);
         // Write new pattern
         for (int i = 0; i < 4; i++)
@@ -754,18 +731,18 @@ void test_pmm(void)
     // complex multi-order lifecycle
     {
         // Phase 1: mixed allocs
-        void* p1 = pmm_alloc_page();
-        void* p4 = pmm_alloc_pages(4);
-        void* p2 = pmm_alloc_pages(2);
-        void* p8 = pmm_alloc_pages(8);
+        void *p1 = pmm_alloc_page();
+        void *p4 = pmm_alloc_pages(4);
+        void *p2 = pmm_alloc_pages(2);
+        void *p8 = pmm_alloc_pages(8);
 
         // Phase 2: free middle ones
         pmm_free_pages(p4, 4);
         pmm_free_pages(p2, 2);
 
         // Phase 3: alloc different sizes from freed space
-        void* q2 = pmm_alloc_pages(2);
-        void* q1 = pmm_alloc_page();
+        void *q2 = pmm_alloc_pages(2);
+        void *q1 = pmm_alloc_page();
         TEST_ASSERT("lifecycle q2", q2 != NULL);
         TEST_ASSERT("lifecycle q1", q1 != NULL);
 
@@ -776,7 +753,7 @@ void test_pmm(void)
         pmm_free_page(q1);
 
         // Phase 5: large alloc should work (everything merged)
-        void* big = pmm_alloc_pages(16);
+        void *big = pmm_alloc_pages(16);
         TEST_ASSERT("lifecycle big alloc", big != NULL);
         pmm_free_pages(big, 16);
     }

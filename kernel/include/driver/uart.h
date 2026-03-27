@@ -37,10 +37,10 @@
 #define UART_MIS_RTMIS (1 << 6)
 
 /* Public UART Register Pointers and Synchronization */
-extern volatile uint32_t* uart_dr;
-extern volatile uint32_t* uart_fr;
-extern volatile uint32_t* uart_mis;
-extern volatile uint32_t* uart_imsc;
+extern volatile uint32_t *uart_dr;
+extern volatile uint32_t *uart_fr;
+extern volatile uint32_t *uart_mis;
+extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
 /*
@@ -69,19 +69,19 @@ char uart_getc(void);
 /*
  * uart_puts - Sends a null-terminated string to the UART.
  */
-void uart_puts(const char* str);
+void uart_puts(const char *str);
 
 /*
  * uart_puts_locked - Sends a null-terminated string while holding the
  * UART spinlock to ensure atomic output across multiple cores.
  */
-void uart_puts_locked(const char* str);
+void uart_puts_locked(const char *str);
 
 /*
  * uart_write - A wrapper for tty_write that routes output through the
  * console TTY subsystem.
  */
-void uart_write(const char* buf, size_t len);
+void uart_write(const char *buf, size_t len);
 
 /*
  * uart_data_ready - Returns non-zero if there is at least one character

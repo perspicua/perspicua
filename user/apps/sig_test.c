@@ -11,8 +11,7 @@ int main()
 {
     printf("Signal test starting...\n");
 
-    if (sys_signal(SIGNAL_INT, handle_sigint) < 0)
-    {
+    if (sys_signal(SIGNAL_INT, handle_sigint) < 0) {
         printf("Failed to set signal handler\n");
         return 1;
     }

@@ -13,13 +13,12 @@
 /*
  * fb_info_struct - Structure containing the hardware framebuffer state.
  */
-struct fb_info_struct
-{
+struct fb_info_struct {
     unsigned int width;
     unsigned int height;
     unsigned int pitch;
     unsigned int size;
-    unsigned char* ptr;
+    unsigned char *ptr;
 };
 
 /* The global framebuffer device information. */

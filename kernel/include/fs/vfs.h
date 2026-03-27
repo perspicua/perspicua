@@ -8,6 +8,7 @@
 #ifndef PERSPICUA_KERNEL_VFS_H
 #define PERSPICUA_KERNEL_VFS_H
 
+#include "core/lock.h"
 #include "types.h"
 #include "uapi/stat.h"
 
@@ -23,8 +24,7 @@ struct vfs_file;
 /*
  * vfs_vnode_type - Enumeration of supported vnode types.
  */
-enum vfs_vnode_type
-{
+enum vfs_vnode_type {
     VFS_VNODE_TYPE_REGULAR,
     VFS_VNODE_TYPE_DIR,
     VFS_VNODE_TYPE_DEVICE
@@ -44,10 +44,9 @@ enum vfs_vnode_type
 /*
  * vfs_mount_entry - Represents a mounted filesystem instance.
  */
-struct vfs_mount_entry
-{
+struct vfs_mount_entry {
     char path[VFS_MAX_PATH_LEN];
-    struct vfs_vnode* root;
+    struct vfs_vnode *root;
 };
 
 /* Type definition for file offsets and sizes */
@@ -56,8 +55,7 @@ typedef int64_t vfs_off_t;
 /*
  * vfs_dirent - Directory entry structure returned to userspace.
  */
-struct vfs_dirent
-{
+struct vfs_dirent {
     uint32_t ino;
     char name[256];
 };
@@ -65,37 +63,34 @@ struct vfs_dirent
 /*
  * vfs_vnode_ops - Functional interface for filesystem-specific operations.
  */
-struct vfs_vnode_ops
-{
-    int (*read)(struct vfs_file* file, void* buffer, size_t size);
-    int (*write)(struct vfs_file* file, const void* buffer, size_t size);
-    struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
-    int (*readdir)(struct vfs_file* file, void* buffer, size_t count);
-    int (*close)(struct vfs_file* file);
-    int (*stat)(struct vfs_vnode* node, struct stat* buf);
-    int (*mmap)(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags);
+struct vfs_vnode_ops {
+    int (*read)(struct vfs_file *file, void *buffer, size_t size);
+    int (*write)(struct vfs_file *file, const void *buffer, size_t size);
+    struct vfs_vnode *(*lookup)(struct vfs_vnode *dir, const char *filename);
+    int (*readdir)(struct vfs_file *file, void *buffer, size_t count);
+    int (*close)(struct vfs_file *file);
+    int (*stat)(struct vfs_vnode *node, struct stat *buf);
+    int (*mmap)(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags);
 };
 
 /*
  * vfs_vnode - The primary VFS abstraction representing an inode/file.
  */
-struct vfs_vnode
-{
+struct vfs_vnode {
     enum vfs_vnode_type type;
     char name[256];
     vfs_off_t file_size;
-    struct vfs_vnode* parent;
-    struct vfs_vnode_ops* ops;
-    void* internal_info;
+    struct vfs_vnode *parent;
+    struct vfs_vnode_ops *ops;
+    void *internal_info;
     atomic_t refcount;
 };
 
 /*
  * vfs_file - Represents an open file instance (file descriptor).
  */
-struct vfs_file
-{
-    struct vfs_vnode* node;
+struct vfs_file {
+    struct vfs_vnode *node;
     vfs_off_t offset;
     int flags;
     atomic_t refcount;
@@ -115,24 +110,24 @@ void vfs_init(void);
  * vfs_resolve_path - Traverses the directory tree to find the vnode
  * corresponding to the given path.
  */
-struct vfs_vnode* vfs_resolve_path(const char* path, struct vfs_vnode* cwd, int* error);
+struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int *error);
 
 /*
  * vfs_vnode_put - Decrements the reference count of a vnode and frees it
  * if the count reaches zero.
  */
-void vfs_vnode_put(struct vfs_vnode* node);
+void vfs_vnode_put(struct vfs_vnode *node);
 
 /*
  * vfs_open - Opens a file for the current process. Returns a file descriptor
  * on success or a negative error code.
  */
-int vfs_open(const char* path, int flags);
+int vfs_open(const char *path, int flags);
 
 /*
  * vfs_open_pid - Opens a file on behalf of a specific process.
  */
-int vfs_open_pid(const char* path, int flags, uint32_t pid);
+int vfs_open_pid(const char *path, int flags, uint32_t pid);
 
 /*
  * vfs_close - Closes an open file descriptor.
@@ -147,22 +142,22 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
 /*
  * vfs_read - Reads data from a file descriptor into a buffer.
  */
-int vfs_read(int fd, void* buffer, size_t count);
+int vfs_read(int fd, void *buffer, size_t count);
 
 /*
  * vfs_readdir - Reads directory entries from a directory file descriptor.
  */
-int vfs_readdir(int fd, void* buffer, size_t count);
+int vfs_readdir(int fd, void *buffer, size_t count);
 
 /*
  * vfs_write - Writes data from a buffer to a file descriptor.
  */
-int vfs_write(int fd, const void* buffer, size_t count);
+int vfs_write(int fd, const void *buffer, size_t count);
 
 /*
  * vfs_stat - Retrieves metadata for a specific file.
  */
-int vfs_stat(const char* path, struct stat* buf);
+int vfs_stat(const char *path, struct stat *buf);
 
 /*
  * vfs_dup2 - Duplicates a file descriptor.
@@ -173,14 +168,14 @@ int vfs_dup2(int oldfd, int newfd);
  * vfs_mount - Attaches a filesystem root vnode to the global namespace
  * at the specified path.
  */
-int vfs_mount(const char* path, struct vfs_vnode* root);
+int vfs_mount(const char *path, struct vfs_vnode *root);
 
 /*
  * vfs_unmount - Detaches a filesystem from the global namespace.
  */
-int vfs_unmount(const char* path);
+int vfs_unmount(const char *path);
 
-int vfs_chdir(const char* path);
+int vfs_chdir(const char *path);
 
-int vfs_getcwd(char* buf, size_t size);
+int vfs_getcwd(char *buf, size_t size);
 #endif /* PERSPICUA_KERNEL_VFS_H */

@@ -52,34 +52,37 @@
 /* High-level page-permission combinators */
 
 /* User-space executable: EL0 R-X, EL1 RO */
-#define MMU_PAGE_USER_CODE                                                                                    \
-    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_AP_RO \
-     | MMU_PXN | MMU_PTE_NG)
+#define MMU_PAGE_USER_CODE                                                                        \
+    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER \
+     | MMU_AP_RO | MMU_PXN | MMU_PTE_NG)
 
 /* User-space writable data: EL0 RW, NX */
-#define MMU_PAGE_USER_DATA                                                                                    \
-    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_AP_RW \
-     | MMU_PXN | MMU_UXN | MMU_PTE_NG)
+#define MMU_PAGE_USER_DATA                                                                        \
+    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER \
+     | MMU_AP_RW | MMU_PXN | MMU_UXN | MMU_PTE_NG)
 
 /* User-space read-only data: EL0 RO, NX */
-#define MMU_PAGE_USER_RODATA                                                                                  \
-    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER | MMU_AP_RO \
-     | MMU_PXN | MMU_UXN | MMU_PTE_NG)
+#define MMU_PAGE_USER_RODATA                                                                      \
+    (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER \
+     | MMU_AP_RO | MMU_PXN | MMU_UXN | MMU_PTE_NG)
 
 /* Kernel code: EL1 R-X, EL0 NX/No access */
 #define MMU_FLAGS_KERNEL_RX (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO | MMU_UXN)
 
 /* Kernel read-only data: EL1 RO, NX */
-#define MMU_FLAGS_KERNEL_RO (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_KERNEL_RO \
+    (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RO | MMU_PXN | MMU_UXN)
 
 /* Kernel read-write data: EL1 RW, NX */
-#define MMU_FLAGS_KERNEL_RW (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RW | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_KERNEL_RW \
+    (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_RW | MMU_PXN | MMU_UXN)
 
 /* MMIO: Device memory, NX */
 #define MMU_FLAGS_DEVICE_RW (MMU_PTE_AF | MMU_ATTR_DEVICE | MMU_AP_RW | MMU_PXN | MMU_UXN)
 
 /* Framebuffer: Write-combining, NX */
-#define MMU_FLAGS_FRAMEBUFFER (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL_NC | MMU_AP_RW | MMU_PXN | MMU_UXN)
+#define MMU_FLAGS_FRAMEBUFFER \
+    (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL_NC | MMU_AP_RW | MMU_PXN | MMU_UXN)
 
 /* Kernel MMU API */
 
@@ -96,31 +99,33 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
 void mmu_unmap_page(unsigned long vaddr);
 
 /* Translate a kernel virtual address to physical */
-int mmu_query(unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags);
+int mmu_query(unsigned long vaddr, unsigned long *out_paddr, unsigned long *out_flags);
 
 /* Allocate a new user page table root */
-unsigned long* mmu_create_user_pgd(void);
+unsigned long *mmu_create_user_pgd(void);
 
 /* Recursively free a user address space */
-void mmu_destroy_user_pgd(unsigned long* pgd);
+void mmu_destroy_user_pgd(unsigned long *pgd);
 
 /* Deep-copy a user address space with CoW semantics */
-unsigned long* mmu_copy_user_pgd(unsigned long* parent_pgd);
+unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd);
 
 /* Map a 4 KB page in a user address space */
-void mmu_user_map_page(unsigned long* pgd, unsigned long vaddr, unsigned long paddr, unsigned long flags);
+void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
+                       unsigned long flags);
 
 /* Unmap a 4 KB page from a user address space */
-void mmu_user_unmap_page(unsigned long* pgd, unsigned long vaddr);
+void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
 
 /* Translate a user virtual address to physical */
-int mmu_user_query(unsigned long* pgd, unsigned long vaddr, unsigned long* out_paddr, unsigned long* out_flags);
+int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
+                   unsigned long *out_flags);
 
 /* Load a user PGD into TTBR0_EL1 */
-void mmu_switch_user(unsigned long* pgd, unsigned long asid);
+void mmu_switch_user(unsigned long *pgd, unsigned long asid);
 
 /* Resolve a Copy-on-Write fault */
-int mmu_handle_cow(unsigned long* pgd, unsigned long vaddr);
+int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 
 /* Return the physical address of the empty user PGD */
 unsigned long mmu_kernel_ttbr0(void);

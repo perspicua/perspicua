@@ -13,7 +13,7 @@ void test_mmu_user(void)
 
     // --- create and destroy empty PGD ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
+        unsigned long *pgd = mmu_create_user_pgd();
         TEST_ASSERT("create_pgd: non-null", pgd != 0);
 
         // fresh PGD should have no mappings
@@ -26,8 +26,8 @@ void test_mmu_user(void)
 
     // --- basic user map + query ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* phys = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *phys = pmm_alloc_page();
         unsigned long paddr = V2P(phys);
         unsigned long vaddr = USER_VA_BASE;
 
@@ -48,8 +48,8 @@ void test_mmu_user(void)
 
     // --- unmap removes mapping ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* phys = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *phys = pmm_alloc_page();
         unsigned long vaddr = USER_VA_BASE + 0x1000;
 
         mmu_user_map_page(pgd, vaddr, V2P(phys), MMU_PAGE_USER_DATA);
@@ -64,9 +64,9 @@ void test_mmu_user(void)
 
     // --- user code vs data flags ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
         unsigned long va_code = USER_VA_BASE + 0x2000;
         unsigned long va_data = USER_VA_BASE + 0x3000;
 
@@ -97,36 +97,32 @@ void test_mmu_user(void)
 
     // --- multiple pages in same PGD ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
+        unsigned long *pgd = mmu_create_user_pgd();
 #define MP_COUNT 8
-        void* pages[MP_COUNT];
+        void *pages[MP_COUNT];
         unsigned long vas[MP_COUNT];
 
-        for (int i = 0; i < MP_COUNT; i++)
-        {
+        for (int i = 0; i < MP_COUNT; i++) {
             pages[i] = pmm_alloc_page();
             vas[i] = USER_VA_BASE + 0x10000 + (unsigned long)i * 0x1000;
             mmu_user_map_page(pgd, vas[i], V2P(pages[i]), MMU_PAGE_USER_DATA);
         }
 
         int ok = 1;
-        for (int i = 0; i < MP_COUNT; i++)
-        {
+        for (int i = 0; i < MP_COUNT; i++) {
             unsigned long pa;
             if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i]))
                 ok = 0;
         }
         TEST_ASSERT("multi-page: all mapped correctly", ok);
 
-        for (int i = 0; i < MP_COUNT; i++)
-        {
+        for (int i = 0; i < MP_COUNT; i++) {
             mmu_user_unmap_page(pgd, vas[i]);
         }
 
         // confirm all unmapped
         ok = 1;
-        for (int i = 0; i < MP_COUNT; i++)
-        {
+        for (int i = 0; i < MP_COUNT; i++) {
             if (mmu_user_query(pgd, vas[i], 0, 0))
                 ok = 0;
         }
@@ -139,11 +135,11 @@ void test_mmu_user(void)
 
     // --- pages across different L2 regions (different 2MB windows) ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
-        unsigned long va1 = USER_VA_BASE;             // L2 index 0
-        unsigned long va2 = USER_VA_BASE + 0x200000;  // L2 index 1 (+2MB)
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
+        unsigned long va1 = USER_VA_BASE;            // L2 index 0
+        unsigned long va2 = USER_VA_BASE + 0x200000; // L2 index 1 (+2MB)
 
         mmu_user_map_page(pgd, va1, V2P(p1), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(p2), MMU_PAGE_USER_DATA);
@@ -160,11 +156,11 @@ void test_mmu_user(void)
 
     // --- pages across different L1 entries (different 1GB windows) ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
-        unsigned long va1 = 0x100000000ULL;  // L1 index 4
-        unsigned long va2 = 0x200000000ULL;  // L1 index 8
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
+        unsigned long va1 = 0x100000000ULL; // L1 index 4
+        unsigned long va2 = 0x200000000ULL; // L1 index 8
 
         mmu_user_map_page(pgd, va1, V2P(p1), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(p2), MMU_PAGE_USER_DATA);
@@ -181,9 +177,9 @@ void test_mmu_user(void)
 
     // --- remap: unmap then map different phys to same VA ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
         unsigned long vaddr = USER_VA_BASE + 0x4000;
 
         mmu_user_map_page(pgd, vaddr, V2P(p1), MMU_PAGE_USER_DATA);
@@ -201,11 +197,11 @@ void test_mmu_user(void)
 
     // --- two PGDs are fully isolated ---
     {
-        unsigned long* pgd_a = mmu_create_user_pgd();
-        unsigned long* pgd_b = mmu_create_user_pgd();
-        void* pa = pmm_alloc_page();
-        void* pb = pmm_alloc_page();
-        unsigned long vaddr = USER_VA_BASE + 0x5000;  // same VA in both
+        unsigned long *pgd_a = mmu_create_user_pgd();
+        unsigned long *pgd_b = mmu_create_user_pgd();
+        void *pa = pmm_alloc_page();
+        void *pb = pmm_alloc_page();
+        unsigned long vaddr = USER_VA_BASE + 0x5000; // same VA in both
 
         mmu_user_map_page(pgd_a, vaddr, V2P(pa), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd_b, vaddr, V2P(pb), MMU_PAGE_USER_DATA);
@@ -235,13 +231,13 @@ void test_mmu_user(void)
     // --- destroy PGD with active mappings frees table pages ---
     {
         // track PMM state before and after to ensure no leaks
-        void* before = pmm_alloc_page();
+        void *before = pmm_alloc_page();
         pmm_free_page(before);
 
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
-        void* p3 = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
+        void *p3 = pmm_alloc_page();
 
         // map 3 pages across 2 L2 regions (forces 2 L3 tables + 1 L2 table minimum)
         mmu_user_map_page(pgd, USER_VA_BASE, V2P(p1), MMU_PAGE_USER_DATA);
@@ -252,7 +248,7 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
 
         // if table pages leaked, we'd eventually run out — allocate to confirm
-        void* after = pmm_alloc_page();
+        void *after = pmm_alloc_page();
         TEST_ASSERT("destroy: no table page leak", after != 0);
         pmm_free_page(after);
     }
@@ -267,7 +263,7 @@ void test_mmu_user(void)
 
     // --- mmu_switch_user sets TTBR0 correctly ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
+        unsigned long *pgd = mmu_create_user_pgd();
 
         // switch to user PGD
         mmu_switch_user(pgd, 42);
@@ -291,8 +287,8 @@ void test_mmu_user(void)
 
     // --- ASID encoding in TTBR0 ---
     {
-        unsigned long* pgd1 = mmu_create_user_pgd();
-        unsigned long* pgd2 = mmu_create_user_pgd();
+        unsigned long *pgd1 = mmu_create_user_pgd();
+        unsigned long *pgd2 = mmu_create_user_pgd();
 
         mmu_switch_user(pgd1, 1);
         unsigned long ttbr0_1;
@@ -304,7 +300,8 @@ void test_mmu_user(void)
 
         TEST_ASSERT("asid: pgd1 asid=1", (ttbr0_1 >> 48) == 1);
         TEST_ASSERT("asid: pgd2 asid=2", (ttbr0_2 >> 48) == 2);
-        TEST_ASSERT("asid: different phys", (ttbr0_1 & 0x0000FFFFFFFFFFFFULL) != (ttbr0_2 & 0x0000FFFFFFFFFFFFULL));
+        TEST_ASSERT("asid: different phys",
+                    (ttbr0_1 & 0x0000FFFFFFFFFFFFULL) != (ttbr0_2 & 0x0000FFFFFFFFFFFFULL));
 
         asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
         mmu_destroy_user_pgd(pgd1);
@@ -314,13 +311,13 @@ void test_mmu_user(void)
 
     // --- query unmapped VA in user PGD returns 0 ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
+        unsigned long *pgd = mmu_create_user_pgd();
 
         // query with no L1 entry
         TEST_ASSERT("uq: no L1", mmu_user_query(pgd, 0x300000000ULL, 0, 0) == 0);
 
         // map one page, query a different one in same L2
-        void* p = pmm_alloc_page();
+        void *p = pmm_alloc_page();
         mmu_user_map_page(pgd, USER_VA_BASE, V2P(p), MMU_PAGE_USER_DATA);
         TEST_ASSERT("uq: different page", mmu_user_query(pgd, USER_VA_BASE + 0x1000, 0, 0) == 0);
 
@@ -334,18 +331,18 @@ void test_mmu_user(void)
 
     // --- destroy PGD with mappings across multiple L1 entries ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
 
-        mmu_user_map_page(pgd, 0x100000000ULL, V2P(p1), MMU_PAGE_USER_DATA);  // L1[4]
-        mmu_user_map_page(pgd, 0x200000000ULL, V2P(p2), MMU_PAGE_USER_DATA);  // L1[8]
+        mmu_user_map_page(pgd, 0x100000000ULL, V2P(p1), MMU_PAGE_USER_DATA); // L1[4]
+        mmu_user_map_page(pgd, 0x200000000ULL, V2P(p2), MMU_PAGE_USER_DATA); // L1[8]
 
         // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
         // verify PMM still works (no corruption)
-        void* check = pmm_alloc_page();
+        void *check = pmm_alloc_page();
         TEST_ASSERT("destroy multi-L1: PMM ok", check != 0);
         pmm_free_page(check);
     }
@@ -354,20 +351,19 @@ void test_mmu_user(void)
     // --- stress: create many PGDs, map, destroy ---
     {
 #define STRESS_COUNT 4
-        unsigned long* pgds[STRESS_COUNT];
-        void* phys[STRESS_COUNT];
+        unsigned long *pgds[STRESS_COUNT];
+        void *phys[STRESS_COUNT];
 
-        for (int i = 0; i < STRESS_COUNT; i++)
-        {
+        for (int i = 0; i < STRESS_COUNT; i++) {
             pgds[i] = mmu_create_user_pgd();
             phys[i] = pmm_alloc_page();
-            mmu_user_map_page(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, V2P(phys[i]), MMU_PAGE_USER_DATA);
+            mmu_user_map_page(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, V2P(phys[i]),
+                              MMU_PAGE_USER_DATA);
         }
 
         // verify each PGD has its own mapping
         int ok = 1;
-        for (int i = 0; i < STRESS_COUNT; i++)
-        {
+        for (int i = 0; i < STRESS_COUNT; i++) {
             unsigned long pa;
             if (!mmu_user_query(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, &pa, 0))
                 ok = 0;
@@ -375,8 +371,7 @@ void test_mmu_user(void)
                 ok = 0;
 
             // verify other PGDs don't have this mapping
-            for (int j = 0; j < STRESS_COUNT; j++)
-            {
+            for (int j = 0; j < STRESS_COUNT; j++) {
                 if (j == i)
                     continue;
                 if (mmu_user_query(pgds[j], USER_VA_BASE + (unsigned long)i * 0x1000, 0, 0))
@@ -385,8 +380,7 @@ void test_mmu_user(void)
         }
         TEST_ASSERT("stress: all isolated", ok);
 
-        for (int i = 0; i < STRESS_COUNT; i++)
-        {
+        for (int i = 0; i < STRESS_COUNT; i++) {
             mmu_destroy_user_pgd(pgds[i]);
         }
 #undef STRESS_COUNT
@@ -395,12 +389,12 @@ void test_mmu_user(void)
 
     // --- shared physical page in two PGDs ---
     {
-        unsigned long* pgd_a = mmu_create_user_pgd();
-        unsigned long* pgd_b = mmu_create_user_pgd();
-        void* shared_page = pmm_alloc_page();
+        unsigned long *pgd_a = mmu_create_user_pgd();
+        unsigned long *pgd_b = mmu_create_user_pgd();
+        void *shared_page = pmm_alloc_page();
         unsigned long vaddr = USER_VA_BASE + 0x7000;
 
-        pmm_hold_page(shared_page);  // Hold because we map it twice and mmu_user_unmap_page frees
+        pmm_hold_page(shared_page); // Hold because we map it twice and mmu_user_unmap_page frees
         mmu_user_map_page(pgd_a, vaddr, V2P(shared_page), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd_b, vaddr, V2P(shared_page), MMU_PAGE_USER_DATA);
 
@@ -420,16 +414,16 @@ void test_mmu_user(void)
 
     // --- same physical page mapped to multiple VAs in same PGD ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* shared_page = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *shared_page = pmm_alloc_page();
         unsigned long va1 = USER_VA_BASE + 0x8000;
         unsigned long va2 = USER_VA_BASE + 0x9000;
 
-        pmm_hold_page(shared_page);  // Hold due to multi-map
+        pmm_hold_page(shared_page); // Hold due to multi-map
         mmu_user_map_page(pgd, va1, V2P(shared_page), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(shared_page), MMU_PAGE_USER_DATA);
 
-        *(volatile unsigned long*)shared_page = 0;
+        *(volatile unsigned long *)shared_page = 0;
 
         unsigned long pa1, pa2;
         TEST_ASSERT("multi-va: map1", mmu_user_query(pgd, va1, &pa1, 0) && pa1 == V2P(shared_page));
@@ -441,16 +435,17 @@ void test_mmu_user(void)
     }
     TEST_PASS("shared physical page multiple VAs in same PGD");
 
-    // --- map over existing mapping should replace or at least not leak (assuming implementation allows replace) ---
-    // Perspicua mmu_user_map_page actually doesn't specify if it replaces, but let's test if we can query it safely.
+    // --- map over existing mapping should replace or at least not leak (assuming implementation
+    // allows replace) --- Perspicua mmu_user_map_page actually doesn't specify if it replaces, but
+    // let's test if we can query it safely.
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
         unsigned long va = USER_VA_BASE + 0xA000;
 
         mmu_user_map_page(pgd, va, V2P(p1), MMU_PAGE_USER_DATA);
-        mmu_user_map_page(pgd, va, V2P(p2), MMU_PAGE_USER_DATA);  // frees p1 internally
+        mmu_user_map_page(pgd, va, V2P(p2), MMU_PAGE_USER_DATA); // frees p1 internally
         unsigned long pa;
         TEST_ASSERT("overwrite: queried map", mmu_user_query(pgd, va, &pa, 0));
         TEST_ASSERT("overwrite: updated to p2", pa == V2P(p2));
@@ -461,21 +456,19 @@ void test_mmu_user(void)
 
     // --- fill: 16 pages in user PGD ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
+        unsigned long *pgd = mmu_create_user_pgd();
 #define FILL_COUNT 16
-        void* pages[FILL_COUNT];
+        void *pages[FILL_COUNT];
         unsigned long vas[FILL_COUNT];
 
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             pages[i] = pmm_alloc_page();
             vas[i] = USER_VA_BASE + 0x20000 + (unsigned long)i * 0x1000;
             mmu_user_map_page(pgd, vas[i], V2P(pages[i]), MMU_PAGE_USER_DATA);
         }
 
         int ok = 1;
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             unsigned long pa;
             if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i]))
                 ok = 0;
@@ -483,14 +476,12 @@ void test_mmu_user(void)
         TEST_ASSERT("fill16: all correct", ok);
 
         // unmap all
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             mmu_user_unmap_page(pgd, vas[i]);
         }
 
         ok = 1;
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             if (mmu_user_query(pgd, vas[i], 0, 0))
                 ok = 0;
         }
@@ -503,8 +494,8 @@ void test_mmu_user(void)
 
     // --- user PGD doesn't affect kernel page tables ---
     {
-        unsigned long* pgd = mmu_create_user_pgd();
-        void* p = pmm_alloc_page();
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *p = pmm_alloc_page();
 
         // map in user PGD
         mmu_user_map_page(pgd, USER_VA_BASE + 0x8000, V2P(p), MMU_PAGE_USER_DATA);

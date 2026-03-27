@@ -9,17 +9,17 @@
 #define PERSPICUA_DRIVER_GIC_H
 
 /* GIC Distributor Register Pointers */
-extern volatile unsigned int* gic_d_ctlr;
-extern volatile unsigned int* gic_d_isenablern;
-extern volatile unsigned char* gic_d_ipriorityr;
-extern volatile unsigned char* gic_d_itargetsr;
-extern volatile unsigned int* gic_d_sgir;
+extern volatile unsigned int *gic_d_ctlr;
+extern volatile unsigned int *gic_d_isenablern;
+extern volatile unsigned char *gic_d_ipriorityr;
+extern volatile unsigned char *gic_d_itargetsr;
+extern volatile unsigned int *gic_d_sgir;
 
 /* GIC CPU Interface Register Pointers */
-extern volatile unsigned int* gic_c_ctlr;
-extern volatile unsigned int* gic_c_pmr;
-extern volatile unsigned int* gic_c_iar;
-extern volatile unsigned int* gic_c_eoir;
+extern volatile unsigned int *gic_c_ctlr;
+extern volatile unsigned int *gic_c_pmr;
+extern volatile unsigned int *gic_c_iar;
+extern volatile unsigned int *gic_c_eoir;
 
 /* The ARM physical timer IRQ (PPI) */
 #define GIC_TIMER_IRQ 30

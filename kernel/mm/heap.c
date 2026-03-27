@@ -23,10 +23,9 @@
 #define HEAP_MAX_ALLOC (8 * 1024 * 1024)
 
 /* Block header preceding every allocation in the first-fit pool */
-struct heap_block_header
-{
+struct heap_block_header {
     unsigned long size;             /* Usable size excluding the header */
-    struct heap_block_header* next; /* Next block in the free list */
+    struct heap_block_header *next; /* Next block in the free list */
     unsigned char is_free;          /* Flag indicating if block is free */
 } __attribute__((aligned(16)));
 
@@ -34,7 +33,7 @@ struct heap_block_header
 #define HEAP_ALIGN(x)    (((x) + 15) & ~15UL)
 
 /* Heap state and synchronization */
-static struct heap_block_header* heap_free_list = NULL;
+static struct heap_block_header *heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
 static unsigned long heap_used_size = 0;
@@ -43,18 +42,17 @@ static unsigned long heap_used_size = 0;
  * heap_expand - Requests contiguous pages from the PMM to grow the heap.
  * Returns a free block header for the new region, or NULL on failure.
  */
-static struct heap_block_header* heap_expand(unsigned long min_size)
+static struct heap_block_header *heap_expand(unsigned long min_size)
 {
     unsigned long total = min_size + HEAP_HEADER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    void* region = pmm_alloc_pages(pages);
-    if (!region)
-    {
+    void *region = pmm_alloc_pages(pages);
+    if (!region) {
         return NULL;
     }
 
-    struct heap_block_header* block = (struct heap_block_header*)region;
+    struct heap_block_header *block = (struct heap_block_header *)region;
     block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
     block->next = NULL;
     block->is_free = 1;
@@ -74,27 +72,23 @@ static struct heap_block_header* heap_expand(unsigned long min_size)
  *
  * Must be called with heap_lock held.
  */
-static void heap_insert_free(struct heap_block_header* block)
+static void heap_insert_free(struct heap_block_header *block)
 {
     block->is_free = 1;
 
     /* Find the insertion point: prev->next > block > prev */
-    struct heap_block_header* prev = NULL;
-    struct heap_block_header* next = heap_free_list;
-    while (next && (unsigned long)next < (unsigned long)block)
-    {
+    struct heap_block_header *prev = NULL;
+    struct heap_block_header *next = heap_free_list;
+    while (next && (unsigned long)next < (unsigned long)block) {
         prev = next;
         next = next->next;
     }
 
     /* Link block into the list */
     block->next = next;
-    if (prev)
-    {
+    if (prev) {
         prev->next = block;
-    }
-    else
-    {
+    } else {
         heap_free_list = block;
     }
 
@@ -102,11 +96,9 @@ static void heap_insert_free(struct heap_block_header* block)
      * Coalesce with successor: if block's usable region runs right up to
      * the start of next, merge them. Only merge if next is actually free.
      */
-    if (next && next->is_free)
-    {
-        unsigned char* block_end = (unsigned char*)block + HEAP_HEADER_SIZE + block->size;
-        if (block_end == (unsigned char*)next)
-        {
+    if (next && next->is_free) {
+        unsigned char *block_end = (unsigned char *)block + HEAP_HEADER_SIZE + block->size;
+        if (block_end == (unsigned char *)next) {
             block->size += HEAP_HEADER_SIZE + next->size;
             block->next = next->next;
         }
@@ -116,11 +108,9 @@ static void heap_insert_free(struct heap_block_header* block)
      * Coalesce with predecessor: if prev's usable region runs right up to
      * the start of block, merge them. Only merge if prev is actually free.
      */
-    if (prev && prev->is_free)
-    {
-        unsigned char* prev_end = (unsigned char*)prev + HEAP_HEADER_SIZE + prev->size;
-        if (prev_end == (unsigned char*)block)
-        {
+    if (prev && prev->is_free) {
+        unsigned char *prev_end = (unsigned char *)prev + HEAP_HEADER_SIZE + prev->size;
+        if (prev_end == (unsigned char *)block) {
             prev->size += HEAP_HEADER_SIZE + block->size;
             prev->next = block->next;
         }
@@ -135,8 +125,7 @@ void heap_init(void)
     slab_init();
 
     heap_free_list = heap_expand(PAGE_SIZE);
-    if (!heap_free_list)
-    {
+    if (!heap_free_list) {
         PANIC("HEAP: Failed to initialize pool.");
     }
 
@@ -147,47 +136,39 @@ void heap_init(void)
  * heap_malloc - Allocates a memory block from the appropriate layer.
  * Returns NULL on failure; never panics.
  */
-void* heap_malloc(unsigned long size)
+void *heap_malloc(unsigned long size)
 {
-    if (size == 0 || size > HEAP_MAX_ALLOC)
-    {
+    if (size == 0 || size > HEAP_MAX_ALLOC) {
         return NULL;
     }
 
     /* Use the O(1) slab path for small objects */
-    if (size <= HEAP_SLAB_MAX)
-    {
+    if (size <= HEAP_SLAB_MAX) {
         return slab_alloc(size);
     }
 
     size = HEAP_ALIGN(size);
 
-    while (1)
-    {
+    while (1) {
         unsigned long flags = spin_lock_irqsave(&heap_lock);
 
         /* First-fit search in the free list */
-        struct heap_block_header* prev = NULL;
-        struct heap_block_header* curr = heap_free_list;
-        while (curr)
-        {
-            if (curr->size >= size)
-            {
+        struct heap_block_header *prev = NULL;
+        struct heap_block_header *curr = heap_free_list;
+        while (curr) {
+            if (curr->size >= size) {
                 /* Found a suitable block. Unlink it from the free list. */
-                if (prev)
-                {
+                if (prev) {
                     prev->next = curr->next;
-                }
-                else
-                {
+                } else {
                     heap_free_list = curr->next;
                 }
 
                 /* Split if there is enough room for a usable remainder */
-                if (curr->size >= size + HEAP_HEADER_SIZE + 16)
-                {
-                    struct heap_block_header* split =
-                        (struct heap_block_header*)((unsigned char*)curr + HEAP_HEADER_SIZE + size);
+                if (curr->size >= size + HEAP_HEADER_SIZE + 16) {
+                    struct heap_block_header *split =
+                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
+                                                     + size);
                     split->size = curr->size - size - HEAP_HEADER_SIZE;
                     split->is_free = 1;
                     split->next = NULL;
@@ -203,7 +184,7 @@ void* heap_malloc(unsigned long size)
                 heap_used_size += curr->size + HEAP_HEADER_SIZE;
 
                 spin_unlock_irqrestore(&heap_lock, flags);
-                return (void*)((unsigned char*)curr + HEAP_HEADER_SIZE);
+                return (void *)((unsigned char *)curr + HEAP_HEADER_SIZE);
             }
             prev = curr;
             curr = curr->next;
@@ -212,9 +193,8 @@ void* heap_malloc(unsigned long size)
         /* No suitable block found — drop lock and expand the heap */
         spin_unlock_irqrestore(&heap_lock, flags);
 
-        struct heap_block_header* new_block = heap_expand(size);
-        if (!new_block)
-        {
+        struct heap_block_header *new_block = heap_expand(size);
+        if (!new_block) {
             return NULL;
         }
 
@@ -228,25 +208,23 @@ void* heap_malloc(unsigned long size)
 /*
  * heap_free - Returns memory to the pool.
  */
-void heap_free(void* ptr)
+void heap_free(void *ptr)
 {
-    if (!ptr)
-    {
+    if (!ptr) {
         return;
     }
 
     /* Redirect to slab if it owns this pointer */
-    if (slab_owns(ptr))
-    {
+    if (slab_owns(ptr)) {
         slab_free(ptr);
         return;
     }
 
     unsigned long flags = spin_lock_irqsave(&heap_lock);
-    struct heap_block_header* block = (struct heap_block_header*)((unsigned char*)ptr - HEAP_HEADER_SIZE);
+    struct heap_block_header *block =
+        (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
-    if (block->is_free)
-    {
+    if (block->is_free) {
         PANIC("HEAP: Double free detected.");
     }
 

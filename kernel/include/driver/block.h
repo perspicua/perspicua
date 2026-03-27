@@ -13,8 +13,7 @@
 /*
  * block_device - Represents a generic storage device.
  */
-struct block_device
-{
+struct block_device {
     char name[64];
     size_t block_count;
     size_t block_size;
@@ -23,21 +22,23 @@ struct block_device
      * read_blocks: driver-specific read implementation.
      * write_blocks: driver-specific write implementation.
      */
-    int (*read_blocks)(struct block_device* dev, void* buffer, size_t start_block, size_t num_blocks);
-    int (*write_blocks)(struct block_device* dev, const void* buffer, size_t start_block, size_t num_blocks);
+    int (*read_blocks)(struct block_device *dev, void *buffer, size_t start_block,
+                       size_t num_blocks);
+    int (*write_blocks)(struct block_device *dev, const void *buffer, size_t start_block,
+                        size_t num_blocks);
 
     int present;
-    void* private_data;
+    void *private_data;
 };
 
 /*
  * block_device_register - Adds a new block device to the system.
  */
-void block_device_register(struct block_device* dev);
+void block_device_register(struct block_device *dev);
 
 /*
  * block_device_lookup - Finds a registered block device by name.
  */
-struct block_device* block_device_lookup(const char* name);
+struct block_device *block_device_lookup(const char *name);
 
 #endif /* PERSPICUA_DRIVER_BLOCK_H */

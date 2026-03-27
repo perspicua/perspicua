@@ -14,7 +14,7 @@
  * mmio_read - Reads a 32-bit value from a memory-mapped register and
  * ensures memory ordering with a load barrier.
  */
-static inline uint32_t mmio_read(volatile uint32_t* reg)
+static inline uint32_t mmio_read(volatile uint32_t *reg)
 {
     uint32_t val = *reg;
     __asm__ volatile("dmb ishld" ::: "memory");
@@ -25,7 +25,7 @@ static inline uint32_t mmio_read(volatile uint32_t* reg)
  * mmio_write - Writes a 32-bit value to a memory-mapped register and
  * ensures memory ordering with a store barrier.
  */
-static inline void mmio_write(volatile uint32_t* reg, uint32_t val)
+static inline void mmio_write(volatile uint32_t *reg, uint32_t val)
 {
     __asm__ volatile("dsb ishst" ::: "memory");
     *reg = val;
@@ -35,7 +35,7 @@ static inline void mmio_write(volatile uint32_t* reg, uint32_t val)
  * mmio_read8 - Reads an 8-bit value from a memory-mapped register and
  * ensures memory ordering with a load barrier.
  */
-static inline uint8_t mmio_read8(volatile uint8_t* reg)
+static inline uint8_t mmio_read8(volatile uint8_t *reg)
 {
     uint8_t val = *reg;
     __asm__ volatile("dsb ishld" ::: "memory");
@@ -46,7 +46,7 @@ static inline uint8_t mmio_read8(volatile uint8_t* reg)
  * mmio_write8 - Writes an 8-bit value to a memory-mapped register and
  * ensures memory ordering with a store barrier.
  */
-static inline void mmio_write8(volatile uint8_t* reg, uint8_t val)
+static inline void mmio_write8(volatile uint8_t *reg, uint8_t val)
 {
     __asm__ volatile("dsb ishst" ::: "memory");
     *reg = val;

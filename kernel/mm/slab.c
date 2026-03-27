@@ -42,9 +42,8 @@ static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128
 /*
  * slab_obj - A free-list node embedded directly into unallocated slots.
  */
-struct slab_obj
-{
-    struct slab_obj* next;
+struct slab_obj {
+    struct slab_obj *next;
     uint64_t free_canary;
 };
 
@@ -52,24 +51,22 @@ struct slab_obj
  * slab_page - Header structure located at the start of every physical page
  * managed by the slab allocator.
  */
-struct slab_page
-{
+struct slab_page {
     unsigned int magic;
     unsigned int class_idx;
     unsigned int total_slots;
     unsigned int in_use_count;
-    struct slab_obj* free_list;
-    struct slab_page* next;
+    struct slab_obj *free_list;
+    struct slab_page *next;
 };
 
 /*
  * slab_class - Metadata for a specific size class pool.
  */
-struct slab_class
-{
+struct slab_class {
     unsigned long object_size;
-    struct slab_page* partial_list;
-    struct slab_page* full_list;
+    struct slab_page *partial_list;
+    struct slab_page *full_list;
     spinlock_t lock;
 };
 
@@ -83,9 +80,9 @@ static unsigned long slab_total_pages = 0;
  * ptr_to_slab - Recovers the slab page header from a pointer to an
  * object within that page by masking the page offset.
  */
-static inline struct slab_page* ptr_to_slab(void* ptr)
+static inline struct slab_page *ptr_to_slab(void *ptr)
 {
-    return (struct slab_page*)((unsigned long)ptr & ~(PAGE_SIZE - 1UL));
+    return (struct slab_page *)((unsigned long)ptr & ~(PAGE_SIZE - 1UL));
 }
 
 /*
@@ -94,10 +91,8 @@ static inline struct slab_page* ptr_to_slab(void* ptr)
  */
 static inline int size_to_class_index(unsigned long size)
 {
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
-        if (size <= slab_class_sizes[i])
-        {
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
+        if (size <= slab_class_sizes[i]) {
             return i;
         }
     }
@@ -111,15 +106,14 @@ static inline int size_to_class_index(unsigned long size)
  * Called with the class lock held. pmm_alloc_page() acquires the PMM lock
  * internally, which is always taken after the class lock — see file header.
  */
-static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
+static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
 {
-    void* page = pmm_alloc_page();
-    if (!page)
-    {
+    void *page = pmm_alloc_page();
+    if (!page) {
         return NULL;
     }
 
-    struct slab_page* sp = (struct slab_page*)page;
+    struct slab_page *sp = (struct slab_page *)page;
     sp->magic = SLAB_MAGIC;
     sp->class_idx = idx;
     sp->in_use_count = 0;
@@ -136,17 +130,15 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
     unsigned long start_offset = (hdr_size + obj_size - 1) & ~(obj_size - 1);
 
     unsigned int count = 0;
-    for (unsigned long off = start_offset; off + obj_size <= PAGE_SIZE; off += obj_size)
-    {
-        struct slab_obj* obj = (struct slab_obj*)((unsigned char*)page + off);
+    for (unsigned long off = start_offset; off + obj_size <= PAGE_SIZE; off += obj_size) {
+        struct slab_obj *obj = (struct slab_obj *)((unsigned char *)page + off);
         obj->next = sp->free_list;
         obj->free_canary = SLAB_FREE_POISON;
         sp->free_list = obj;
         count++;
     }
 
-    if (count == 0)
-    {
+    if (count == 0) {
         /*
          * The object size is so large that the header leaves no room for
          * any slots. This should never happen with the current size classes
@@ -173,10 +165,10 @@ static struct slab_page* slab_grow(struct slab_class* sc, unsigned int idx)
  * called. Called with the class lock held; pmm_free_page() acquires the
  * PMM lock internally.
  */
-static void slab_release_page(struct slab_page* sp)
+static void slab_release_page(struct slab_page *sp)
 {
     slab_total_pages--;
-    pmm_free_page((void*)sp);
+    pmm_free_page((void *)sp);
 }
 
 /*
@@ -185,17 +177,14 @@ static void slab_release_page(struct slab_page* sp)
 void slab_init(void)
 {
     /* Verify the power-of-two constraint on every size class */
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
         unsigned long sz = slab_class_sizes[i];
-        if (sz == 0 || (sz & (sz - 1)) != 0)
-        {
+        if (sz == 0 || (sz & (sz - 1)) != 0) {
             PANIC("SLAB: Size class is not a power of two");
         }
     }
 
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
         slab_classes[i].object_size = slab_class_sizes[i];
         slab_classes[i].partial_list = NULL;
         slab_classes[i].full_list = NULL;
@@ -203,10 +192,8 @@ void slab_init(void)
     }
 
     /* Seed every size class with one page to avoid early allocation failures */
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
-        if (!slab_grow(&slab_classes[i], (unsigned int)i))
-        {
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
+        if (!slab_grow(&slab_classes[i], (unsigned int)i)) {
             PANIC("SLAB: Failed to grow initial class pool");
         }
     }
@@ -218,75 +205,67 @@ void slab_init(void)
  * slab_alloc - Allocates an object of at least 'size' bytes.
  * Returns NULL on failure; never panics.
  */
-void* slab_alloc(unsigned long size)
+void *slab_alloc(unsigned long size)
 {
     int idx = size_to_class_index(size);
-    if (idx < 0)
-    {
+    if (idx < 0) {
         return NULL;
     }
 
-    struct slab_class* sc = &slab_classes[idx];
+    struct slab_class *sc = &slab_classes[idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
-    struct slab_page* sp = sc->partial_list;
+    struct slab_page *sp = sc->partial_list;
 
     /* Grow the class if all current pages are full */
-    if (!sp)
-    {
+    if (!sp) {
         sp = slab_grow(sc, (unsigned int)idx);
-        if (!sp)
-        {
+        if (!sp) {
             spin_unlock_irqrestore(&sc->lock, flags);
             return NULL;
         }
     }
 
     /* Pop an object from the page's free list */
-    struct slab_obj* obj = sp->free_list;
+    struct slab_obj *obj = sp->free_list;
     sp->free_list = obj->next;
     obj->free_canary = 0;
     sp->in_use_count++;
 
     /* Move the page to the full list if no more slots are available */
-    if (!sp->free_list)
-    {
+    if (!sp->free_list) {
         sc->partial_list = sp->next;
         sp->next = sc->full_list;
         sc->full_list = sp;
     }
 
     spin_unlock_irqrestore(&sc->lock, flags);
-    return (void*)obj;
+    return (void *)obj;
 }
 
 /*
  * slab_free - Deallocates an object and returns its slot to the owner page.
  */
-void slab_free(void* ptr)
+void slab_free(void *ptr)
 {
-    if (!ptr)
-    {
+    if (!ptr) {
         return;
     }
 
-    struct slab_page* sp = ptr_to_slab(ptr);
-    if (sp->magic != SLAB_MAGIC)
-    {
+    struct slab_page *sp = ptr_to_slab(ptr);
+    if (sp->magic != SLAB_MAGIC) {
         PANIC("SLAB: Attempted to free a non-slab pointer");
     }
 
-    if (sp->class_idx >= SLAB_NUM_CLASSES)
-    {
+    if (sp->class_idx >= SLAB_NUM_CLASSES) {
         PANIC("SLAB: Corrupt class index in slab header");
     }
 
-    struct slab_class* sc = &slab_classes[sp->class_idx];
+    struct slab_class *sc = &slab_classes[sp->class_idx];
     unsigned long flags = spin_lock_irqsave(&sc->lock);
 
-    struct slab_obj* obj = (struct slab_obj*)ptr;
-    if (obj->free_canary == SLAB_FREE_POISON)
-    {
+    struct slab_obj *obj = (struct slab_obj *)ptr;
+    if (obj->free_canary == SLAB_FREE_POISON) {
         PANIC("SLAB: Double-free detected");
     }
 
@@ -298,26 +277,22 @@ void slab_free(void* ptr)
     sp->free_list = obj;
     sp->in_use_count--;
 
-    if (was_full)
-    {
+    if (was_full) {
         /*
          * Unlink from full_list. O(n) in the number of full pages for this
          * class — unavoidable with a singly-linked list.
          */
-        struct slab_page** prev = &sc->full_list;
-        while (*prev && *prev != sp)
-        {
+        struct slab_page **prev = &sc->full_list;
+        while (*prev && *prev != sp) {
             prev = &(*prev)->next;
         }
-        if (!*prev)
-        {
+        if (!*prev) {
             PANIC("SLAB: Page marked full but not found in full_list");
         }
         *prev = sp->next;
 
         /* Return completely empty pages to the PMM immediately */
-        if (sp->in_use_count == 0)
-        {
+        if (sp->in_use_count == 0) {
             spin_unlock_irqrestore(&sc->lock, flags);
             slab_release_page(sp);
             return;
@@ -325,20 +300,16 @@ void slab_free(void* ptr)
 
         sp->next = sc->partial_list;
         sc->partial_list = sp;
-    }
-    else if (sp->in_use_count == 0)
-    {
+    } else if (sp->in_use_count == 0) {
         /*
          * Page was already on the partial list and is now completely empty.
          * Unlink and return it to the PMM.
          */
-        struct slab_page** prev = &sc->partial_list;
-        while (*prev && *prev != sp)
-        {
+        struct slab_page **prev = &sc->partial_list;
+        while (*prev && *prev != sp) {
             prev = &(*prev)->next;
         }
-        if (!*prev)
-        {
+        if (!*prev) {
             PANIC("SLAB: Page not found in partial_list during empty reclaim");
         }
         *prev = sp->next;
@@ -354,15 +325,13 @@ void slab_free(void* ptr)
 /*
  * slab_owns - Returns non-zero if ptr belongs to a slab-managed page.
  */
-int slab_owns(void* ptr)
+int slab_owns(void *ptr)
 {
-    if (!ptr)
-    {
+    if (!ptr) {
         return 0;
     }
-    struct slab_page* sp = ptr_to_slab(ptr);
-    if (!pmm_is_managed((void*)sp))
-    {
+    struct slab_page *sp = ptr_to_slab(ptr);
+    if (!pmm_is_managed((void *)sp)) {
         return 0;
     }
     return sp->magic == SLAB_MAGIC;
@@ -374,20 +343,17 @@ int slab_owns(void* ptr)
 unsigned long slab_get_used(void)
 {
     unsigned long used = 0;
-    for (int i = 0; i < SLAB_NUM_CLASSES; i++)
-    {
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
         unsigned long flags = spin_lock_irqsave(&slab_classes[i].lock);
 
-        struct slab_page* sp = slab_classes[i].partial_list;
-        while (sp)
-        {
+        struct slab_page *sp = slab_classes[i].partial_list;
+        while (sp) {
             used += sp->in_use_count * slab_classes[i].object_size;
             sp = sp->next;
         }
 
         sp = slab_classes[i].full_list;
-        while (sp)
-        {
+        while (sp) {
             used += sp->in_use_count * slab_classes[i].object_size;
             sp = sp->next;
         }

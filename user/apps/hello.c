@@ -4,15 +4,11 @@ int main(void)
 {
     int pid = sys_getpid();
 
-    for (int i = 0; i < 5; i++)
-    {
+    for (int i = 0; i < 5; i++) {
         char msg[] = "Hello from separate binary! PID:  \n";
-        if (pid >= 0 && pid <= 9)
-        {
+        if (pid >= 0 && pid <= 9) {
             msg[32] = (char)(pid + '0');
-        }
-        else
-        {
+        } else {
             msg[32] = '?';
         }
 

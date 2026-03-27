@@ -16,28 +16,28 @@
 #define PMM_MAX_RESERVED_RANGES 16
 
 /* Mark a physical address range as reserved. Must be called before pmm_init. */
-void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char* tag);
+void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 
 /* Initialise the buddy allocator. */
 void pmm_init(void);
 
 /* Allocate and zero a single 4 KB physical page. */
-void* pmm_alloc_page(void);
+void *pmm_alloc_page(void);
 
 /* Allocate and zero a power-of-two block of pages. */
-void* pmm_alloc_pages(unsigned long count);
+void *pmm_alloc_pages(unsigned long count);
 
 /* Decrement reference count; free if zero. */
-void pmm_free_page(void* ptr);
+void pmm_free_page(void *ptr);
 
 /* Free a multi-page block. */
-void pmm_free_pages(void* ptr, unsigned long count);
+void pmm_free_pages(void *ptr, unsigned long count);
 
 /* Increment the reference count of an allocated page. */
-void pmm_hold_page(void* ptr);
+void pmm_hold_page(void *ptr);
 
 /* Check if a virtual address falls in managed RAM. */
-int pmm_is_managed(void* ptr);
+int pmm_is_managed(void *ptr);
 
 /* Get approximate number of free pages. */
 unsigned long pmm_get_free_pages(void);
