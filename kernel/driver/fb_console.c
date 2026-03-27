@@ -14,19 +14,13 @@
 #include "driver/graphics.h"
 #include "driver/fb.h"
 
-/* --- Private Macros --- */
-
 #define CONSOLE_Y_OFFSET 20
 #define CHAR_WIDTH       8
 #define CHAR_HEIGHT      12
 
-/* --- Private Variables --- */
-
 static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
-
-/* --- Private Helper Functions --- */
 
 /*
  * fb_console_scroll - Moves existing lines up and clears the bottom line.
@@ -76,8 +70,6 @@ static void fb_console_putc_unlocked(char c)
         fb_console_scroll();
     }
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * fb_console_init - Resets the cursor and wipes the screen.

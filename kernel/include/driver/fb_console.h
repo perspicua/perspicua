@@ -8,8 +8,6 @@
 #ifndef PERSPICUA_DRIVER_FB_CONSOLE_H
 #define PERSPICUA_DRIVER_FB_CONSOLE_H
 
-/* --- Function Prototypes --- */
-
 /*
  * fb_console_init - Clears the display and resets the cursor.
  */

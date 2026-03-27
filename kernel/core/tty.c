@@ -20,8 +20,6 @@
 
 struct tty console_tty;
 
-/* --- Private Helper Functions --- */
-
 /*
  * wait_queue_add - Appends a task to a TTY wait queue.
  */
@@ -142,8 +140,6 @@ static int tty_has_line(struct tty *tty)
     }
     return 0;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * tty_init - Wipes buffers and resets TTY state.

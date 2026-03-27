@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Data Structures --- */
-
 /*
  * struct block_device - Represents a generic storage unit.
  *
@@ -31,8 +29,6 @@ struct block_device {
     int present;
     void *private_data;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * block_device_register - Adds a new block device to the system registry.

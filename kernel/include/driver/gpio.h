@@ -8,8 +8,6 @@
 #ifndef PERSPICUA_DRIVER_GPIO_H
 #define PERSPICUA_DRIVER_GPIO_H
 
-/* --- Constants and Macros --- */
-
 #define GPIO_MAX_PIN 57
 
 /* GPIO Function Select values (3 bits per pin) */
@@ -26,8 +24,6 @@
 #define GPIO_PUPDN_NONE 0b00
 #define GPIO_PUPDN_UP   0b01
 #define GPIO_PUPDN_DOWN 0b10
-
-/* --- Function Prototypes --- */
 
 /*
  * gpio_init - Discovers the GPIO controller and maps registers.

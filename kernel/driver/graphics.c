@@ -12,8 +12,6 @@
 #include "driver/fb.h"
 #include "driver/font8x8.h"
 
-/* --- Public API Implementations --- */
-
 /*
  * graphics_put_pixel - Updates a single memory location in the framebuffer.
  */

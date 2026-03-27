@@ -12,8 +12,6 @@
 /* Forward declaration for the exception_trap_frame struct */
 struct exception_trap_frame;
 
-/* --- Function Prototypes --- */
-
 int validate_user_buffer(const void *ptr, size_t len, int writable);
 
 /*

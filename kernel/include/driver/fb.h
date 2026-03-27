@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Data Structures --- */
-
 /*
  * struct fb_info_struct - Hardware framebuffer state.
  */
@@ -25,8 +23,6 @@ struct fb_info_struct {
 
 /* Global framebuffer state accessible by other drivers (e.g., graphics) */
 extern struct fb_info_struct fb_info;
-
-/* --- Function Prototypes --- */
 
 /*
  * fb_init - Configures the resolution and allocates the GPU display buffer.

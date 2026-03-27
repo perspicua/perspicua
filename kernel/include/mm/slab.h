@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * slab_init - Seeds the allocator with initial pages for all size classes.
  */

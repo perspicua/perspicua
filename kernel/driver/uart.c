@@ -21,8 +21,6 @@
 
 extern struct tty console_tty;
 
-/* --- Global Variables --- */
-
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
 
@@ -31,8 +29,6 @@ volatile uint32_t *uart_dr = NULL;
 volatile uint32_t *uart_fr = NULL;
 volatile uint32_t *uart_mis = NULL;
 volatile uint32_t *uart_imsc = NULL;
-
-/* --- Private Variables --- */
 
 static unsigned int cached_uart_irq = 0;
 
@@ -43,8 +39,6 @@ static volatile uint32_t *uart_lcrh = NULL;
 static volatile uint32_t *uart_cr = NULL;
 static volatile uint32_t *uart_ifls = NULL;
 static volatile uint32_t *uart_icr = NULL;
-
-/* --- Public API Implementations --- */
 
 /*
  * uart_init - Locates the PL011 UART and initializes it for 8n1 operation.

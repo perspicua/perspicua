@@ -14,13 +14,9 @@
 #include "core/lock.h"
 #include "mm/pmm.h"
 
-/* --- Private Macros --- */
-
 #define SLAB_MAGIC       0x534C4142U
 #define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
 #define SLAB_NUM_CLASSES 7
-
-/* --- Private Data Structures --- */
 
 struct slab_obj {
     struct slab_obj *next;
@@ -43,14 +39,10 @@ struct slab_class {
     spinlock_t lock;
 };
 
-/* --- Private Variables --- */
-
 static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 static struct slab_class slab_classes[SLAB_NUM_CLASSES];
 static unsigned long slab_total_pages = 0;
-
-/* --- Private Helper Functions --- */
 
 static inline struct slab_page *ptr_to_slab(void *ptr)
 {
@@ -114,8 +106,6 @@ static void slab_release_page(struct slab_page *sp)
     slab_total_pages--;
     pmm_free_page((void *)sp);
 }
-
-/* --- Public API Implementations --- */
 
 void slab_init(void)
 {

@@ -12,8 +12,6 @@
 
 #include "fs/vfs.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * devfs_init - Boot-time setup for the device filesystem.
  */

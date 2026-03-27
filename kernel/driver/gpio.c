@@ -13,12 +13,8 @@
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 
-/* --- Private Variables --- */
-
 static volatile unsigned int *gpio_gpfsel0 = NULL;
 static volatile unsigned int *gpio_gppupdn0 = NULL;
-
-/* --- Public API Implementations --- */
 
 /*
  * gpio_init - Discovers and maps the GPIO registers from the DTB.

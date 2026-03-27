@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Data Structures --- */
-
 /*
  * struct cpio_newc_header - Standard header for the CPIO 'newc' format.
  *
@@ -34,8 +32,6 @@ struct cpio_newc_header {
     char name_size[8];
     char checksum[8];
 } __attribute__((packed));
-
-/* --- Function Prototypes --- */
 
 /*
  * initrd_init - Parses the CPIO archive and registers files into RAMFS.

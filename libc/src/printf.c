@@ -170,52 +170,52 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
         int uppercase = 0;
 
         switch (*p) {
-        case 'd':
-        case 'i': {
-            int64_t val;
-            if (is_longlong) {
-                val = (int64_t)va_arg(args, long long);
-            } else if (is_long) {
-                val = (int64_t)va_arg(args, long);
-            } else if (is_size) {
-                val = (int64_t)va_arg(args, ssize_t);
-            } else {
-                val = (int64_t)va_arg(args, int);
-            }
-
-            uint64_t uval;
-            if (val < 0) {
-                sign_char = '-';
-                uval = (uint64_t)(-(val + 1)) + 1ULL;
-            } else {
-                if (flag_plus) {
-                    sign_char = '+';
-                } else if (flag_space) {
-                    sign_char = ' ';
+            case 'd':
+            case 'i': {
+                int64_t val;
+                if (is_longlong) {
+                    val = (int64_t)va_arg(args, long long);
+                } else if (is_long) {
+                    val = (int64_t)va_arg(args, long);
+                } else if (is_size) {
+                    val = (int64_t)va_arg(args, ssize_t);
+                } else {
+                    val = (int64_t)va_arg(args, int);
                 }
-                uval = (uint64_t)val;
-            }
-            num_len = fmt_uint(uval, 10, 0, num_buf);
-            goto emit_number;
-        }
 
-        case 'u':
-            base = 10;
-            goto unsigned_common;
-        case 'x':
-            base = 16;
-            uppercase = 0;
-            goto unsigned_common;
-        case 'X':
-            base = 16;
-            uppercase = 1;
-            goto unsigned_common;
-        case 'o':
-            base = 8;
-            goto unsigned_common;
-        case 'b':
-            base = 2;
-            goto unsigned_common;
+                uint64_t uval;
+                if (val < 0) {
+                    sign_char = '-';
+                    uval = (uint64_t)(-(val + 1)) + 1ULL;
+                } else {
+                    if (flag_plus) {
+                        sign_char = '+';
+                    } else if (flag_space) {
+                        sign_char = ' ';
+                    }
+                    uval = (uint64_t)val;
+                }
+                num_len = fmt_uint(uval, 10, 0, num_buf);
+                goto emit_number;
+            }
+
+            case 'u':
+                base = 10;
+                goto unsigned_common;
+            case 'x':
+                base = 16;
+                uppercase = 0;
+                goto unsigned_common;
+            case 'X':
+                base = 16;
+                uppercase = 1;
+                goto unsigned_common;
+            case 'o':
+                base = 8;
+                goto unsigned_common;
+            case 'b':
+                base = 2;
+                goto unsigned_common;
 
 unsigned_common: {
     uint64_t uval;
@@ -260,92 +260,92 @@ emit_number: {
     break;
 }
 
-        case 'p': {
-            unsigned long val = va_arg(args, unsigned long);
-            fb_putc(fb, '0');
-            fb_putc(fb, 'x');
-            char tmp[17];
-            int n = fmt_uint((uint64_t)val, 16, 0, tmp);
-            for (int i = n; i < 16; i++) {
+            case 'p': {
+                unsigned long val = va_arg(args, unsigned long);
                 fb_putc(fb, '0');
-            }
-            for (int i = 0; i < n; i++) {
-                fb_putc(fb, tmp[i]);
-            }
-            break;
-        }
-
-        case 's': {
-            const char *s = va_arg(args, const char *);
-            if (!s) {
-                s = "(null)";
-            }
-
-            int slen = 0;
-            const char *t = s;
-            while (*t) {
-                if (prec >= 0 && slen >= prec) {
-                    break;
+                fb_putc(fb, 'x');
+                char tmp[17];
+                int n = fmt_uint((uint64_t)val, 16, 0, tmp);
+                for (int i = n; i < 16; i++) {
+                    fb_putc(fb, '0');
                 }
-                slen++;
-                t++;
-            }
-
-            int pad = (width > slen) ? width - slen : 0;
-
-            if (!flag_left) {
-                for (int i = 0; i < pad; i++) {
-                    fb_putc(fb, ' ');
+                for (int i = 0; i < n; i++) {
+                    fb_putc(fb, tmp[i]);
                 }
+                break;
             }
 
-            for (int i = 0; i < slen; i++) {
-                if (s[i] == '\n' && fb->crlf) {
-                    fb_putc(fb, '\r');
+            case 's': {
+                const char *s = va_arg(args, const char *);
+                if (!s) {
+                    s = "(null)";
                 }
-                fb_putc(fb, s[i]);
-            }
 
-            if (flag_left) {
-                for (int i = 0; i < pad; i++) {
-                    fb_putc(fb, ' ');
+                int slen = 0;
+                const char *t = s;
+                while (*t) {
+                    if (prec >= 0 && slen >= prec) {
+                        break;
+                    }
+                    slen++;
+                    t++;
                 }
-            }
-            break;
-        }
 
-        case 'c': {
-            char c = (char)va_arg(args, int);
-            int pad = (width > 1) ? width - 1 : 0;
+                int pad = (width > slen) ? width - slen : 0;
 
-            if (!flag_left) {
-                for (int i = 0; i < pad; i++) {
-                    fb_putc(fb, ' ');
+                if (!flag_left) {
+                    for (int i = 0; i < pad; i++) {
+                        fb_putc(fb, ' ');
+                    }
                 }
-            }
 
-            fb_putc(fb, c);
-
-            if (flag_left) {
-                for (int i = 0; i < pad; i++) {
-                    fb_putc(fb, ' ');
+                for (int i = 0; i < slen; i++) {
+                    if (s[i] == '\n' && fb->crlf) {
+                        fb_putc(fb, '\r');
+                    }
+                    fb_putc(fb, s[i]);
                 }
+
+                if (flag_left) {
+                    for (int i = 0; i < pad; i++) {
+                        fb_putc(fb, ' ');
+                    }
+                }
+                break;
             }
-            break;
-        }
 
-        case '%':
-            fb_putc(fb, '%');
-            break;
+            case 'c': {
+                char c = (char)va_arg(args, int);
+                int pad = (width > 1) ? width - 1 : 0;
 
-        case '\0':
-            p--;
-            break;
+                if (!flag_left) {
+                    for (int i = 0; i < pad; i++) {
+                        fb_putc(fb, ' ');
+                    }
+                }
 
-        default:
-            fb_putc(fb, '%');
-            fb_putc(fb, *p);
-            break;
+                fb_putc(fb, c);
+
+                if (flag_left) {
+                    for (int i = 0; i < pad; i++) {
+                        fb_putc(fb, ' ');
+                    }
+                }
+                break;
+            }
+
+            case '%':
+                fb_putc(fb, '%');
+                break;
+
+            case '\0':
+                p--;
+                break;
+
+            default:
+                fb_putc(fb, '%');
+                fb_putc(fb, *p);
+                break;
         }
     }
 
@@ -361,7 +361,10 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
     }
 
     struct fmt_buf fb = {
-        .buf = buf, .size = size, .pos = 0, .crlf = 0,
+        .buf = buf,
+        .size = size,
+        .pos = 0,
+        .crlf = 0,
     };
 
     int ret = fmt_core(&fb, fmt, args);

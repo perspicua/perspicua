@@ -24,36 +24,36 @@ volatile int kernel_panicked = 0;
 static void print_ec(unsigned int ec)
 {
     switch (ec) {
-    case 0x01:
-        printf("  [WFI/WFE]\n");
-        break;
-    case 0x15:
-        printf("  [SVC AArch64]\n");
-        break;
-    case 0x20:
-        printf("  [Inst Abort, lower EL]\n");
-        break;
-    case 0x21:
-        printf("  [Inst Abort, same EL]\n");
-        break;
-    case 0x24:
-        printf("  [Data Abort, lower EL]\n");
-        break;
-    case 0x25:
-        printf("  [Data Abort, same EL]\n");
-        break;
-    case 0x2C:
-        printf("  [SP Alignment Fault]\n");
-        break;
-    case 0x30:
-        printf("  [FP Exception]\n");
-        break;
-    case 0x3C:
-        printf("  [BRK instruction]\n");
-        break;
-    default:
-        printf("  [EC=0x%02x]\n", ec);
-        break;
+        case 0x01:
+            printf("  [WFI/WFE]\n");
+            break;
+        case 0x15:
+            printf("  [SVC AArch64]\n");
+            break;
+        case 0x20:
+            printf("  [Inst Abort, lower EL]\n");
+            break;
+        case 0x21:
+            printf("  [Inst Abort, same EL]\n");
+            break;
+        case 0x24:
+            printf("  [Data Abort, lower EL]\n");
+            break;
+        case 0x25:
+            printf("  [Data Abort, same EL]\n");
+            break;
+        case 0x2C:
+            printf("  [SP Alignment Fault]\n");
+            break;
+        case 0x30:
+            printf("  [FP Exception]\n");
+            break;
+        case 0x3C:
+            printf("  [BRK instruction]\n");
+            break;
+        default:
+            printf("  [EC=0x%02x]\n", ec);
+            break;
     }
 }
 

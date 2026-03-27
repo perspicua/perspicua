@@ -22,23 +22,15 @@
 #include "core/lock.h"
 #include "sched/process.h"
 
-/* --- Compile-time tunables --- */
-
 #ifndef SCHED_NUM_CORES
     #define SCHED_NUM_CORES 4
 #endif
-
-/* --- Static assertions (must match switch.S offsets) --- */
 
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
 _Static_assert(__builtin_offsetof(struct task, state) == 112,
                "task->state offset mismatch — update task_wrapper_asm");
 
-/* --- Internal macros --- */
-
 #define TASK_CANARY_PTR(t) ((unsigned long *)((t)->stack + PAGE_SIZE))
-
-/* --- Static scheduler state --- */
 
 /* Sentinels to detect BSS corruption. */
 static uint64_t s_canary_lo = 0xAAAAAAAAAAAAAAAAULL;
@@ -64,11 +56,7 @@ static int sched_core_pid[SCHED_NUM_CORES];
 static unsigned long sched_next_id;
 static spinlock_t sched_id_lock = SPINLOCK_INIT;
 
-/* --- Forward declarations (Assembly) --- */
-
 extern void task_wrapper_asm(void);
-
-/* --- Private Helper Functions --- */
 
 /* Verifies BSS sentinels around boot tasks. */
 static void sched_check_bss_canaries(void)
@@ -306,8 +294,6 @@ static void cleanup_dead_task(int cpu)
         heap_free(dead);
     }
 }
-
-/* --- Public API Implementations --- */
 
 /* Appends a task to a ready queue. */
 void enqueue_ready(int cpu, struct task *t)

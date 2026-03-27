@@ -11,8 +11,6 @@
 
 #include "core/timer.h"
 
-/* --- Public API Implementations --- */
-
 /*
  * spin_lock - Uses load-acquire/store-exclusive for AArch64 mutual exclusion.
  */

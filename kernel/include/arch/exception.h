@@ -10,12 +10,8 @@
 
 #include "types.h"
 
-/* --- Constants and Types --- */
-
 /* 128-bit type for NEON/FPU registers */
 typedef __uint128_t uint128_t;
-
-/* --- Data Structures --- */
 
 /*
  * struct exception_trap_frame - CPU state saved on the stack during an exception.
@@ -37,8 +33,6 @@ struct exception_trap_frame {
 
     uint128_t q[32]; /* SIMD/NEON/FPU registers v0 - v31 */
 } __attribute__((aligned(16)));
-
-/* --- Function Prototypes --- */
 
 /*
  * exception_unhandled_vector - Default handler for unknown or reserved vectors.

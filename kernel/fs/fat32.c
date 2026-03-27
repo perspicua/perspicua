@@ -15,11 +15,7 @@
 #include "core/lock.h"
 #include "mm/slab.h"
 
-/* --- Private Variables --- */
-
 static struct fat32_fs current_fs;
-
-/* --- Private Helper Functions --- */
 
 /*
  * cluster_to_lba - Converts a FAT cluster number to a Logical Block Address.
@@ -92,8 +88,6 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
     }
     return 1;
 }
-
-/* --- VFS Operation Bridges --- */
 
 static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
 {
@@ -288,8 +282,6 @@ static struct vfs_vnode_ops fat32_vnode_ops = {
     .lookup = fat32_vfs_lookup,
     .readdir = fat32_vfs_readdir,
 };
-
-/* --- Public API Implementations --- */
 
 /*
  * fat32_get_root_node - Returns the root directory vnode.

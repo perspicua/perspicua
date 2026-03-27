@@ -15,8 +15,6 @@
 #include "mm/addr.h"
 #include "core/lock.h"
 
-/* --- Private Macros --- */
-
 #define PTE_VALID    MMU_PTE_VALID
 #define PTE_TABLE    MMU_PTE_TABLE
 #define PTE_PAGE     MMU_PTE_PAGE
@@ -38,8 +36,6 @@
 
 #define PT_ENTRIES 512UL
 
-/* --- Private Variables --- */
-
 extern char __text_start[], __text_end[];
 extern char __rodata_start[], __rodata_end[];
 extern char __data_start[], __data_end[];
@@ -52,8 +48,6 @@ static unsigned long *kernel_pgd_virt;
 static unsigned long empty_pgd_phys;
 
 static spinlock_t mmu_lock = SPINLOCK_INIT;
-
-/* --- Private Helper Functions --- */
 
 /*
  * tlbi_va_is - Invalidates TLB for a single page across all cores.
@@ -129,8 +123,6 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
 
     return l3;
 }
-
-/* --- Public API Implementations --- */
 
 void mmu_init(void)
 {

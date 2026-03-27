@@ -11,8 +11,6 @@
 #include "string.h"
 #include "stdio.h"
 
-/* --- Private Helper Functions --- */
-
 /*
  * hex8_to_u32 - Converts an 8-char hex string to a 32-bit integer.
  */
@@ -32,8 +30,6 @@ static uint32_t hex8_to_u32(const char *s)
     }
     return res;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * initrd_init - Iterates through the CPIO archive and registers files.

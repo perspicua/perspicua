@@ -27,15 +27,11 @@
 #include "fs/vfs.h"
 #include "arch/uaccess.h"
 
-/* --- Global Variables --- */
-
 spinlock_t process_table_lock = SPINLOCK_INIT;
 struct process process_table[PROCESS_TABLE_SIZE];
 
 /* Performs ERET to EL0 using the trap frame on the kernel stack */
 extern void ret_to_user(void);
-
-/* --- Private Helper Functions --- */
 
 /*
  * va_init - Resets a virtual-address allocator to its initial state.
@@ -148,8 +144,6 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
     }
     return vbase;
 }
-
-/* --- Public API Implementations --- */
 
 void process_flush_icache_range(void *start, size_t size)
 {

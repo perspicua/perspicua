@@ -14,8 +14,6 @@
 
 #include "core/lock.h"
 
-/* --- Constants and Macros --- */
-
 #define VFS_MAX_PATH_LEN 4096
 #define VFS_MAX_FDS      32
 #define VFS_MAX_MOUNTS   8
@@ -36,8 +34,6 @@
 #define VFS_SEEK_CUR 1
 #define VFS_SEEK_END 2
 
-/* --- Enums and Types --- */
-
 typedef int64_t vfs_off_t;
 
 /*
@@ -48,8 +44,6 @@ enum vfs_vnode_type {
     VFS_VNODE_TYPE_DIR,
     VFS_VNODE_TYPE_DEVICE
 };
-
-/* --- Data Structures --- */
 
 struct vfs_vnode;
 struct vfs_file;
@@ -97,8 +91,6 @@ struct vfs_file {
     int flags;
     atomic_t refcount;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * vfs_init - Initializes the mount table and VFS synchronization.

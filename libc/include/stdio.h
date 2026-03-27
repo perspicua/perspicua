@@ -12,8 +12,6 @@
 
 #include <stdarg.h>
 
-/* --- Function Prototypes --- */
-
 /* Formatted output to the console (UART). */
 int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

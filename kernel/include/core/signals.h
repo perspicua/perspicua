@@ -12,8 +12,6 @@
 
 #include "arch/exception.h"
 
-/* --- Data Structures --- */
-
 /*
  * struct signal_frame - State saved on the user stack during signal delivery.
  *
@@ -24,8 +22,6 @@ struct signal_frame {
     struct exception_trap_frame saved_tf;
     sigset_t saved_mask;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * signal_handle_pending - Dispatches pending signals before returning to user mode.

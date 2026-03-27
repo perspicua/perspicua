@@ -10,12 +10,8 @@
 
 #include "types.h"
 
-/* --- Constants and Macros --- */
-
 #define SPINLOCK_INIT  {0}
 #define ATOMIC_INIT(i) {(i)}
-
-/* --- Data Structures --- */
 
 /*
  * struct spinlock_t - Simple busy-wait lock for short critical sections.
@@ -32,8 +28,6 @@ typedef struct {
 typedef struct {
     volatile int counter;
 } atomic_t;
-
-/* --- Function Prototypes --- */
 
 /*
  * spin_lock - Acquires a spinlock, busy-waiting if necessary.

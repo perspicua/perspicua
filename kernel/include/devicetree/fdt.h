@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Constants and Macros --- */
-
 #define FDT_MAGIC 0xd00dfeed
 
 #define FDT_BEGIN_NODE 0x00000001
@@ -21,8 +19,6 @@
 #define FDT_END        0x00000009
 
 #define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
-
-/* --- Data Structures --- */
 
 /*
  * struct fdt_header - Standard FDT header as it appears in the blob.
@@ -68,8 +64,6 @@ struct fdt_property {
     const void *value;
 };
 
-/* --- Inline Helper Functions --- */
-
 static inline uint32_t fdt32_to_cpu(uint32_t val)
 {
     return ((val & 0x000000ff) << 24) | ((val & 0x0000ff00) << 8) | ((val & 0x00ff0000) >> 8)
@@ -80,8 +74,6 @@ static inline uint64_t fdt64_to_cpu(uint64_t val)
 {
     return ((uint64_t)fdt32_to_cpu((uint32_t)val) << 32) | fdt32_to_cpu((uint32_t)(val >> 32));
 }
-
-/* --- Function Prototypes --- */
 
 /*
  * fdt_init - Initializes the parser with the DTB's base address.

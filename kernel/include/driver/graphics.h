@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * graphics_put_pixel - Draws a single pixel at (x, y) with a 32-bit ARGB color.
  */

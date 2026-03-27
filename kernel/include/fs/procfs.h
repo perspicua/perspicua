@@ -10,8 +10,6 @@
 
 #include "fs/vfs.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * procfs_init - Initializes the proc filesystem and mounts it at /proc.
  */

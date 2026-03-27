@@ -20,8 +20,6 @@
 #include "driver/uart.h"
 #include "driver/mailbox.h"
 
-/* --- Private Data Structures --- */
-
 typedef struct {
     volatile uint32_t arg2;
     volatile uint32_t blk_size_cnt;
@@ -38,8 +36,6 @@ typedef struct {
     volatile uint32_t host_control2;
     volatile uint32_t capabilities[2];
 } sdhci_regs_t;
-
-/* --- Private Macros --- */
 
 /* Status Register Bits */
 #define STATUS_CMD_INHIBIT (1 << 0)
@@ -81,14 +77,10 @@ typedef struct {
 #define CMD55  (CMD_IDX(55) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
 #define ACMD41 (CMD_IDX(41) | CMD_RESP_48)
 
-/* --- Private Variables --- */
-
 static sdhci_regs_t *regs = NULL;
 static struct block_device sd_block_dev;
 static uint32_t sd_rca = 0;
 static int sd_is_sdhc = 0;
-
-/* --- Private Helper Functions --- */
 
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
@@ -227,8 +219,6 @@ static int sd_init_card(void)
 
     return PERS_SUCCESS;
 }
-
-/* --- Public API Implementations --- */
 
 int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, size_t num_blocks)
 {

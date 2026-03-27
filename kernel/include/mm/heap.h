@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * heap_init - Boot-time initialization of heap layers and initial pool.
  */

@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Constants and Macros --- */
-
 #define ELF_IDENT_MAG0       0
 #define ELF_IDENT_MAG1       1
 #define ELF_IDENT_MAG2       2
@@ -49,8 +47,6 @@ typedef uint32_t elf64_word;
 typedef int32_t elf64_sword;
 typedef uint64_t elf64_xword;
 typedef int64_t elf64_sxword;
-
-/* --- Data Structures --- */
 
 /*
  * struct elf64_header - The main ELF file header.
@@ -91,8 +87,6 @@ struct elf64_program_header {
     elf64_xword mem_size;
     elf64_xword align;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * elf_load - Parses and loads an ELF executable from the filesystem.

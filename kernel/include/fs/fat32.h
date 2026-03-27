@@ -13,8 +13,6 @@
 #include "driver/block.h"
 #include "fs/vfs.h"
 
-/* --- Data Structures --- */
-
 /*
  * struct partition_entry - MBR partition table entry.
  */
@@ -105,8 +103,6 @@ struct fat32_fs {
     uint32_t fat_lba_start;
     uint32_t data_lba_start;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * fat32_init - Discovers and mounts a FAT32 partition on the given device.

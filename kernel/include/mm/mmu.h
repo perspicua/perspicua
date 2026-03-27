@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Descriptor Bits (ARMv8-A Reference D5) --- */
-
 #define MMU_PTE_VALID (1ULL << 0)
 #define MMU_PTE_TABLE (1ULL << 1) /* L0-L2 only */
 #define MMU_PTE_PAGE  (1ULL << 1) /* L3 only */
@@ -43,8 +41,6 @@
 
 #define MMU_PTE_ADDR_MASK 0x0000FFFFFFFFF000ULL
 
-/* --- High-level Permission Combinators --- */
-
 #define MMU_PAGE_USER_CODE                                                                        \
     (MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER \
      | MMU_AP_RO | MMU_PXN | MMU_PTE_NG)
@@ -69,8 +65,6 @@
 
 #define MMU_FLAGS_FRAMEBUFFER \
     (MMU_PTE_AF | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL_NC | MMU_AP_RW | MMU_PXN | MMU_UXN)
-
-/* --- Function Prototypes --- */
 
 void mmu_init(void);
 void mmu_secondary_init(void);

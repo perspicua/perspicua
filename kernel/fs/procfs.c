@@ -18,13 +18,9 @@
 #include "fs/vfs.h"
 #include "sched/process.h"
 
-/* --- Private Variables --- */
-
 static struct vfs_vnode *procfs_root_vnode = NULL;
 static struct vfs_vnode *version_vnode = NULL;
 static struct vfs_vnode *meminfo_vnode = NULL;
-
-/* --- Private Helper Functions --- */
 
 /*
  * procfs_get_vnode_path - Recursively reconstructs the absolute path of a vnode.
@@ -68,8 +64,6 @@ static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t si
     }
     return len;
 }
-
-/* --- Internal Read Handlers --- */
 
 static int procfs_version_read(struct vfs_file *file, void *buffer, size_t size)
 {
@@ -284,16 +278,12 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
     return to_copy;
 }
 
-/* --- Internal Ops Mapping --- */
-
 static struct vfs_vnode_ops procfs_version_ops = {.read = procfs_version_read};
 static struct vfs_vnode_ops procfs_meminfo_ops = {.read = procfs_meminfo_read};
 static struct vfs_vnode_ops procfs_pid_status_ops = {.read = procfs_pid_status_read};
 static struct vfs_vnode_ops procfs_pid_cmdline_ops = {.read = procfs_pid_cmdline_read};
 static struct vfs_vnode_ops procfs_pid_cwd_ops = {.read = procfs_pid_cwd_read};
 static struct vfs_vnode_ops procfs_pid_fd_entry_ops = {.read = procfs_pid_fd_entry_read};
-
-/* --- Directory Lookup and Readdir --- */
 
 static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
@@ -527,8 +517,6 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
 
 static struct vfs_vnode_ops procfs_root_ops = {.readdir = procfs_root_readdir,
                                                .lookup = procfs_root_lookup};
-
-/* --- Public API Implementations --- */
 
 /*
  * procfs_init - Boot-time registration and mounting of /proc.

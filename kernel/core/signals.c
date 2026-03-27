@@ -20,8 +20,6 @@
 #include "sched/sched.h"
 #include "sched/process.h"
 
-/* --- Public API Implementations --- */
-
 /*
  * signal_handle_pending - Dispatches signals before returning to user mode.
  *

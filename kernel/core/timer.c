@@ -9,8 +9,6 @@
 
 #include "stdio.h"
 
-/* --- Private Helper Functions --- */
-
 /*
  * read_cntfrq - Reads the system counter frequency register (CNTFRQ_EL0).
  */
@@ -30,8 +28,6 @@ static inline unsigned long read_cntpct(void)
     asm volatile("mrs %0, cntpct_el0" : "=r"(val));
     return val;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * get_system_time - Converts raw counter ticks to milliseconds of uptime.

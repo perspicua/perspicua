@@ -10,12 +10,8 @@
 
 #include "arch/exception.h"
 
-/* --- Constants and Macros --- */
-
 #define SYSCALL_MAX_RW_SIZE   (4UL * 1024 * 1024)
 #define SYSCALL_MAX_MMAP_SIZE (256UL * 1024 * 1024)
-
-/* --- Function Prototypes --- */
 
 /*
  * validate_user_buffer - Verifies that a memory range is accessible from user mode.

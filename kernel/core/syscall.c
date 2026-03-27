@@ -28,8 +28,6 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 
-/* --- Public API Implementations --- */
-
 /*
  * validate_user_buffer - Verifies that a memory range is valid for user access.
  */

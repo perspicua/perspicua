@@ -20,11 +20,7 @@
 #include "sched/sched.h"
 #include "sched/process.h"
 
-/* --- Private Macros --- */
-
 #define PIPE_BUF_SIZE 4096
-
-/* --- Private Data Structures --- */
 
 /*
  * struct pipe - Shared IPC buffer and synchronization state.
@@ -43,8 +39,6 @@ struct pipe {
     struct task *read_wait_queue;
     struct task *write_wait_queue;
 };
-
-/* --- Private Helper Functions --- */
 
 /*
  * pipe_wait - Blocks the current task on a pipe's specific wait queue.
@@ -182,8 +176,6 @@ static int pipe_close(struct vfs_file *file)
 
 static struct vfs_vnode_ops pipe_ops = {
     .read = pipe_read, .write = pipe_write, .close = pipe_close};
-
-/* --- Public API Implementations --- */
 
 /*
  * pipe_create - Allocates a pipe and installs descriptors in the process table.

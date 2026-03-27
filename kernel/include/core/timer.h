@@ -8,8 +8,6 @@
 #ifndef PERSPICUA_CORE_TIMER_H
 #define PERSPICUA_CORE_TIMER_H
 
-/* --- Function Prototypes --- */
-
 /*
  * get_system_time - Returns the uptime in milliseconds.
  */

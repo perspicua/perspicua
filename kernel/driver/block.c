@@ -16,16 +16,10 @@
 #include "fs/devfs.h"
 #include "mm/slab.h"
 
-/* --- Private Macros --- */
-
 #define BLOCK_MAX_DEVICES 8
-
-/* --- Private Variables --- */
 
 static struct block_device *devices[BLOCK_MAX_DEVICES];
 static size_t nr_devices = 0;
-
-/* --- Private Helper Functions --- */
 
 /*
  * block_device_vfs_read - Bridge between VFS byte-reads and driver block-reads.
@@ -77,8 +71,6 @@ static int block_device_vfs_write(struct vfs_file *file, const void *buffer, siz
 /* Operation mapping for devfs registration */
 static struct vfs_vnode_ops block_device_vfs_ops = {
     .read = block_device_vfs_read, .write = block_device_vfs_write, .lookup = NULL, .close = NULL};
-
-/* --- Public API Implementations --- */
 
 /*
  * block_device_register - Adds a device to the global table and registers it in devfs.

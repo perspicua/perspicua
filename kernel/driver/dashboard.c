@@ -18,8 +18,6 @@
 #include "driver/graphics.h"
 #include "driver/fb.h"
 
-/* --- Private Helper Functions --- */
-
 /*
  * uint_to_str - Converts an unsigned long to its decimal string representation.
  */
@@ -45,8 +43,6 @@ static void uint_to_str(unsigned long n, char *buf)
         buf[i - j - 1] = tmp;
     }
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * dashboard_update - Refresh and render the system metrics bar.

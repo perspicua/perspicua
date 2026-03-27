@@ -14,13 +14,9 @@
 
 #include "mm/addr.h"
 
-/* --- Private Variables --- */
-
 static const uint32_t *fdt_struct_block;
 static const char *fdt_strings_block;
 static uintptr_t fdt_base_address;
-
-/* --- Private Helper Functions --- */
 
 /*
  * fdt_next_tag - Extracts the next token and advances the cursor.
@@ -48,8 +44,6 @@ static void fdt_update_pointers(uintptr_t base)
     fdt_struct_block = (const uint32_t *)(base + fdt32_to_cpu(fdt->off_dt_struct));
     fdt_strings_block = (const char *)(base + fdt32_to_cpu(fdt->off_dt_strings));
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * fdt_init - Configures the parser with the initial physical DTB address.

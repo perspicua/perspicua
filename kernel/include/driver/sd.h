@@ -12,8 +12,6 @@
 
 #include "driver/block.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * sd_init - Discovers and configures the EMMC2 controller and attached card.
  */

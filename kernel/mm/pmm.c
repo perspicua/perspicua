@@ -15,12 +15,8 @@
 #include "core/lock.h"
 #include "devicetree/fdt.h"
 
-/* --- Private Macros --- */
-
 #define PMM_MAX_FREE_LIST_SCAN  131072UL
 #define PMM_MAX_RESERVED_RANGES 64
-
-/* --- Private Data Structures --- */
 
 /*
  * struct pmm_page - Metadata for a single physical 4 KB page.
@@ -43,11 +39,7 @@ struct pmm_reserved_range {
     const char *tag;
 };
 
-/* --- Global Variables --- */
-
 unsigned long pmm_metadata_end = 0;
-
-/* --- Private Variables --- */
 
 extern char __kernel_end[];
 
@@ -63,8 +55,6 @@ static unsigned int pmm_reserved_range_count = 0;
 
 static spinlock_t pmm_lock = SPINLOCK_INIT;
 static int pmm_ready = 0;
-
-/* --- Private Helper Functions --- */
 
 static inline unsigned int get_order(unsigned long count)
 {
@@ -180,8 +170,6 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
     p->next = pmm_free_lists[order];
     pmm_free_lists[order] = p;
 }
-
-/* --- Public API Implementations --- */
 
 void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag)
 {

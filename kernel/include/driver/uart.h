@@ -12,8 +12,6 @@
 
 #include "core/lock.h"
 
-/* --- Constants and Macros --- */
-
 /* UART Flag Register (FR) bits */
 #define UART_FR_TXFF (1 << 5)
 #define UART_FR_RXFE (1 << 4)
@@ -38,15 +36,11 @@
 #define UART_MIS_TXMIS (1 << 5)
 #define UART_MIS_RTMIS (1 << 6)
 
-/* --- Public Register Pointers and Synchronization --- */
-
 extern volatile uint32_t *uart_dr;
 extern volatile uint32_t *uart_fr;
 extern volatile uint32_t *uart_mis;
 extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
-
-/* --- Function Prototypes --- */
 
 /*
  * uart_init - Discovers the UART and configures it for 115200 8n1.

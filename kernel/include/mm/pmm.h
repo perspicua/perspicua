@@ -10,12 +10,8 @@
 
 #include "types.h"
 
-/* --- Constants and Macros --- */
-
 #define PMM_MAX_ORDER 10
 #define PAGE_SIZE     4096
-
-/* --- Function Prototypes --- */
 
 /*
  * pmm_init - Discovers RAM from the DTB and initializes the buddy system.

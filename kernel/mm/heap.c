@@ -15,13 +15,9 @@
 #include "mm/slab.h"
 #include "mm/pmm.h"
 
-/* --- Private Macros --- */
-
 #define HEAP_SLAB_MAX  1024
 #define HEAP_MAX_ALLOC (8 * 1024 * 1024)
 #define HEAP_ALIGN(x)  (((x) + 15) & ~15UL)
-
-/* --- Private Data Structures --- */
 
 /*
  * struct heap_block_header - Prefix for first-fit pool allocations.
@@ -34,14 +30,10 @@ struct heap_block_header {
 
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
 
-/* --- Private Variables --- */
-
 static struct heap_block_header *heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
 static unsigned long heap_used_size = 0;
-
-/* --- Private Helper Functions --- */
 
 /*
  * heap_expand - Requests contiguous pages from PMM to grow the pool.
@@ -108,8 +100,6 @@ static void heap_insert_free(struct heap_block_header *block)
         }
     }
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * heap_init - Initializes slab layer and the first-fit pool.

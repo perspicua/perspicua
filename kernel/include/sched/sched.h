@@ -18,8 +18,6 @@
 #define SCHED_STACK_PAGES        64 // Must be exact power of two for buddy allocator
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
-/* --- Enums --- */
-
 /* Possible execution states for a task. */
 enum sched_task_state {
     SCHED_TASK_RUNNING,
@@ -27,8 +25,6 @@ enum sched_task_state {
     SCHED_TASK_BLOCKED,
     SCHED_TASK_DEAD
 };
-
-/* --- Data Structures --- */
 
 /* Saved processor state for context switching (AArch64 callee-saved). */
 struct cpu_context {
@@ -60,8 +56,6 @@ struct task {
     int skip_signals;            /* Flag to indicate if signal handling should be deferred */
     volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
-
-/* --- Function Prototypes --- */
 
 /* Returns the index of the current CPU core (0-3). */
 static inline int get_core_id(void)

@@ -19,13 +19,9 @@
 #include "stdio.h"
 #include "panic.h"
 
-/* --- Private Macros and Constants --- */
-
 #define ELF_PROG_FLAG_X 0x1
 #define ELF_PROG_FLAG_W 0x2
 #define ELF_PROG_FLAG_R 0x4
-
-/* --- Private Helper Functions --- */
 
 /*
  * elf_check_header - Validates the ELF file identity and machine type.
@@ -58,8 +54,6 @@ static int elf_check_header(struct elf64_header *hdr)
 
     return PERS_SUCCESS;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * elf_load - Parses and loads an ELF executable from the filesystem.

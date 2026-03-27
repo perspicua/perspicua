@@ -8,8 +8,6 @@
 #ifndef PERSPICUA_DRIVER_MAILBOX_H
 #define PERSPICUA_DRIVER_MAILBOX_H
 
-/* --- Function Prototypes --- */
-
 /*
  * mbox_init - Discovers the mailbox hardware and maps registers.
  */

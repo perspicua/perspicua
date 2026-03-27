@@ -19,8 +19,6 @@
 #include "mm/heap.h"
 #include "fs/vfs.h"
 
-/* --- Private Data Structures --- */
-
 /*
  * struct devfs_node - Internal entry in the devfs directory linked-list.
  */
@@ -30,15 +28,11 @@ struct devfs_node {
     struct devfs_node *next;
 };
 
-/* --- Private Variables --- */
-
 static struct vfs_vnode *devfs_root_vnode = NULL;
 static struct devfs_node *devfs_devices = NULL;
 static spinlock_t devfs_lock = SPINLOCK_INIT;
 
 extern struct tty console_tty;
-
-/* --- Private Helper Functions --- */
 
 /*
  * devfs_root_lookup - Scans the device list for a matching name.
@@ -111,8 +105,6 @@ static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
                                               .readdir = devfs_root_readdir};
 
 static struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
-
-/* --- Public API Implementations --- */
 
 /*
  * devfs_register_device - Creates a vnode and links it to the device list.

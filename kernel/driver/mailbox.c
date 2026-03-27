@@ -13,18 +13,12 @@
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 
-/* --- Private Macros --- */
-
 #define MBOX_STATUS_FULL  0x80000000
 #define MBOX_STATUS_EMPTY 0x40000000
-
-/* --- Private Variables --- */
 
 static volatile unsigned int *mbox_read = NULL;
 static volatile unsigned int *mbox_status = NULL;
 static volatile unsigned int *mbox_write = NULL;
-
-/* --- Public API Implementations --- */
 
 /*
  * mbox_init - Locates and maps the BCM2835 mailbox registers.

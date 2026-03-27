@@ -19,8 +19,6 @@
 #include "fs/vfs.h"
 #include "sched/sched.h"
 
-/* --- Constants and Macros --- */
-
 #define PROCESS_TABLE_SIZE       1024
 #define USER_VA_BASE             0x40000000ULL
 #define USER_VA_MAX_REGIONS      16
@@ -30,16 +28,12 @@
 #define SPSR_EL1_KERN      0x000003C5ULL
 #define STACK_CANARY_VALUE 0xDEADC0DEDEADC0DEULL
 
-/* --- Enums and Types --- */
-
 typedef enum {
     PROCESS_STATE_EMPTY = 0,
     PROCESS_STATE_RUNNING,
     PROCESS_STATE_ZOMBIE,
     PROCESS_STATE_DEAD
 } process_state_t;
-
-/* --- Data Structures --- */
 
 struct va_region {
     uintptr_t base;
@@ -88,12 +82,8 @@ struct process {
     uintptr_t default_sigrestorer;
 };
 
-/* --- Global Variables --- */
-
 extern struct process process_table[PROCESS_TABLE_SIZE];
 extern spinlock_t process_table_lock;
-
-/* --- Function Prototypes --- */
 
 /* Lifecycle and execution */
 void process_init(void);

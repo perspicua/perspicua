@@ -15,8 +15,6 @@
 #include "devicetree/fdt.h"
 #include "driver/uart.h"
 
-/* --- Global Variables --- */
-
 volatile unsigned int *gic_d_ctlr = NULL;
 volatile unsigned int *gic_d_isenablern = NULL;
 volatile unsigned char *gic_d_ipriorityr = NULL;
@@ -28,11 +26,7 @@ volatile unsigned int *gic_c_pmr = NULL;
 volatile unsigned int *gic_c_iar = NULL;
 volatile unsigned int *gic_c_eoir = NULL;
 
-/* --- Private Variables --- */
-
 static unsigned int cached_uart_irq = 0;
-
-/* --- Public API Implementations --- */
 
 /*
  * gic_send_panic_ipi - Signals all other cores using SGI 0.

@@ -13,11 +13,7 @@
 #include "core/lock.h"
 #include "sched/sched.h"
 
-/* --- Constants and Macros --- */
-
 #define TTY_BUFFER_SIZE 256
-
-/* --- Data Structures --- */
 
 /*
  * struct tty - Represents a terminal device with its buffers and state.
@@ -45,8 +41,6 @@ struct tty {
     int canon_enabled;
     uint32_t foreground_pid;
 };
-
-/* --- Function Prototypes --- */
 
 /*
  * tty_init - Initializes a TTY structure with default settings.

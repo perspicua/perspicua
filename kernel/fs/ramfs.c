@@ -17,11 +17,7 @@
 #include "mm/heap.h"
 #include "fs/vfs.h"
 
-/* --- Private Macros --- */
-
 #define RAMFS_MAX_FILES 32
-
-/* --- Private Data Structures --- */
 
 /*
  * struct ramfs_file_data - Mapping between file metadata and its memory buffer.
@@ -33,16 +29,12 @@ struct ramfs_file_data {
     struct vfs_vnode *node;
 };
 
-/* --- Private Variables --- */
-
 static struct ramfs_file_data ramfs_files[RAMFS_MAX_FILES];
 static int ramfs_file_count = 0;
 
 static struct vfs_vnode *ramfs_root_vnode = NULL;
 static struct vfs_vnode_ops ramfs_dir_ops;
 static struct vfs_vnode_ops ramfs_file_ops;
-
-/* --- Private Helper Functions --- */
 
 static int ramfs_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
@@ -61,8 +53,6 @@ static int ramfs_readdir(struct vfs_file *file, void *buffer, size_t count)
 
     return entries_read;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * ramfs_read - Direct memory-to-buffer copy for file contents.

@@ -8,11 +8,7 @@
 #ifndef PERSPICUA_DRIVER_GIC_H
 #define PERSPICUA_DRIVER_GIC_H
 
-/* --- Constants and Macros --- */
-
 #define GIC_TIMER_IRQ 30
-
-/* --- GIC Distributor Registers --- */
 
 extern volatile unsigned int *gic_d_ctlr;
 extern volatile unsigned int *gic_d_isenablern;
@@ -20,14 +16,10 @@ extern volatile unsigned char *gic_d_ipriorityr;
 extern volatile unsigned char *gic_d_itargetsr;
 extern volatile unsigned int *gic_d_sgir;
 
-/* --- GIC CPU Interface Registers --- */
-
 extern volatile unsigned int *gic_c_ctlr;
 extern volatile unsigned int *gic_c_pmr;
 extern volatile unsigned int *gic_c_iar;
 extern volatile unsigned int *gic_c_eoir;
-
-/* --- Function Prototypes --- */
 
 /*
  * gic_init - Discovers and initializes the GIC hardware.

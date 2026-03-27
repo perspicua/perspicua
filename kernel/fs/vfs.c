@@ -18,8 +18,6 @@
 #include "fs/devfs.h"
 #include "sched/process.h"
 
-/* --- Private Data Structures --- */
-
 /*
  * struct vfs_mount_entry - Internal registration of a mounted filesystem.
  */
@@ -28,13 +26,9 @@ struct vfs_mount_entry {
     struct vfs_vnode *root;
 };
 
-/* --- Private Variables --- */
-
 static struct vfs_mount_entry vfs_mount_table[VFS_MAX_MOUNTS];
 static int vfs_mount_count = 0;
 static spinlock_t vfs_lock = SPINLOCK_INIT;
-
-/* --- Private Helper Functions --- */
 
 /*
  * find_mount - Performs a longest-prefix match to find the mount point for a path.
@@ -199,8 +193,6 @@ static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
 
     return PERS_SUCCESS;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * vfs_init - Initializes internal mount infrastructure.

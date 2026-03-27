@@ -17,19 +17,13 @@
 #include "mm/mmu.h"
 #include "sched/process.h"
 
-/* --- Private Variables --- */
-
 /* Mailbox message buffer for GPU requests (must be 16-byte aligned) */
 static __attribute__((aligned(16))) unsigned int mbox[36];
 
 /* VFS operations for the /dev/fb0 device */
 static struct vfs_vnode_ops fb_vfs_ops;
 
-/* --- Global Variables --- */
-
 struct fb_info_struct fb_info;
-
-/* --- Private Helper Functions --- */
 
 /*
  * fb_mmap - Maps the physical framebuffer into a user process address space.
@@ -53,8 +47,6 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
 
     return 0;
 }
-
-/* --- Public API Implementations --- */
 
 /*
  * fb_init - Requests a 32-bit RGBA display buffer from the GPU.

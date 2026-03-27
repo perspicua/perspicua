@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Function Prototypes --- */
-
 /*
  * pipe_create - Internal implementation of the pipe() system call.
  *

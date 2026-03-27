@@ -13,8 +13,6 @@
 
 #include "uapi/stat.h"
 
-/* --- Constants and Macros --- */
-
 /* Filesystem access mode and control flags. */
 #define VFS_O_RDONLY  0x0000
 #define VFS_O_WRONLY  0x0001
@@ -30,15 +28,11 @@
 #define VFS_SEEK_CUR 1
 #define VFS_SEEK_END 2
 
-/* --- Data Structures --- */
-
 /* Directory entry structure returned to userspace. */
 struct vfs_dirent {
     uint32_t ino;
     char name[256];
 };
-
-/* --- Function Prototypes --- */
 
 /* Process and execution control */
 void sys_exit(int status);
