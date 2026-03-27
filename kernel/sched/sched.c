@@ -1,58 +1,19 @@
 /*
- * kernel/sched/sched.c
+ * sched.c - Preemptive, SMP-aware round-robin scheduler for AArch64.
  *
- * Preemptive, SMP-aware round-robin scheduler for AArch64.
- *
- * ── Design overview ──────────────────────────────────────────────────────────
- *
- *  Per-CPU ready queues
- *    Each core owns a singly-linked FIFO of READY tasks protected by its own
- *    spinlock.  Tasks are appended at the tail and removed from the head so
- *    that every runnable task gets a fair turn.
- *
- *  Global sleep queue
- *    A single list ordered by wake_time, protected by sched_sleep_lock.
- *    schedule() drains any tasks whose deadline has passed back into the
- *    local ready queue before selecting the next task to run.
- *
- *  Work-stealing
- *    When a core's ready queue is empty it scans the other cores' queues and
- *    steals the first eligible task it finds.  PID-0 kernel/boot tasks are
- *    never stolen.
- *
- *  Deferred dead-task cleanup
- *    A task cannot free its own stack while it is still executing on it.
- *    When a task transitions to SCHED_TASK_DEAD, schedule() stashes it in
- *    sched_cleanup[cpu] and the *next* call to schedule() on that core
- *    actually releases the memory.
- *
- *  Current-task pointer
- *    TPIDR_EL1 holds a pointer to the struct task of the currently running
- *    task on each core.  sched_get_current() is therefore a single MRS
- *    instruction.
- *
- * ── Lock ordering ────────────────────────────────────────────────────────────
- *
- *   sched_sleep_lock          (global, coarse)
- *   sched_ready_locks[cpu]    (per-CPU, fine)
- *   sched_next_id_lock        (global, narrow — only held for an increment)
- *
- *   Never acquire a ready-queue lock while holding the sleep lock, or
- *   vice-versa.  The cleanup slot and idle-task pointers are only ever
- *   accessed from the owning core, so they need no lock.
- *
- * ── IRQ discipline ───────────────────────────────────────────────────────────
- *
- *   schedule() and every public function that touches shared state disables
- *   IRQs for its critical section via irq_save()/irq_restore().  Individual
- *   spinlock helpers (spin_lock_irqsave) are used for queue operations so
- *   that an interrupt arriving mid-operation cannot deadlock on a lock that
- *   the interrupted code already holds.
+ * This file implements task queue management, sleep handling, work-stealing,
+ * and context switching for the kernel.
  */
 
 #include "sched/sched.h"
 
+#include "types.h"
+#include "stdio.h"
+#include "string.h"
+#include "panic.h"
+
 #include "uapi/errors.h"
+
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/heap.h"
@@ -60,103 +21,65 @@
 #include "core/timer.h"
 #include "core/lock.h"
 #include "sched/process.h"
-#include "stdio.h"
-#include "string.h"
-#include "panic.h"
 
-#include "types.h"
-/* --------------------------------------------------------------------------
- * Compile-time tunables
- * -------------------------------------------------------------------------- */
+/* --- Compile-time tunables --- */
 
 #ifndef SCHED_NUM_CORES
     #define SCHED_NUM_CORES 4
 #endif
 
-/* --------------------------------------------------------------------------
- * Static assertions — keep in sync with switch.S offsets
- * -------------------------------------------------------------------------- */
+/* --- Static assertions (must match switch.S offsets) --- */
 
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
 _Static_assert(__builtin_offsetof(struct task, state) == 112,
                "task->state offset mismatch — update task_wrapper_asm");
 
-/* --------------------------------------------------------------------------
- * Internal macros
- * -------------------------------------------------------------------------- */
+/* --- Internal macros --- */
 
-/* Address of the stack-canary word at the bottom of the usable stack region
- * (immediately above the guard page). */
 #define TASK_CANARY_PTR(t) ((unsigned long *)((t)->stack + PAGE_SIZE))
 
-/* --------------------------------------------------------------------------
- * Static scheduler state
- * --------------------------------------------------------------------------
- *
- * The canary sentinels around sched_boot_tasks[] detect wild writes that
- * overflow into the scheduler's own BSS.
- */
+/* --- Static scheduler state --- */
 
-/* Boot/init task structs — one per core, statically allocated so that
- * core 0's initial task does not need heap_malloc before the heap exists. */
+/* Sentinels to detect BSS corruption. */
 static uint64_t s_canary_lo = 0xAAAAAAAAAAAAAAAAULL;
 static struct task sched_boot_tasks[SCHED_NUM_CORES];
 static uint64_t s_canary_hi = 0xBBBBBBBBBBBBBBBBULL;
 
-/* One idle task per core, allocated during sched_init / sched_secondary_init. */
+/* Per-core idle tasks and ready queues. */
 static struct task *sched_idle[SCHED_NUM_CORES];
-
-/* Per-CPU ready queues. */
 static struct task *sched_rq_head[SCHED_NUM_CORES];
 static struct task *sched_rq_tail[SCHED_NUM_CORES];
 static spinlock_t sched_rq_lock[SCHED_NUM_CORES] = {[0 ... SCHED_NUM_CORES - 1] = SPINLOCK_INIT};
 
-/* Global sleep queue (ordered by wake_time, earliest first). */
+/* Global sleep queue (ordered by wake_time). */
 static struct task *sched_sleep_head;
 static spinlock_t sched_sleep_lock = SPINLOCK_INIT;
 
-/* Per-core deferred-cleanup slot: task to be freed on the next schedule(). */
+/* Per-core state tracking. */
 static struct task *sched_cleanup[SCHED_NUM_CORES];
-
-/* Per-core PID tracking (for sched_get_core_pid). */
+static struct task *sched_prev_task[SCHED_NUM_CORES];
 static int sched_core_pid[SCHED_NUM_CORES];
 
-/* Per-core deferred-active-clear slot: task whose on_core flag should be cleared. */
-static struct task *sched_prev_task[SCHED_NUM_CORES];
-
-/* Monotonically increasing task ID. */
+/* Task ID allocation. */
 static unsigned long sched_next_id;
 static spinlock_t sched_id_lock = SPINLOCK_INIT;
 
-/* --------------------------------------------------------------------------
- * Forward declarations (assembly)
- * -------------------------------------------------------------------------- */
+/* --- Forward declarations (Assembly) --- */
 
-/* Defined in switch.S.  New tasks start here; x19 holds the entry point. */
 extern void task_wrapper_asm(void);
 
-/* --------------------------------------------------------------------------
- * Internal helpers — canary / corruption checks
- * -------------------------------------------------------------------------- */
+/* --- Private Helper Functions --- */
 
-/*
- * sched_check_bss_canaries — verify the sentinels around sched_boot_tasks[].
- * Called at the top of every schedule() invocation.
- */
+/* Verifies BSS sentinels around boot tasks. */
 static void sched_check_bss_canaries(void)
 {
     if (s_canary_lo != 0xAAAAAAAAAAAAAAAAULL || s_canary_hi != 0xBBBBBBBBBBBBBBBBULL) {
         pr_err("sched: BSS canary corruption!\n");
-        pr_err("  lo: 0x%llx (expected 0xAAAAAAAAAAAAAAAA)\n", (unsigned long long)s_canary_lo);
-        pr_err("  hi: 0x%llx (expected 0xBBBBBBBBBBBBBBBB)\n", (unsigned long long)s_canary_hi);
         PANIC("sched: memory corruption around boot task structs");
     }
 }
 
-/*
- * task_check_stack_canary — verify that a task's kernel stack has not
- * overflowed into the guard page region.
- */
+/* Verifies that a task's kernel stack hasn't overflowed. */
 static void task_check_stack_canary(const struct task *t)
 {
     if (t->stack && *TASK_CANARY_PTR(t) != SCHED_STACK_CANARY) {
@@ -165,10 +88,7 @@ static void task_check_stack_canary(const struct task *t)
     }
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — task ID
- * -------------------------------------------------------------------------- */
-
+/* Allocates a unique task identifier. */
 static unsigned long alloc_task_id(void)
 {
     unsigned long flags = spin_lock_irqsave(&sched_id_lock);
@@ -177,62 +97,35 @@ static unsigned long alloc_task_id(void)
     return id;
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — kernel stack allocation
- * -------------------------------------------------------------------------- */
-
-/*
- * alloc_task_stack — allocate SCHED_STACK_PAGES physical pages, unmap the
- * first page as a guard, write the canary at the bottom of the usable region,
- * and return a pointer to the raw allocation base (i.e. the guard page).
- *
- * The returned pointer is stored in task->stack so that TASK_CANARY_PTR()
- * and the cleanup path (pmm_free_pages + re-map guard) work correctly.
- *
- * Returns NULL on OOM.
- */
+/* Allocates a kernel stack with a guard page. */
 static unsigned char *alloc_task_stack(void)
 {
     unsigned char *base = (unsigned char *)pmm_alloc_pages(SCHED_STACK_PAGES);
-    if (!base)
+    if (!base) {
         return NULL;
+    }
 
-    mmu_unmap_page((unsigned long)base); /* guard page */
+    mmu_unmap_page((unsigned long)base); /* Guard page */
     *(unsigned long *)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
     return base;
 }
 
-/*
- * free_task_stack — release a stack previously obtained with alloc_task_stack.
- * Re-maps the guard page before handing memory back to the PMM so that the
- * physical page is clean for reuse.
- */
+/* Frees a kernel stack and restores the guard page mapping. */
 static void free_task_stack(unsigned char *stack)
 {
-    if (!stack)
+    if (!stack) {
         return;
+    }
 
-    /*
-     * Sanity check: stack must be a kernel virtual address.
-     * If it's below KERNEL_VMA it's a physical address — someone corrupted
-     * dead->stack after sched_create_user_task wrote it.
-     */
     if ((unsigned long)stack < KERNEL_VMA) {
-        pr_err("sched: free_task_stack: non-VA pointer 0x%lx\n", (unsigned long)stack);
         PANIC("sched: corrupted t->stack in free_task_stack");
     }
 
     mmu_map_page((unsigned long)stack, V2P(stack), MMU_FLAGS_KERNEL_RW);
     pmm_free_pages(stack, SCHED_STACK_PAGES);
 }
-/*
- * init_task_stack_context — set up the cpu_context fields for a brand-new
- * task so that the first switch_context() into it lands in task_wrapper_asm
- * with x19 = entry_fn.
- *
- * stack  — the raw base pointer returned by alloc_task_stack()
- * entry  — the C function the task should execute
- */
+
+/* Sets up initial context for a new task. */
 static void init_task_stack_context(struct task *t, unsigned char *stack, void (*entry)(void))
 {
     unsigned long sp = ((unsigned long)(stack + PAGE_SIZE) + SCHED_TASK_STACK_SIZE) & ~15UL;
@@ -242,14 +135,7 @@ static void init_task_stack_context(struct task *t, unsigned char *stack, void (
     t->context.x19 = (unsigned long)entry;
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — ready queue
- * -------------------------------------------------------------------------- */
-
-/*
- * rq_enqueue — append a task to the tail of cpu's ready queue.
- * Caller must NOT hold sched_rq_lock[cpu].
- */
+/* Internal enqueue helper. Caller must NOT hold rq lock. */
 static void rq_enqueue(int cpu, struct task *t)
 {
     unsigned long flags = spin_lock_irqsave(&sched_rq_lock[cpu]);
@@ -268,34 +154,28 @@ static void rq_enqueue(int cpu, struct task *t)
     spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
 }
 
-/*
- * rq_dequeue — remove and return the first eligible task from cpu's queue.
- *
- * If allow_pid0 is 0, tasks with pid == 0 are skipped (used by work-stealing
- * to avoid migrating boot/kernel tasks off their home core).
- *
- * Returns NULL if no eligible task is found.
- */
-
+/* Internal dequeue helper. Returns first eligible task. */
 static struct task *rq_dequeue(int cpu, int allow_pid0)
 {
     unsigned long flags = spin_lock_irqsave(&sched_rq_lock[cpu]);
-
     struct task *prev = NULL;
     struct task *curr = sched_rq_head[cpu];
 
     while (curr) {
         if ((allow_pid0 || curr->pid != 0) && curr->on_core == -1) {
-            if (prev)
+            if (prev) {
                 prev->next = curr->next;
-            else
+            } else {
                 sched_rq_head[cpu] = curr->next;
+            }
 
-            if (curr == sched_rq_tail[cpu])
+            if (curr == sched_rq_tail[cpu]) {
                 sched_rq_tail[cpu] = prev;
+            }
 
-            if (!sched_rq_head[cpu])
+            if (!sched_rq_head[cpu]) {
                 sched_rq_tail[cpu] = NULL;
+            }
 
             curr->next = NULL;
             spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
@@ -309,14 +189,7 @@ static struct task *rq_dequeue(int cpu, int allow_pid0)
     return NULL;
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — sleep queue
- * -------------------------------------------------------------------------- */
-
-/*
- * sleep_enqueue — insert a task into the global sleep queue in wake_time
- * order (earliest first).  Uses signed difference to handle wrap-around.
- */
+/* Inserts task into ordered sleep queue. */
 static void sleep_enqueue(struct task *t)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
@@ -329,8 +202,9 @@ static void sleep_enqueue(struct task *t)
     }
 
     struct task *curr = sched_sleep_head;
-    while (curr->next && (long)(t->wake_time - curr->next->wake_time) >= 0)
+    while (curr->next && (long)(t->wake_time - curr->next->wake_time) >= 0) {
         curr = curr->next;
+    }
 
     t->next = curr->next;
     curr->next = t;
@@ -338,11 +212,7 @@ static void sleep_enqueue(struct task *t)
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
 
-/*
- * sleep_drain — move all tasks whose wake_time has passed from the sleep
- * queue back into 'cpu's ready queue.  Uses an atomic CAS to guard against
- * the rare case where sched_unblock() races with the timer expiry.
- */
+/* Returns expired tasks to ready queues. */
 static void sleep_drain(int cpu)
 {
     unsigned long now = get_system_time();
@@ -354,12 +224,12 @@ static void sleep_drain(int cpu)
         w->next = NULL;
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
 
-        /* CAS: only enqueue if still BLOCKED; sched_unblock() may have
-         * already moved the task to READY via a different code path. */
+        /* Only enqueue if still blocked; prevents race with unblock. */
         enum sched_task_state expected = SCHED_TASK_BLOCKED;
-        if (__atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY,
-                                        /*weak=*/0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+        if (__atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
+                                        __ATOMIC_SEQ_CST)) {
             rq_enqueue(cpu, w);
+        }
 
         flags = spin_lock_irqsave(&sched_sleep_lock);
     }
@@ -367,10 +237,7 @@ static void sleep_drain(int cpu)
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — idle task
- * -------------------------------------------------------------------------- */
-
+/* Cleans up predecessor of a task that bypassed normal return path. */
 static void idle_entry(void)
 {
     int cpu = get_core_id();
@@ -380,23 +247,26 @@ static void idle_entry(void)
     }
 
     enable_interrupts();
-    for (;;)
+    for (;;) {
         asm volatile("wfe");
+    }
 }
 
+/* Allocates and initializes an idle task for a core. */
 static struct task *create_idle_task(int core_id)
 {
     struct task *t = (struct task *)heap_malloc(sizeof(struct task));
-    if (!t)
+    if (!t) {
         PANIC("sched: OOM allocating idle task");
+    }
     memset(t, 0, sizeof(*t));
 
     unsigned char *stack = alloc_task_stack();
-    if (!stack)
+    if (!stack) {
         PANIC("sched: OOM allocating idle task stack");
+    }
 
     init_task_stack_context(t, stack, idle_entry);
-
     t->state = SCHED_TASK_READY;
     t->id = 900 + (unsigned long)core_id;
     t->pid = 0;
@@ -406,83 +276,49 @@ static struct task *create_idle_task(int core_id)
     return t;
 }
 
-/* --------------------------------------------------------------------------
- * Internal helpers — deferred dead-task cleanup
- * -------------------------------------------------------------------------- */
-
-/*
- * cleanup_dead_task — free the stack and (if heap-allocated) the task struct
- * of a task that died on a previous schedule() invocation on this core.
- *
- * Must be called before prev/next selection so we never free the task we are
- * about to switch into.
- *
- * sched_boot_tasks[] are statically allocated and must not be passed to
- * heap_free().
- */
+/* Releases resources of a dead task. */
 static void cleanup_dead_task(int cpu)
 {
     struct task *dead = sched_cleanup[cpu];
-    if (!dead)
+    if (!dead) {
         return;
+    }
 
-    if (dead == sched_get_current())
+    if (dead == sched_get_current()) {
         PANIC("sched: attempt to free the active task");
+    }
 
     sched_cleanup[cpu] = NULL;
 
-    /*
-     * Validate the task struct before using any of its fields.
-     */
-    unsigned long dead_addr_before = (unsigned long)dead;
-
-    if ((unsigned long)dead != dead_addr_before) {
-        pr_err("sched: STACK CORRUPTION during task cleanup!\n");
-        PANIC("sched: cleanup_dead_task stack corruption");
-    }
-
-    if (dead_addr_before < KERNEL_VMA) {
-        pr_err("sched: cleanup_dead_task: invalid pointer 0x%lx\n", dead_addr_before);
+    if ((unsigned long)dead < KERNEL_VMA) {
         PANIC("sched: invalid task pointer in cleanup_dead_task");
     }
 
-    if ((unsigned long)dead->stack != 0 && (unsigned long)dead->stack < KERNEL_VMA) {
-        pr_err("sched: CORRUPTION DETECTED (t->stack 0x%lx, pid %u)\n", (unsigned long)dead->stack,
-               (unsigned)dead->pid);
+    if (dead->stack && (unsigned long)dead->stack < KERNEL_VMA) {
         PANIC("sched: t->stack corrupted before cleanup_dead_task");
     }
 
     free_task_stack(dead->stack);
     dead->stack = NULL;
 
-    int is_boot_task = (dead >= &sched_boot_tasks[0] && dead < &sched_boot_tasks[SCHED_NUM_CORES]);
-    if (!is_boot_task)
+    int is_boot = (dead >= &sched_boot_tasks[0] && dead < &sched_boot_tasks[SCHED_NUM_CORES]);
+    if (!is_boot) {
         heap_free(dead);
+    }
 }
-/* --------------------------------------------------------------------------
- * Public API — enqueue_ready (called from process.c and elsewhere)
- * -------------------------------------------------------------------------- */
 
+/* --- Public API Implementations --- */
+
+/* Appends a task to a ready queue. */
 void enqueue_ready(int cpu, struct task *t)
 {
     if (t && t->stack && (unsigned long)t->stack < KERNEL_VMA) {
-        pr_err("sched: enqueue_ready: t->stack 0x%lx is not VA! (id=%lu pid=%u)\n",
-               (unsigned long)t->stack, t->id, (unsigned)t->pid);
         PANIC("sched: corrupted t->stack at enqueue");
     }
     rq_enqueue(cpu, t);
 }
 
-/* --------------------------------------------------------------------------
- * Public API — initialisation
- * -------------------------------------------------------------------------- */
-
-/*
- * sched_init — initialise the scheduler on the primary core (CPU 0).
- *
- * Called once during boot before any secondary cores are started.  The boot
- * task is a static struct so that this can run before the heap exists.
- */
+/* Initializes scheduler on the primary core. */
 void sched_init(void)
 {
     struct task *boot = &sched_boot_tasks[0];
@@ -491,10 +327,10 @@ void sched_init(void)
     boot->state = SCHED_TASK_RUNNING;
     boot->id = alloc_task_id();
     boot->pid = 0;
-    boot->stack = NULL; /* boot task has no separately allocated stack */
+    boot->stack = NULL; /* Uses boot stack */
     boot->ttbr0 = mmu_kernel_ttbr0();
     boot->on_core = 0;
-    /* Publish as the current task for CPU 0. */
+
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
     sched_idle[0] = create_idle_task(0);
@@ -503,17 +339,10 @@ void sched_init(void)
     pr_info("sched: Initialized with %d cores\n", SCHED_NUM_CORES);
 }
 
-/*
- * sched_secondary_init — initialise the scheduler on a secondary core.
- *
- * Each secondary core calls this after the MMU and stack are up.  The boot
- * task is immediately marked DEAD (it will be cleaned up on the first
- * schedule()) and the core dives straight into the scheduling loop.
- */
+/* Initializes scheduler on secondary cores. */
 void sched_secondary_init(void)
 {
     int core_id = get_core_id();
-
     struct task *boot = &sched_boot_tasks[core_id];
     memset(boot, 0, sizeof(*boot));
 
@@ -522,6 +351,7 @@ void sched_secondary_init(void)
     boot->pid = 0;
     boot->ttbr0 = mmu_kernel_ttbr0();
     boot->on_core = core_id;
+
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
     sched_idle[core_id] = create_idle_task(core_id);
@@ -530,32 +360,24 @@ void sched_secondary_init(void)
     enable_interrupts();
     schedule();
 
-    /* Unreachable — schedule() never returns on a secondary core after init. */
     PANIC("sched_secondary_init: schedule() returned unexpectedly");
 }
 
-/* --------------------------------------------------------------------------
- * Public API — task creation
- * -------------------------------------------------------------------------- */
-
-/*
- * sched_create_task — spawn a new kernel thread starting at 'entry'.
- *
- * The new task is immediately placed on the local core's ready queue.
- */
+/* Spawns a new kernel thread. */
 void sched_create_task(void (*entry)(void))
 {
     struct task *t = (struct task *)heap_malloc(sizeof(struct task));
-    if (!t)
+    if (!t) {
         PANIC("sched_create_task: OOM for task struct");
+    }
     memset(t, 0, sizeof(*t));
 
     unsigned char *stack = alloc_task_stack();
-    if (!stack)
+    if (!stack) {
         PANIC("sched_create_task: OOM for stack");
+    }
 
     init_task_stack_context(t, stack, entry);
-
     t->state = SCHED_TASK_READY;
     t->ttbr0 = mmu_kernel_ttbr0();
     t->pid = 0;
@@ -565,21 +387,14 @@ void sched_create_task(void (*entry)(void))
     rq_enqueue(get_core_id(), t);
 }
 
-/*
- * sched_create_user_task — allocate and initialise a task struct for a
- * user-mode process.
- *
- * The caller (process.c) has already set up the kernel stack and forged the
- * trap frame; it passes the pre-computed sp and lr values directly.
- *
- * Returns the new task pointer, or NULL on OOM.
- */
+/* Initializes a task for a user process. */
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid)
 {
     struct task *t = (struct task *)heap_malloc(sizeof(struct task));
-    if (!t)
+    if (!t) {
         return NULL;
+    }
     memset(t, 0, sizeof(*t));
 
     t->state = SCHED_TASK_READY;
@@ -588,28 +403,13 @@ struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forge
     t->pid = pid;
     t->id = alloc_task_id();
     t->on_core = -1;
-    /*
-     * t->stack points to the guard page base of the kernel stack so that
-     * TASK_CANARY_PTR() resolves correctly and free_task_stack() can release
-     * the allocation.  kstack_base is the first *usable* byte (guard page + 1),
-     * so we step back by PAGE_SIZE to find the actual allocation base.
-     */
     t->stack = (unsigned char *)(kstack_base - PAGE_SIZE);
     t->ttbr0 = process_get_ttbr0(pid);
-    // pr_debug("sched: created user task id=%lu pid=%u stack=0x%lx\n", t->id, (unsigned)t->pid,
-    // (unsigned long)t->stack);
+
     return t;
 }
 
-/* --------------------------------------------------------------------------
- * Public API — blocking / sleeping
- * -------------------------------------------------------------------------- */
-
-/*
- * sched_sleep_ms — put the current task to sleep for at least 'ms' ms.
- *
- * The idle task cannot sleep; the call is silently ignored in that case.
- */
+/* Puts the current task to sleep. */
 void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
@@ -629,12 +429,7 @@ void sched_sleep_ms(unsigned long ms)
     irq_restore(flags);
 }
 
-/*
- * sched_block — voluntarily yield to the BLOCKED state.
- *
- * The caller is responsible for arranging a future sched_unblock() (or a
- * sleep-queue wake-up) so the task is not lost.  The idle task cannot block.
- */
+/* Yields the processor and enters BLOCKED state. */
 void sched_block(void)
 {
     unsigned long flags = irq_save();
@@ -651,32 +446,25 @@ void sched_block(void)
     irq_restore(flags);
 }
 
-/*
- * sched_unblock — move a blocked task back onto a ready queue.
- *
- * Uses a CAS so that concurrent calls (e.g. from an IRQ handler and a
- * timer expiry) are idempotent.  The task is always placed on the local
- * core's queue; future work could prefer the task's home core.
- */
+/* Moves a blocked task to ready queue. */
 void sched_unblock(struct task *t)
 {
-    if (!t)
+    if (!t) {
         return;
+    }
 
-    /* If it's already READY, it's already in the queue or running. */
-    if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_READY)
+    if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_READY) {
         return;
+    }
 
     enum sched_task_state expected = SCHED_TASK_BLOCKED;
-    if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY,
-                                    /*weak=*/0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+    if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
+                                    __ATOMIC_SEQ_CST)) {
         rq_enqueue(get_core_id(), t);
+    }
 }
 
-/* --------------------------------------------------------------------------
- * Public API — introspection
- * -------------------------------------------------------------------------- */
-
+/* Returns the active task on the calling CPU. */
 struct task *sched_get_current(void)
 {
     struct task *t;
@@ -684,53 +472,29 @@ struct task *sched_get_current(void)
     return t;
 }
 
+/* Returns the PID running on a specific core. */
 int sched_get_core_pid(int cpu)
 {
-    if (cpu < 0 || cpu >= SCHED_NUM_CORES)
+    if (cpu < 0 || cpu >= SCHED_NUM_CORES) {
         return -PERS_ERR_INVALID_ARGUMENT;
+    }
     return sched_core_pid[cpu];
 }
 
-/* --------------------------------------------------------------------------
- * Public API — schedule()
- * -------------------------------------------------------------------------- */
-
-/*
- * schedule — select the next task and switch to it.
- *
- * Steps (in order):
- *   1. Free any dead task left over from the previous invocation.
- *   2. Drain expired sleepers back into the ready queue.
- *   3. Validate the outgoing task's stack canary.
- *   4. Transition the outgoing task: RUNNING -> READY (re-enqueue) or
- *      DEAD -> stash in cleanup slot.
- *   5. Select the next task: local queue -> work-steal -> idle.
- *   6. Context switch.
- *
- * IRQs are disabled for the duration.  switch_context() saves callee-saved
- * registers of 'prev' and restores those of 'next'; when prev is eventually
- * resumed it returns from switch_context() and proceeds to irq_restore().
- */
+/* Core scheduling logic. Selects next task and context switches. */
 void schedule(void)
 {
     unsigned long flags = irq_save();
     int cpu = get_core_id();
 
-    /* ── Step 0: Clear deferred on_core flag from previous bypassed tasks ── */
-    /* If a newly forked task bypassed the normal return path in a previous cycle,
-       we clean up its predecessor safely here. */
+    /* Clean up predecessor if it bypassed normal return. */
     if (sched_prev_task[cpu]) {
         sched_prev_task[cpu]->on_core = -1;
         sched_prev_task[cpu] = NULL;
     }
 
-    /* ── Step 1: deferred dead-task cleanup ── */
     cleanup_dead_task(cpu);
-
-    /* ── Step 2: wake expired sleepers ── */
     sleep_drain(cpu);
-
-    /* ── Step 3: sanity-check BSS sentinels ── */
     sched_check_bss_canaries();
 
     struct task *prev = sched_get_current();
@@ -743,36 +507,37 @@ void schedule(void)
 
     switch (prev->state) {
         case SCHED_TASK_RUNNING:
-            if (prev != sched_idle[cpu])
+            if (prev != sched_idle[cpu]) {
                 rq_enqueue(cpu, prev);
+            }
             break;
         case SCHED_TASK_BLOCKED:
+        case SCHED_TASK_READY:
             break;
         case SCHED_TASK_DEAD:
-            if (sched_cleanup[cpu])
+            if (sched_cleanup[cpu]) {
                 PANIC("sched: double-dead task on same core");
+            }
             sched_cleanup[cpu] = prev;
-            break;
-        case SCHED_TASK_READY:
             break;
     }
 
-    struct task *next = rq_dequeue(cpu, /*allow_pid0=*/1);
-
+    struct task *next = rq_dequeue(cpu, 1);
     if (!next) {
         for (int i = 1; i <= SCHED_NUM_CORES; i++) {
             int victim = (cpu + i) % SCHED_NUM_CORES;
-            next = rq_dequeue(victim, /*allow_pid0=*/0);
-            if (next)
+            next = rq_dequeue(victim, 0);
+            if (next) {
                 break;
+            }
         }
     }
 
-    if (!next)
+    if (!next) {
         next = sched_idle[cpu];
+    }
 
     next->on_core = cpu;
-
     next->state = SCHED_TASK_RUNNING;
     sched_core_pid[cpu] = (int)next->pid;
 
@@ -783,17 +548,13 @@ void schedule(void)
 
     if (prev != next) {
         if (next->context.lr == 0 || next->context.sp == 0) {
-            pr_err("sched: corrupt context — task id=%lu pid=%u lr=0x%lx sp=0x%lx\n", next->id,
-                   (unsigned)next->pid, next->context.lr, next->context.sp);
             PANIC("sched: corrupt task context");
         }
 
         sched_prev_task[cpu] = prev;
-
         switch_context(&prev->context, &next->context);
 
-        /* We return here executing on the NEW task's stack.
-         * The task may have migrated cores while asleep, so re-fetch core ID. */
+        /* Resumed on NEW stack. Re-fetch core ID in case of migration. */
         int new_cpu = get_core_id();
         if (sched_prev_task[new_cpu]) {
             sched_prev_task[new_cpu]->on_core = -1;
