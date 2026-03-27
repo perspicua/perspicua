@@ -299,8 +299,8 @@ static struct vfs_vnode* vfs_resolve_path_locked(const char* path, struct vfs_vn
             struct vfs_vnode* mount_node = NULL;
             for (size_t i = 1; i < (size_t)vfs_mount_count; i++)
             {
-                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr &&
-                    strcmp(vfs_mount_table[i].root->name, token) == 0)
+                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr
+                    && strcmp(vfs_mount_table[i].root->name, token) == 0)
                 {
                     mount_node = vfs_mount_table[i].root;
                     break;
@@ -719,6 +719,57 @@ int vfs_write(int fd, const void* buffer, size_t count)
     int bytes = f->node->ops->write(f, buffer, count);
     atomic_dec_and_test(&f->refcount);
     return bytes;
+}
+
+/*
+ * vfs_vnode_stat - Internal helper to fill a stat buffer from a vnode.
+ */
+static int vfs_vnode_stat(struct vfs_vnode* node, struct stat* buf)
+{
+    if (!node || !buf)
+        return -PERS_ERR_INVALID_ARGUMENT;
+
+    /* Initialize the stat buffer with default values from the vnode */
+    memset(buf, 0, sizeof(struct stat));
+
+    if (node->type == VFS_VNODE_TYPE_DIR)
+        buf->st_mode = S_IFDIR | 0755;
+    else if (node->type == VFS_VNODE_TYPE_DEVICE)
+        buf->st_mode = S_IFCHR | 0666;
+    else
+        buf->st_mode = S_IFREG | 0644;
+
+    buf->st_size = (uint64_t)node->file_size;
+    buf->st_nlink = 1;
+    buf->st_uid = 0;
+    buf->st_gid = 0;
+
+    /* If the filesystem provides a specific stat implementation, use it */
+    if (node->ops && node->ops->stat)
+    {
+        return node->ops->stat(node, buf);
+    }
+
+    return PERS_SUCCESS;
+}
+
+/*
+ * vfs_stat - Public path-based metadata retrieval.
+ */
+int vfs_stat(const char* path, struct stat* buf)
+{
+    int pid_idx = process_find_current();
+    if (pid_idx < 0)
+        return pid_idx;
+
+    int error = 0;
+    struct vfs_vnode* node = vfs_resolve_path(path, process_table[pid_idx].cwd, &error);
+    if (!node)
+        return error;
+
+    int res = vfs_vnode_stat(node, buf);
+    vfs_vnode_put(node);
+    return res;
 }
 
 /*

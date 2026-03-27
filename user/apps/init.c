@@ -31,7 +31,8 @@ int main(void)
         if (shell_pid == 0)
         {
             /* Child process: execute the shell */
-            sys_exec("/sh.elf");
+            char* argv[] = {"/sh.elf", NULL};
+            sys_exec("/sh.elf", argv);
             print_string("[ INIT ] Error: failed to exec /sh.elf\n");
             sys_exit(1);
         }

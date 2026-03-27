@@ -23,6 +23,7 @@
 #include "mm/addr.h"
 #include "core/elf.h"
 #include "mm/mmu.h"
+#include "mm/heap.h"
 #include "panic.h"
 #include "mm/pmm.h"
 #include "sched/sched.h"
@@ -32,6 +33,7 @@
 #include "core/timer.h"
 #include "types.h"
 #include "fs/vfs.h"
+#include "arch/uaccess.h"
 
 /* --------------------------------------------------------------------------
  * Globals
@@ -43,7 +45,6 @@ struct process process_table[PROCESS_TABLE_SIZE];
 /* Defined in arch/entry.S — performs ERET to EL0 using the trap frame that
  * sits at the top of the kernel stack. */
 extern void ret_to_user(void);
-
 /* --------------------------------------------------------------------------
  * Internal helpers
  * -------------------------------------------------------------------------- */
@@ -564,7 +565,7 @@ int process_create_from_file(const char* path, uint32_t pid)
  *
  * Returns PERS_SUCCESS or a negative error code.
  */
-int process_exec(const char* path)
+int process_exec(const char* path, char* const argv[])
 {
     int pid = process_find_current();
     if (pid < 0)
@@ -572,15 +573,48 @@ int process_exec(const char* path)
 
     struct process* p = &process_table[pid];
 
+    /* ---- Copy arguments from user space before we switch PGD ---- */
+    char* kargv[64];
+    int argc = 0;
+    if (argv)
+    {
+        while (argc < 63)
+        {
+            char* uarg;
+            if (copy_from_user(&uarg, &argv[argc], sizeof(char*)) != 0)
+                break;
+            if (!uarg)
+                break;
+
+            char* karg = heap_malloc(256);
+            if (!karg)
+                break;
+            long copied = strncpy_from_user(karg, uarg, 256);
+            if (copied < 0)
+            {
+                heap_free(karg);
+                break;
+            }
+            kargv[argc++] = karg;
+        }
+    }
+    kargv[argc] = NULL;
+
     /* ---- Load new ELF into fresh page table ---- */
     unsigned long* new_pgd = mmu_create_user_pgd();
     if (!new_pgd)
+    {
+        for (int i = 0; i < argc; i++)
+            heap_free(kargv[i]);
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     uint64_t entry_point;
     if (elf_load(path, new_pgd, &entry_point) != 0)
     {
         mmu_destroy_user_pgd(new_pgd);
+        for (int i = 0; i < argc; i++)
+            heap_free(kargv[i]);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
@@ -588,16 +622,75 @@ int process_exec(const char* path)
     struct va_allocator new_va;
     va_init(&new_va);
 
-    uintptr_t new_stack = setup_user_stack(&new_va, new_pgd, 32);
-    if (!new_stack)
+    uintptr_t new_stack_base = setup_user_stack(&new_va, new_pgd, 32);
+    if (!new_stack_base)
     {
         mmu_destroy_user_pgd(new_pgd);
+        for (int i = 0; i < argc; i++)
+            heap_free(kargv[i]);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
+    /* ---- Push arguments onto the new user stack ---- */
+    /* We work from the top of the stack downwards.
+       The stack layout will be:
+       [Top of stack]
+       Strings (null-terminated)
+       argv[argc] = NULL
+       argv[argc-1]
+       ...
+       argv[0]
+       argc
+    */
+    uintptr_t user_sp = new_stack_base + 32 * PAGE_SIZE;
+
+    /* 1. Copy the strings themselves */
+    uintptr_t karg_user_vaddrs[64];
+    for (int i = 0; i < argc; i++)
+    {
+        size_t len = strlen(kargv[i]) + 1;
+        user_sp -= len;
+        user_sp &= ~7UL; /* Align to 8 bytes */
+
+        /* To write to the user stack, we need to map it into kernel space or use a helper.
+           Since it's a NEW stack and we haven't switched yet, we can't just write to user_sp.
+           We'll use mmu_user_query to find the physical page. */
+        unsigned long paddr;
+        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL))
+        {
+            void* kptr = (void*)(P2V(paddr) + (user_sp & 0xFFF));
+            memcpy(kptr, kargv[i], len);
+        }
+        karg_user_vaddrs[i] = user_sp;
+    }
+
+    /* 2. Copy the argv array (pointers to strings) */
+    user_sp -= (argc + 1) * sizeof(uintptr_t);
+    user_sp &= ~15UL; /* Align to 16 bytes for SP */
+    uintptr_t argv_ptr = user_sp;
+
+    for (int i = 0; i < argc; i++)
+    {
+        unsigned long paddr;
+        if (mmu_user_query(new_pgd, (user_sp + i * 8) & ~0xFFFUL, &paddr, NULL))
+        {
+            void* kptr = (void*)(P2V(paddr) + ((user_sp + i * 8) & 0xFFF));
+            *(uintptr_t*)kptr = karg_user_vaddrs[i];
+        }
+    }
+    /* NULL terminator for argv */
+    unsigned long paddr_null;
+    if (mmu_user_query(new_pgd, (user_sp + argc * 8) & ~0xFFFUL, &paddr_null, NULL))
+    {
+        void* kptr = (void*)(P2V(paddr_null) + ((user_sp + argc * 8) & 0xFFF));
+        *(uintptr_t*)kptr = 0;
+    }
+
+    /* Clean up temporary kernel strings */
+    for (int i = 0; i < argc; i++)
+        heap_free(kargv[i]);
+
     /* ---- Close FDs with O_CLOEXEC set ---- */
-    /* NOTE: a POSIX exec closes all O_CLOEXEC fds.  For now we close all
-     * fds for simplicity; extend this once VFS tracks the CLOEXEC flag. */
     close_all_fds(p);
     open_std_fds((uint32_t)pid);
 
@@ -617,7 +710,7 @@ int process_exec(const char* path)
     unsigned long* old_pgd = p->user_pgd;
     p->user_pgd = new_pgd;
     p->vaddr_code = (uintptr_t)entry_point;
-    p->vaddr_user_stack = new_stack;
+    p->vaddr_user_stack = new_stack_base;
     p->va = new_va;
     p->ttbr0 = V2P(new_pgd) | ((uint64_t)(p->asid & 0xFFFFUL) << 48);
 
@@ -639,16 +732,16 @@ int process_exec(const char* path)
         mmu_destroy_user_pgd(old_pgd);
 
     /* ---- Rebuild trap frame on the existing kernel stack ---- */
-    uintptr_t user_sp_top = new_stack + 32 * PAGE_SIZE;
-    struct exception_trap_frame* tf = build_trap_frame(p->vaddr_kernel_stack, entry_point, user_sp_top);
+    struct exception_trap_frame* tf = build_trap_frame(p->vaddr_kernel_stack, entry_point, user_sp);
+
+    /* Set argc and argv in the trap frame so they appear in x0 and x1 */
+    tf->x[0] = (uint64_t)argc;
+    tf->x[1] = (uint64_t)argv_ptr;
 
     p->context.sp = (unsigned long)tf;
     p->context.lr = (unsigned long)ret_to_user;
 
-    /* Propagate the new context into the scheduler task struct so that the
-     * context-switch path uses the correct stack pointer and TTBR0.
-     * skip_signals defers signal delivery until we have fully returned to
-     * the new user image. */
+    /* Propagate the new context into the scheduler task struct */
     struct task* curr = sched_get_current();
     if (curr)
     {
@@ -658,7 +751,7 @@ int process_exec(const char* path)
         curr->skip_signals = 1;
     }
 
-    pr_info("proc: PID %d exec '%s'\n", pid, path);
+    pr_info("proc: PID %d exec '%s' (argc=%d)\n", pid, path, argc);
     return PERS_SUCCESS;
 }
 

@@ -10,6 +10,7 @@
 
 #include "types.h"
 #include "signals.h"
+#include "uapi/stat.h"
 
 /* Filesystem access mode and control flags */
 #define VFS_O_RDONLY  0x0000
@@ -45,7 +46,7 @@ int sys_open(const char* path, int flags);
 int sys_read(int fd, void* buf, size_t len);
 int sys_getdents(int fd, void* buf, size_t count);
 int sys_close(int fd);
-int sys_exec(const char* path);
+int sys_exec(const char* path, char* const argv[]);
 int sys_fork(void);
 int sys_waitpid(int pid, int* status, int options);
 int sys_pipe(int pipefd[2]);
@@ -60,5 +61,6 @@ int sys_sigpending(sigset_t* set);
 int sys_sigsuspend(const sigset_t* mask);
 int sys_chdir(const char* path);
 int sys_getcwd(char* buf, size_t size);
+int sys_stat(const char* path, struct stat* buf);
 void* sys_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

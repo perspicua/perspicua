@@ -9,6 +9,7 @@
 #define PERSPICUA_KERNEL_VFS_H
 
 #include "types.h"
+#include "uapi/stat.h"
 
 /* Forward declarations for core VFS structures */
 struct vfs_vnode;
@@ -71,6 +72,7 @@ struct vfs_vnode_ops
     struct vfs_vnode* (*lookup)(struct vfs_vnode* dir, const char* filename);
     int (*readdir)(struct vfs_file* file, void* buffer, size_t count);
     int (*close)(struct vfs_file* file);
+    int (*stat)(struct vfs_vnode* node, struct stat* buf);
     int (*mmap)(struct vfs_file* file, uintptr_t vaddr, size_t length, int prot, int flags);
 };
 
@@ -156,6 +158,11 @@ int vfs_readdir(int fd, void* buffer, size_t count);
  * vfs_write - Writes data from a buffer to a file descriptor.
  */
 int vfs_write(int fd, const void* buffer, size_t count);
+
+/*
+ * vfs_stat - Retrieves metadata for a specific file.
+ */
+int vfs_stat(const char* path, struct stat* buf);
 
 /*
  * vfs_dup2 - Duplicates a file descriptor.
