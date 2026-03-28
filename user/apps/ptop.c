@@ -426,7 +426,7 @@ static int collect_procs(struct proc_info *out, int max)
  * demo_main() call with sys_exec("/bin/demo") instead.
  */
 /* ── demo launcher ───────────────────────────────────────────────── */
-#define DEMO_PATH "/stress.elf" /* adjust to wherever demo.elf is mounted */
+#define DEMO_PATH "/bin/stress.elf" /* adjust to wherever demo.elf is mounted */
 
 static void launch_demo(void)
 {

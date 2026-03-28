@@ -172,28 +172,43 @@ static void run_exec(Command *cmd)
     char path[256];
     if (cmd->argv[0][0] == '/') {
         strcpy(path, cmd->argv[0]);
-    } else {
-        strcpy(path, "/");
-        strcat(path, cmd->argv[0]);
-        strcat(path, ".elf");
-    }
-
-    if (sys_exec(path, cmd->argv) < 0) {
-        if (cmd->argv[0][0] != '/') {
-            strcpy(path, "/");
-            strcat(path, cmd->argv[0]);
-            if (sys_exec(path, cmd->argv) < 0) {
-                print_string("sh: command not found: ");
-                print_string(cmd->argv[0]);
-                print_string("\n");
-                sys_exit(1);
-            }
-        } else {
+        if (sys_exec(path, cmd->argv) < 0) {
             print_string("sh: command not found: ");
             print_string(cmd->argv[0]);
             print_string("\n");
             sys_exit(1);
         }
+    } else {
+        /* 1. Try /bin/name.elf */
+        strcpy(path, "/bin/");
+        strcat(path, cmd->argv[0]);
+        strcat(path, ".elf");
+        if (sys_exec(path, cmd->argv) >= 0)
+            return;
+
+        /* 2. Try /bin/name */
+        strcpy(path, "/bin/");
+        strcat(path, cmd->argv[0]);
+        if (sys_exec(path, cmd->argv) >= 0)
+            return;
+
+        /* 3. Try /name.elf */
+        strcpy(path, "/");
+        strcat(path, cmd->argv[0]);
+        strcat(path, ".elf");
+        if (sys_exec(path, cmd->argv) >= 0)
+            return;
+
+        /* 4. Try /name */
+        strcpy(path, "/");
+        strcat(path, cmd->argv[0]);
+        if (sys_exec(path, cmd->argv) >= 0)
+            return;
+
+        print_string("sh: command not found: ");
+        print_string(cmd->argv[0]);
+        print_string("\n");
+        sys_exit(1);
     }
 }
 

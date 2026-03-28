@@ -13,14 +13,17 @@
 #include "uapi/errors.h"
 
 #include "core/lock.h"
+#include "core/timer.h"
 #include "mm/pmm.h"
 #include "mm/slab.h"
+#include "mm/heap.h"
 #include "fs/vfs.h"
 #include "sched/process.h"
 
 static struct vfs_vnode *procfs_root_vnode = NULL;
 static struct vfs_vnode *version_vnode = NULL;
 static struct vfs_vnode *meminfo_vnode = NULL;
+static struct vfs_vnode *uptime_vnode = NULL;
 
 /*
  * procfs_get_vnode_path - Recursively reconstructs the absolute path of a vnode.
@@ -83,6 +86,26 @@ static int procfs_version_read(struct vfs_file *file, void *buffer, size_t size)
     return to_copy;
 }
 
+static int procfs_uptime_read(struct vfs_file *file, void *buffer, size_t size)
+{
+    char buf[64];
+    unsigned long uptime_ms = get_system_time();
+    snprintf(buf, sizeof(buf), "%lu.%02lu\n", uptime_ms / 1000, (uptime_ms % 1000) / 10);
+    size_t len = strlen(buf);
+
+    if (file->offset >= (vfs_off_t)len) {
+        return 0;
+    }
+
+    size_t available = len - file->offset;
+    size_t to_copy = (size < available) ? size : available;
+
+    memcpy(buffer, buf + file->offset, to_copy);
+    file->offset += to_copy;
+
+    return to_copy;
+}
+
 static int procfs_meminfo_read(struct vfs_file *file, void *buffer, size_t size)
 {
     char buf[256];
@@ -109,6 +132,44 @@ static int procfs_meminfo_read(struct vfs_file *file, void *buffer, size_t size)
     memcpy(buffer, buf + file->offset, to_copy);
     file->offset += to_copy;
 
+    return to_copy;
+}
+
+static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size)
+{
+    uintptr_t pid = (uintptr_t)file->node->internal_info;
+    char *buf = heap_malloc(2048);
+    if (!buf)
+        return -PERS_ERR_OUT_OF_MEMORY;
+
+    int pos = 0;
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    if (process_table[pid].state == PROCESS_STATE_EMPTY) {
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        heap_free(buf);
+        return 0;
+    }
+
+    for (size_t i = 0; i < process_table[pid].va.count; i++) {
+        struct va_region *r = &process_table[pid].va.regions[i];
+        pos += snprintf(buf + pos, 2048 - pos, "%016lx-%016lx %lu pages\n", r->base,
+                        r->base + r->pages * PAGE_SIZE, r->pages);
+    }
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    size_t len = strlen(buf);
+    if (file->offset >= (vfs_off_t)len) {
+        heap_free(buf);
+        return 0;
+    }
+
+    size_t available = len - file->offset;
+    size_t to_copy = (size < available) ? size : available;
+
+    memcpy(buffer, buf + file->offset, to_copy);
+    file->offset += to_copy;
+
+    heap_free(buf);
     return to_copy;
 }
 
@@ -148,8 +209,12 @@ static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t si
              "Pid:    %lu\n"
              "PPid:   %u\n"
              "State:  %s\n"
-             "VmSize: %lu kB\n",
-             process_table[pid].name, pid, process_table[pid].parent_pid, state_str, vm_size);
+             "VmSize: %lu kB\n"
+             "SigPnd: %08x\n"
+             "SigBlk: %08x\n",
+             process_table[pid].name, pid, process_table[pid].parent_pid, state_str, vm_size,
+             (unsigned int)process_table[pid].pending_signals,
+             (unsigned int)process_table[pid].blocked_signals);
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     size_t len = strlen(buf);
@@ -279,8 +344,10 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
 }
 
 static struct vfs_vnode_ops procfs_version_ops = {.read = procfs_version_read};
+static struct vfs_vnode_ops procfs_uptime_ops = {.read = procfs_uptime_read};
 static struct vfs_vnode_ops procfs_meminfo_ops = {.read = procfs_meminfo_read};
 static struct vfs_vnode_ops procfs_pid_status_ops = {.read = procfs_pid_status_read};
+static struct vfs_vnode_ops procfs_pid_maps_ops = {.read = procfs_pid_maps_read};
 static struct vfs_vnode_ops procfs_pid_cmdline_ops = {.read = procfs_pid_cmdline_read};
 static struct vfs_vnode_ops procfs_pid_cwd_ops = {.read = procfs_pid_cwd_read};
 static struct vfs_vnode_ops procfs_pid_fd_entry_ops = {.read = procfs_pid_fd_entry_read};
@@ -374,11 +441,11 @@ static struct vfs_vnode_ops procfs_pid_fd_dir_ops = {.lookup = procfs_pid_fd_loo
 static int procfs_pid_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
     struct vfs_dirent *vfs_buffer = (struct vfs_dirent *)buffer;
-    const char *static_entries[] = {"status", "cmdline", "cwd", "fd"};
+    const char *static_entries[] = {"status", "maps", "cmdline", "cwd", "fd"};
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    while (entries_written < max_entries && file->offset < 4) {
+    while ((size_t)entries_written < max_entries && file->offset < 5) {
         vfs_buffer[entries_written].ino = file->offset + 10;
         strcpy(vfs_buffer[entries_written].name, static_entries[file->offset]);
         file->offset++;
@@ -389,13 +456,15 @@ static int procfs_pid_readdir(struct vfs_file *file, void *buffer, size_t count)
 
 static struct vfs_vnode *procfs_pid_lookup(struct vfs_vnode *dir, const char *filename)
 {
-    const char *names[] = {"status", "cmdline", "cwd", "fd"};
-    struct vfs_vnode_ops *ops[] = {&procfs_pid_status_ops, &procfs_pid_cmdline_ops,
-                                   &procfs_pid_cwd_ops, &procfs_pid_fd_dir_ops};
+    const char *names[] = {"status", "maps", "cmdline", "cwd", "fd"};
+    struct vfs_vnode_ops *ops[] = {&procfs_pid_status_ops, &procfs_pid_maps_ops,
+                                   &procfs_pid_cmdline_ops, &procfs_pid_cwd_ops,
+                                   &procfs_pid_fd_dir_ops};
     enum vfs_vnode_type types[] = {VFS_VNODE_TYPE_REGULAR, VFS_VNODE_TYPE_REGULAR,
-                                   VFS_VNODE_TYPE_REGULAR, VFS_VNODE_TYPE_DIR};
+                                   VFS_VNODE_TYPE_REGULAR, VFS_VNODE_TYPE_REGULAR,
+                                   VFS_VNODE_TYPE_DIR};
 
-    for (size_t i = 0; i < 4; i++) {
+    for (size_t i = 0; i < 5; i++) {
         if (strcmp(filename, names[i]) == 0) {
             struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
             memset(node, 0, sizeof(struct vfs_vnode));
@@ -421,8 +490,8 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    const char *static_names[] = {"version", "meminfo"};
-    int static_count = 2;
+    const char *static_names[] = {"version", "uptime", "meminfo"};
+    int static_count = 3;
 
     while (entries_written < (int)max_entries) {
         if (file->offset < static_count) {
@@ -464,6 +533,10 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
     if (strcmp(filename, "version") == 0) {
         atomic_inc(&version_vnode->refcount);
         return version_vnode;
+    }
+    if (strcmp(filename, "uptime") == 0) {
+        atomic_inc(&uptime_vnode->refcount);
+        return uptime_vnode;
     }
     if (strcmp(filename, "meminfo") == 0) {
         atomic_inc(&meminfo_vnode->refcount);
@@ -515,6 +588,7 @@ void procfs_init(void)
     procfs_root_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     version_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     meminfo_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+    uptime_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
 
     memset(procfs_root_vnode, 0, sizeof(struct vfs_vnode));
     procfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
@@ -530,6 +604,14 @@ void procfs_init(void)
     version_vnode->parent = procfs_root_vnode;
     atomic_inc(&procfs_root_vnode->refcount);
     strcpy(version_vnode->name, "version");
+
+    memset(uptime_vnode, 0, sizeof(struct vfs_vnode));
+    uptime_vnode->type = VFS_VNODE_TYPE_REGULAR;
+    uptime_vnode->ops = &procfs_uptime_ops;
+    uptime_vnode->refcount.counter = 1;
+    uptime_vnode->parent = procfs_root_vnode;
+    atomic_inc(&procfs_root_vnode->refcount);
+    strcpy(uptime_vnode->name, "uptime");
 
     memset(meminfo_vnode, 0, sizeof(struct vfs_vnode));
     meminfo_vnode->type = VFS_VNODE_TYPE_REGULAR;
