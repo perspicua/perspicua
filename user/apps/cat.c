@@ -1,14 +1,20 @@
 #include "syscall.h"
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"
 
 static void cat_file(int fd)
 {
-    char buf[512];
+    char *buf = malloc(4096);
+    if (!buf) {
+        printf("cat: memory allocation failed\n");
+        return;
+    }
     int bytes_read;
-    while ((bytes_read = sys_read(fd, buf, sizeof(buf))) > 0) {
+    while ((bytes_read = sys_read(fd, buf, 4096)) > 0) {
         sys_write(1, buf, (size_t)bytes_read);
     }
+    free(buf);
 }
 
 int main(int argc, char **argv)

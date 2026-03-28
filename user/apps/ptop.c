@@ -10,6 +10,7 @@
 #include "string.h"
 #include "types.h"
 #include "wait.h"
+#include "stdlib.h"
 
 /* ── tunables ────────────────────────────────────────────────────── */
 #define REFRESH_INTERVAL_MS 1000
@@ -449,7 +450,11 @@ static void launch_demo(void)
 /* ── entry point ─────────────────────────────────────────────────── */
 int main(void)
 {
-    struct proc_info procs[MAX_PROCS];
+    struct proc_info *procs = malloc(sizeof(struct proc_info) * MAX_PROCS);
+    if (!procs) {
+        printf("ptop: failed to allocate memory for process info\n");
+        sys_exit(1);
+    }
 
     /* launch demo workload before first draw so processes are visible
        immediately on iteration 1 */
@@ -489,6 +494,7 @@ int main(void)
     ptop_write(ANSI_SHOW_CURSOR);
     ptop_write(C_RESET "\n");
 
+    free(procs);
     sys_exit(0);
     return 0;
 }

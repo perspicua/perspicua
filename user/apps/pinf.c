@@ -2,6 +2,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "types.h"
+#include "stdlib.h"
 
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
@@ -26,29 +27,34 @@ int main(int argc, char **argv)
 
     char *pid_str = argv[1];
     char path[128];
-    char buf[2048];
+    char *buf = malloc(2048);
+    if (!buf) {
+        printf("pinf: memory allocation failed\n");
+        return 1;
+    }
 
     printf("\n PROCESS INSPECTOR: PID %s\n", pid_str);
     printf(" ──────────────────────────\n");
 
     /* Status */
     snprintf(path, sizeof(path), "/proc/%s/status", pid_str);
-    if (read_proc_file(path, buf, sizeof(buf)) > 0) {
+    if (read_proc_file(path, buf, 2048) > 0) {
         printf("%s", buf);
     } else {
         printf(" Error: Could not read status for PID %s\n", pid_str);
+        free(buf);
         return 1;
     }
 
     /* CMDLine */
     snprintf(path, sizeof(path), "/proc/%s/cmdline", pid_str);
-    if (read_proc_file(path, buf, sizeof(buf)) > 0) {
+    if (read_proc_file(path, buf, 2048) > 0) {
         printf("Cmdline: %s\n", buf[0] ? buf : "[none]");
     }
 
     /* CWD */
     snprintf(path, sizeof(path), "/proc/%s/cwd", pid_str);
-    if (read_proc_file(path, buf, sizeof(buf)) > 0) {
+    if (read_proc_file(path, buf, 2048) > 0) {
         printf("Cwd:     %s", buf); // already has newline from procfs
     }
 
@@ -56,7 +62,7 @@ int main(int argc, char **argv)
     printf("\n VIRTUAL MEMORY MAP\n");
     printf(" ──────────────────\n");
     snprintf(path, sizeof(path), "/proc/%s/maps", pid_str);
-    if (read_proc_file(path, buf, sizeof(buf)) > 0) {
+    if (read_proc_file(path, buf, 2048) > 0) {
         printf("%s", buf);
     } else {
         printf(" [none or inaccessible]\n");
@@ -90,5 +96,6 @@ int main(int argc, char **argv)
     }
     printf("\n");
 
+    free(buf);
     return 0;
 }
