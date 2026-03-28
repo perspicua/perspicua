@@ -355,10 +355,15 @@ static int collect_procs(struct proc_info *out, int max)
     if (fd < 0)
         return 0;
 
-    while (count < max) {
+    int scanned = 0;
+    const int MAX_SCAN = MAX_PROCS * 2; /* Safety scan limit */
+
+    while (count < max && scanned < MAX_SCAN) {
         int n = sys_getdents(fd, &dent, sizeof(dent));
         if (n <= 0)
             break;
+
+        scanned++;
 
         /* skip "." ".." and non-numeric names (version, meminfo, etc.) */
         const char *nm = dent.name;
@@ -465,16 +470,21 @@ int main(void)
 
         /* Reap any children that have exited (non-blocking) */
         int reaped;
-        while ((reaped = sys_waitpid(-1, NULL, WNOHANG)) > 0)
-            ;
+        int reap_count = 0;
+        /* Limit reaping to avoid infinite loop if sys_waitpid misbehaves */
+        while (reap_count < MAX_PROCS && (reaped = sys_waitpid(-1, NULL, WNOHANG)) > 0) {
+            reap_count++;
+        }
 
         if (iter < MAX_ITERATIONS)
             sys_sleep(REFRESH_INTERVAL_MS);
     }
 
     /* Final cleanup: reap the demo process if it finished */
-    while (sys_waitpid(-1, NULL, WNOHANG) > 0)
-        ;
+    int final_reap_count = 0;
+    while (final_reap_count < MAX_PROCS && sys_waitpid(-1, NULL, WNOHANG) > 0) {
+        final_reap_count++;
+    }
 
     ptop_write(ANSI_SHOW_CURSOR);
     ptop_write(C_RESET "\n");

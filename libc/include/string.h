@@ -10,8 +10,6 @@
 
 #include "types.h"
 
-/* --- Function Prototypes --- */
-
 /* String length and copying */
 size_t strlen(const char *str);
 char *strcpy(char *dest, const char *src);

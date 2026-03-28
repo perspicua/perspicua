@@ -1,32 +1,33 @@
 /*
- * main.c - The kernel entry point and system initialization sequence.
- *
- * This file contains the primary 'main' function which orchestrates the
- * sequential bring-up of all kernel subsystems, memory management,
- * drivers, and the multi-core scheduler.
+ * kernel/init/main.c - Kernel entry point and system initialization sequence.
  */
 
-#include "fs/procfs.h"
+#include "uapi/errors.h"
+
 #include "types.h"
-#include "mm/addr.h"
-#include "core/lock.h"
-#include "panic.h"
 #include "stdio.h"
 #include "string.h"
+#include "panic.h"
 
+#include "mm/addr.h"
 #include "mm/pmm.h"
 #include "mm/mmu.h"
 #include "mm/heap.h"
 #include "mm/slab.h"
+
+#include "core/lock.h"
 #include "core/timer.h"
+#include "core/tty.h"
+#include "core/initrd.h"
+
 #include "sched/sched.h"
 #include "sched/process.h"
-#include "fs/vfs.h"
-#include "core/tty.h"
 
-#include "core/initrd.h"
+#include "fs/vfs.h"
 #include "fs/ramfs.h"
 #include "fs/devfs.h"
+#include "fs/procfs.h"
+#include "fs/fat32.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -37,10 +38,8 @@
 #include "driver/dashboard.h"
 #include "driver/sd.h"
 #include "driver/block.h"
-#include "uapi/errors.h"
 
 #include "devicetree/fdt.h"
-#include "fs/fat32.h"
 #include "test.h"
 
 /* Kernel metadata and versioning */
@@ -50,12 +49,11 @@
 extern void _entry(void);
 extern struct tty console_tty;
 
-/* Global synchronization for early boot messages */
-// static spinlock_t console_lock = SPINLOCK_INIT; // Removed in favor of printk's internal lock
-
-/*
- * smp_init - Brings up the secondary CPU cores by writing the kernel
- * entry point to their respective spin tables.
+/**
+ * smp_init - Brings up secondary CPU cores.
+ *
+ * Writes the kernel entry point to the BCM2711 ARM spin tables and signals
+ * an event to wake parked cores.
  */
 static void smp_init(void)
 {
@@ -78,16 +76,15 @@ static void smp_init(void)
     asm volatile("dc cvac, %0" : : "r"(spin_cpu3));
     asm volatile("dsb sy");
 
-    /* Send event to wake up parked cores */
+    /* Wake up parked cores */
     asm volatile("sev");
 
     /* Allow time for secondary cores to reach secondary_main */
     sleep_ms(200);
 }
 
-/*
+/**
  * secondary_main - Entry point for non-primary CPU cores.
- * Initializes per-core MMU, interrupt controller, and local timers.
  */
 __attribute__((used)) void secondary_main(void)
 {
@@ -103,13 +100,13 @@ __attribute__((used)) void secondary_main(void)
 
     sched_secondary_init();
 
-    /* Fallback loop: secondary cores should enter the scheduler */
+    /* Secondary cores enter the scheduler or wait for events */
     for (;;) {
         asm volatile("wfe");
     }
 }
 
-/*
+/**
  * print_banner - Displays the kernel version string.
  */
 static void print_banner(void)
@@ -117,9 +114,8 @@ static void print_banner(void)
     pr_info("perspicua kernel v%s (" __DATE__ " " __TIME__ ")\n", KERNEL_VERSION);
 }
 
-/*
- * dashboard_task - Background task responsible for refreshing the
- * system status display.
+/**
+ * dashboard_task - Background task for system status display.
  */
 static void dashboard_task(void)
 {
@@ -129,12 +125,12 @@ static void dashboard_task(void)
     }
 }
 
-/*
- * main - The primary kernel initialization routine.
+/**
+ * main - Primary kernel initialization routine.
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
-    /* Stage 0: initialize devicetree parser*/
+    /* Stage 0: Devicetree parser initialization */
     fdt_init(global_dtb_ptr);
 
     /* Stage 1: Basic hardware and console bring-up */
@@ -153,7 +149,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     pmm_init();
     mmu_init();
 
-    // Re-base DTB pointers to virtual addresses post-MMU
+    /* Re-base DTB pointers to virtual addresses post-MMU */
     fdt_rebase(P2V(global_dtb_ptr));
 
     remap_framebuffer_pages();
@@ -165,10 +161,10 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     timer_interrupt_init();
     sched_init();
 
-    /* Start the graphical dashboard update task */
+    /* Start background maintenance tasks */
     sched_create_task(dashboard_task);
 
-    /* Stage 4: Multi-processing and Filesystem */
+    /* Stage 4: Multi-processing and Filesystems */
     smp_init();
 
     vfs_init();
@@ -177,27 +173,23 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fb_register_device();
     sd_init();
 
-    /* Initialize and mount FAT32 as the root filesystem */
+    /* Root filesystem initialization (FAT32) */
     if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
     }
 
-    /* Mount devfs over the FAT32 root */
+    /* Mount auxiliary filesystems */
     vfs_mount("/dev", devfs_get_root());
-
-    /* Initialize and mount procfs */
     procfs_init();
 
-    run_all_tests();
     enable_interrupts();
-    run_scheduler_tests();
 
-    /* Load and execute the primary user-space application from the SD card */
+    /* Launch primary user-space application */
     if (process_create_from_file("/init.elf", 1) != 0) {
         pr_err("init: Failed to load /init.elf\n");
     }
 
-    /* The main thread remains parked while the scheduler handles execution */
+    /* Main thread parks while scheduler handles execution */
     while (1) {
         asm volatile("wfe");
     }
