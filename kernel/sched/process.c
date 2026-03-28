@@ -594,10 +594,10 @@ void process_exit(uint32_t pid, int exit_status)
         mmu_destroy_user_pgd(pgd);
     }
 
-    p->va.count = 0;
     p->exit_status = exit_status;
 
     flags = spin_lock_irqsave(&process_table_lock);
+    p->va.count = 0;
     p->state = PROCESS_STATE_ZOMBIE;
 
     uint32_t ppid = p->parent_pid;
@@ -751,6 +751,7 @@ int process_waitpid(int pid, int *status, int options)
                 if (status) {
                     *status = candidate->exit_status;
                 }
+                memset(candidate, 0, sizeof(struct process));
                 candidate->state = PROCESS_STATE_EMPTY;
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
