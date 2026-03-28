@@ -5,19 +5,23 @@
 
 static void print_mode(uint32_t mode)
 {
-    char type = '-';
-    if (S_ISDIR(mode))
-        type = 'd';
-    else if (S_ISCHR(mode))
-        type = 'c';
-    else if (S_ISBLK(mode))
-        type = 'b';
-    else if (S_ISFIFO(mode))
-        type = 'p';
-    else if (S_ISLNK(mode))
-        type = 'l';
+    const char *type_str = "[REG]";
 
-    printf("%c", type);
+    if (S_ISDIR(mode)) {
+        type_str = "[DIR]";
+    } else if (S_ISCHR(mode)) {
+        type_str = "[CHR]";
+    } else if (S_ISBLK(mode)) {
+        type_str = "[BLK]";
+    } else if (S_ISFIFO(mode)) {
+        type_str = "[PIP]";
+    } else if (S_ISLNK(mode)) {
+        type_str = "[LNK]";
+    } else if (mode & S_IXUSR) {
+        type_str = "[EXE]";
+    }
+
+    printf("%-5s  ", type_str);
     printf("%c", (mode & S_IRUSR) ? 'r' : '-');
     printf("%c", (mode & S_IWUSR) ? 'w' : '-');
     printf("%c", (mode & S_IXUSR) ? 'x' : '-');
@@ -29,12 +33,24 @@ static void print_mode(uint32_t mode)
     printf("%c", (mode & S_IXOTH) ? 'x' : '-');
 }
 
+static void print_header(void)
+{
+    printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  NAME\n");
+    for (int i = 0; i < 62; i++)
+        sys_write(1, "─", 3);
+    printf("\n");
+}
+
 static void print_entry(const char *name, struct stat *st, int long_format)
 {
     if (long_format) {
         print_mode(st->st_mode);
-        printf(" %2u %4u %4u %8u %s\n", (unsigned int)st->st_nlink, (unsigned int)st->st_uid,
-               (unsigned int)st->st_gid, (unsigned int)st->st_size, name);
+
+        char og[32];
+        snprintf(og, sizeof(og), "%u:%u", (uint32_t)st->st_uid, (uint32_t)st->st_gid);
+
+        printf("  %3u  %-12s  %8u  %s\n", (unsigned int)st->st_nlink, og, (unsigned int)st->st_size,
+               name);
     } else {
         printf("%s\n", name);
     }
@@ -49,6 +65,8 @@ static int list_path_with_options(const char *path, int long_format, int show_al
     }
 
     if (!S_ISDIR(st.st_mode)) {
+        if (long_format)
+            print_header();
         print_entry(path, &st, long_format);
         return 0;
     }
@@ -58,6 +76,9 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         printf("ls: cannot open directory '%s'\n", path);
         return 1;
     }
+
+    if (long_format)
+        print_header();
 
     struct vfs_dirent dirents[16];
     int res;
@@ -72,7 +93,6 @@ static int list_path_with_options(const char *path, int long_format, int show_al
 
             if (long_format) {
                 struct stat entry_st;
-                // Skip constructing path if it's . or /
                 if (strcmp(path, ".") == 0) {
                     strncpy(full_path, dirents[i].name, sizeof(full_path));
                 } else {
@@ -84,8 +104,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
                 }
 
                 if (sys_stat(full_path, &entry_st) < 0) {
-                    // If stat fails, just print name
-                    printf("?--------- ? ? ? ? %s\n", dirents[i].name);
+                    printf("?---------      ?       ?       ?        ?  %s\n", dirents[i].name);
                 } else {
                     print_entry(dirents[i].name, &entry_st, long_format);
                 }
