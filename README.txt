@@ -11,12 +11,19 @@ HARDWARE SUPPORT:
   - Graphics: Framebuffer console
 
 BUILDING THE KERNEL:
-  - Requires: AArch64 cross-compiler (aarch64-none-elf-)
-  - Command:  make
+  - Requires: AArch64 cross-compiler, CMake, Just, mtools, and cpio.
+  - Commands:
+      just build [type] # Build the project (default: debug)
+      just run          # Compile and run in QEMU
+      just run-gui      # Run in QEMU with GUI (serial vc)
+      just debug        # Compile and start in debug mode (waits for GDB)
+      just gdb          # Connect GDB to the QEMU debug instance
+      just disasm       # Show disassembled kernel
+      just clean        # Remove build artifacts
 
-RUNNING IN QEMU:
-  - Terminal: make run
-  - GUI:      make run-gui
+      Examples:
+        just build            # Builds Debug
+        just build release    # Builds Release (Optimized)
 
 The source code is organized as follows:
   - kernel/     Core kernel subsystems and drivers

@@ -1,7 +1,6 @@
+# Build artifacts
 build/
-libc/build/
-kernel/build/
-user/build/
+compile_commands.json
 *.o
 *.d
 *.elf
@@ -9,7 +8,23 @@ user/build/
 *.img
 *.cpio
 .cflags
-compile_commands.json
+sdcard.img
+
+# IDE / Editor
 .vscode/
 .cache/
 .history/
+.idea/
+*.swp
+
+# CMake
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+Testing
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps
