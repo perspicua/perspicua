@@ -292,41 +292,30 @@ static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t cou
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    const char *static_names[] = {".", ".."};
-    int static_count = 2;
-
     while (entries_written < (int)max_entries) {
-        if (file->offset < static_count) {
-            vfs_buffer[entries_written].ino = (ino_t)(file->offset + 1);
-            strncpy(vfs_buffer[entries_written].name, static_names[file->offset], 255);
-            vfs_buffer[entries_written].name[255] = '\0';
-            file->offset++;
-            entries_written++;
-        } else {
-            int fd_idx = (int)file->offset - static_count;
-            int found = 0;
+        int fd_idx = (int)file->offset;
+        int found = 0;
 
-            struct process *p = &process_table[pid];
-            for (int i = fd_idx; i < VFS_MAX_FDS; i++) {
-                spin_lock(&p->fd_lock);
-                if (p->fd_table[i]) {
-                    vfs_buffer[entries_written].ino = (ino_t)(1000 + i);
-                    snprintf(vfs_buffer[entries_written].name,
-                             sizeof(vfs_buffer[entries_written].name), "%d", i);
-                    spin_unlock(&p->fd_lock);
-                    file->offset = (vfs_off_t)(static_count + i + 1);
-                    found = 1;
-                    break;
-                }
+        struct process *p = &process_table[pid];
+        for (int i = fd_idx; i < VFS_MAX_FDS; i++) {
+            spin_lock(&p->fd_lock);
+            if (p->fd_table[i]) {
+                vfs_buffer[entries_written].ino = (ino_t)(1000 + i);
+                snprintf(vfs_buffer[entries_written].name, sizeof(vfs_buffer[entries_written].name),
+                         "%d", i);
                 spin_unlock(&p->fd_lock);
-            }
-
-            if (!found) {
-                file->offset = (vfs_off_t)(static_count + VFS_MAX_FDS);
+                file->offset = (vfs_off_t)(i + 1);
+                found = 1;
                 break;
             }
-            entries_written++;
+            spin_unlock(&p->fd_lock);
         }
+
+        if (!found) {
+            file->offset = (vfs_off_t)(VFS_MAX_FDS);
+            break;
+        }
+        entries_written++;
     }
     return entries_written;
 }
@@ -385,12 +374,12 @@ static struct vfs_vnode_ops procfs_pid_fd_dir_ops = {.lookup = procfs_pid_fd_loo
 static int procfs_pid_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
     struct vfs_dirent *vfs_buffer = (struct vfs_dirent *)buffer;
-    const char *static_entries[] = {".", "..", "status", "cmdline", "cwd", "fd"};
+    const char *static_entries[] = {"status", "cmdline", "cwd", "fd"};
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    while (entries_written < max_entries && file->offset < 6) {
-        vfs_buffer[entries_written].ino = file->offset + 1;
+    while (entries_written < max_entries && file->offset < 4) {
+        vfs_buffer[entries_written].ino = file->offset + 10;
         strcpy(vfs_buffer[entries_written].name, static_entries[file->offset]);
         file->offset++;
         entries_written++;
@@ -432,8 +421,8 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    const char *static_names[] = {".", "..", "version", "meminfo"};
-    int static_count = 4;
+    const char *static_names[] = {"version", "meminfo"};
+    int static_count = 2;
 
     while (entries_written < (int)max_entries) {
         if (file->offset < static_count) {

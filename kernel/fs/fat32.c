@@ -241,6 +241,11 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                     continue;
                 }
 
+                /* Skip . and .. entries from the FAT filesystem itself */
+                if (dirs[i].name[0] == '.') {
+                    continue;
+                }
+
                 struct vfs_dirent *dirent = &dirent_buf[entries_read];
                 int idx = 0;
                 for (int k = 0; k < 8; k++) {
