@@ -42,13 +42,15 @@ static int ramfs_readdir(struct vfs_file *file, void *buffer, size_t count)
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_read = 0;
 
-    for (int i = (int)file->offset; i < ramfs_file_count && entries_read < (int)max_entries; i++) {
+    int i = (int)file->offset;
+    while (i < ramfs_file_count && entries_read < (int)max_entries) {
         struct vfs_dirent *dirent = &dirent_buf[entries_read];
         strncpy(dirent->name, ramfs_files[i].name, 255);
         dirent->name[255] = '\0';
         dirent->ino = 0;
         file->offset++;
         entries_read++;
+        i++;
     }
 
     return entries_read;

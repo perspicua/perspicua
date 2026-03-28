@@ -558,25 +558,58 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     struct vfs_dirent *dirents = (struct vfs_dirent *)buffer;
 
     vfs_off_t orig_offset = f->offset;
-    uint32_t mount_idx = (uint32_t)((orig_offset >> 32) & 0xFFFFFFFF);
+    /* Offset layout:
+     * [63:34] - Mount index
+     * [33:32] - Dot/DotDot index (0: none, 1: ".", 2: "..")
+     * [31: 0] - FS-specific offset
+     */
+    uint32_t mount_idx = (uint32_t)((orig_offset >> 34) & 0x3FFFFFFF);
+    uint32_t dot_idx = (uint32_t)((orig_offset >> 32) & 0x03);
     f->offset = orig_offset & 0xFFFFFFFF;
 
     int res = 0;
-    if (mount_idx == 0) {
-        res = f->node->ops->readdir(f, buffer, count);
-        if (res < 0) {
-            f->offset = orig_offset;
-            atomic_dec_and_test(&f->refcount);
-            return res;
+
+    /* 1. Handle "." and ".." */
+    if (dot_idx < 2) {
+        if (dot_idx == 0) {
+            strncpy(dirents[res].name, ".", 255);
+            dirents[res].name[255] = '\0';
+            dirents[res].ino = 1;
+            res++;
+            dot_idx = 1;
+        }
+
+        if ((size_t)res < max_entries && dot_idx == 1) {
+            strncpy(dirents[res].name, "..", 255);
+            dirents[res].name[255] = '\0';
+            dirents[res].ino = 2;
+            res++;
+            dot_idx = 2;
         }
 
         if ((size_t)res == max_entries) {
+            goto readdir_done;
+        }
+    }
+
+    /* 2. Handle Filesystem-specific entries */
+    if (mount_idx == 0) {
+        int fs_res = f->node->ops->readdir(f, buffer + res * dirent_size,
+                                           (max_entries - (size_t)res) * dirent_size);
+        if (fs_res < 0) {
+            f->offset = orig_offset;
             atomic_dec_and_test(&f->refcount);
-            return res;
+            return fs_res;
+        }
+        res += fs_res;
+
+        if ((size_t)res == max_entries) {
+            goto readdir_done;
         }
         mount_idx = 1;
     }
 
+    /* 3. Handle VFS Mount points */
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
     while ((size_t)res < max_entries && (mount_idx - 1) < (uint32_t)vfs_mount_count) {
         int i = mount_idx - 1;
@@ -595,7 +628,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
             if (is_child) {
                 strncpy(dirents[res].name, vfs_mount_table[i].root->name, 255);
                 dirents[res].name[255] = '\0';
-                dirents[res].ino = 9000 + i;
+                dirents[res].ino = 9000 + (uint32_t)i;
                 res++;
             }
         }
@@ -603,7 +636,9 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
 
-    f->offset = (f->offset & 0xFFFFFFFF) | ((vfs_off_t)mount_idx << 32);
+readdir_done:
+    f->offset =
+        (f->offset & 0xFFFFFFFF) | ((vfs_off_t)dot_idx << 32) | ((vfs_off_t)mount_idx << 34);
 
     atomic_dec_and_test(&f->refcount);
     return res;

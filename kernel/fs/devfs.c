@@ -71,16 +71,20 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 
     spin_lock(&devfs_lock);
     struct devfs_node *curr = devfs_devices;
-    while (curr && entries_read < (int)max_entries) {
-        if (current_idx >= (uint32_t)file->offset) {
-            struct vfs_dirent *dirent = &dirent_buf[entries_read];
-            strncpy(dirent->name, curr->name, 255);
-            dirent->name[255] = '\0';
-            dirent->ino = 0;
-            file->offset++;
-            entries_read++;
-        }
+
+    /* Skip entries already read */
+    while (curr && current_idx < (uint32_t)file->offset) {
+        curr = curr->next;
         current_idx++;
+    }
+
+    while (curr && entries_read < (int)max_entries) {
+        struct vfs_dirent *dirent = &dirent_buf[entries_read];
+        strncpy(dirent->name, curr->name, 255);
+        dirent->name[255] = '\0';
+        dirent->ino = 0;
+        file->offset++;
+        entries_read++;
         curr = curr->next;
     }
     spin_unlock(&devfs_lock);
