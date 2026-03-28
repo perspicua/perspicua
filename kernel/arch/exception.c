@@ -18,6 +18,7 @@
 #include "core/syscall.h"
 #include "core/tty.h"
 #include "mm/mmu.h"
+#include "mm/addr.h"
 #include "sched/sched.h"
 #include "sched/process.h"
 #include "driver/uart.h"
@@ -112,18 +113,16 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
     unsigned long far;
     asm volatile("mrs %0, far_el1" : "=r"(far));
 
-    if (exception_fixup(tf)) {
-        return;
-    }
-
     uint32_t fsc = esr & FSC_MASK;
     int is_write =
         (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
-    int is_user = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
+    int is_user_fault = (ec == EC_INST_ABORT_LOWER || ec == EC_DATA_ABORT_LOWER);
     int is_inst = (ec == EC_INST_ABORT_LOWER || ec == EC_INST_ABORT_SAME);
 
-    /* Attempt Copy-on-Write for user permission faults before failing */
-    if (is_user && is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3)) {
+    /* Attempt Copy-on-Write for user permission faults before failing.
+     * We also check if it's a kernel access to user memory (far < KERNEL_VMA).
+     */
+    if (is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3) && (far < KERNEL_VMA)) {
         int pid = process_find_current();
         if (pid >= 0) {
             unsigned long *pgd = process_table[pid].user_pgd;
@@ -133,7 +132,11 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
         }
     }
 
-    if (is_user) {
+    if (exception_fixup(tf)) {
+        return;
+    }
+
+    if (is_user_fault) {
         int pid = process_find_current();
 
         printk("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data",

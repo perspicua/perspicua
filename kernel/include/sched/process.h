@@ -21,7 +21,7 @@
 
 #define PROCESS_TABLE_SIZE       1024
 #define USER_VA_BASE             0x40000000ULL
-#define USER_VA_MAX_REGIONS      16
+#define USER_VA_MAX_REGIONS      64
 #define PROCESS_USER_STACK_PAGES 64
 
 #define SPSR_EL0_USER      0x00000000ULL

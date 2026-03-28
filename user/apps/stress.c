@@ -43,7 +43,7 @@ void stress_fork()
         }
         if (pid == 0) {
             // Child: do some minor work and exit
-            sys_sleep(7000);
+            sys_sleep(70);
             sys_exit(0);
         } else {
             pids[i] = pid;
