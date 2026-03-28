@@ -22,9 +22,9 @@ user: libc
 
 $(INITRD): user
 	$(call print_img,$@)
-	@mkdir -p $(BUILD_DIR)/root
-	@cp $(USER_DIR)/build/*.elf $(BUILD_DIR)/root/
-	$(Q)cd $(BUILD_DIR)/root && find . -maxdepth 1 -not -path "." | sed 's|^\./||' | cpio -o -H newc > ../initrd.cpio 2>/dev/null
+	@mkdir -p $(BUILD_DIR)/root/bin
+	@cp $(USER_DIR)/build/*.elf $(BUILD_DIR)/root/bin/
+	$(Q)cd $(BUILD_DIR)/root && find . -maxdepth 2 -not -path "." | sed 's|^\./||' | cpio -o -H newc > ../initrd.cpio 2>/dev/null
 
 kernel: libc $(INITRD)
 	@printf "  $(COL_YELLOW)MAKE$(COL_DEFAULT)    kernel\n"
@@ -54,7 +54,8 @@ ifeq ($(UNAME_S),Darwin)
 endif
 	$(Q)dd if=/dev/zero of=$(SD_IMAGE) bs=1M count=32 status=none
 	$(Q)$(MFORMAT) -i $(SD_IMAGE) -F ::
-	$(Q)$(MCOPY) -i $(SD_IMAGE) $(USER_DIR)/build/*.elf ::/
+	$(Q)$(MMD) -i $(SD_IMAGE) ::/bin
+	$(Q)$(MCOPY) -i $(SD_IMAGE) $(USER_DIR)/build/*.elf ::/bin/
 	$(Q)echo "Hello from the real FAT32 filesystem!" > hello.txt
 	$(Q)echo "This is small.txt" > small.txt
 	$(Q)echo "Line 1: This is a very big file that should test our cluster chaining." > big.txt

@@ -185,8 +185,8 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     enable_interrupts();
 
     /* Launch primary user-space application */
-    if (process_create_from_file("/init.elf", 1) != 0) {
-        pr_err("init: Failed to load /init.elf\n");
+    if (process_create_from_file("/bin/init.elf", 1) != 0) {
+        pr_err("init: Failed to load init\n");
     }
 
     /* Main thread parks while scheduler handles execution */
