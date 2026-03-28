@@ -11,6 +11,8 @@ static int read_proc_file(const char *path, char *buf, size_t bufsz)
     int n = sys_read(fd, buf, bufsz - 1);
     if (n > 0)
         buf[n] = '\0';
+    else
+        buf[0] = '\0';
     sys_close(fd);
     return n;
 }
@@ -24,7 +26,7 @@ int main(int argc, char **argv)
 
     char *pid_str = argv[1];
     char path[128];
-    char buf[1024];
+    char buf[2048];
 
     printf("\n PROCESS INSPECTOR: PID %s\n", pid_str);
     printf(" ──────────────────────────\n");
@@ -50,6 +52,16 @@ int main(int argc, char **argv)
         printf("Cwd:     %s", buf); // already has newline from procfs
     }
 
+    /* Maps */
+    printf("\n VIRTUAL MEMORY MAP\n");
+    printf(" ──────────────────\n");
+    snprintf(path, sizeof(path), "/proc/%s/maps", pid_str);
+    if (read_proc_file(path, buf, sizeof(buf)) > 0) {
+        printf("%s", buf);
+    } else {
+        printf(" [none or inaccessible]\n");
+    }
+
     /* Open FDs */
     printf("\n OPEN FILE DESCRIPTORS\n");
     printf(" ──────────────────────\n");
@@ -57,6 +69,7 @@ int main(int argc, char **argv)
     int fd = sys_open(path, VFS_O_RDONLY);
     if (fd >= 0) {
         struct vfs_dirent dent;
+        int found = 0;
         while (sys_getdents(fd, &dent, sizeof(dent)) > 0) {
             if (dent.name[0] == '.')
                 continue;
@@ -66,10 +79,11 @@ int main(int argc, char **argv)
             char link_target[512];
             if (read_proc_file(fd_path, link_target, sizeof(link_target)) > 0) {
                 printf(" fd %3s -> %s", dent.name, link_target);
-            } else {
-                printf(" fd %3s -> [unknown]", dent.name);
+                found = 1;
             }
         }
+        if (!found)
+            printf(" [none]\n");
         sys_close(fd);
     } else {
         printf(" [none or inaccessible]\n");

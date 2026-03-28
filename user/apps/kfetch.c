@@ -7,8 +7,6 @@
 #include "string.h"
 #include "types.h"
 
-/* ── /proc helpers ───────────────────────────────────────────────── */
-
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
     int fd = sys_open(path, VFS_O_RDONLY);
@@ -57,8 +55,6 @@ static void strip_newline(char *s)
         *p = '\0';
 }
 
-/* ── UI Constants ────────────────────────────────────────────────── */
-
 #define BAR_WIDTH  20
 #define LOGO_LINES 20
 #define LOGO_W     42
@@ -99,8 +95,6 @@ static void add_sep(void)
     info_count++;
 }
 
-/* ── Main ────────────────────────────────────────────────────────── */
-
 int main(void)
 {
     char buf[512];
@@ -111,6 +105,12 @@ int main(void)
     if (read_proc_file("/proc/version", buf, sizeof(buf)) > 0) {
         strip_newline(buf);
         strncpy(ver, buf, sizeof(ver) - 1);
+    }
+
+    char uptime_str[64] = "unknown";
+    if (read_proc_file("/proc/uptime", buf, sizeof(buf)) > 0) {
+        strip_newline(buf);
+        snprintf(uptime_str, sizeof(uptime_str), "%s seconds", buf);
     }
 
     unsigned long mem_total = 0, mem_free = 0, slab_used = 0, slab_total = 0;
@@ -145,8 +145,11 @@ int main(void)
     add_info("OS", "Perspicua");
     add_info("KERNEL", ver);
     add_info("ARCH", "AArch64");
+    add_info("UPTIME", uptime_str);
     add_sep();
 
+    add_info("USER", "root");
+    add_info("SHELL", "sh");
     snprintf(tmp, sizeof(tmp), "%d", procs);
     add_info("PROCS", tmp);
     snprintf(tmp, sizeof(tmp), "%d", sys_getpid());
