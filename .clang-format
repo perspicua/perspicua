@@ -6,27 +6,27 @@ Standard: c++11
 IndentWidth: 4
 TabWidth: 4
 UseTab: Never
-ColumnLimit: 120
+ColumnLimit: 100
 ContinuationIndentWidth: 4
 AccessModifierOffset: -4
-IndentCaseLabels: false
+IndentCaseLabels: true
 IndentGotoLabels: false
 IndentPPDirectives: BeforeHash
 IndentWrappedFunctionNames: false
 NamespaceIndentation: None
 
 # --- Braces ---
-BreakBeforeBraces: Allman
+BreakBeforeBraces: Custom
 BraceWrapping:
   AfterClass: true
-  AfterControlStatement: Always
-  AfterEnum: true
+  AfterControlStatement: Never
+  AfterEnum: false
   AfterFunction: true
   AfterNamespace: false
-  AfterStruct: true
-  AfterUnion: true
+  AfterStruct: false
+  AfterUnion: false
   BeforeCatch: false
-  BeforeElse: true
+  BeforeElse: false
   BeforeLambdaBody: false
   SplitEmptyFunction: false
   SplitEmptyRecord: false
@@ -43,7 +43,7 @@ AllowShortLoopsOnASingleLine: false
 # --- Line breaking ---
 AlwaysBreakAfterReturnType: None
 AlwaysBreakBeforeMultilineStrings: false
-AlwaysBreakTemplateDeclarations: No
+AlwaysBreakTemplateDeclarations: Yes
 BreakBeforeBinaryOperators: NonAssignment
 BreakBeforeTernaryOperators: true
 BreakConstructorInitializers: BeforeColon
@@ -60,8 +60,8 @@ AlignTrailingComments: true
 AlignEscapedNewlines: Left
 
 # --- Pointer & reference ---
-PointerAlignment: Left
-ReferenceAlignment: Left
+PointerAlignment: Right
+ReferenceAlignment: Right
 DerivePointerAlignment: false
 
 # --- Spacing ---
@@ -75,7 +75,7 @@ SpaceBeforeInheritanceColon: false
 SpaceBeforeParens: ControlStatements
 SpaceBeforeRangeBasedForLoopColon: false
 SpaceInEmptyParentheses: false
-SpacesBeforeTrailingComments: 2
+SpacesBeforeTrailingComments: 1
 SpacesInAngles: Never
 SpacesInCStyleCastParentheses: false
 SpacesInContainerLiterals: false
@@ -83,20 +83,8 @@ SpacesInParentheses: false
 SpacesInSquareBrackets: false
 
 # --- Includes ---
-IncludeBlocks: Regroup
+IncludeBlocks: Preserve
 SortIncludes: false
-IncludeCategories:
-  - Regex: '^".*\.h"'
-    Priority: 1
-  - Regex: '^<.*\.h>'
-    Priority: 2
-  - Regex: '.*'
-    Priority: 3
-
-# --- Packing ---
-BinPackArguments: false
-BinPackParameters: false
-CompactNamespaces: false
 
 # --- Misc ---
 ReflowComments: true
@@ -112,5 +100,5 @@ PenaltyBreakComment: 300
 PenaltyBreakFirstLessLess: 120
 PenaltyBreakString: 1000
 PenaltyBreakTemplateDeclaration: 10
-PenaltyExcessCharacter: 696969
+PenaltyExcessCharacter: 100
 PenaltyReturnTypeOnItsOwnLine: 60

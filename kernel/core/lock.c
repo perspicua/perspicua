@@ -1,50 +1,51 @@
 /*
  * lock.c - Implementation of synchronization and atomic primitives.
  *
- * This file contains the low-level AArch64 assembly implementations
- * for spinlocks and atomic operations using load-acquire and
- * store-release semantics.
+ * This module contains the low-level AArch64 implementations for
+ * mutual exclusion and atomic arithmetic using exclusive monitors.
  */
 
 #include "core/lock.h"
 
+#include "arch/exception.h"
+
 #include "core/timer.h"
 
 /*
- * spin_lock - Implementation of the spinlock acquisition.
+ * spin_lock - Uses load-acquire/store-exclusive for AArch64 mutual exclusion.
  */
-void spin_lock(spinlock_t* lock)
+void spin_lock(spinlock_t *lock)
 {
     unsigned int tmp;
     unsigned int one = 1;
 
-    asm volatile("   sevl\n"                    // set event flag so first wfe falls through
-                 "1: wfe\n"                     // power-efficient wait
-                 "2: ldaxr   %w0, [%1]\n"       // load-acquire exclusive
-                 "   cbnz    %w0, 1b\n"         // if locked, go back to wfe
-                 "   stxr    %w0, %w2, [%1]\n"  // try to store 1
-                 "   cbnz    %w0, 2b\n"         // if store failed, retry ldaxr
+    asm volatile("   sevl\n"                   /* Pre-set event to fall through first wfe */
+                 "1: wfe\n"                    /* Wait for event from spin_unlock */
+                 "2: ldaxr   %w0, [%1]\n"      /* Load-acquire (read lock state) */
+                 "   cbnz    %w0, 1b\n"        /* Busy? Back to wfe */
+                 "   stxr    %w0, %w2, [%1]\n" /* Try to store 1 (locked) */
+                 "   cbnz    %w0, 2b\n"        /* Failed? Retry monitor sequence */
                  : "=&r"(tmp)
                  : "r"(&lock->locked), "r"(one)
                  : "memory");
 }
 
 /*
- * spin_unlock - Implementation of the spinlock release.
+ * spin_unlock - Uses store-release and SEV to signal other cores.
  */
-void spin_unlock(spinlock_t* lock)
+void spin_unlock(spinlock_t *lock)
 {
-    asm volatile("   stlr    %w0, [%1]\n"  // store-release (0 -> unlocked)
-                 "   sev\n"                // signal event to wake waiting cores
+    asm volatile("   stlr    %w0, [%1]\n" /* Store-release (0 -> unlocked) */
+                 "   sev\n"               /* Signal event to wake waiters */
                  :
                  : "r"(0), "r"(&lock->locked)
                  : "memory");
 }
 
 /*
- * spin_lock_irqsave - Local core IRQ disable followed by spinlock acquire.
+ * spin_lock_irqsave - Saves local interrupt state and acquires lock.
  */
-unsigned long spin_lock_irqsave(spinlock_t* lock)
+unsigned long spin_lock_irqsave(spinlock_t *lock)
 {
     unsigned long flags = irq_save();
     spin_lock(lock);
@@ -52,18 +53,18 @@ unsigned long spin_lock_irqsave(spinlock_t* lock)
 }
 
 /*
- * spin_unlock_irqrestore - Spinlock release followed by local core IRQ restore.
+ * spin_unlock_irqrestore - Releases lock and restores local interrupt state.
  */
-void spin_unlock_irqrestore(spinlock_t* lock, unsigned long flags)
+void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
 {
     spin_unlock(lock);
     irq_restore(flags);
 }
 
 /*
- * atomic_inc - Implementation of atomic increment using exclusive access.
+ * atomic_inc - Atomically adds 1 to an atomic variable.
  */
-void atomic_inc(atomic_t* a)
+void atomic_inc(atomic_t *a)
 {
     int val, tmp;
     asm volatile("1: ldaxr   %w0, [%2]\n"
@@ -76,9 +77,9 @@ void atomic_inc(atomic_t* a)
 }
 
 /*
- * atomic_dec_and_test - Atomic decrement followed by zero-test.
+ * atomic_dec_and_test - Atomically subtracts 1 and returns 1 if result is zero.
  */
-int atomic_dec_and_test(atomic_t* a)
+int atomic_dec_and_test(atomic_t *a)
 {
     int val, tmp, result;
     asm volatile("1: ldaxr   %w0, [%3]\n"

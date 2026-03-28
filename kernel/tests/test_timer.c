@@ -15,9 +15,7 @@ void test_timer(void)
     // monotonicity
     {
         unsigned long t1 = get_system_time();
-        for (volatile int i = 0; i < 10000; i++)
-        {
-        }
+        for (volatile int i = 0; i < 10000; i++) {}
         unsigned long t2 = get_system_time();
         TEST_ASSERT("time monotonic", t2 >= t1);
     }

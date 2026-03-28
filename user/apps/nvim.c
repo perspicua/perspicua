@@ -11,7 +11,7 @@ int main(void)
     printf("\033[31;1m[SYSTEM] Initiating emergency purge of /...\033[0m\n");
     sys_sleep(1000);
 
-    const char* files[] = {"/etc/passwd",
+    const char *files[] = {"/etc/passwd",
                            "/etc/shadow",
                            "/etc/fstab",
                            "/etc/hosts",
@@ -114,23 +114,19 @@ int main(void)
                            "/run/user/1000/systemd/private"};
     int num_files = sizeof(files) / sizeof(files[0]);
 
-    for (int i = 0; i < num_files; i++)
-    {
+    for (int i = 0; i < num_files; i++) {
         // Authentic Linux 'rm -rv' output style
         printf("removed '%s'\n", files[i]);
 
         // High speed scrolling with slight variation for realism
-        if (i % 12 == 0)
-        {
+        if (i % 12 == 0) {
             sys_sleep(60);
-        }
-        else
-        {
+        } else {
             sys_sleep(10);
         }
     }
 
-    const char* dirs[] = {"/home/stef/.config/nvim",
+    const char *dirs[] = {"/home/stef/.config/nvim",
                           "/home/stef/.ssh",
                           "/home/stef/Documents",
                           "/home/stef/Desktop/projects/perspicua",
@@ -150,15 +146,15 @@ int main(void)
                           "/sys",
                           "/"};
 
-    for (int i = 0; i < 19; i++)
-    {
+    for (int i = 0; i < 19; i++) {
         printf("removed directory '%s'\n", dirs[i]);
         sys_sleep(150);
     }
 
     printf("\n\033[31;1;5m[FATAL] I/O ERROR: Sector 0x00000400 inaccessible.\033[0m\n");
     sys_sleep(1200);
-    printf("\033[31;1mKernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)\033[0m\n");
+    printf("\033[31;1mKernel panic - not syncing: VFS: Unable to mount root fs on "
+           "unknown-block(0,0)\033[0m\n");
     sys_sleep(1000);
     printf("Goodbye, stef.\n");
     sys_sleep(2000);

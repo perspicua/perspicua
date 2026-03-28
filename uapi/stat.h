@@ -39,8 +39,7 @@
 #define S_IWOTH 00002
 #define S_IXOTH 00001
 
-struct stat
-{
+struct stat {
     uint32_t st_dev;
     uint32_t st_ino;
     uint32_t st_mode;

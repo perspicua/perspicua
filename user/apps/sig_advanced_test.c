@@ -27,8 +27,7 @@ int main()
     sa.sa_flags = 0;
     sa.sa_restorer = NULL;
 
-    if (sys_sigaction(SIGNAL_INT, &sa, NULL) < 0)
-    {
+    if (sys_sigaction(SIGNAL_INT, &sa, NULL) < 0) {
         printf("Failed to set sigaction\n");
         return 1;
     }
@@ -42,12 +41,9 @@ int main()
     sys_kill(sys_getpid(), SIGNAL_INT);
 
     sys_yield();
-    if (sig_received == 0)
-    {
+    if (sig_received == 0) {
         printf("Signal correctly masked.\n");
-    }
-    else
-    {
+    } else {
         printf("FAILED: Signal was not masked!\n");
     }
 
@@ -57,12 +53,9 @@ int main()
     /* Signal should be delivered now */
     sys_yield();
 
-    if (sig_received == SIGNAL_INT)
-    {
+    if (sig_received == SIGNAL_INT) {
         printf("Signal correctly delivered after unmasking.\n");
-    }
-    else
-    {
+    } else {
         printf("FAILED: Signal was not delivered!\n");
     }
 

@@ -10,60 +10,60 @@
 
 #include "types.h"
 
-/* FDT Magic Number */
 #define FDT_MAGIC 0xd00dfeed
 
-/* FDT Tokens */
 #define FDT_BEGIN_NODE 0x00000001
 #define FDT_END_NODE   0x00000002
 #define FDT_PROP       0x00000003
 #define FDT_NOP        0x00000004
 #define FDT_END        0x00000009
 
-/* Alignment macro for DTB strings and data. */
 #define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
 /*
- * The FDT header structure as it appears in the blob.
- * All fields are big-endian.
+ * struct fdt_header - Standard FDT header as it appears in the blob.
+ *
+ * All fields are Big-Endian. This structure provides offsets to the
+ * different blocks of the device tree.
  */
-struct fdt_header
-{
-    uint32_t magic;             /* magic word FDT_MAGIC */
-    uint32_t totalsize;         /* total size of DT block */
-    uint32_t off_dt_struct;     /* offset to structure */
-    uint32_t off_dt_strings;    /* offset to strings */
-    uint32_t off_mem_rsvmap;    /* offset to memory reserve map */
-    uint32_t version;           /* format version */
-    uint32_t last_comp_version; /* last compatible version */
-    uint32_t boot_cpuid_phys;   /* physical CPU id */
-    uint32_t size_dt_strings;   /* size of the strings block */
-    uint32_t size_dt_struct;    /* size of the structure block */
+struct fdt_header {
+    uint32_t magic;
+    uint32_t totalsize;
+    uint32_t off_dt_struct;
+    uint32_t off_dt_strings;
+    uint32_t off_mem_rsvmap;
+    uint32_t version;
+    uint32_t last_comp_version;
+    uint32_t boot_cpuid_phys;
+    uint32_t size_dt_strings;
+    uint32_t size_dt_struct;
 };
 
-/* Memory reservation block entry. */
-struct fdt_reserve_entry
-{
+/*
+ * struct fdt_reserve_entry - A single memory reservation block.
+ */
+struct fdt_reserve_entry {
     uint64_t address;
     uint64_t size;
 };
 
-/* Internal FDT property header as it appears in the blob. */
-struct fdt_prop_header
-{
+/*
+ * struct fdt_prop_header - Internal header for a node property.
+ */
+struct fdt_prop_header {
     uint32_t len;
     uint32_t nameoff;
 };
 
-/* Parsed property structure for ease of use in the public API. */
-struct fdt_property
-{
-    const char* name;
+/*
+ * struct fdt_property - A parsed property for public consumption.
+ */
+struct fdt_property {
+    const char *name;
     uint32_t size;
-    const void* value;
+    const void *value;
 };
 
-/* Endianness swapping utilities (Big-Endian to Little-Endian) */
 static inline uint32_t fdt32_to_cpu(uint32_t val)
 {
     return ((val & 0x000000ff) << 24) | ((val & 0x0000ff00) << 8) | ((val & 0x00ff0000) >> 8)
@@ -76,33 +76,33 @@ static inline uint64_t fdt64_to_cpu(uint64_t val)
 }
 
 /*
- * Initialization and Re-basing
+ * fdt_init - Initializes the parser with the DTB's base address.
  */
-
-/* Initializes the FDT parser with the physical address of the DTB. */
 void fdt_init(uintptr_t global_dtb_ptr);
 
-/* Updates the FDT internal pointers to a new base address (e.g., post-MMU). */
+/*
+ * fdt_rebase - Updates internal pointers to a new virtual base address.
+ */
 void fdt_rebase(uintptr_t new_base);
 
 /*
- * Query API
+ * fdt_get_property - Retrieves a property by name from a given node.
  */
-
-/* Retrieves a property by name from a given FDT node. */
-int fdt_get_property(const uint32_t* node, const char* prop_name, struct fdt_property* out_prop);
-
-/* Finds a node by its absolute path in the device tree. */
-const uint32_t* fdt_find_node_by_path(const char* path);
-
-/* Finds the first node that matches a specific compatible string. */
-const uint32_t* fdt_find_node_by_compatible(const char* compatible);
+int fdt_get_property(const uint32_t *node, const char *prop_name, struct fdt_property *out_prop);
 
 /*
- * Memory Reservation API
+ * fdt_find_node_by_path - Locates a node using its absolute path.
  */
+const uint32_t *fdt_find_node_by_path(const char *path);
 
-/* Parses the memory reservation map and registers ranges with the PMM. */
+/*
+ * fdt_find_node_by_compatible - Locates the first node matching a compatible string.
+ */
+const uint32_t *fdt_find_node_by_compatible(const char *compatible);
+
+/*
+ * fdt_parse_memory_reservations - Informs the PMM of reserved regions.
+ */
 void fdt_parse_memory_reservations(void);
 
 #endif /* PERSPICUA_DEVICETREE_FDT_H */

@@ -10,10 +10,8 @@ extern int _suite_failed;
 // test assertion macros
 
 #define TEST_ASSERT(name, cond)                             \
-    do                                                      \
-    {                                                       \
-        if (!(cond))                                        \
-        {                                                   \
+    do {                                                    \
+        if (!(cond)) {                                      \
             pr_err("test: %s: %s [FAILED]\n", name, #cond); \
             tests_failed++;                                 \
             return;                                         \
@@ -21,12 +19,10 @@ extern int _suite_failed;
     } while (0)
 
 #define TEST_ASSERT_EQ(name, actual, expected)                                  \
-    do                                                                          \
-    {                                                                           \
+    do {                                                                        \
         long _a = (long)(actual);                                               \
         long _e = (long)(expected);                                             \
-        if (_a != _e)                                                           \
-        {                                                                       \
+        if (_a != _e) {                                                         \
             pr_err("test: %s: expected %ld, got %ld [FAILED]\n", name, _e, _a); \
             tests_failed++;                                                     \
             return;                                                             \
@@ -34,12 +30,10 @@ extern int _suite_failed;
     } while (0)
 
 #define TEST_ASSERT_NEQ(name, actual, unexpected)                          \
-    do                                                                     \
-    {                                                                      \
+    do {                                                                   \
         long _a = (long)(actual);                                          \
         long _u = (long)(unexpected);                                      \
-        if (_a == _u)                                                      \
-        {                                                                  \
+        if (_a == _u) {                                                    \
             pr_err("test: %s: unexpected value %ld [FAILED]\n", name, _u); \
             tests_failed++;                                                \
             return;                                                        \
@@ -47,20 +41,17 @@ extern int _suite_failed;
     } while (0)
 
 #define TEST_PASS(name) \
-    do                  \
-    {                   \
+    do {                \
         tests_passed++; \
     } while (0)
 
 #define TEST_SUITE_BEGIN(name)        \
-    do                                \
-    {                                 \
+    do {                              \
         _suite_failed = tests_failed; \
     } while (0)
 
 #define TEST_SUITE_END(name)                                                                \
-    do                                                                                      \
-    {                                                                                       \
+    do {                                                                                    \
         if (tests_failed == _suite_failed)                                                  \
             pr_info("test: %s [OK]\n", name);                                               \
         else                                                                                \
@@ -87,4 +78,4 @@ void test_scheduler(void);
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
 
-#endif  // _TEST_H_
+#endif // _TEST_H_

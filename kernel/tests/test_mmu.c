@@ -4,7 +4,7 @@
 #include "mm/addr.h"
 #include "string.h"
 
-#define TEST_VA_BASE (KERNEL_VMA + 0x100000000ULL)  // PGD index 4
+#define TEST_VA_BASE (KERNEL_VMA + 0x100000000ULL) // PGD index 4
 
 void test_mmu(void)
 {
@@ -12,7 +12,7 @@ void test_mmu(void)
 
     // basic map and query
     {
-        void* phys_page = pmm_alloc_page();
+        void *phys_page = pmm_alloc_page();
         unsigned long paddr = V2P(phys_page);
         unsigned long vaddr = TEST_VA_BASE;
 
@@ -33,9 +33,9 @@ void test_mmu(void)
 
     // unmap makes page not-mapped
     {
-        void* phys_page = pmm_alloc_page();
+        void *phys_page = pmm_alloc_page();
         unsigned long paddr = V2P(phys_page);
-        unsigned long vaddr = TEST_VA_BASE + 0x1000;  // next page
+        unsigned long vaddr = TEST_VA_BASE + 0x1000; // next page
 
         mmu_map_page(vaddr, paddr, MMU_FLAGS_KERNEL_RW);
         mmu_unmap_page(vaddr);
@@ -58,18 +58,18 @@ void test_mmu(void)
 
     // map, write, read through new mapping
     {
-        void* phys_page = pmm_alloc_page();
+        void *phys_page = pmm_alloc_page();
         unsigned long paddr = V2P(phys_page);
         unsigned long vaddr = TEST_VA_BASE + 0x2000;
 
         mmu_map_page(vaddr, paddr, MMU_FLAGS_KERNEL_RW);
 
         // write through virtual address
-        volatile unsigned long* ptr = (volatile unsigned long*)vaddr;
+        volatile unsigned long *ptr = (volatile unsigned long *)vaddr;
         *ptr = 0xCAFEBABEDEADBEEFULL;
 
         // read through the original kernel-mapped VA (P2V of the same phys page)
-        volatile unsigned long* direct = (volatile unsigned long*)phys_page;
+        volatile unsigned long *direct = (volatile unsigned long *)phys_page;
         TEST_ASSERT("write through mapping", *direct == 0xCAFEBABEDEADBEEFULL);
 
         mmu_unmap_page(vaddr);
@@ -79,9 +79,9 @@ void test_mmu(void)
 
     // map multiple pages in same L2 region
     {
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
-        void* p3 = pmm_alloc_page();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
+        void *p3 = pmm_alloc_page();
         unsigned long v1 = TEST_VA_BASE + 0x3000;
         unsigned long v2 = TEST_VA_BASE + 0x4000;
         unsigned long v3 = TEST_VA_BASE + 0x5000;
@@ -91,13 +91,13 @@ void test_mmu(void)
         mmu_map_page(v3, V2P(p3), MMU_FLAGS_KERNEL_RW);
 
         // write distinct values
-        *(volatile unsigned long*)v1 = 0x1111;
-        *(volatile unsigned long*)v2 = 0x2222;
-        *(volatile unsigned long*)v3 = 0x3333;
+        *(volatile unsigned long *)v1 = 0x1111;
+        *(volatile unsigned long *)v2 = 0x2222;
+        *(volatile unsigned long *)v3 = 0x3333;
 
-        TEST_ASSERT("multi-page: p1 value", *(volatile unsigned long*)p1 == 0x1111);
-        TEST_ASSERT("multi-page: p2 value", *(volatile unsigned long*)p2 == 0x2222);
-        TEST_ASSERT("multi-page: p3 value", *(volatile unsigned long*)p3 == 0x3333);
+        TEST_ASSERT("multi-page: p1 value", *(volatile unsigned long *)p1 == 0x1111);
+        TEST_ASSERT("multi-page: p2 value", *(volatile unsigned long *)p2 == 0x2222);
+        TEST_ASSERT("multi-page: p3 value", *(volatile unsigned long *)p3 == 0x3333);
 
         // verify queries
         unsigned long pa;
@@ -116,20 +116,20 @@ void test_mmu(void)
 
     // map pages across different L2 entries (different 2MB regions)
     {
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
         // v1 in first 2MB of PGD[4], v2 in second 2MB
         unsigned long v1 = TEST_VA_BASE + 0x6000;
-        unsigned long v2 = TEST_VA_BASE + 0x200000 + 0x6000;  // +2MB
+        unsigned long v2 = TEST_VA_BASE + 0x200000 + 0x6000; // +2MB
 
         mmu_map_page(v1, V2P(p1), MMU_FLAGS_KERNEL_RW);
         mmu_map_page(v2, V2P(p2), MMU_FLAGS_KERNEL_RW);
 
-        *(volatile unsigned long*)v1 = 0xAAAA;
-        *(volatile unsigned long*)v2 = 0xBBBB;
+        *(volatile unsigned long *)v1 = 0xAAAA;
+        *(volatile unsigned long *)v2 = 0xBBBB;
 
-        TEST_ASSERT("cross-L2: p1", *(volatile unsigned long*)p1 == 0xAAAA);
-        TEST_ASSERT("cross-L2: p2", *(volatile unsigned long*)p2 == 0xBBBB);
+        TEST_ASSERT("cross-L2: p1", *(volatile unsigned long *)p1 == 0xAAAA);
+        TEST_ASSERT("cross-L2: p2", *(volatile unsigned long *)p2 == 0xBBBB);
 
         mmu_unmap_page(v1);
         mmu_unmap_page(v2);
@@ -151,20 +151,20 @@ void test_mmu(void)
 
     // map and unmap cycle — re-map same VA to different phys
     {
-        void* p1 = pmm_alloc_page();
-        void* p2 = pmm_alloc_page();
+        void *p1 = pmm_alloc_page();
+        void *p2 = pmm_alloc_page();
         unsigned long vaddr = TEST_VA_BASE + 0x7000;
 
         mmu_map_page(vaddr, V2P(p1), MMU_FLAGS_KERNEL_RW);
-        *(volatile unsigned long*)vaddr = 0x1234;
-        TEST_ASSERT("remap: first mapping", *(volatile unsigned long*)p1 == 0x1234);
+        *(volatile unsigned long *)vaddr = 0x1234;
+        TEST_ASSERT("remap: first mapping", *(volatile unsigned long *)p1 == 0x1234);
         mmu_unmap_page(vaddr);
 
         mmu_map_page(vaddr, V2P(p2), MMU_FLAGS_KERNEL_RW);
-        *(volatile unsigned long*)vaddr = 0x5678;
-        TEST_ASSERT("remap: second mapping", *(volatile unsigned long*)p2 == 0x5678);
+        *(volatile unsigned long *)vaddr = 0x5678;
+        TEST_ASSERT("remap: second mapping", *(volatile unsigned long *)p2 == 0x5678);
         // p1 should still have old value
-        TEST_ASSERT("remap: p1 unchanged", *(volatile unsigned long*)p1 == 0x1234);
+        TEST_ASSERT("remap: p1 unchanged", *(volatile unsigned long *)p1 == 0x1234);
         mmu_unmap_page(vaddr);
 
         pmm_free_page(p1);
@@ -174,7 +174,7 @@ void test_mmu(void)
 
     // read-only mapping: verify flags
     {
-        void* phys_page = pmm_alloc_page();
+        void *phys_page = pmm_alloc_page();
         unsigned long vaddr = TEST_VA_BASE + 0x8000;
         mmu_map_page(vaddr, V2P(phys_page), MMU_FLAGS_KERNEL_RO);
 
@@ -192,34 +192,30 @@ void test_mmu(void)
     // fill test: map 16 pages, verify all, unmap all
     {
 #define FILL_COUNT 16
-        void* pages[FILL_COUNT];
+        void *pages[FILL_COUNT];
         unsigned long vas[FILL_COUNT];
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             pages[i] = pmm_alloc_page();
             vas[i] = TEST_VA_BASE + 0x10000 + (unsigned long)i * 0x1000;
             mmu_map_page(vas[i], V2P(pages[i]), MMU_FLAGS_KERNEL_RW);
-            *(volatile unsigned long*)vas[i] = (unsigned long)(0xF000 + i);
+            *(volatile unsigned long *)vas[i] = (unsigned long)(0xF000 + i);
         }
 
         int ok = 1;
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
-            if (*(volatile unsigned long*)pages[i] != (unsigned long)(0xF000 + i))
+        for (int i = 0; i < FILL_COUNT; i++) {
+            if (*(volatile unsigned long *)pages[i] != (unsigned long)(0xF000 + i))
                 ok = 0;
         }
         TEST_ASSERT("fill: all values correct", ok);
 
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             mmu_unmap_page(vas[i]);
             pmm_free_page(pages[i]);
         }
 
         // verify all unmapped
         ok = 1;
-        for (int i = 0; i < FILL_COUNT; i++)
-        {
+        for (int i = 0; i < FILL_COUNT; i++) {
             if (mmu_query(vas[i], 0, 0))
                 ok = 0;
         }

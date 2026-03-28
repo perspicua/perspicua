@@ -1,16 +1,16 @@
 /*
  * uart.h - Public API for the PL011 UART driver.
  *
- * This file defines the constants, macros, and function prototypes for
- * managing serial communication through the primary UART controller.
+ * This header defines constants and functions for managing serial
+ * communication through the primary UART controller.
  */
 
 #ifndef PERSPICUA_DRIVER_UART_H
 #define PERSPICUA_DRIVER_UART_H
 
-#include "core/lock.h"
 #include "types.h"
-#include "io.h"
+
+#include "core/lock.h"
 
 /* UART Flag Register (FR) bits */
 #define UART_FR_TXFF (1 << 5)
@@ -36,16 +36,14 @@
 #define UART_MIS_TXMIS (1 << 5)
 #define UART_MIS_RTMIS (1 << 6)
 
-/* Public UART Register Pointers and Synchronization */
-extern volatile uint32_t* uart_dr;
-extern volatile uint32_t* uart_fr;
-extern volatile uint32_t* uart_mis;
-extern volatile uint32_t* uart_imsc;
+extern volatile uint32_t *uart_dr;
+extern volatile uint32_t *uart_fr;
+extern volatile uint32_t *uart_mis;
+extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
 /*
- * uart_init - Discovers the UART device from the hardware tree and
- * configures it for 115200 baud, 8n1, with FIFOs enabled.
+ * uart_init - Discovers the UART and configures it for 115200 8n1.
  */
 void uart_init(void);
 
@@ -55,52 +53,47 @@ void uart_init(void);
 void uart_send(char c);
 
 /*
- * uart_send_raw - Transmits a single character without taking a lock.
- * Caller MUST hold uart_tx_lock.
+ * uart_send_raw - Transmits a character without locking (caller must hold lock).
  */
 void uart_send_raw(char c);
 
 /*
- * uart_getc - Receives a single character. This function blocks until
- * a character is available in the receive FIFO.
+ * uart_getc - Receives a single character (blocking).
  */
 char uart_getc(void);
 
 /*
  * uart_puts - Sends a null-terminated string to the UART.
  */
-void uart_puts(const char* str);
+void uart_puts(const char *str);
 
 /*
- * uart_puts_locked - Sends a null-terminated string while holding the
- * UART spinlock to ensure atomic output across multiple cores.
+ * uart_puts_locked - Sends a string atomically while holding the lock.
  */
-void uart_puts_locked(const char* str);
+void uart_puts_locked(const char *str);
 
 /*
- * uart_write - A wrapper for tty_write that routes output through the
- * console TTY subsystem.
+ * uart_write - Wrapper for tty_write targeting the console TTY.
  */
-void uart_write(const char* buf, size_t len);
+void uart_write(const char *buf, size_t len);
 
 /*
- * uart_data_ready - Returns non-zero if there is at least one character
- * waiting in the receive FIFO.
+ * uart_data_ready - Returns non-zero if RX FIFO is not empty.
  */
 int uart_data_ready(void);
 
 /*
- * uart_enable_interrupts - Enables the receive and receive timeout interrupts.
+ * uart_enable_interrupts - Enables RX and RX Timeout interrupts.
  */
 void uart_enable_interrupts(void);
 
 /*
- * uart_clear_interrupt - Clears the interrupts specified by the given mask.
+ * uart_clear_interrupt - Clears interrupts matching the bitmask.
  */
 void uart_clear_interrupt(uint32_t mask);
 
 /*
- * uart_get_irq - Returns the cached IRQ number for the UART controller.
+ * uart_get_irq - Returns the cached IRQ number for the UART.
  */
 unsigned int uart_get_irq(void);
 

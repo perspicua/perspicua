@@ -1,25 +1,27 @@
 /*
  * tty.h - Public API for the Teletype (TTY) subsystem.
  *
- * This file defines the TTY structure and functions for managing
- * character-based input and output, including line editing and buffering.
+ * This header defines the TTY structure and functions for character-based
+ * input/output, including line editing and buffering.
  */
 
-#ifndef PERSPICUA_KERNEL_TTY_H
-#define PERSPICUA_KERNEL_TTY_H
+#ifndef PERSPICUA_CORE_TTY_H
+#define PERSPICUA_CORE_TTY_H
 
 #include "types.h"
+
 #include "core/lock.h"
 #include "sched/sched.h"
 
-/* Size of the internal circular buffers for receive and transmit */
 #define TTY_BUFFER_SIZE 256
 
 /*
- * tty - Represents a terminal device with its associated buffers and state.
+ * struct tty - Represents a terminal device with its buffers and state.
+ *
+ * Manages separate RX/TX circular buffers and wait queues for processes
+ * performing blocking I/O.
  */
-struct tty
-{
+struct tty {
     char rx_buffer[TTY_BUFFER_SIZE];
     size_t rx_head;
     size_t rx_tail;
@@ -28,39 +30,36 @@ struct tty
     size_t tx_head;
     size_t tx_tail;
 
-    struct task* wait_queue_head;
-    struct task* wait_queue_tail;
+    struct task *wait_queue_head;
+    struct task *wait_queue_tail;
 
-    struct task* tx_wait_queue_head;
-    struct task* tx_wait_queue_tail;
+    struct task *tx_wait_queue_head;
+    struct task *tx_wait_queue_tail;
 
     spinlock_t lock;
     int echo_enabled;
-    int canon_enabled; /* Canonical mode: waits for newline before returning data */
+    int canon_enabled;
     uint32_t foreground_pid;
 };
 
 /*
- * tty_init - Initializes a TTY structure with empty buffers and default settings.
+ * tty_init - Initializes a TTY structure with default settings.
  */
-void tty_init(struct tty* tty);
+void tty_init(struct tty *tty);
 
 /*
- * tty_handle_rx - Processes a single character received from the hardware.
- * Handles line editing in canonical mode and wakes up waiting readers.
+ * tty_handle_rx - Processes a character received from the hardware.
  */
-void tty_handle_rx(struct tty* tty, char c);
+void tty_handle_rx(struct tty *tty, char c);
 
 /*
- * tty_read - Reads up to 'count' characters from the TTY receive buffer.
- * This function may block if the buffer is empty or a full line is required.
+ * tty_read - Reads characters from the TTY receive buffer.
  */
-int tty_read(struct tty* tty, char* buf, size_t count);
+int tty_read(struct tty *tty, char *buf, size_t count);
 
 /*
- * tty_write - Writes 'count' characters to the TTY transmit buffer and
- * triggers hardware transmission.
+ * tty_write - Writes characters to the TTY transmit buffer.
  */
-int tty_write(struct tty* tty, const char* buf, size_t count);
+int tty_write(struct tty *tty, const char *buf, size_t count);
 
-#endif /* PERSPICUA_KERNEL_TTY_H */
+#endif /* PERSPICUA_CORE_TTY_H */

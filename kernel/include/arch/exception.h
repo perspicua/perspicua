@@ -1,7 +1,8 @@
 /*
- * kernel/include/arch/exception.h
+ * exception.h - Hardware exception handling and trap frame definitions.
  *
- * Hardware exception handling, trap frames, and vector handlers for AArch64.
+ * This header defines the register state saved during exceptions and the
+ * entry points for architecture-specific exception handling on AArch64.
  */
 
 #ifndef PERSPICUA_ARCH_EXCEPTION_H
@@ -9,47 +10,46 @@
 
 #include "types.h"
 
-/* --- Constants and Macros --- */
-
 /* 128-bit type for NEON/FPU registers */
 typedef __uint128_t uint128_t;
 
-/* --- Data Structures --- */
-
 /*
- * Represents the CPU state saved on the stack during an exception.
- * Layout must strictly match the save_all/restore_all macros in arch/vector.S.
+ * struct exception_trap_frame - CPU state saved on the stack during an exception.
+ *
+ * This structure captures the complete execution context (GPRs, ELR, SPSR, and
+ * SIMD/FP registers) to allow for transparent process preemption and fault
+ * diagnosis. The layout MUST strictly match the assembly macros in vector.S.
  */
-struct exception_trap_frame
-{
+struct exception_trap_frame {
     uint64_t sp_el0;
-    uint64_t _pad;      // alignment padding (xzr)
-    uintptr_t elr_el1;  // addr to return after syscall
-    uint64_t spsr_el1;  // cpu state
-    // registers
-    uint64_t x[30];  // x0 - x29
-    uint64_t x30;    // link
-    uint32_t fpsr;
-    uint32_t fpcr;
+    uint64_t _pad;     /* Alignment padding (xzr) */
+    uintptr_t elr_el1; /* Address to return to after exception or syscall */
+    uint64_t spsr_el1; /* Saved processor state */
 
-    uint128_t q[32];  // NEON/FPU registers
+    uint64_t x[30]; /* General purpose registers x0 - x29 */
+    uint64_t x30;   /* Link register (LR) */
+    uint32_t fpsr;  /* Floating-point status register */
+    uint32_t fpcr;  /* Floating-point control register */
+
+    uint128_t q[32]; /* SIMD/NEON/FPU registers v0 - v31 */
 } __attribute__((aligned(16)));
 
-/* --- Function Prototypes --- */
-
 /*
- * Called when an unexpected exception occurs that has no specific handler.
+ * exception_unhandled_vector - Default handler for unknown or reserved vectors.
+ *
+ * Used as a fallback when the processor takes an exception into a vector
+ * with no specific implementation (e.g., FIQ or SError).
  */
 void exception_unhandled_vector(void);
 
 /*
- * Main entry point for hardware interrupts (IRQ).
+ * exception_irq_handler - Top-level entry point for hardware interrupts.
  */
 void exception_irq_handler(void);
 
 /*
- * Main entry point for synchronous exceptions (syscalls, aborts).
+ * exception_sync_handler - Entry point for synchronous traps and system calls.
  */
-void exception_sync_handler(struct exception_trap_frame* tf);
+void exception_sync_handler(struct exception_trap_frame *tf);
 
 #endif /* PERSPICUA_ARCH_EXCEPTION_H */

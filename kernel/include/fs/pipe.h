@@ -1,43 +1,21 @@
 /*
- * pipe.h - Anonymous pipe definitions.
+ * pipe.h - Public API for anonymous pipes.
+ *
+ * This header defines the kernel-internal interface for creating and
+ * managing inter-process communication pipes.
  */
 
-#ifndef PERSPICUA_KERNEL_PIPE_H
-#define PERSPICUA_KERNEL_PIPE_H
+#ifndef PERSPICUA_FS_PIPE_H
+#define PERSPICUA_FS_PIPE_H
 
 #include "types.h"
-#include "fs/vfs.h"
-#include "core/lock.h"
-#include "sched/sched.h"
-
-#define PIPE_BUF_SIZE 4096
 
 /*
- * struct pipe - Represents an anonymous pipe.
- * This structure is typically pointed to by vnode->internal_info.
+ * pipe_create - Internal implementation of the pipe() system call.
+ *
+ * Allocates a shared buffer and two file descriptors (read/write) for
+ * the current process. Returns PERS_SUCCESS or a negative error.
  */
-struct pipe
-{
-    char buffer[PIPE_BUF_SIZE];
-    size_t head;  /* Next write position */
-    size_t tail;  /* Next read position */
-    size_t count; /* Number of bytes currently in buffer */
+int pipe_create(int pipefd[2]);
 
-    int readers; /* Number of open read ends */
-    int writers; /* Number of open write ends */
-
-    spinlock_t lock;
-
-    struct task* read_wait_queue;  /* Tasks waiting for data to read */
-    struct task* write_wait_queue; /* Tasks waiting for space to write */
-};
-
-/* --- Public API --- */
-
-/*
- * kernel_pipe - Internal implementation of the pipe() system call.
- * Creates a new anonymous pipe and returns two file descriptors.
- */
-int kernel_pipe(int pipefd[2]);
-
-#endif /* PERSPICUA_KERNEL_PIPE_H */
+#endif /* PERSPICUA_FS_PIPE_H */

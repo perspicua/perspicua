@@ -21,12 +21,12 @@ void test_types(void)
     TEST_ASSERT_EQ("sizeof ssize_t", sizeof(ssize_t), 8);
     TEST_ASSERT_EQ("sizeof uintptr_t", sizeof(uintptr_t), 8);
     TEST_ASSERT_EQ("sizeof ptrdiff_t", sizeof(ptrdiff_t), 8);
-    TEST_ASSERT_EQ("sizeof void*", sizeof(void*), 8);
+    TEST_ASSERT_EQ("sizeof void*", sizeof(void *), 8);
     TEST_PASS("pointer/size type sizes");
 
     // null
     TEST_ASSERT("NULL is zero", NULL == NULL);
-    void* p = NULL;
+    void *p = NULL;
     TEST_ASSERT("NULL ptr is false", !p);
     TEST_PASS("NULL definition");
 

@@ -8,8 +8,7 @@
 #ifndef PERSPICUA_LIBC_TYPES_H
 #define PERSPICUA_LIBC_TYPES_H
 
-/* NULL pointer definition */
-#define NULL ((void*)0)
+#define NULL ((void *)0)
 
 /* Fixed-width integer types */
 typedef signed char int8_t;
@@ -28,9 +27,10 @@ typedef signed long ptrdiff_t;
 typedef unsigned long uintptr_t;
 typedef signed long intptr_t;
 
+/* Posix-compatible fundamental types */
 typedef unsigned long long ino_t;
 typedef int64_t off_t;
-/* Integer type limits */
+
 #define INT8_MIN  (-128)
 #define INT8_MAX  (127)
 #define UINT8_MAX (255U)
@@ -48,13 +48,5 @@ typedef int64_t off_t;
 #define UINT64_MAX (18446744073709551615ULL)
 
 #define SIZE_MAX UINT64_MAX
-
-/*
- * atomic_t - Structure for atomic integer operations.
- */
-typedef struct
-{
-    volatile int counter;
-} atomic_t;
 
 #endif /* PERSPICUA_LIBC_TYPES_H */

@@ -1,15 +1,16 @@
 /*
  * block.c - Generic block device management layer.
  *
- * This layer provides a unified interface for block-oriented hardware
- * (like SD cards, disks, etc.) and integrates them into the VFS via devfs.
+ * This module provides a unified interface for block-oriented hardware
+ * and handles their registration into the device filesystem (devfs).
  */
 
 #include "driver/block.h"
 
-#include "uapi/errors.h"
 #include "stdio.h"
 #include "string.h"
+
+#include "uapi/errors.h"
 
 #include "fs/vfs.h"
 #include "fs/devfs.h"
@@ -17,18 +18,18 @@
 
 #define BLOCK_MAX_DEVICES 8
 
-static struct block_device* devices[BLOCK_MAX_DEVICES];
+static struct block_device *devices[BLOCK_MAX_DEVICES];
 static size_t nr_devices = 0;
 
 /*
- * block_device_vfs_read - VFS bridge for block device reads.
+ * block_device_vfs_read - Bridge between VFS byte-reads and driver block-reads.
  */
-static int block_device_vfs_read(struct vfs_file* file, void* buffer, size_t size)
+static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t size)
 {
-    struct block_device* dev = (struct block_device*)file->node->internal_info;
+    struct block_device *dev = (struct block_device *)file->node->internal_info;
 
-    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0)
-    {
+    /* Enforce block-aligned offsets and sizes */
+    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
@@ -36,8 +37,7 @@ static int block_device_vfs_read(struct vfs_file* file, void* buffer, size_t siz
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->read_blocks(dev, buffer, start_block, num_blocks);
-    if (res == PERS_SUCCESS)
-    {
+    if (res == PERS_SUCCESS) {
         file->offset += size;
         return (int)size;
     }
@@ -46,14 +46,13 @@ static int block_device_vfs_read(struct vfs_file* file, void* buffer, size_t siz
 }
 
 /*
- * block_device_vfs_write - VFS bridge for block device writes.
+ * block_device_vfs_write - Bridge between VFS byte-writes and driver block-writes.
  */
-static int block_device_vfs_write(struct vfs_file* file, const void* buffer, size_t size)
+static int block_device_vfs_write(struct vfs_file *file, const void *buffer, size_t size)
 {
-    struct block_device* dev = (struct block_device*)file->node->internal_info;
+    struct block_device *dev = (struct block_device *)file->node->internal_info;
 
-    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0)
-    {
+    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
@@ -61,8 +60,7 @@ static int block_device_vfs_write(struct vfs_file* file, const void* buffer, siz
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->write_blocks(dev, buffer, start_block, num_blocks);
-    if (res == PERS_SUCCESS)
-    {
+    if (res == PERS_SUCCESS) {
         file->offset += size;
         return (int)size;
     }
@@ -70,48 +68,42 @@ static int block_device_vfs_write(struct vfs_file* file, const void* buffer, siz
     return res;
 }
 
-/* Operation mapping for block devices exposed in devfs */
+/* Operation mapping for devfs registration */
 static struct vfs_vnode_ops block_device_vfs_ops = {
     .read = block_device_vfs_read, .write = block_device_vfs_write, .lookup = NULL, .close = NULL};
 
 /*
- * block_device_register - Adds a new block device to the system.
+ * block_device_register - Adds a device to the global table and registers it in devfs.
  */
-void block_device_register(struct block_device* dev)
+void block_device_register(struct block_device *dev)
 {
-    if (!dev)
-    {
+    if (!dev) {
         return;
     }
 
-    if (nr_devices >= BLOCK_MAX_DEVICES)
-    {
-        pr_err("block: Registration failed: table full\n");
+    if (nr_devices >= BLOCK_MAX_DEVICES) {
+        pr_err("block: registration failed: table full\n");
         return;
     }
 
     devices[nr_devices++] = dev;
 
-    if (devfs_register_device(dev->name, &block_device_vfs_ops, dev) != PERS_SUCCESS)
-    {
-        pr_err("block: Failed to register /dev/%s\n", dev->name);
+    if (devfs_register_device(dev->name, &block_device_vfs_ops, dev) != PERS_SUCCESS) {
+        pr_err("block: failed to register /dev/%s\n", dev->name);
     }
 }
 
 /*
- * block_device_lookup - Finds a registered block device by name.
+ * block_device_lookup - Returns a device pointer matching the provided name.
  */
-struct block_device* block_device_lookup(const char* name)
+struct block_device *block_device_lookup(const char *name)
 {
-    if (!name)
-    {
+    if (!name) {
         return NULL;
     }
 
-    for (size_t i = 0; i < nr_devices; i++)
-    {
-        if (devices[i] && strcmp(name, devices[i]->name) == 0)
-        {
+    for (size_t i = 0; i < nr_devices; i++) {
+        if (devices[i] && strcmp(name, devices[i]->name) == 0) {
             return devices[i];
         }
     }

@@ -1,7 +1,8 @@
 /*
- * signals.h - Standard Library signal definitions.
+ * signals.h - Userspace signal handling API.
  *
- * Provides userspace with signal-related constants and types.
+ * Provides userspace with the necessary constants and types to interact
+ * with the kernel's signal subsystem.
  */
 
 #ifndef PERSPICUA_LIBC_SIGNALS_H

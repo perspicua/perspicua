@@ -39,7 +39,7 @@ void test_string(void)
     // strcpy
     {
         char buf[64];
-        char* ret = strcpy(buf, "hello");
+        char *ret = strcpy(buf, "hello");
         TEST_ASSERT("strcpy contents", strcmp(buf, "hello") == 0);
         TEST_ASSERT("strcpy returns dst", ret == buf);
 
@@ -71,7 +71,7 @@ void test_string(void)
     {
         char buf[64];
         strcpy(buf, "hello");
-        char* ret = strcat(buf, " world");
+        char *ret = strcat(buf, " world");
         TEST_ASSERT("strcat contents", strcmp(buf, "hello world") == 0);
         TEST_ASSERT("strcat returns dst", ret == buf);
 
@@ -109,7 +109,7 @@ void test_string(void)
 
     // strchr
     {
-        const char* s = "hello world";
+        const char *s = "hello world";
         TEST_ASSERT("strchr found 'l'", strchr(s, 'l') == s + 2);
         TEST_ASSERT("strchr found 'h'", strchr(s, 'h') == s);
         TEST_ASSERT("strchr found 'd'", strchr(s, 'd') == s + 10);
@@ -120,7 +120,7 @@ void test_string(void)
 
     // strrchr
     {
-        const char* s = "hello world";
+        const char *s = "hello world";
         TEST_ASSERT("strrchr last 'l'", strrchr(s, 'l') == s + 9);
         TEST_ASSERT("strrchr first 'h'", strrchr(s, 'h') == s);
         TEST_ASSERT("strrchr not found", strrchr(s, 'z') == NULL);
@@ -130,7 +130,7 @@ void test_string(void)
 
     // strstr
     {
-        const char* s = "hello world hello";
+        const char *s = "hello world hello";
         TEST_ASSERT("strstr found", strstr(s, "world") == s + 6);
         TEST_ASSERT("strstr at begin", strstr(s, "hello") == s);
         TEST_ASSERT("strstr at end", strstr("abcxyz", "xyz") != NULL);
@@ -167,7 +167,7 @@ void test_string(void)
     // strtok
     {
         char buf[] = "   hello   world   from   strtok   ";
-        char* token = strtok(buf, " ");
+        char *token = strtok(buf, " ");
         TEST_ASSERT("strtok first", token != NULL && strcmp(token, "hello") == 0);
         token = strtok(NULL, " ");
         TEST_ASSERT("strtok second", token != NULL && strcmp(token, "world") == 0);
@@ -193,8 +193,8 @@ void test_string(void)
     // strtok_r
     {
         char buf[] = "   hello   world   from   strtok_r   ";
-        char* saveptr;
-        char* token = strtok_r(buf, " ", &saveptr);
+        char *saveptr;
+        char *token = strtok_r(buf, " ", &saveptr);
         TEST_ASSERT("strtok_r first", token != NULL && strcmp(token, "hello") == 0);
         token = strtok_r(NULL, " ", &saveptr);
         TEST_ASSERT("strtok_r second", token != NULL && strcmp(token, "world") == 0);
@@ -213,8 +213,7 @@ void test_string(void)
         memset(buf, 0xAA, sizeof(buf));
         int ok = 1;
         for (int i = 0; i < 128; i++)
-            if ((unsigned char)buf[i] != 0xAA)
-            {
+            if ((unsigned char)buf[i] != 0xAA) {
                 ok = 0;
                 break;
             }
@@ -223,8 +222,7 @@ void test_string(void)
         memset(buf, 0, sizeof(buf));
         ok = 1;
         for (int i = 0; i < 128; i++)
-            if (buf[i] != 0)
-            {
+            if (buf[i] != 0) {
                 ok = 0;
                 break;
             }
@@ -238,15 +236,14 @@ void test_string(void)
         memset(odd, 0x55, 13);
         ok = 1;
         for (int i = 0; i < 13; i++)
-            if ((unsigned char)odd[i] != 0x55)
-            {
+            if ((unsigned char)odd[i] != 0x55) {
                 ok = 0;
                 break;
             }
         TEST_ASSERT("memset odd size", ok);
 
         char rv[4];
-        void* ret = memset(rv, 'Z', 4);
+        void *ret = memset(rv, 'Z', 4);
         TEST_ASSERT("memset returns dest", ret == rv);
     }
     TEST_PASS("memset");
@@ -255,7 +252,7 @@ void test_string(void)
     {
         char src[] = "copy me!";
         char dst[16];
-        void* ret = memcpy(dst, src, 9);
+        void *ret = memcpy(dst, src, 9);
         TEST_ASSERT("memcpy contents", strcmp(dst, "copy me!") == 0);
         TEST_ASSERT("memcpy returns dst", ret == dst);
 
@@ -313,7 +310,7 @@ void test_string(void)
 
         char rv_src[4] = "abc";
         char rv_dst[4];
-        void* ret = memmove(rv_dst, rv_src, 4);
+        void *ret = memmove(rv_dst, rv_src, 4);
         TEST_ASSERT("memmove returns dst", ret == rv_dst);
     }
     TEST_PASS("memmove");

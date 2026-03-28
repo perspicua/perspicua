@@ -1,57 +1,51 @@
 /*
  * timer.h - Public API for system time and interrupt control.
  *
- * This file defines the interface for millisecond-precision timing,
- * system uptime retrieval, and low-level CPU interrupt management.
+ * This header defines the interface for uptime retrieval, delays, and
+ * low-level CPU interrupt management.
  */
 
-#ifndef PERSPICUA_KERNEL_TIMER_H
-#define PERSPICUA_KERNEL_TIMER_H
+#ifndef PERSPICUA_CORE_TIMER_H
+#define PERSPICUA_CORE_TIMER_H
 
 /*
- * sleep_ms - Blocks the current CPU core for the specified duration in
- * milliseconds using a busy-wait loop.
- */
-void sleep_ms(unsigned long ms);
-
-/*
- * get_system_time - Returns the number of milliseconds elapsed since
- * the system was booted.
+ * get_system_time - Returns the uptime in milliseconds.
  */
 unsigned long get_system_time(void);
 
 /*
- * timer_interrupt_init - Configures the ARM generic physical timer
- * to trigger periodic interrupts on the current CPU core.
+ * sleep_ms - Performs a busy-wait delay for the specified duration.
+ */
+void sleep_ms(unsigned long ms);
+
+/*
+ * timer_interrupt_init - Configures the periodic generic timer tick.
  */
 void timer_interrupt_init(void);
 
 /*
- * timer_interrupt_reset - Resets the timer's compare value to trigger
- * the next periodic interrupt.
+ * timer_interrupt_reset - Reloads the timer for the next tick.
  */
 void timer_interrupt_reset(void);
 
 /*
- * enable_interrupts - Unmasks IRQ interrupts on the local CPU core.
+ * enable_interrupts - Unmasks IRQs on the local CPU core.
  */
 void enable_interrupts(void);
 
 /*
- * disable_interrupts - Masks IRQ interrupts on the local CPU core.
+ * disable_interrupts - Masks IRQs on the local CPU core.
  */
 void disable_interrupts(void);
 
 /*
- * irq_save - Disables interrupts on the local core and returns the
- * previous interrupt state mask.
+ * irq_save - Disables interrupts and returns the previous state mask.
  */
 unsigned long irq_save(void);
 
 /*
- * irq_restore - Restores the local CPU core's interrupt state to the
- * provided mask value.
+ * irq_restore - Restores the interrupt state from a saved mask.
  */
 void irq_restore(unsigned long flags);
 
-#endif /* PERSPICUA_KERNEL_TIMER_H */
+#endif /* PERSPICUA_CORE_TIMER_H */

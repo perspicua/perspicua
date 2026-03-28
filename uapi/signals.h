@@ -1,8 +1,8 @@
 /*
- * signals.h - Public API for signals.
+ * signals.h - Public API for signal numbers and handling structures.
  *
- * This file defines the signals available and the handler type for
- * process signaling.
+ * This header defines the standard signal numbers and action structures
+ * shared between the kernel and userspace.
  */
 
 #ifndef PERSPICUA_UAPI_SIGNALS_H
@@ -10,7 +10,8 @@
 
 #include "types.h"
 
-/* Signal numbers */
+/* --- Signal Numbers --- */
+
 #define SIGNAL_HUP    1
 #define SIGNAL_INT    2
 #define SIGNAL_QUIT   3
@@ -48,13 +49,11 @@
 
 #ifndef __ASSEMBLY__
 
-/* sigset_t for signal masking */
-typedef uint32_t sigset_t;
+/* --- Types and Constants --- */
 
-/* Function pointer type for signal handlers */
+typedef uint32_t sigset_t;
 typedef void (*signal_handler_t)(int);
 
-    /* Special handler values */
     #define SIGNAL_DFL ((signal_handler_t)0)    /* Default action */
     #define SIGNAL_IGN ((signal_handler_t)1)    /* Ignore signal */
     #define SIGNAL_ERR ((signal_handler_t) - 1) /* Error return */
@@ -69,13 +68,17 @@ typedef void (*signal_handler_t)(int);
     #define SA_RESETHAND 0x80000000
     #define SA_RESTORER  0x04000000
 
-    /* sigprocmask how */
+    /* sigprocmask "how" values */
     #define SIG_BLOCK   0
     #define SIG_UNBLOCK 1
     #define SIG_SETMASK 2
 
-struct sigaction
-{
+/* --- Data Structures --- */
+
+/*
+ * struct sigaction - Defines the action to be taken upon signal delivery.
+ */
+struct sigaction {
     signal_handler_t sa_handler;
     sigset_t sa_mask;
     int sa_flags;

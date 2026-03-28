@@ -8,10 +8,10 @@
 #include "types.h"
 #include "syscall.h"
 
-/*
- * __libc_write - Routes string data to the standard output file descriptor.
- */
-void __libc_write(const char* buf, size_t len)
+/* --- Public API Implementations --- */
+
+/* Routes string data to the standard output file descriptor. */
+void __libc_write(const char *buf, size_t len)
 {
     sys_write(1, buf, len);
 }

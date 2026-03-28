@@ -1,15 +1,15 @@
 /*
  * syscalls.h - System call number definitions.
  *
- * This file defines the unique numeric identifiers for each system call
- * provided by the kernel, used by both the userspace wrappers and the
- * kernel dispatcher.
+ * This header defines the unique numeric identifiers for each system call
+ * shared between the kernel dispatcher and userspace wrappers.
  */
 
 #ifndef PERSPICUA_UAPI_SYSCALLS_H
 #define PERSPICUA_UAPI_SYSCALLS_H
 
-/* System call identifiers */
+/* --- System Call Identifiers --- */
+
 #define SYS_WRITE       1
 #define SYS_EXIT        2
 #define SYS_GETPID      3

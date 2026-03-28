@@ -64,9 +64,9 @@ static void smp_init(void)
     unsigned long entry_phys = V2P((unsigned long)_entry);
 
     /* BCM2711 ARM spin table addresses */
-    volatile unsigned long* spin_cpu1 = (unsigned long*)P2V(0xE0);
-    volatile unsigned long* spin_cpu2 = (unsigned long*)P2V(0xE8);
-    volatile unsigned long* spin_cpu3 = (unsigned long*)P2V(0xF0);
+    volatile unsigned long *spin_cpu1 = (unsigned long *)P2V(0xE0);
+    volatile unsigned long *spin_cpu2 = (unsigned long *)P2V(0xE8);
+    volatile unsigned long *spin_cpu3 = (unsigned long *)P2V(0xF0);
 
     *spin_cpu1 = entry_phys;
     *spin_cpu2 = entry_phys;
@@ -104,8 +104,7 @@ __attribute__((used)) void secondary_main(void)
     sched_secondary_init();
 
     /* Fallback loop: secondary cores should enter the scheduler */
-    for (;;)
-    {
+    for (;;) {
         asm volatile("wfe");
     }
 }
@@ -124,8 +123,7 @@ static void print_banner(void)
  */
 static void dashboard_task(void)
 {
-    while (1)
-    {
+    while (1) {
         dashboard_update();
         sched_sleep_ms(100);
     }
@@ -180,8 +178,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     sd_init();
 
     /* Initialize and mount FAT32 as the root filesystem */
-    if (fat32_init("sd0") == PERS_SUCCESS)
-    {
+    if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
     }
 
@@ -191,19 +188,17 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Initialize and mount procfs */
     procfs_init();
 
-    // run_all_tests();
+    run_all_tests();
     enable_interrupts();
     run_scheduler_tests();
 
     /* Load and execute the primary user-space application from the SD card */
-    if (process_create_from_file("/init.elf", 1) != 0)
-    {
+    if (process_create_from_file("/init.elf", 1) != 0) {
         pr_err("init: Failed to load /init.elf\n");
     }
 
     /* The main thread remains parked while the scheduler handles execution */
-    while (1)
-    {
+    while (1) {
         asm volatile("wfe");
     }
 
