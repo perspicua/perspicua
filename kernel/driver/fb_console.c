@@ -44,26 +44,59 @@ static void fb_console_scroll(void)
 /*
  * fb_console_putc_unlocked - Internal rendering logic without synchronization.
  */
+static int ansi_state = 0;
 static void fb_console_putc_unlocked(char c)
 {
-    if (c == '\n') {
-        cursor_x = 0;
-        cursor_y += CHAR_HEIGHT;
-    } else if (c == '\r') {
-        cursor_x = 0;
-    } else if (c == '\b' || c == 127) {
-        if (cursor_x >= CHAR_WIDTH) {
-            cursor_x -= CHAR_WIDTH;
-            graphics_draw_char(cursor_x, cursor_y, ' ', 0xFFFFFFFF, 0x00000000);
-        }
-    } else {
-        graphics_draw_char(cursor_x, cursor_y, c, 0xFFFFFFFF, 0x00000000);
-        cursor_x += CHAR_WIDTH;
-
-        if (cursor_x + CHAR_WIDTH > fb_info.width) {
+    if (ansi_state == 0) {
+        if (c == '\033') {
+            ansi_state = 1;
+        } else if (c == '\n') {
             cursor_x = 0;
             cursor_y += CHAR_HEIGHT;
+        } else if (c == '\r') {
+            cursor_x = 0;
+        } else if (c == '\b' || c == 127) {
+            if (cursor_x >= CHAR_WIDTH) {
+                cursor_x -= CHAR_WIDTH;
+                graphics_draw_char(cursor_x, cursor_y, ' ', 0xFFFFFFFF, 0x00000000);
+            }
+        } else {
+            graphics_draw_char(cursor_x, cursor_y, c, 0xFFFFFFFF, 0x00000000);
+            cursor_x += CHAR_WIDTH;
+
+            if (cursor_x + CHAR_WIDTH > fb_info.width) {
+                cursor_x = 0;
+                cursor_y += CHAR_HEIGHT;
+            }
         }
+    } else if (ansi_state == 1) {
+        if (c == '[') {
+            ansi_state = 2;
+        } else {
+            ansi_state = 0;
+        }
+    } else if (ansi_state == 2) {
+        if (c == 'H') {
+            cursor_x = 0;
+            cursor_y = CONSOLE_Y_OFFSET;
+            ansi_state = 0;
+        } else if (c == '2' || c == '3') {
+            /* Support for 2J and 3J */
+            ansi_state = 3;
+        } else if (c == 'J') {
+            /* Just J? Clear from cursor to end. For now, we only care about 2J/3J */
+            ansi_state = 0;
+        } else {
+            /* Any other sequence? Just reset state for now */
+            ansi_state = 0;
+        }
+    } else if (ansi_state == 3) {
+        if (c == 'J') {
+            /* Clear screen area (but not dashboard) */
+            graphics_draw_rect(0, CONSOLE_Y_OFFSET, fb_info.width,
+                               fb_info.height - CONSOLE_Y_OFFSET, 0x00000000, 1);
+        }
+        ansi_state = 0;
     }
 
     if (cursor_y + CHAR_HEIGHT > fb_info.height) {

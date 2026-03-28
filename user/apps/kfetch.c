@@ -6,6 +6,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "types.h"
+#include "stdlib.h"
 
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
@@ -74,7 +75,7 @@ static const char *logo[LOGO_LINES] = {
     "                             :*#######-.", "                              .=*******=",
 };
 
-static char info_lines[MAX_INFO][128];
+static char (*info_lines)[128];
 static int info_count = 0;
 
 static void add_info(const char *label, const char *value)
@@ -97,24 +98,35 @@ static void add_sep(void)
 
 int main(void)
 {
-    char buf[512];
+    info_lines = malloc(MAX_INFO * 128);
+    if (!info_lines) {
+        printf("kfetch: memory allocation failed\n");
+        return 1;
+    }
+
+    char *buf = malloc(512);
+    if (!buf) {
+        printf("kfetch: memory allocation failed\n");
+        free(info_lines);
+        return 1;
+    }
     char tmp[128];
 
     /* 1. Gather Data */
     char ver[64] = "unknown";
-    if (read_proc_file("/proc/version", buf, sizeof(buf)) > 0) {
+    if (read_proc_file("/proc/version", buf, 512) > 0) {
         strip_newline(buf);
         strncpy(ver, buf, sizeof(ver) - 1);
     }
 
     char uptime_str[64] = "unknown";
-    if (read_proc_file("/proc/uptime", buf, sizeof(buf)) > 0) {
+    if (read_proc_file("/proc/uptime", buf, 512) > 0) {
         strip_newline(buf);
         snprintf(uptime_str, sizeof(uptime_str), "%s seconds", buf);
     }
 
     unsigned long mem_total = 0, mem_free = 0, slab_used = 0, slab_total = 0;
-    if (read_proc_file("/proc/meminfo", buf, sizeof(buf)) > 0) {
+    if (read_proc_file("/proc/meminfo", buf, 512) > 0) {
         char *p;
         if ((p = find_field(buf, "MemTotal")))
             mem_total = atoul(p);
@@ -198,5 +210,7 @@ int main(void)
     }
     printf("\n");
 
+    free(buf);
+    free(info_lines);
     return 0;
 }

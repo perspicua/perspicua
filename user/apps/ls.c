@@ -1,6 +1,7 @@
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
+#include "stdlib.h"
 #include "uapi/stat.h"
 
 static void print_mode(uint32_t mode)
@@ -80,12 +81,19 @@ static int list_path_with_options(const char *path, int long_format, int show_al
     if (long_format)
         print_header();
 
-    struct vfs_dirent dirents[16];
+    size_t num_dirents = 32;
+    struct vfs_dirent *dirents = malloc(sizeof(struct vfs_dirent) * num_dirents);
+    if (!dirents) {
+        printf("ls: memory allocation failed\n");
+        sys_close(fd);
+        return 1;
+    }
+
     int res;
     char full_path[512];
     int path_len = strlen(path);
 
-    while ((res = sys_getdents(fd, dirents, sizeof(dirents))) > 0) {
+    while ((res = sys_getdents(fd, dirents, sizeof(struct vfs_dirent) * num_dirents)) > 0) {
         for (int i = 0; i < res; i++) {
             if (dirents[i].name[0] == '.' && !show_all) {
                 continue;
@@ -114,6 +122,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         }
     }
 
+    free(dirents);
     sys_close(fd);
     return 0;
 }

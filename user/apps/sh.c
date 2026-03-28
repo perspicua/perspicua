@@ -2,6 +2,7 @@
 #include "string.h"
 #include "signals.h"
 #include "wait.h"
+#include "stdlib.h"
 
 #define MAX_ARGS    32
 #define CMD_MAX_LEN 512
@@ -146,7 +147,11 @@ static int is_output_builtin(const char *name)
 static void run_output_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "clear") == 0) {
-        print_string("\033[2J\033[H");
+        /* \033[H  - Move cursor to home (1,1)
+         * \033[2J - Clear entire screen
+         * \033[3J - Clear scrollback buffer
+         */
+        print_string("\033[H\033[2J\033[3J");
     } else if (strcmp(cmd->argv[0], "echo") == 0) {
         for (int i = 1; i < cmd->argc; i++) {
             print_string(cmd->argv[i]);
@@ -343,7 +348,11 @@ static void execute_pipeline(char *pipe_string)
 
 static void execute_line(char *line)
 {
-    char expanded[CMD_MAX_LEN * 2];
+    char *expanded = malloc(CMD_MAX_LEN * 2);
+    if (!expanded) {
+        print_string("sh: memory allocation failed\n");
+        return;
+    }
     expand_operators(line, expanded);
 
     /* Split by semi-colons for sequential execution */
@@ -359,7 +368,9 @@ static void execute_line(char *line)
             in_quotes = !in_quotes;
         if (*p == ';' && !in_quotes) {
             *p = '\0';
-            seq_commands[num_seq++] = p + 1;
+            if (num_seq < 16) {
+                seq_commands[num_seq++] = p + 1;
+            }
         }
         p++;
     }
@@ -367,6 +378,8 @@ static void execute_line(char *line)
     for (int i = 0; i < num_seq; i++) {
         execute_pipeline(seq_commands[i]);
     }
+
+    free(expanded);
 }
 
 static void print_prompt(void)
@@ -389,7 +402,11 @@ int main(void)
     print_string("Perspicua Shell\n");
     print_string("Type help to see available commands.\n\n");
 
-    char cmd_buffer[CMD_MAX_LEN];
+    char *cmd_buffer = malloc(CMD_MAX_LEN);
+    if (!cmd_buffer) {
+        print_string("sh: memory allocation failed\n");
+        sys_exit(1);
+    }
     int cmd_length = 0;
 
     print_prompt();
@@ -421,5 +438,6 @@ int main(void)
         }
     }
 
+    free(cmd_buffer);
     return 0;
 }

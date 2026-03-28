@@ -4,7 +4,7 @@ BUILD_DIR ?= build
 
 CFLAGS = $(COMMON_CFLAGS) -Iinclude -I../kernel/include -I..
 
-SRCS_COMMON = src/string.c src/printf.c
+SRCS_COMMON = src/string.c src/printf.c src/malloc.c
 SRCS_KERNEL = kernel/hooks.c kernel/panic.c
 SRCS_USER   = user/hooks.c user/syscall.c
 

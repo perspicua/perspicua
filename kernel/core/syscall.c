@@ -71,8 +71,8 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
             return 0;
         }
 
-        /* Check for write permissions if requested (bit 7 is Read-Only) */
-        if (writable && (current_flags & (1ULL << 7))) {
+        /* Check for write permissions (bit 7 is Read-Only, but COW allows it) */
+        if (writable && (current_flags & (1ULL << 7)) && !(current_flags & MMU_PTE_COW)) {
             spin_unlock_irqrestore(&process_table_lock, flags);
             return 0;
         }
