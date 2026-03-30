@@ -239,6 +239,7 @@ void syscall_handle(struct exception_trap_frame *tf)
         case SYS_EXEC: {
             const char *path = (const char *)(tf->x[0]);
             char *const *argv = (char *const *)(tf->x[1]);
+            char *const *envp = (char *const *)(tf->x[2]);
 
             if (!validate_user_buffer(path, 1, 0)) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -253,7 +254,7 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            int res = process_exec(kpath, argv);
+            int res = process_exec(kpath, argv, envp);
             heap_free(kpath);
 
             if (res < 0) {

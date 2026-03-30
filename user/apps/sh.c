@@ -17,6 +17,21 @@ typedef struct {
     int background;
 } Command;
 
+char **environ;
+
+static char *get_env(const char *name)
+{
+    if (!environ)
+        return NULL;
+    size_t len = strlen(name);
+    for (int i = 0; environ[i]; i++) {
+        if (strncmp(environ[i], name, len) == 0 && environ[i][len] == '=') {
+            return &environ[i][len + 1];
+        }
+    }
+    return NULL;
+}
+
 static void handle_sigchld(int sig)
 {
     (void)sig;
@@ -175,46 +190,54 @@ static void run_output_builtin(Command *cmd)
 static void run_exec(Command *cmd)
 {
     char path[256];
-    if (cmd->argv[0][0] == '/') {
-        strcpy(path, cmd->argv[0]);
-        if (sys_exec(path, cmd->argv) < 0) {
-            print_string("sh: command not found: ");
-            print_string(cmd->argv[0]);
-            print_string("\n");
-            sys_exit(1);
-        }
-    } else {
-        /* 1. Try /bin/name.elf */
-        strcpy(path, "/bin/");
-        strcat(path, cmd->argv[0]);
-        strcat(path, ".elf");
-        if (sys_exec(path, cmd->argv) >= 0)
-            return;
+    char *name = cmd->argv[0];
 
-        /* 2. Try /bin/name */
-        strcpy(path, "/bin/");
-        strcat(path, cmd->argv[0]);
-        if (sys_exec(path, cmd->argv) >= 0)
-            return;
-
-        /* 3. Try /name.elf */
-        strcpy(path, "/");
-        strcat(path, cmd->argv[0]);
-        strcat(path, ".elf");
-        if (sys_exec(path, cmd->argv) >= 0)
-            return;
-
-        /* 4. Try /name */
-        strcpy(path, "/");
-        strcat(path, cmd->argv[0]);
-        if (sys_exec(path, cmd->argv) >= 0)
-            return;
-
-        print_string("sh: command not found: ");
-        print_string(cmd->argv[0]);
-        print_string("\n");
+    // If command contains a slash, try to exec it directly
+    if (strchr(name, '/')) {
+        sys_exec(name, cmd->argv, environ);
+        print_string("sh: ");
+        print_string(name);
+        print_string(": no such file or directory\n");
         sys_exit(1);
     }
+
+    char *path_env = get_env("PATH");
+    if (!path_env) {
+        path_env = "/bin:/";
+    }
+
+    char path_copy[256];
+    strncpy(path_copy, path_env, sizeof(path_copy));
+    path_copy[sizeof(path_copy) - 1] = '\0';
+
+    char *dir = strtok(path_copy, ":");
+    while (dir) {
+        // Try dir/name.elf
+        strcpy(path, dir);
+        int len = strlen(path);
+        if (len > 0 && path[len - 1] != '/') {
+            strcat(path, "/");
+        }
+        strcat(path, name);
+        strcat(path, ".elf");
+        sys_exec(path, cmd->argv, environ);
+
+        // Try dir/name
+        strcpy(path, dir);
+        len = strlen(path);
+        if (len > 0 && path[len - 1] != '/') {
+            strcat(path, "/");
+        }
+        strcat(path, name);
+        sys_exec(path, cmd->argv, environ);
+
+        dir = strtok(NULL, ":");
+    }
+
+    print_string("sh: command not found: ");
+    print_string(name);
+    print_string("\n");
+    sys_exit(1);
 }
 
 static int apply_redirections(Command *cmd)
@@ -394,8 +417,11 @@ static void print_prompt(void)
     }
 }
 
-int main(void)
+int main(int argc, char *argv[], char *envp[])
 {
+    (void)argc;
+    (void)argv;
+    environ = envp;
     sys_signal(SIGNAL_INT, SIGNAL_IGN);
     sys_signal(SIGNAL_CHLD, handle_sigchld);
 

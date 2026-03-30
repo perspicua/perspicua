@@ -121,17 +121,18 @@ int sys_close(int fd)
     return (int)res;
 }
 
-int sys_exec(const char *path, char *const argv[])
+int sys_exec(const char *path, char *const argv[], char *const envp[])
 {
     long res;
     asm volatile("mov x0, %1\n"
                  "mov x1, %2\n"
-                 "mov x8, %3\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
                  "svc #0\n"
                  "mov %0, x0"
                  : "=r"(res)
-                 : "r"(path), "r"(argv), "i"(SYS_EXEC)
-                 : "x0", "x1", "x8", "memory");
+                 : "r"(path), "r"(argv), "r"(envp), "i"(SYS_EXEC)
+                 : "x0", "x1", "x2", "x8", "memory");
     return (int)res;
 }
 

@@ -411,7 +411,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     return PERS_SUCCESS;
 }
 
-int process_exec(const char *path, char *const argv[])
+int process_exec(const char *path, char *const argv[], char *const envp[])
 {
     int pid = process_find_current();
     if (pid < 0) {
@@ -439,12 +439,33 @@ int process_exec(const char *path, char *const argv[])
     }
     kargv[argc] = NULL;
 
+    char *kenvp[64];
+    int envc = 0;
+    if (envp) {
+        while (envc < 63) {
+            char *uenv;
+            if (copy_from_user(&uenv, &envp[envc], sizeof(char *)) != 0 || !uenv) {
+                break;
+            }
+            char *kenv = heap_malloc(256);
+            if (!kenv || strncpy_from_user(kenv, uenv, 256) < 0) {
+                heap_free(kenv);
+                break;
+            }
+            kenvp[envc++] = kenv;
+        }
+    }
+    kenvp[envc] = NULL;
+
     unsigned long *new_pgd = mmu_create_user_pgd();
     uint64_t entry_point;
     if (!new_pgd || elf_load(path, new_pgd, &entry_point) != 0) {
         mmu_destroy_user_pgd(new_pgd);
         for (int i = 0; i < argc; i++) {
             heap_free(kargv[i]);
+        }
+        for (int i = 0; i < envc; i++) {
+            heap_free(kenvp[i]);
         }
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
@@ -456,6 +477,10 @@ int process_exec(const char *path, char *const argv[])
         mmu_destroy_user_pgd(new_pgd);
         for (int i = 0; i < argc; i++) {
             heap_free(kargv[i]);
+        }
+
+        for (int i = 0; i < envc; i++) {
+            heap_free(kenvp[i]);
         }
         return -PERS_ERR_OUT_OF_MEMORY;
     }
@@ -492,6 +517,36 @@ int process_exec(const char *path, char *const argv[])
         heap_free(kargv[i]);
     }
 
+    /* Set up user stack with envp (top-down) */
+    uintptr_t kenv_user_vaddrs[64];
+
+    for (int i = 0; i < envc; i++) {
+        size_t len = strlen(kenvp[i]) + 1;
+        user_sp = (user_sp - len) & ~7UL;
+        unsigned long paddr;
+        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL)) {
+            memcpy((void *)(P2V(paddr) + (user_sp & 0xFFF)), kenvp[i], len);
+        }
+        kenv_user_vaddrs[i] = user_sp;
+    }
+
+    user_sp = (user_sp - (envc + 1) * sizeof(uintptr_t)) & ~15UL;
+    uintptr_t envp_ptr = user_sp;
+
+    for (int i = 0; i < envc; i++) {
+        unsigned long paddr;
+        if (mmu_user_query(new_pgd, (user_sp + i * 8) & ~0xFFFUL, &paddr, NULL)) {
+            *(uintptr_t *)(P2V(paddr) + ((user_sp + i * 8) & 0xFFF)) = kenv_user_vaddrs[i];
+        }
+    }
+    unsigned long riciu_secret_var;
+    if (mmu_user_query(new_pgd, (user_sp + envc * 8) & ~0xFFFUL, &riciu_secret_var, NULL)) {
+        *(uintptr_t *)(P2V(riciu_secret_var) + ((user_sp + envc * 8) & 0xFFF)) = 0;
+    }
+
+    for (int i = 0; i < envc; i++) {
+        heap_free(kenvp[i]);
+    }
     close_all_fds(p);
     open_std_fds((uint32_t)pid);
 
@@ -530,6 +585,7 @@ int process_exec(const char *path, char *const argv[])
     struct exception_trap_frame *tf = build_trap_frame(p->vaddr_kernel_stack, entry_point, user_sp);
     tf->x[0] = (uint64_t)argc;
     tf->x[1] = (uint64_t)argv_ptr;
+    tf->x[2] = (uint64_t)envp_ptr;
 
     p->context.sp = (unsigned long)tf;
     p->context.lr = (unsigned long)ret_to_user;
