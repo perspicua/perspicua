@@ -2,6 +2,7 @@ set(LIBC_SRC_COMMON
     src/string.c
     src/printf.c
     src/malloc.c
+    src/env.c
 )
 
 set(LIBC_SRC_KERNEL

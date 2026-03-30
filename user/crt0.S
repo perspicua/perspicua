@@ -20,7 +20,13 @@ _start:
     mov x8, #SYS_SIGRESTORE
     svc #0
 
-    // Restore argc/argv for main
+    // Restore argc/argv/envp for _libc_init
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
+    bl _libc_init
+
+    // Restore argc/argv/envp for main
     mov x0, x19
     mov x1, x20
     mov x2, x21

@@ -421,16 +421,16 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     struct process *p = &process_table[pid];
 
     /* Copy arguments before switching address space */
-    char *kargv[64];
+    char *kargv[128];
     int argc = 0;
     if (argv) {
-        while (argc < 63) {
+        while (argc < 127) {
             char *uarg;
             if (copy_from_user(&uarg, &argv[argc], sizeof(char *)) != 0 || !uarg) {
                 break;
             }
-            char *karg = heap_malloc(256);
-            if (!karg || strncpy_from_user(karg, uarg, 256) < 0) {
+            char *karg = heap_malloc(1024);
+            if (!karg || strncpy_from_user(karg, uarg, 1024) < 0) {
                 heap_free(karg);
                 break;
             }
@@ -439,16 +439,16 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
     kargv[argc] = NULL;
 
-    char *kenvp[64];
+    char *kenvp[128];
     int envc = 0;
     if (envp) {
-        while (envc < 63) {
+        while (envc < 127) {
             char *uenv;
             if (copy_from_user(&uenv, &envp[envc], sizeof(char *)) != 0 || !uenv) {
                 break;
             }
-            char *kenv = heap_malloc(256);
-            if (!kenv || strncpy_from_user(kenv, uenv, 256) < 0) {
+            char *kenv = heap_malloc(1024);
+            if (!kenv || strncpy_from_user(kenv, uenv, 1024) < 0) {
                 heap_free(kenv);
                 break;
             }
@@ -487,7 +487,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     /* Set up user stack with argc/argv (top-down) */
     uintptr_t user_sp = new_stack_base + 32 * PAGE_SIZE;
-    uintptr_t karg_user_vaddrs[64];
+    uintptr_t karg_user_vaddrs[128];
 
     for (int i = 0; i < argc; i++) {
         size_t len = strlen(kargv[i]) + 1;
@@ -518,7 +518,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     /* Set up user stack with envp (top-down) */
-    uintptr_t kenv_user_vaddrs[64];
+    uintptr_t kenv_user_vaddrs[128];
 
     for (int i = 0; i < envc; i++) {
         size_t len = strlen(kenvp[i]) + 1;

@@ -17,21 +17,6 @@ typedef struct {
     int background;
 } Command;
 
-char **environ;
-
-static char *get_env(const char *name)
-{
-    if (!environ)
-        return NULL;
-    size_t len = strlen(name);
-    for (int i = 0; environ[i]; i++) {
-        if (strncmp(environ[i], name, len) == 0 && environ[i][len] == '=') {
-            return &environ[i][len + 1];
-        }
-    }
-    return NULL;
-}
-
 static void handle_sigchld(int sig)
 {
     (void)sig;
@@ -136,7 +121,8 @@ static void parse_command(char *str, Command *cmd)
 
 static int is_parent_builtin(const char *name)
 {
-    return (strcmp(name, "cd") == 0 || strcmp(name, "exit") == 0);
+    return (strcmp(name, "cd") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "export") == 0
+            || strcmp(name, "unset") == 0);
 }
 
 static void run_parent_builtin(Command *cmd)
@@ -150,13 +136,29 @@ static void run_parent_builtin(Command *cmd)
             print_string(target);
             print_string("\n");
         }
+    } else if (strcmp(cmd->argv[0], "export") == 0) {
+        if (cmd->argc > 1) {
+            char *arg = cmd->argv[1];
+            char *equals = strchr(arg, '=');
+            if (equals) {
+                *equals = '\0';
+                setenv(arg, equals + 1, 1);
+                *equals = '='; // Restore if needed, though arg is local to parse_command's tokens
+            } else {
+                setenv(arg, "", 1);
+            }
+        }
+    } else if (strcmp(cmd->argv[0], "unset") == 0) {
+        if (cmd->argc > 1) {
+            unsetenv(cmd->argv[1]);
+        }
     }
 }
 
 static int is_output_builtin(const char *name)
 {
     return (strcmp(name, "clear") == 0 || strcmp(name, "echo") == 0 || strcmp(name, "pwd") == 0
-            || strcmp(name, "help") == 0);
+            || strcmp(name, "help") == 0 || strcmp(name, "env") == 0);
 }
 
 static void run_output_builtin(Command *cmd)
@@ -182,8 +184,15 @@ static void run_output_builtin(Command *cmd)
         }
     } else if (strcmp(cmd->argv[0], "help") == 0) {
         print_string("Perspicua Shell\n");
-        print_string("Built-ins: help, echo, clear, pwd, cd, exit\n");
+        print_string("Built-ins: help, echo, clear, pwd, cd, exit, export, unset, env\n");
         print_string("Features: |, >, >>, <, \" \", &, ;\n");
+    } else if (strcmp(cmd->argv[0], "env") == 0) {
+        if (environ) {
+            for (int i = 0; environ[i]; i++) {
+                print_string(environ[i]);
+                print_string("\n");
+            }
+        }
     }
 }
 
@@ -201,7 +210,7 @@ static void run_exec(Command *cmd)
         sys_exit(1);
     }
 
-    char *path_env = get_env("PATH");
+    char *path_env = getenv("PATH");
     if (!path_env) {
         path_env = "/bin:/";
     }
@@ -421,7 +430,7 @@ int main(int argc, char *argv[], char *envp[])
 {
     (void)argc;
     (void)argv;
-    environ = envp;
+    (void)envp;
     sys_signal(SIGNAL_INT, SIGNAL_IGN);
     sys_signal(SIGNAL_CHLD, handle_sigchld);
 
