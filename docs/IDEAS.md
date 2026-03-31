@@ -1,27 +1,3 @@
-# Perspicua OS: Development Ideas & Architectural Assessment
-
-Based on a careful review of the project's source code, architecture, and roadmap, here is a comprehensive assessment and a set of high-quality development recommendations.
-
-## Project Assessment
-
-**Current Maturity:** 
-Perspicua is an impressive, well-structured early-to-mid stage academic/hobbyist OS. It has successfully crossed the difficult "boot to user-space" threshold. The foundational architecture is solid, featuring functional memory management (PMM, MMU, slab, heap), a Virtual File System (devfs, procfs, ramfs, FAT32 read), and a subset of a standard C library.
-
-**Strengths:** 
-* **SMP from Day One:** Designing for multi-core (AArch64 spin tables, `smp_init`) from the start is a massive architectural advantage.
-* **Tooling & Standards:** The build system (CMake + Just) is clean, and enforcing strict style guidelines (`.clang-format`) shows a commitment to long-term maintainability.
-* **Modularity:** The separation of `kernel/`, `libc/`, `user/`, and `uapi/` is textbook and well-executed.
-
-**Weaknesses:** 
-* Hardware support relies heavily on polling (SD card, UART).
-* Debugging infrastructure is limited (relies entirely on external GDB).
-* Lack of automated regression testing (tests exist in-kernel but are not run via CI).
-
-**Risks:** 
-* The impending transition to interrupt-driven drivers and demand paging (Phases 2 & 3) in a 4-core SMP environment introduces severe risks for race conditions, deadlocks, and silent memory corruption.
-
----
-
 ## High-Impact Improvements
 
 These suggestions are prioritized to unblock the roadmap while mitigating architectural risks.
