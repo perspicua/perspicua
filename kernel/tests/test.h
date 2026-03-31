@@ -78,4 +78,7 @@ void test_scheduler(void);
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
 
+void test_kasan_heap(void);
+void test_kasan_slab(void);
+
 #endif // _TEST_H_

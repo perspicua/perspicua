@@ -187,8 +187,8 @@ void test_heap(void)
         // Second allocation should come from the split remainder
         void *next = heap_malloc(LARGE);
         TEST_ASSERT("split: second from remainder", next != NULL);
-        // next should be right after small's block: small + LARGE + HEADER_SIZE
-        unsigned long expected = (unsigned long)small + LARGE + TEST_HEADER_SIZE;
+        // next should be right after small's block: small + LARGE + HEADER_SIZE + FOOTER_SIZE (16)
+        unsigned long expected = (unsigned long)small + LARGE + TEST_HEADER_SIZE + 16;
         TEST_ASSERT("split: contiguous layout", (unsigned long)next == expected);
         heap_free(small);
         heap_free(next);
