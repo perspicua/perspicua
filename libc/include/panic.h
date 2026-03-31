@@ -13,6 +13,8 @@
 /* Global flag set when the kernel enters a panic state. */
 extern volatile int kernel_panicked;
 
+const char *panic_resolve_symbol(unsigned long addr, unsigned long *offset);
+
 /* Primary error handler; accepts an optional trap frame. */
 void panic_full(const char *msg, const char *file, int line, unsigned long fp,
                 struct exception_trap_frame *tf) __attribute__((noreturn));
