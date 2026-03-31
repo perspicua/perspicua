@@ -102,4 +102,18 @@ int sched_get_core_pid(int cpu);
 /* Low-level assembly function to swap processor state. */
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
+#ifndef SCHED_NUM_CORES
+    #define SCHED_NUM_CORES 4
+#endif
+
+/*
+ * Scheduler statistics tracked per CPU core.
+ */
+struct sched_stats {
+    uint64_t context_switches;
+    uint64_t idle_count;
+};
+
+extern struct sched_stats core_sched_stats[SCHED_NUM_CORES];
+
 #endif /* PERSPICUA_SCHED_SCHED_H */

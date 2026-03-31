@@ -42,6 +42,8 @@ extern unsigned long __ex_table_end[];
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
 
+struct irq_stats core_irq_stats[4];
+
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the
  * exception table.
@@ -230,6 +232,8 @@ void exception_irq_handler(void)
         return;
     }
 
+    int current_core = get_core_id();
+
     if (irq_id == 0) {
         /* SGI 0: panic IPI broadcast */
         mmio_write(gic_c_eoir, iar);
@@ -238,11 +242,13 @@ void exception_irq_handler(void)
             asm volatile("wfe");
         }
     } else if (irq_id == GIC_TIMER_IRQ) {
+        core_irq_stats[current_core].timer_count++;
         timer_interrupt_reset();
         mmio_write(gic_c_eoir, iar);
         schedule();
         return;
     } else if (irq_id == uart_irq_cached) {
+        core_irq_stats[current_core].uart_count++;
         uint32_t mis = mmio_read(uart_mis);
 
         if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
