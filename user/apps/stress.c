@@ -6,6 +6,8 @@
 #include "signals.h"
 #include "uapi/errors.h"
 
+static char **global_envp;
+
 // 1. Stack Stress
 int recursive_function(int depth)
 {
@@ -351,9 +353,9 @@ void stress_exec()
     int pid = sys_fork();
     if (pid == 0) {
         char *argv[] = {"stress", "--exec-child", NULL};
-        sys_exec("/bin/stress.elf", argv);
+        sys_exec("/bin/stress.elf", argv, global_envp);
         /* Try without /bin/ prefix as sh does */
-        sys_exec("stress.elf", argv);
+        sys_exec("stress.elf", argv, global_envp);
         sys_exit(1);
     } else if (pid > 0) {
         int status;
@@ -394,8 +396,9 @@ void stress_malloc()
     printf("[STRESS] Malloc churn test complete.\n");
 }
 
-int main(int argc, char **argv)
+int main(int argc, char **argv, char **envp)
 {
+    global_envp = envp;
     if (argc > 1 && strcmp(argv[1], "--exec-child") == 0) {
         /* We were re-executed by stress_exec() */
         sys_exit(0);

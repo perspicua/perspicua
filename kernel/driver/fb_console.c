@@ -81,8 +81,12 @@ static void fb_console_putc_unlocked(char c)
             cursor_y = CONSOLE_Y_OFFSET;
             ansi_state = 0;
         } else if (c == '2' || c == '3') {
-            /* Support for 2J and 3J */
+            /* Support for 2J, 3J, and 2K */
             ansi_state = 3;
+        } else if (c == 'K') {
+            /* Support for 0K, 1K, 2K. For now, we only implement 2K (clear entire line) */
+            graphics_draw_rect(0, cursor_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
+            ansi_state = 0;
         } else if (c == 'J') {
             /* Just J? Clear from cursor to end. For now, we only care about 2J/3J */
             ansi_state = 0;
@@ -95,6 +99,9 @@ static void fb_console_putc_unlocked(char c)
             /* Clear screen area (but not dashboard) */
             graphics_draw_rect(0, CONSOLE_Y_OFFSET, fb_info.width,
                                fb_info.height - CONSOLE_Y_OFFSET, 0x00000000, 1);
+        } else if (c == 'K') {
+            /* Clear entire line */
+            graphics_draw_rect(0, cursor_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
         }
         ansi_state = 0;
     }

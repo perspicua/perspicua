@@ -7,13 +7,19 @@ static void print_string(const char *s)
     sys_write(1, s, strlen(s));
 }
 
-int main(void)
+int main(int argc, char *argv[], char *envp[])
 {
+    (void)argc;
+    (void)argv;
     if (sys_getpid() != 1) {
         print_string("[ INIT ] Error: Must run as PID 1\n");
         return 1;
     }
     print_string("[ INIT ] Userspace started\n");
+
+    /* Default environment if none provided */
+    char *default_env[] = {"PATH=/bin:/", NULL};
+    char **current_env = (envp && envp[0]) ? envp : default_env;
 
     while (1) {
         print_string("[ INIT ] Forking shell...\n");
@@ -28,7 +34,7 @@ int main(void)
         if (shell_pid == 0) {
             /* Child process: execute the shell */
             char *argv[] = {"/bin/sh.elf", NULL};
-            sys_exec("/bin/sh.elf", argv);
+            sys_exec("/bin/sh.elf", argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
             sys_exit(1);
         } else {

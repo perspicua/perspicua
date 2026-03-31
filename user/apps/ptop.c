@@ -45,6 +45,8 @@
 /* Column headers */
 #define C_COL_HDR ESC "38;5;34m" ESC "1m"
 
+static char **global_envp;
+
 /* Alternating row colours */
 #define C_ROW_ODD  ESC "38;5;82m"
 #define C_ROW_EVEN ESC "38;5;40m"
@@ -439,7 +441,7 @@ static void launch_demo(void)
     if (pid == 0) {
         /* child — replace image with demo binary */
         char *argv[] = {DEMO_PATH, NULL};
-        sys_exec(DEMO_PATH, argv);
+        sys_exec(DEMO_PATH, argv, global_envp);
         /* if exec returns, the binary wasn't found */
         ptop_write(C_WARN "ptop: exec(" DEMO_PATH ") failed\n" C_RESET);
         sys_exit(1);
@@ -448,8 +450,11 @@ static void launch_demo(void)
 }
 
 /* ── entry point ─────────────────────────────────────────────────── */
-int main(void)
+int main(int argc, char **argv, char **envp)
 {
+    global_envp = envp;
+    (void)argc;
+    (void)argv;
     struct proc_info *procs = malloc(sizeof(struct proc_info) * MAX_PROCS);
     if (!procs) {
         printf("ptop: failed to allocate memory for process info\n");

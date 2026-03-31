@@ -39,7 +39,7 @@ void sys_exit(int status);
 int sys_getpid(void);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
-int sys_exec(const char *path, char *const argv[]);
+int sys_exec(const char *path, char *const argv[], char *const envp[]);
 int sys_fork(void);
 int sys_waitpid(int pid, int *status, int options);
 
