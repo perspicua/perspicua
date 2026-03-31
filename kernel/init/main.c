@@ -183,6 +183,8 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
+    run_all_tests();
+    run_scheduler_tests();
 
     /* Launch primary user-space application */
     if (process_create_from_file("/bin/init.elf", 1) != 0) {

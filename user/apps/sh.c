@@ -57,9 +57,10 @@ static void print_prompt(void);
 
 static void redraw_line(const char *cmd)
 {
-    printf("\r\033[2K"); // Try ANSI clear line, if not supported it might just print junk but we'll see
+    printf(
+        "\r\033[2K"); // Try ANSI clear line, if not supported it might just print junk but we'll see
     // If \033[2K fails, we can fallback to:
-    // printf("\r                                                                                \r");
+    // printf("\r \r");
     print_prompt();
     printf("%s", cmd);
 }
@@ -83,10 +84,10 @@ static int read_key(void)
 
         if (seq[0] == '[') {
             switch (seq[1]) {
-            case 'A':
-                return KEY_UP;
-            case 'B':
-                return KEY_DOWN;
+                case 'A':
+                    return KEY_UP;
+                case 'B':
+                    return KEY_DOWN;
             }
         }
         return 27;
