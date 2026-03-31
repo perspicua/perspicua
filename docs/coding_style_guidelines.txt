@@ -1,0 +1,97 @@
+--------------------------------------------------------------------------------
+1. GENERAL GUIDELINES (Applies to all files)
+--------------------------------------------------------------------------------
+- File Header: Start every file with a brief block comment stating the file's 
+  name and its purpose/responsibilities.
+- Naming Convention: Use snake_case for all variables, functions, and structs.
+- Prefixing: Prefix global structs, enums, and public functions with the 
+  subsystem name (e.g., `process_init`, `PROCESS_STATE_RUNNING`).
+- Balance: Strive for a balance in commenting. Code should be self-explanatory 
+  where possible, with comments reserved for intent and complexity.
+
+--------------------------------------------------------------------------------
+2. BRACES AND SPACING (Visual Clutter Reduction)
+--------------------------------------------------------------------------------
+- Braces: Use "Attach" style for control flow (if, for, while, switch). The opening 
+  brace MUST be on the same line as the statement. Functions MUST have the opening 
+  brace on a new line.
+  
+  Example:
+  void function(void)
+  {
+      if (condition) {
+          // logic
+      } else {
+          // logic
+      }
+  }
+
+- Pointers: Attach the asterisk to the variable name, NOT the type.
+  - Good: `struct pmm_page *next;`
+  - Bad:  `struct pmm_page* next;`
+
+- Indentation: 4 spaces. No tabs.
+- Column Limit: 100 characters.
+
+--------------------------------------------------------------------------------
+3. HEADER FILES (.h) - The Public API
+--------------------------------------------------------------------------------
+Header files should strictly contain what other files need to know to interact 
+with the module. Do not expose internal workings.
+
+Structure Order:
+1. Header Guards: Format as `PERSPICUA_SUBSYSTEM_FILENAME_H`.
+2. Includes: Group logically (Standard Lib -> Shared/UAPI -> Arch -> Kernel).
+3. Constants and Macros: Use #define for public constants.
+4. Enums: Use typedef enum for state variables and flags.
+5. Data Structures: Define structs used in the public API.
+6. Function Prototypes: Group logically by functionality.
+
+--------------------------------------------------------------------------------
+4. SOURCE FILES (.c) - The Implementation
+--------------------------------------------------------------------------------
+Source files should hide their internal state. Anything not explicitly needed 
+by another file MUST be marked `static`.
+
+Structure Order:
+1. Includes: Always include the file's own `.h` header FIRST.
+2. Private Macros and Constants.
+3. Private Data Structures.
+4. Global/Static Variables.
+5. Private Helper Functions: Marked `static`.
+6. Public API Implementations.
+
+--------------------------------------------------------------------------------
+5. COMMENTING GUIDELINES (Finding the Balance)
+--------------------------------------------------------------------------------
+- Avoid Clutter: Do not over-comment. A file should not feel "noisy" with text. 
+  Remove comments that explain trivial operations and shorten verbose ones 
+  to their essence.
+- Self-Documenting Code: Prefer clear variable and function names over comments. 
+  If you need a comment to explain what a variable is, consider renaming it.
+- The "Why", not the "What": Do not explain what the code is doing (the code 
+  itself should be readable enough for that). Explain WHY it is doing it, 
+  especially for hardware quirks or non-obvious algorithms.
+- Redundancy: Avoid "stating the obvious" comments. 
+  - Bad:  `count++; // Increment the count`
+  - Good: `count++; // Account for the terminating null byte`
+- Minimum Requirements: 
+  - Every public function MUST have a BRIEF block comment explaining its intent.
+  - Every struct MUST have a BRIEF comment explaining its role in the system.
+- Internal Logic: Use `//` inside functions sparingly, only for "tricky" bits 
+  like bit manipulation, memory barriers, or complex pointer arithmetic.
+
+--------------------------------------------------------------------------------
+6. INCLUDE ORDER CHEAT SHEET
+--------------------------------------------------------------------------------
+Group includes separated by a blank line:
+
+#include "own_header.h"
+
+#include "uapi/syscall.h"  // Shared user/kernel headers
+
+#include "arch/mmu.h"      // Architecture specifics
+
+#include "kernel/pmm.h"    // Other kernel subsystems
+#include "kernel/vfs.h"
+================================================================================
