@@ -13,11 +13,6 @@
 #include "driver/block.h"
 
 /*
- * sd_init - Discovers and configures the EMMC2 controller and attached card.
- */
-void sd_init(void);
-
-/*
  * sd_read_blocks - Block-level read implementation for the SD card.
  */
 int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, size_t num_blocks);

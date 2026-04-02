@@ -4,12 +4,16 @@
 #include "mm/heap.h"
 #include "mm/addr.h"
 #include "panic.h"
+#include "uapi/errors.h"
 
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
 
 extern struct device_driver __drivers_bus_start[];
 extern struct device_driver __drivers_bus_end[];
+
+extern struct device_driver __drivers_irq_start[];
+extern struct device_driver __drivers_irq_end[];
 
 extern struct device_driver __drivers_device_start[];
 extern struct device_driver __drivers_device_end[];
@@ -37,7 +41,9 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
             /* Probe the driver */
             int ret = drv->probe(&dev);
             if (ret != 0) {
-                pr_err("driver: %s probe failed with error %d\n", drv->name, ret);
+                if (ret != -PERS_ERR_NOT_FOUND) {
+                    pr_err("driver: %s probe failed with error %d\n", drv->name, ret);
+                }
             } else {
                 pr_info("driver: %s probed successfully\n", drv->name);
             }
@@ -55,6 +61,12 @@ void driver_probe_bus(void)
 {
     pr_info("driver: probing BUS level drivers...\n");
     probe_driver_list(__drivers_bus_start, __drivers_bus_end);
+}
+
+void driver_probe_irqs(void)
+{
+    pr_info("driver: probing IRQ level drivers...\n");
+    probe_driver_list(__drivers_irq_start, __drivers_irq_end);
 }
 
 void driver_probe_devices(void)
@@ -79,23 +91,52 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
     }
 
     const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    /*
-     * A very simplified assumption for now: if size is >= 12, it might be
-     * a 64-bit address, so we take the second 32-bit cell. Otherwise the first.
-     * This logic matches the original UART/GPIO code, but a true implementation
-     * should read #address-cells and #size-cells from the parent node.
-     */
-    uint32_t phys_base =
-        (reg_prop.size >= 12 && index == 0)
-            ? fdt32_to_cpu(reg_data[1])
-            : fdt32_to_cpu(reg_data[index * 2]); /* Very rudimentary index support */
+
+    /* Find parent node to get #address-cells and #size-cells */
+    uint32_t address_cells = 1; /* Default if not found */
+    uint32_t size_cells = 1;    /* Default if not found */
+
+    const uint32_t *parent = fdt_get_parent_node(dev->fdt_node);
+    if (parent) {
+        struct fdt_property ac_prop;
+        if (fdt_get_property(parent, "#address-cells", &ac_prop) == 0) {
+            /* For the memory mapped registers, #address-cells is usually 1 or 2 */
+            address_cells = fdt32_to_cpu(*(const uint32_t *)ac_prop.value);
+        }
+
+        struct fdt_property sc_prop;
+        if (fdt_get_property(parent, "#size-cells", &sc_prop) == 0) {
+            size_cells = fdt32_to_cpu(*(const uint32_t *)sc_prop.value);
+        }
+    }
+
+    /* Each 'reg' entry takes (address_cells + size_cells) * 4 bytes */
+    uint32_t entry_cells = address_cells + size_cells;
+    uint32_t offset = index * entry_cells;
+
+    /* Ensure we don't read past the property size */
+    if ((offset + address_cells) * 4 > reg_prop.size) {
+        return 0;
+    }
+
+    uint64_t phys_base = 0;
+    if (address_cells == 1) {
+        phys_base = fdt32_to_cpu(reg_data[offset]);
+    } else if (address_cells == 2) {
+        phys_base =
+            ((uint64_t)fdt32_to_cpu(reg_data[offset]) << 32) | fdt32_to_cpu(reg_data[offset + 1]);
+    } else {
+        return 0; /* Unsupported #address-cells size */
+    }
 
     /* Handle legacy BCM address translation if needed */
-    if (phys_base < 0xFC000000) {
+    if (phys_base >= 0x40000000 && phys_base < 0x41000000) {
+        phys_base = (phys_base & 0x00FFFFFF) | 0xFF800000;
+    } else if (phys_base < 0xFC000000) {
         phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
     }
 
-    return P2V(phys_base);
+    return P2V((uintptr_t)phys_base);
 }
 
 /*

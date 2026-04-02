@@ -40,6 +40,10 @@ SECTIONS
         KEEP(*(.drivers.device))
         __drivers_device_end = .;
         
+        __drivers_irq_start = .;
+        KEEP(*(.drivers.irq))
+        __drivers_irq_end = .;
+        
         . = ALIGN(8);
         __ex_table_start = .;
         *(__ex_table)

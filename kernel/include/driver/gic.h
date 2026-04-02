@@ -22,11 +22,6 @@ extern volatile unsigned int *gic_c_iar;
 extern volatile unsigned int *gic_c_eoir;
 
 /*
- * gic_init - Discovers and initializes the GIC hardware.
- */
-void gic_init(void);
-
-/*
  * gic_secondary_init - Performs per-core GIC setup for secondary CPUs.
  */
 void gic_secondary_init(void);

@@ -6,6 +6,7 @@
  */
 
 #include "driver/sd.h"
+#include "driver/device.h"
 
 #include "stdio.h"
 #include "string.h"
@@ -293,45 +294,23 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
     return PERS_SUCCESS;
 }
 
-void sd_init(void)
+static int sd_probe(struct device *dev)
 {
-    const char *compatibles[] = {"brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci", NULL};
-    const uint32_t *node = NULL;
-
-    for (int i = 0; compatibles[i]; i++) {
-        const uint32_t *n = fdt_find_node_by_compatible(compatibles[i]);
-        if (!n) {
-            continue;
-        }
-
-        struct fdt_property reg_prop;
-        if (fdt_get_property(n, "reg", &reg_prop) != 0) {
-            continue;
-        }
-
-        const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-        uint32_t phys_base =
-            (reg_prop.size >= 12) ? fdt32_to_cpu(reg_data[1]) : fdt32_to_cpu(reg_data[0]);
-
-        if (phys_base < 0xFC000000) {
-            phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
-        }
-
-        sdhci_regs_t *r = (sdhci_regs_t *)P2V(phys_base);
-        if (r->status & STATUS_CARD_INSERT) {
-            node = n;
-            regs = r;
-            break;
-        }
+    uintptr_t vbase = devm_get_io_base(dev, 0);
+    if (!vbase) {
+        return -PERS_ERR_NOT_FOUND;
     }
 
-    if (!node) {
-        return;
+    sdhci_regs_t *r = (sdhci_regs_t *)vbase;
+    if (!(r->status & STATUS_CARD_INSERT)) {
+        return -PERS_ERR_NOT_FOUND;
     }
+
+    regs = r;
 
     if (sd_set_clock(100000000) < 0) {
         pr_err("sd: clock init failed\n");
-        return;
+        return -PERS_ERR_IO_ERROR;
     }
 
     if (sd_init_host() == PERS_SUCCESS && sd_init_card() == PERS_SUCCESS) {
@@ -345,7 +324,21 @@ void sd_init(void)
 
         size_t mb = (sd_block_dev.block_count * 512) / (1024 * 1024);
         pr_info("sd: SDHC card found: %lu MB\n", mb);
+        return 0;
     } else {
         pr_err("sd: card init failed\n");
+        return -PERS_ERR_IO_ERROR;
     }
 }
+
+DEVICE_DRIVER(bcm2711_emmc2) = {
+    .name = "bcm2711-emmc2",
+    .compatible = "brcm,bcm2711-emmc2",
+    .probe = sd_probe,
+};
+
+DEVICE_DRIVER(bcm2835_sdhci) = {
+    .name = "bcm2835-sdhci",
+    .compatible = "brcm,bcm2835-sdhci",
+    .probe = sd_probe,
+};

@@ -6,6 +6,7 @@
  */
 
 #include "driver/mailbox.h"
+#include "driver/device.h"
 
 #include "stdio.h"
 #include "panic.h"
@@ -21,35 +22,27 @@ static volatile unsigned int *mbox_status = NULL;
 static volatile unsigned int *mbox_write = NULL;
 
 /*
- * mbox_init - Locates and maps the BCM2835 mailbox registers.
+ * bcm2835_mbox_probe - Locates and maps the BCM2835 mailbox registers.
  */
-void mbox_init(void)
+static int bcm2835_mbox_probe(struct device *dev)
 {
-    const uint32_t *mbox_node = fdt_find_node_by_compatible("brcm,bcm2835-mbox");
-    if (!mbox_node) {
-        PANIC("MBOX: device node not found");
+    uintptr_t vbase = devm_get_io_base(dev, 0);
+    if (!vbase) {
+        PANIC("MBOX: missing or invalid 'reg' property");
     }
-
-    struct fdt_property reg_prop;
-    if (fdt_get_property(mbox_node, "reg", &reg_prop) != 0) {
-        PANIC("MBOX: missing 'reg' property");
-    }
-
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
-
-    if (phys_base < 0xFC000000) {
-        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
-    }
-
-    uintptr_t vbase = P2V(phys_base);
 
     mbox_read = (unsigned int *)(vbase + 0x00);
     mbox_status = (unsigned int *)(vbase + 0x18);
     mbox_write = (unsigned int *)(vbase + 0x20);
 
-    pr_info("mbox: VideoCore mailbox initialized\n");
+    return 0;
 }
+
+CORE_DRIVER(bcm2835_mbox) = {
+    .name = "bcm2835-mbox",
+    .compatible = "brcm,bcm2835-mbox",
+    .probe = bcm2835_mbox_probe,
+};
 
 /*
  * mbox_call - Submits a property buffer to the GPU and waits for a response.

@@ -101,6 +101,11 @@ const uint32_t *fdt_find_node_by_path(const char *path);
 const uint32_t *fdt_find_node_by_compatible(const char *compatible);
 
 /*
+ * fdt_get_parent_node - Locates the parent node of a given node.
+ */
+const uint32_t *fdt_get_parent_node(const uint32_t *target_node);
+
+/*
  * fdt_parse_memory_reservations - Informs the PMM of reserved regions.
  */
 void fdt_parse_memory_reservations(void);
