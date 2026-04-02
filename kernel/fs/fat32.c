@@ -14,6 +14,9 @@
 
 #include "core/lock.h"
 #include "mm/slab.h"
+#include "fs/pagecache.h"
+#include "mm/pmm.h"
+#include "mm/addr.h"
 
 static struct fat32_fs current_fs;
 
@@ -89,38 +92,35 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
     return 1;
 }
 
-static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
+static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page_buffer)
 {
-    if (!file || !file->node || !buffer) {
-        return -PERS_ERR_INVALID_ARGUMENT;
-    }
-
-    uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
-    uint32_t file_size = (uint32_t)file->node->file_size;
-    uint32_t offset = (uint32_t)file->offset;
-
-    if (offset >= file_size) {
+    uint32_t start_offset = page_index * PAGE_SIZE;
+    if (start_offset >= node->file_size)
         return 0;
-    }
-    if (offset + size > file_size) {
-        size = file_size - offset;
-    }
 
+    uint32_t cluster = (uint32_t)(uintptr_t)node->internal_info;
     uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
-    uint32_t clusters_to_skip = offset / bytes_per_cluster;
+    uint32_t clusters_to_skip = start_offset / bytes_per_cluster;
 
     for (uint32_t i = 0; i < clusters_to_skip; i++) {
         cluster = get_next_cluster(cluster);
-        if (cluster >= 0x0FFFFFF8) {
+        if (cluster >= 0x0FFFFFF8)
             return 0;
-        }
     }
 
     uint32_t bytes_read = 0;
-    uint8_t sector_buffer[512];
+    uint32_t to_read = PAGE_SIZE;
+    if (start_offset + to_read > node->file_size) {
+        to_read = node->file_size - start_offset;
+    }
 
-    while (bytes_read < size) {
-        uint32_t offset_in_cluster = (offset + bytes_read) % bytes_per_cluster;
+    memset(page_buffer, 0, PAGE_SIZE);
+
+    uint8_t sector_buffer[512];
+    uint32_t current_offset = start_offset;
+
+    while (bytes_read < to_read) {
+        uint32_t offset_in_cluster = current_offset % bytes_per_cluster;
         uint32_t sector_in_cluster = offset_in_cluster / 512;
         uint32_t offset_in_sector = offset_in_cluster % 512;
 
@@ -131,21 +131,77 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
         }
 
         uint32_t can_read = 512 - offset_in_sector;
-        uint32_t remaining = size - bytes_read;
+        uint32_t remaining = to_read - bytes_read;
         uint32_t to_copy = (can_read < remaining) ? can_read : remaining;
 
         for (uint32_t i = 0; i < to_copy; i++) {
-            ((uint8_t *)buffer)[bytes_read + i] = sector_buffer[offset_in_sector + i];
+            ((uint8_t *)page_buffer)[bytes_read + i] = sector_buffer[offset_in_sector + i];
         }
 
         bytes_read += to_copy;
+        current_offset += to_copy;
 
-        if ((offset + bytes_read) % bytes_per_cluster == 0) {
+        if (current_offset % bytes_per_cluster == 0) {
             cluster = get_next_cluster(cluster);
-            if (cluster >= 0x0FFFFFF8 && bytes_read < size) {
+            if (cluster >= 0x0FFFFFF8 && bytes_read < to_read) {
                 break;
             }
         }
+    }
+    return bytes_read;
+}
+
+static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
+{
+    if (!file || !file->node || !buffer) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    uint32_t file_size = (uint32_t)file->node->file_size;
+    uint32_t offset = (uint32_t)file->offset;
+
+    if (offset >= file_size)
+        return 0;
+    if (offset + size > file_size)
+        size = file_size - offset;
+
+    uint32_t bytes_read = 0;
+    uint8_t *out_buf = (uint8_t *)buffer;
+
+    while (bytes_read < size) {
+        size_t current_offset = offset + bytes_read;
+        size_t page_index = current_offset / PAGE_SIZE;
+        size_t offset_in_page = current_offset % PAGE_SIZE;
+
+        size_t to_copy = PAGE_SIZE - offset_in_page;
+        if (to_copy > size - bytes_read) {
+            to_copy = size - bytes_read;
+        }
+
+        void *page_data = pagecache_get_page(file->node, page_index);
+        if (!page_data) {
+            page_data = pmm_alloc_pages(1);
+            if (!page_data) {
+                return bytes_read > 0 ? (int)bytes_read : -PERS_ERR_OUT_OF_MEMORY;
+            }
+
+            fat32_read_page(file->node, page_index, page_data);
+
+            if (pagecache_add_page(file->node, page_index, page_data) != PERS_SUCCESS) {
+                pmm_free_pages(page_data, 1);
+                page_data = pagecache_get_page(file->node, page_index);
+            }
+        }
+
+        if (page_data) {
+            for (size_t i = 0; i < to_copy; i++) {
+                out_buf[bytes_read + i] = ((uint8_t *)page_data)[offset_in_page + i];
+            }
+        } else {
+            break;
+        }
+
+        bytes_read += to_copy;
     }
 
     file->offset += bytes_read;
