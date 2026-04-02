@@ -152,6 +152,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     pmm_init();
     mmu_init();
 
+    extern void pagecache_init(void);
+    pagecache_init();
+
     /* Re-base DTB pointers to virtual addresses post-MMU */
     fdt_rebase(P2V(global_dtb_ptr));
 
