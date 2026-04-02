@@ -28,6 +28,23 @@ SECTIONS
         __rodata_start = .;
         *(.rodata .rodata.*)
         . = ALIGN(8);
+        __drivers_core_start = .;
+        KEEP(*(.drivers.core))
+        __drivers_core_end = .;
+        
+        __drivers_bus_start = .;
+        KEEP(*(.drivers.bus))
+        __drivers_bus_end = .;
+        
+        __drivers_device_start = .;
+        KEEP(*(.drivers.device))
+        __drivers_device_end = .;
+        
+        __drivers_irq_start = .;
+        KEEP(*(.drivers.irq))
+        __drivers_irq_end = .;
+        
+        . = ALIGN(8);
         __ex_table_start = .;
         *(__ex_table)
         __ex_table_end = .;

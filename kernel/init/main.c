@@ -134,9 +134,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fdt_init(global_dtb_ptr);
 
     /* Stage 1: Basic hardware and console bring-up */
-    gpio_init();
-    uart_init();
-    mbox_init();
+    extern void driver_probe_core(void);
+    driver_probe_core();
+
     fb_init();
     fb_console_init();
     tty_init(&console_tty);
@@ -156,7 +156,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     heap_init();
 
     /* Stage 3: Interrupts and scheduling */
-    gic_init();
+    extern void driver_probe_irqs(void);
+    driver_probe_irqs();
+
     uart_enable_interrupts();
     timer_interrupt_init();
     sched_init();
@@ -171,7 +173,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     process_init();
     devfs_init();
     fb_register_device();
-    sd_init();
+
+    extern void driver_probe_devices(void);
+    driver_probe_devices();
 
     /* Root filesystem initialization (FAT32) */
     if (fat32_init("sd0") == PERS_SUCCESS) {

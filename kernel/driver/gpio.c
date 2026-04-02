@@ -6,6 +6,7 @@
  */
 
 #include "driver/gpio.h"
+#include "driver/device.h"
 
 #include "stdio.h"
 #include "panic.h"
@@ -17,36 +18,27 @@ static volatile unsigned int *gpio_gpfsel0 = NULL;
 static volatile unsigned int *gpio_gppupdn0 = NULL;
 
 /*
- * gpio_init - Discovers and maps the GPIO registers from the DTB.
+ * bcm2711_gpio_probe - Discovers and maps the GPIO registers from the DTB.
  */
-void gpio_init(void)
+static int bcm2711_gpio_probe(struct device *dev)
 {
-    const uint32_t *gpio_node = fdt_find_node_by_compatible("brcm,bcm2711-gpio");
-    if (!gpio_node) {
-        PANIC("GPIO: device node not found");
+    uintptr_t vbase = devm_get_io_base(dev, 0);
+    if (!vbase) {
+        PANIC("GPIO: missing or invalid 'reg' property");
     }
-
-    struct fdt_property reg_prop;
-    if (fdt_get_property(gpio_node, "reg", &reg_prop) != 0) {
-        PANIC("GPIO: missing 'reg' property");
-    }
-
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
-
-    /* Handle legacy BCM address translation if needed */
-    if (phys_base < 0xFC000000) {
-        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
-    }
-
-    uintptr_t vbase = P2V(phys_base);
 
     /* BCM2711 specific register offsets */
     gpio_gpfsel0 = (unsigned int *)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int *)(vbase + 0xE4);
 
-    pr_info("gpio: BCM2711 driver initialized\n");
+    return 0;
 }
+
+CORE_DRIVER(bcm2711_gpio) = {
+    .name = "bcm2711-gpio",
+    .compatible = "brcm,bcm2711-gpio",
+    .probe = bcm2711_gpio_probe,
+};
 
 /*
  * gpio_set_pin_function - Sets the 3-bit function code for a GPIO pin.

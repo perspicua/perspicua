@@ -285,3 +285,49 @@ const uint32_t *fdt_find_node_by_path(const char *path)
 
     return NULL;
 }
+
+/*
+ * fdt_get_parent_node - Locates the parent node of a given node.
+ */
+const uint32_t *fdt_get_parent_node(const uint32_t *target_node)
+{
+    if (!target_node || target_node == fdt_struct_block) {
+        return NULL;
+    }
+
+    const uint32_t *p = fdt_struct_block;
+    uint32_t tag;
+
+    const uint32_t *parent_stack[32];
+    int depth = 0;
+
+    while ((tag = fdt_next_tag(&p)) != FDT_END) {
+        if (tag == FDT_BEGIN_NODE) {
+            const uint32_t *current_node = p - 1;
+
+            if (current_node == target_node) {
+                if (depth > 0) {
+                    return parent_stack[depth - 1];
+                }
+                return NULL;
+            }
+
+            if (depth < 32) {
+                parent_stack[depth] = current_node;
+            }
+            depth++;
+
+            const char *name = (const char *)p;
+            p = (const uint32_t *)FDT_ALIGN((uintptr_t)(name + strlen(name) + 1), 4);
+        } else if (tag == FDT_END_NODE) {
+            if (depth > 0) {
+                depth--;
+            }
+        } else if (tag == FDT_PROP) {
+            const struct fdt_prop_header *hdr = (const struct fdt_prop_header *)p;
+            p = (const uint32_t *)FDT_ALIGN((uintptr_t)(hdr + 1) + fdt32_to_cpu(hdr->len), 4);
+        }
+    }
+
+    return NULL;
+}
