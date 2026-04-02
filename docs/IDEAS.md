@@ -1,63 +1,78 @@
-## High-Impact Improvements
+## Kernel Architecture & Performance
 
-These suggestions are prioritized to unblock the roadmap while mitigating architectural risks.
-
-**1. Title: Unified Hardware Abstraction Layer (Device Model)**
-* **Category:** 🧱 Architecture & Kernel Design
-* **Description:** Replace the hardcoded initialization sequence in `main.c` with a dynamic device model. Implement a system where devices are probed dynamically from the Devicetree (FDT), and drivers register themselves to a central `bus`.
-* **Why It Matters:** As you add PCIe, USB (xHCI), and Ethernet (Phase 2 & 4), hardcoding driver initialization will become unmaintainable. A unified model is required for dynamic driver loading, power management, and unified `sysfs` reporting.
-* **Difficulty:** Medium
-* **Impact:** High
-* **Recommended Timing:** Soon (Prerequisite for Phase 2 PCIe/USB)
-
-**2. Title: Kernel Lock Dependency Validator (Lockdep)**
-* **Category:** 🐞 Debugging & Observability
-* **Description:** Implement a debug-only tracking system for spinlocks that records the order in which locks are acquired by each CPU thread. If a thread attempts to acquire a lock out of the globally established order, panic and print the cycle.
-* **Why It Matters:** You have a 4-core SMP system. As you move to interrupt-driven SD/UART and block caches, locking complexity will explode. SMP deadlocks are notoriously difficult to debug via GDB; a lockdep system catches them instantly at runtime.
+**1. Title: Demand Paging (On-Demand ELF Loading)**
+* **Category:** 🧱 MM & Performance
+* **Description:** Modify the ELF loader and page fault handler to support demand paging. Instead of loading the entire binary into RAM at `exec()`, map the segments as "not present" and load 4KB pages from the SD card only when the CPU triggers a translation fault.
+* **Why It Matters:** Dramatically reduces process startup time and RAM usage. It allows running programs larger than physical memory and is a hallmark of a modern OS.
 * **Difficulty:** High
-* **Impact:** High
-* **Recommended Timing:** Now (Before adding more SMP complexity)
+* **Impact:** Very High
 
-**3. Title: Symbolized Stack Traces on Panic / Abort** [done]
-* **Category:** 🐞 Debugging & Observability
-* **Description:** Embed the kernel symbol table (`.symtab` and `.strtab`) directly into the kernel image. Update `handle_abort` and `panic` to unwind the AArch64 frame pointers (`x29`) and print the actual function names instead of raw hex addresses.
-* **Why It Matters:** Dramatically reduces the time needed to debug data aborts. You won't need to run `just disasm` or manually correlate addresses with `kernel8.elf` every time the system crashes.
+**2. Title: Fully Interrupt-Driven I/O (SD & UART)**
+* **Category:** 🏎️ Drivers & Throughput
+* **Description:** Transition the SD card (`sd.c`) and UART drivers away from polling loops and `sleep_ms()`. Use GIC interrupts to wake up blocked tasks only when the hardware is ready for the next data block.
+* **Why It Matters:** Currently, the CPU wastes millions of cycles spinning while waiting for hardware. Interrupt-driven I/O unblocks the scheduler to run other tasks during I/O wait times, significantly improving SMP utilization.
 * **Difficulty:** Medium
 * **Impact:** High
-* **Recommended Timing:** Now
 
-**4. Title: Unified Page Cache Layer**
-* **Category:** 🧱 Architecture & Kernel Design
-* **Description:** Implement the Phase 1 roadmap goal by creating a generic page cache layer between the VFS and the block device. Read requests to `fat32` should query an in-memory radix tree of cached blocks. Write requests mark pages as "dirty" to be flushed asynchronously.
-* **Why It Matters:** This is the absolute prerequisite for Demand Paging (Phase 3). Without it, every page fault will block on physical SD card I/O, freezing the task. It also prevents thrashing the SD card.
+**3. Title: Kernel Preemption & Priority Scheduling**
+* **Category:** 🕒 Scheduling
+* **Description:** Implement a `preempt_count` and allow the scheduler to switch tasks even while in EL1 (Kernel Mode), provided no spinlocks are held. Upgrade the Round-Robin scheduler to a Priority-based or MLFQ model.
+* **Why It Matters:** Prevents long-running kernel tasks from lagging the entire system. Priority scheduling ensures the UI/Shell remains responsive even under heavy background load.
 * **Difficulty:** High
-* **Impact:** High
-* **Recommended Timing:** Now (Completes Phase 1)
-
-**5. Title: Kernel Address Sanitizer (KASAN) / Slab Redzones** [DONE]
-* **Category:** 🐞 Debugging & Observability
-* **Description:** Implement lightweight memory sanitization for the kernel heap/slab allocators. Add "redzones" (magic bytes like `0xDEADBEEF`) around allocated slabs. Check these zones on `kfree()` to detect buffer overflows or use-after-free bugs.
-* **Why It Matters:** Memory corruption in the kernel often manifests millions of cycles after the actual bug occurred, making it impossible to trace. Redzones catch overflows at the exact moment the memory is freed.
-* **Difficulty:** Medium
-* **Impact:** High
-* **Recommended Timing:** Soon
-
-**6. Title: User-Space System Call Fuzzer** [DONE]
-* **Category:** 🧪 Testing Infrastructure
-* **Description:** Create a user-space application (`stress_syscall.c`) that rapidly calls all implemented syscalls with randomized, invalid, or boundary-case arguments (e.g., null pointers, unmapped addresses, negative file descriptors).
-* **Why It Matters:** Ensures the kernel's `validate_user_buffer` and boundary checks are bulletproof. Fuzzing will uncover hidden validation bugs before they cause kernel panics during Phase 3 third-party validation (like porting DOOM).
-* **Difficulty:** Low
 * **Impact:** Medium
-* **Recommended Timing:** Soon
+
+**4. Title: Shared Memory IPC (`shm`)**
+* **Category:** 🛠️ IPC & MM
+* **Description:** Add support for shared memory regions via `mmap(MAP_SHARED)`. Allow different processes to map the same physical page frames into their respective virtual address spaces.
+* **Why It Matters:** Fastest form of IPC. Required for high-performance graphics servers, database engines, and complex multi-process applications.
+* **Difficulty:** Medium
+* **Impact:** High
+
+---
+
+## User-Space & libc Maturity
+
+**1. Title: Buffered I/O (`FILE *`) & Stream Redirection**
+* **Category:** 🛠️ libc & User-Space
+* **Description:** Implement a standard `FILE` abstraction in `libc` with internal buffering (`fopen`, `fread`, `fwrite`, `fflush`).
+* **Why It Matters:** Currently, every `printf` results in a direct UART write or raw `sys_write`. Buffering is critical for performance once file I/O moves to the SD card. It also simplifies porting software that expects `stdin`/`stdout`.
+* **Difficulty:** Medium
+* **Impact:** High
+
+**2. Title: Standardized Error Handling (`errno.h`)**
+* **Category:** 🛠️ libc & User-Space
+* **Description:** Implement a global `errno` and ensure all system call wrappers in `libc` set it correctly based on kernel return codes.
+* **Why It Matters:** This is the "missing link" for porting 3rd party C code. Almost all standard libraries and applications rely on `errno` to diagnose failures.
+* **Difficulty:** Low
+* **Impact:** High
+
+**3. Title: Core POSIX Utilities (The "Base System")**
+* **Category:** 🛠️ libc & User-Space
+* **Description:** Implement missing core utilities: `mkdir`, `rm`, `cp`, `mv`, `free`, `ps`, `df`, `kill`, `grep`, and `wc`.
+* **Why It Matters:** Transitioning from an "experiment" to a "system" requires basic file management and observation tools.
+* **Difficulty:** Low to Medium
+* **Impact:** High
+
+**4. Title: Shell (`sh`) Quality of Life: Tab Completion & Globbing**
+* **Category:** 🛠️ libc & User-Space
+* **Description:** Add filename tab completion (reading the CWD), globbing (`*`), and basic job control (`jobs`, `fg`, `bg`) to the shell.
+* **Why It Matters:** Significantly improves the interactive developer experience. Navigating the VFS becomes exponentially faster with completion.
+* **Difficulty:** Medium
+* **Impact:** Medium
+
+**5. Title: User-Space System Integrity (assert.h & libc tests)**
+* **Category:** 🛠️ libc & User-Space
+* **Description:** Implement `assert.h` (using `abort()`) and a standalone `libc` test suite (running in user-space). Refactor headers (moving `VFS_O_RDONLY` to `fcntl.h`, etc.) to align with POSIX expectations.
+* **Why It Matters:** As more code moves to user-space, the kernel's `ASSERT` becomes inappropriate. Standardized testing for `libc` ensures core functions like `malloc` and `string.c` don't regress.
+* **Difficulty:** Medium
+* **Impact:** High
 
 ---
 
 ## Tooling & Workflow Improvements
 
 **Build & Dev Workflow**
-1. **Automated CI with QEMU Expect Scripts:** Add a GitHub Action or GitLab CI pipeline that builds the kernel, boots it in QEMU headlessly, and uses `pexpect` to wait for the shell prompt, run `test`, and assert the output says "all tests passed". This prevents regressions.
-2. **Reproducible Devcontainer:** Provide a `Dockerfile` or `.devcontainer.json` that locks in specific versions of the AArch64 toolchain, `mtools`, CMake, and `just`. "It works on my machine" is a massive bottleneck in OS dev.
-3. **Incremental SD Card Updates:** Instead of recreating the entire 32MB SD card image every time a single user app changes, create a `just update-sd` target that uses `mcopy -o` to dynamically inject only the changed `.elf` files into the existing FAT32 image. This speeds up the dev loop significantly.
+1. **Incremental SD Card Updates:** Instead of recreating the entire 32MB SD card image every time a single user app changes, create a `just update-sd` target that uses `mcopy -o` to dynamically inject only the changed `.elf` files into the existing FAT32 image. This speeds up the dev loop significantly.
 
 **Debugging & Testing**
 4. **GDB Python Helper Scripts:** Write a `.gdbinit` or Python GDB extension specifically for Perspicua. Add custom commands like `pers_dump_tasks` (to walk the process list) or `pers_dump_pt <pid>` (to translate virtual addresses). Inspecting nested kernel structs manually in GDB is tedious.

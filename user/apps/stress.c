@@ -27,7 +27,7 @@ int recursive_function(int depth)
 void stress_stack()
 {
     printf("[STRESS] Testing deep recursion (stack size)...\n");
-    int res = recursive_function(100);
+    int res = recursive_function(120);
     printf("[STRESS] Recursion depth reached, returned %d\n", res);
 }
 
@@ -35,7 +35,7 @@ void stress_stack()
 void stress_fork()
 {
     printf("[STRESS] Testing process forks (table size & concurrency)...\n");
-    int num_processes = 200;
+    int num_processes = 900;
     int *pids = malloc(num_processes * sizeof(int));
     if (!pids) {
         printf("[STRESS] Failed to allocate pids array\n");
