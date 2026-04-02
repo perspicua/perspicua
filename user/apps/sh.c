@@ -476,6 +476,7 @@ static void execute_line(char *line)
     free(expanded);
 }
 
+// returns start of last word
 __attribute__((unused)) static int find_token_start(const char *buf, int cursor_pos)
 {
     if (cursor_pos == 0)
@@ -539,6 +540,8 @@ __attribute__((unused)) static char **find_cmd_matches(const char *prefix, int *
             // skips "." and ".."
             if (entry_name[0] == '.')
                 continue;
+
+            // if potential match not cmd skip
             int name_len = strlen(entry_name);
             if (name_len < 4 || !strcmp(entry_name + name_len - 4 - 1, ".elf"))
                 continue;
@@ -547,13 +550,13 @@ __attribute__((unused)) static char **find_cmd_matches(const char *prefix, int *
             char *cmd_name = malloc(cmd_len);
             strncpy(cmd_name, entry_name, cmd_len);
 
+            // if prefix of cmd matches prefix, add to match list (if not dupplicate)
             if (prefix_len == 0 || !strncmp(cmd_name, prefix, prefix_len)) {
                 int dup = 0;
                 for (int i = 0; i < matches_count; i++) {
                     if (!strncmp(cmd_name, matches[i], strlen(matches[i]) - 1))
                         dup = 1;
                 }
-
                 if (!dup && matches_count < capacity)
                     matches[matches_count++] = cmd_name;
                 else
