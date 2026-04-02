@@ -4,6 +4,8 @@
 #include "wait.h"
 #include "stdlib.h"
 #include "stdio.h"
+#include "dirent.h"
+#include <stddef.h>
 
 #define MAX_ARGS    32
 #define CMD_MAX_LEN 512
@@ -473,6 +475,118 @@ static void execute_line(char *line)
 
     free(expanded);
 }
+
+__attribute__((unused)) static int find_token_start(const char *buf, int cursor_pos)
+{
+    if (cursor_pos == 0)
+        return 0;
+
+    int pos = cursor_pos - 1;
+
+    while (pos > 0) {
+        if (buf[pos] == ' ' || buf[pos] == '\t')
+            return pos + 1;
+        else
+            pos--;
+    }
+
+    return 0;
+}
+
+// true if cmd; false if file/arg
+__attribute__((unused)) static int is_cmd_position(const char *buf, int token_start)
+{
+    if (token_start == 0)
+        return 1;
+
+    int pos = token_start - 1;
+    while (pos > 0 && buf[pos] == ' ') {
+        pos--;
+    }
+
+    if (pos <= 0)
+        return 1;
+
+    if (buf[pos] == '|' || buf[pos] == ';' || buf[pos] == '&')
+        return 1;
+    else
+        return 0;
+}
+
+__attribute__((unused)) static char **find_cmd_matches(const char *prefix, int *count_out)
+{
+    char *path_env = getenv("PATH");
+    if (!path_env)
+        path_env = "/bin:/";
+
+    size_t prefix_len = strlen(prefix);
+    char *prefix_part = strtok((char *)prefix, ":");
+
+    // 2^vibe
+    int capacity = 32;
+    int matches_count = 0;
+    char **matches = malloc(capacity * sizeof(char *));
+
+    while (prefix_part) {
+        DIR *dir = opendir(prefix_part);
+        if (!dir)
+            continue;
+
+        struct vfs_dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            char *entry_name = entry->name;
+
+            // skips "." and ".."
+            if (entry_name[0] == '.')
+                continue;
+            int name_len = strlen(entry_name);
+            if (name_len < 4 || !strcmp(entry_name + name_len - 4 - 1, ".elf"))
+                continue;
+
+            int cmd_len = name_len - 4;
+            char *cmd_name = malloc(cmd_len);
+            strncpy(cmd_name, entry_name, cmd_len);
+
+            if (prefix_len == 0 || !strncmp(cmd_name, prefix, prefix_len)) {
+                int dup = 0;
+                for (int i = 0; i < matches_count; i++) {
+                    if (!strncmp(cmd_name, matches[i], strlen(matches[i]) - 1))
+                        dup = 1;
+                }
+
+                if (!dup && matches_count < capacity)
+                    matches[matches_count++] = cmd_name;
+                else
+                    free(cmd_name);
+            }
+            closedir(dir);
+        }
+        prefix_part = strtok(NULL, ":");
+    }
+
+    if (matches_count == 0) {
+        free(matches);
+        *count_out = 0;
+        return NULL;
+    }
+
+    // TODO: sort matches
+
+    void *temp = realloc(matches, (matches_count + 1) * sizeof(char *));
+    if (!temp) {
+        free(matches);
+        *count_out = 0;
+        return NULL;
+    }
+
+    matches = temp;
+    matches[matches_count] = NULL;
+    *count_out = matches_count;
+
+    return matches;
+}
+// TODO: file matching, completion logic, interogation
+// static void completion(char *cmd_buffer, size_t cmd_len) {}
 
 static void print_prompt(void)
 {
