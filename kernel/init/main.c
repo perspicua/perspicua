@@ -143,6 +143,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     print_banner();
 
+    extern void lockdep_init(void);
+    lockdep_init();
+
     /* Stage 2: Memory management initialization */
     fdt_parse_memory_reservations();
 

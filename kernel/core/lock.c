@@ -6,6 +6,7 @@
  */
 
 #include "core/lock.h"
+#include "core/lockdep.h"
 
 #include "arch/exception.h"
 
@@ -16,6 +17,8 @@
  */
 void spin_lock(spinlock_t *lock)
 {
+    lockdep_acquire(lock);
+
     unsigned int tmp;
     unsigned int one = 1;
 
@@ -35,6 +38,8 @@ void spin_lock(spinlock_t *lock)
  */
 void spin_unlock(spinlock_t *lock)
 {
+    lockdep_release(lock);
+
     asm volatile("   stlr    %w0, [%1]\n" /* Store-release (0 -> unlocked) */
                  "   sev\n"               /* Signal event to wake waiters */
                  :
