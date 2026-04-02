@@ -145,7 +145,7 @@ void *heap_malloc(unsigned long size)
         struct heap_block_header *prev = NULL;
         struct heap_block_header *curr = heap_free_list;
         while (curr) {
-            if (curr->size >= size) {
+            if (curr->size >= size + HEAP_FOOTER_SIZE) {
                 if (prev) {
                     prev->next = curr->next;
                 } else {
@@ -184,7 +184,7 @@ void *heap_malloc(unsigned long size)
 
         spin_unlock_irqrestore(&heap_lock, flags);
 
-        struct heap_block_header *new_block = heap_expand(size);
+        struct heap_block_header *new_block = heap_expand(size + HEAP_FOOTER_SIZE);
         if (!new_block) {
             return NULL;
         }
