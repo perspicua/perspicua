@@ -710,6 +710,14 @@ mmap_done:
             break;
         }
 
+        case SYS_LSEEK: {
+            int fd = (int)tf->x[0];
+            off_t offset = (off_t)tf->x[1];
+            int whence = (int)tf->x[2];
+            tf->x[0] = (uint64_t)vfs_lseek(fd, offset, whence);
+            break;
+        }
+
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;

@@ -3,6 +3,8 @@ set(LIBC_SRC_COMMON
     src/printf.c
     src/malloc.c
     src/env.c
+    src/dirent.c
+    src/file.c
 )
 
 set(LIBC_SRC_KERNEL

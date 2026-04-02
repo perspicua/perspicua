@@ -21,16 +21,19 @@ void sys_exit(int status)
                  : "x0", "x8", "memory");
 }
 
-void sys_write(int fd, const char *buf, size_t len)
+int sys_write(int fd, const char *buf, size_t len)
 {
-    asm volatile("mov x0, %0\n"
-                 "mov x1, %1\n"
-                 "mov x2, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0"
-                 :
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
                  : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_WRITE)
                  : "x0", "x1", "x2", "x8", "memory");
+    return (int)res;
 }
 
 int sys_getpid(void)
@@ -351,4 +354,19 @@ void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off
                    "r"(offset), "i"(SYS_MMAP)
                  : "x0", "x1", "x2", "x3", "x4", "x5", "x8", "memory");
     return (void *)res;
+}
+
+off_t sys_lseek(int fd, off_t offset, int whence)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)offset), "r"((long)whence), "i"(SYS_LSEEK)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return (off_t)res;
 }
