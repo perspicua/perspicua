@@ -26,11 +26,6 @@
 #define GPIO_PUPDN_DOWN 0b10
 
 /*
- * gpio_init - Discovers the GPIO controller and maps registers.
- */
-void gpio_init(void);
-
-/*
  * gpio_set_pin_function - Sets the operational mode of a GPIO pin.
  */
 void gpio_set_pin_function(unsigned int pin, unsigned int function);

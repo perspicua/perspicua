@@ -43,11 +43,6 @@ extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
 /*
- * uart_init - Discovers the UART and configures it for 115200 8n1.
- */
-void uart_init(void);
-
-/*
  * uart_send - Transmits a single character with full synchronization.
  */
 void uart_send(char c);

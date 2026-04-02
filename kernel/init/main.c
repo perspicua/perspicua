@@ -134,8 +134,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fdt_init(global_dtb_ptr);
 
     /* Stage 1: Basic hardware and console bring-up */
-    gpio_init();
-    uart_init();
+    extern void driver_probe_core(void);
+    driver_probe_core();
+
     mbox_init();
     fb_init();
     fb_console_init();

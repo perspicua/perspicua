@@ -6,6 +6,7 @@
  */
 
 #include "driver/gpio.h"
+#include "driver/device.h"
 
 #include "stdio.h"
 #include "panic.h"
@@ -17,17 +18,12 @@ static volatile unsigned int *gpio_gpfsel0 = NULL;
 static volatile unsigned int *gpio_gppupdn0 = NULL;
 
 /*
- * gpio_init - Discovers and maps the GPIO registers from the DTB.
+ * bcm2711_gpio_probe - Discovers and maps the GPIO registers from the DTB.
  */
-void gpio_init(void)
+static int bcm2711_gpio_probe(struct device *dev)
 {
-    const uint32_t *gpio_node = fdt_find_node_by_compatible("brcm,bcm2711-gpio");
-    if (!gpio_node) {
-        PANIC("GPIO: device node not found");
-    }
-
     struct fdt_property reg_prop;
-    if (fdt_get_property(gpio_node, "reg", &reg_prop) != 0) {
+    if (fdt_get_property(dev->fdt_node, "reg", &reg_prop) != 0) {
         PANIC("GPIO: missing 'reg' property");
     }
 
@@ -45,8 +41,14 @@ void gpio_init(void)
     gpio_gpfsel0 = (unsigned int *)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int *)(vbase + 0xE4);
 
-    pr_info("gpio: BCM2711 driver initialized\n");
+    return 0;
 }
+
+CORE_DRIVER(bcm2711_gpio) = {
+    .name = "bcm2711-gpio",
+    .compatible = "brcm,bcm2711-gpio",
+    .probe = bcm2711_gpio_probe,
+};
 
 /*
  * gpio_set_pin_function - Sets the 3-bit function code for a GPIO pin.

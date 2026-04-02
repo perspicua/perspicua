@@ -6,6 +6,7 @@
  */
 
 #include "driver/uart.h"
+#include "driver/device.h"
 
 #include "io.h"
 #include "stdio.h"
@@ -41,17 +42,12 @@ static volatile uint32_t *uart_ifls = NULL;
 static volatile uint32_t *uart_icr = NULL;
 
 /*
- * uart_init - Locates the PL011 UART and initializes it for 8n1 operation.
+ * pl011_uart_probe - Locates the PL011 UART and initializes it for 8n1 operation.
  */
-void uart_init(void)
+static int pl011_uart_probe(struct device *dev)
 {
-    const uint32_t *uart_node = fdt_find_node_by_compatible("arm,pl011-axi");
-    if (!uart_node) {
-        PANIC("UART: device node not found");
-    }
-
     struct fdt_property reg_prop;
-    if (fdt_get_property(uart_node, "reg", &reg_prop) != 0) {
+    if (fdt_get_property(dev->fdt_node, "reg", &reg_prop) != 0) {
         PANIC("UART: missing 'reg' property");
     }
 
@@ -99,7 +95,7 @@ void uart_init(void)
     uart_ready = 1;
 
     struct fdt_property irq_prop;
-    if (fdt_get_property(uart_node, "interrupts", &irq_prop) == 0) {
+    if (fdt_get_property(dev->fdt_node, "interrupts", &irq_prop) == 0) {
         const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
         uint32_t type = fdt32_to_cpu(irq_data[0]);
         uint32_t num = fdt32_to_cpu(irq_data[1]);
@@ -108,8 +104,14 @@ void uart_init(void)
         cached_uart_irq = 153; /* Fallback for BCM2711 */
     }
 
-    pr_info("uart: PL011 at 0x%lx, IRQ %u\n", vbase, cached_uart_irq);
+    return 0;
 }
+
+CORE_DRIVER(pl011_uart) = {
+    .name = "pl011-uart",
+    .compatible = "arm,pl011-axi",
+    .probe = pl011_uart_probe,
+};
 
 /*
  * uart_write - Directs output to the line-buffered TTY.
