@@ -46,20 +46,10 @@ static volatile uint32_t *uart_icr = NULL;
  */
 static int pl011_uart_probe(struct device *dev)
 {
-    struct fdt_property reg_prop;
-    if (fdt_get_property(dev->fdt_node, "reg", &reg_prop) != 0) {
-        PANIC("UART: missing 'reg' property");
+    uintptr_t vbase = devm_get_io_base(dev, 0);
+    if (!vbase) {
+        PANIC("UART: missing or invalid 'reg' property");
     }
-
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    uint32_t phys_base =
-        (reg_prop.size >= 12) ? fdt32_to_cpu(reg_data[1]) : fdt32_to_cpu(reg_data[0]);
-
-    if (phys_base < 0xFC000000) {
-        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
-    }
-
-    uintptr_t vbase = P2V(phys_base);
 
     /* Map register offsets */
     uart_dr = (uint32_t *)(vbase + 0x00);
@@ -94,13 +84,8 @@ static int pl011_uart_probe(struct device *dev)
 
     uart_ready = 1;
 
-    struct fdt_property irq_prop;
-    if (fdt_get_property(dev->fdt_node, "interrupts", &irq_prop) == 0) {
-        const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
-        uint32_t type = fdt32_to_cpu(irq_data[0]);
-        uint32_t num = fdt32_to_cpu(irq_data[1]);
-        cached_uart_irq = (type == 0) ? num + 32 : num;
-    } else {
+    cached_uart_irq = devm_get_irq(dev, 0);
+    if (!cached_uart_irq) {
         cached_uart_irq = 153; /* Fallback for BCM2711 */
     }
 

@@ -22,20 +22,10 @@ static volatile unsigned int *gpio_gppupdn0 = NULL;
  */
 static int bcm2711_gpio_probe(struct device *dev)
 {
-    struct fdt_property reg_prop;
-    if (fdt_get_property(dev->fdt_node, "reg", &reg_prop) != 0) {
-        PANIC("GPIO: missing 'reg' property");
+    uintptr_t vbase = devm_get_io_base(dev, 0);
+    if (!vbase) {
+        PANIC("GPIO: missing or invalid 'reg' property");
     }
-
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    uint32_t phys_base = fdt32_to_cpu(reg_data[0]);
-
-    /* Handle legacy BCM address translation if needed */
-    if (phys_base < 0xFC000000) {
-        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
-    }
-
-    uintptr_t vbase = P2V(phys_base);
 
     /* BCM2711 specific register offsets */
     gpio_gpfsel0 = (unsigned int *)(vbase + 0x00);
