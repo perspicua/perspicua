@@ -1,0 +1,54 @@
+Perspicua Development Ideas
+===========================
+
+KERNEL ARCHITECTURE & PERFORMANCE:
+  - Demand Paging (On-Demand ELF Loading)
+      Difficulty: High | Impact: Very High
+      Details: Load 4KB pages from SD on-demand during page faults.
+      Benefit: Reduces process startup time and RAM usage significantly.
+  - Fully Interrupt-Driven I/O (SD & UART)
+      Difficulty: Medium | Impact: High
+      Details: Use GIC interrupts to wake blocked tasks instead of polling.
+      Benefit: Improves SMP utilization by unblocking the scheduler.
+  - Kernel Preemption & Priority Scheduling
+      Difficulty: High | Impact: Medium
+      Details: Support EL1 preemption and Priority/MLFQ scheduling.
+      Benefit: Improves system responsiveness and prevents kernel task lag.
+  - Shared Memory IPC (shm)
+      Difficulty: Medium | Impact: High
+      Details: Support shared physical page frames via mmap(MAP_SHARED).
+      Benefit: Enables high-performance graphics and complex IPC.
+
+USER-SPACE & LIBC MATURITY:
+  - Standardized Error Handling (errno.h)
+      Difficulty: Low | Impact: High
+      Details: Implement global errno and update libc syscall wrappers.
+      Benefit: Essential for porting 3rd party C libraries and tools.
+  - Core POSIX Utilities ("Base System")
+      Difficulty: Low-Med | Impact: High
+      Details: Implement mkdir, rm, cp, mv, ps, kill, grep, wc, etc.
+      Benefit: Transitions the project from experiment to usable system.
+  - Shell (sh) Quality of Life
+      Difficulty: Medium | Impact: Medium
+      Details: Add tab completion, globbing (*), and job control (fg, bg).
+      Benefit: Exponentially improves interactive developer experience.
+  - User-Space System Integrity
+      Difficulty: Medium | Impact: High
+      Details: Implement assert.h and a user-space libc test suite.
+      Benefit: Ensures libc stability as complexity moves to user-land.
+
+TOOLING & WORKFLOW IMPROVEMENTS:
+  - Incremental SD Card Updates: Use mcopy to update only changed .elf files.
+  - GDB Python Helper Scripts: Custom commands for dumping tasks/page tables.
+  - Configurable Features: Kconfig-lite via CMake for SMP/Debug toggles.
+  - Network TAP Setup: Automate TAP/TUN interface bridging in Justfile.
+
+LONG-TERM STRATEGIC IDEAS:
+  - POSIX ABI Compatibility: Align syscall numbers with Linux/AArch64.
+  - Graphics Server: Wayland-lite compositor designed for user-space.
+  - Virtualization: Use EL2 extensions for hardware-assisted guest OS.
+
+HIDDEN RISKS & WARNINGS:
+  - Polled I/O Deadlock: Interrupt-driven I/O in SMP requires granular locking.
+  - Privilege Escalation: Must use ldtr/sttr for safe user pointer access.
+  - FAT32 Integrity: FS writes are prone to corruption; needs robust sync.
