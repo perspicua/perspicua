@@ -35,7 +35,7 @@ struct vfs_dirent {
 };
 
 /* Process and execution control */
-void sys_exit(int status);
+__attribute__((noreturn)) void sys_exit(int status);
 int sys_getpid(void);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);

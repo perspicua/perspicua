@@ -16,6 +16,7 @@ set(LIBC_SRC_USER
     user/hooks.c
     user/syscall.c
     user/errno.c
+    user/assert.c
 )
 
 # libk (for kernel)

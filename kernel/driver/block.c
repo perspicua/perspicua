@@ -203,8 +203,7 @@ int block_cache_sync(void)
     struct block_cache_entry *entry = lru_head;
     while (entry) {
         if (entry->dirty) {
-            struct block_ops_wrapper *ops =
-                (struct block_ops_wrapper *)entry->dev->private_data;
+            struct block_ops_wrapper *ops = (struct block_ops_wrapper *)entry->dev->private_data;
             int res = ops->orig_write_blocks(entry->dev, entry->data, entry->block_nr, 1);
             if (res == PERS_SUCCESS) {
                 entry->dirty = 0;
