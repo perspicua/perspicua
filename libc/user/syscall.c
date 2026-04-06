@@ -3,11 +3,127 @@
  *
  * This file provides the AArch64 assembly wrappers for the libc API,
  * using the SVC instruction to transition to the kernel.
+ *
+ * Each wrapper translates the kernel's negative PERS_ERR_* return value
+ * into a standard POSIX errno code and returns -1 (or the appropriate
+ * sentinel) on failure, matching the POSIX syscall contract.
  */
 
 #include "syscall.h"
+#include "errno.h"
 
 #include "uapi/syscalls.h"
+#include "uapi/errors.h"
+#include "uapi/mman.h"
+
+/* --- Internal errno translation --- */
+
+/*
+ * Map a PERS_ERR_* code to the corresponding POSIX errno value.
+ * Called with the positive error code extracted from a negative return.
+ */
+static int __pers_to_errno(int pers_err)
+{
+    switch (pers_err) {
+        case PERS_ERR_NOT_FOUND:
+            return ENOENT;
+        case PERS_ERR_NOT_A_DIRECTORY:
+            return ENOTDIR;
+        case PERS_ERR_IS_A_DIRECTORY:
+            return EISDIR;
+        case PERS_ERR_PERMISSION_DENIED:
+            return EACCES;
+        case PERS_ERR_ALREADY_EXISTS:
+            return EEXIST;
+        case PERS_ERR_OUT_OF_RESOURCES:
+            return ENFILE;
+        case PERS_ERR_INVALID_ARGUMENT:
+            return EINVAL;
+        case PERS_ERR_OUT_OF_MEMORY:
+            return ENOMEM;
+        case PERS_ERR_IO_ERROR:
+            return EIO;
+        case PERS_ERR_TRY_AGAIN:
+            return EAGAIN;
+        case PERS_ERR_NO_SUCH_PROCESS:
+            return ESRCH;
+        case PERS_ERR_NOT_IMPLEMENTED:
+            return ENOSYS;
+        case PERS_ERR_BUFFER_TOO_SMALL:
+            return ERANGE;
+        case PERS_ERR_NOT_A_DEVICE:
+            return ENODEV;
+        case PERS_ERR_READ_ONLY_FS:
+            return EROFS;
+        case PERS_ERR_FILE_TOO_LARGE:
+            return EFBIG;
+        case PERS_ERR_NO_SPACE_LEFT:
+            return ENOSPC;
+        case PERS_ERR_BAD_FILE_DESCRIPTOR:
+            return EBADF;
+        case PERS_ERR_EXECUTABLE_FORMAT_ERROR:
+            return ENOEXEC;
+        case PERS_ERR_INTERRUPTED:
+            return EINTR;
+        case PERS_ERR_RESOURCE_DEADLOCK:
+            return EDEADLK;
+        case PERS_ERR_BROKEN_PIPE:
+            return EPIPE;
+        case PERS_ERR_CONNECTION_REFUSED:
+            return ECONNREFUSED;
+        case PERS_ERR_TIMED_OUT:
+            return ETIMEDOUT;
+        case PERS_ERR_ILLEGAL_SEEK:
+            return ESPIPE;
+        case PERS_ERR_NAME_TOO_LONG:
+            return ENAMETOOLONG;
+        case PERS_ERR_DIR_NOT_EMPTY:
+            return ENOTEMPTY;
+        case PERS_ERR_TOO_MANY_SYMLINKS:
+            return ELOOP;
+        case PERS_ERR_CROSS_DEVICE_LINK:
+            return EXDEV;
+        case PERS_ERR_OPERATION_NOT_SUPPORTED:
+            return ENOTSUP;
+        default:
+            return EIO;
+    }
+}
+
+/* Set errno from a raw kernel return value and return -1. */
+static inline int __set_errno_ret(long res)
+{
+    errno = __pers_to_errno((int)-res);
+    return -1;
+}
+
+/* Translate a raw kernel return to a POSIX int result. */
+static inline int __syscall_ret(long res)
+{
+    if (res < 0)
+        return __set_errno_ret(res);
+    return (int)res;
+}
+
+/* Translate a raw kernel return to a POSIX off_t result. */
+static inline off_t __syscall_off_ret(long res)
+{
+    if (res < 0) {
+        errno = __pers_to_errno((int)-res);
+        return (off_t)-1;
+    }
+    return (off_t)res;
+}
+
+/* Translate a raw kernel return to a POSIX mmap result. */
+static inline void *__syscall_mmap_ret(long res)
+{
+    if (res < 0) {
+        errno = __pers_to_errno((int)-res);
+        return MAP_FAILED;
+    }
+    return (void *)res;
+}
 
 /* --- Public API Implementations --- */
 
@@ -33,7 +149,7 @@ int sys_write(int fd, const char *buf, size_t len)
                  : "=r"(res)
                  : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_WRITE)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_getpid(void)
@@ -45,7 +161,7 @@ int sys_getpid(void)
                  : "=r"(pid)
                  : "i"(SYS_GETPID)
                  : "x0", "x8", "memory");
-    return (int)pid;
+    return __syscall_ret(pid);
 }
 
 void sys_yield(void)
@@ -78,7 +194,7 @@ int sys_open(const char *path, int flags)
                  : "=r"(fd)
                  : "r"(path), "r"((long)flags), "i"(SYS_OPEN)
                  : "x0", "x1", "x8", "memory");
-    return (int)fd;
+    return __syscall_ret(fd);
 }
 
 int sys_read(int fd, void *buf, size_t len)
@@ -93,7 +209,7 @@ int sys_read(int fd, void *buf, size_t len)
                  : "=r"(bytes)
                  : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_READ)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)bytes;
+    return __syscall_ret(bytes);
 }
 
 int sys_getdents(int fd, void *buf, size_t count)
@@ -108,7 +224,7 @@ int sys_getdents(int fd, void *buf, size_t count)
                  : "=r"(res)
                  : "r"((long)fd), "r"(buf), "r"((long)count), "i"(SYS_GETDENTS)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_close(int fd)
@@ -121,7 +237,7 @@ int sys_close(int fd)
                  : "=r"(res)
                  : "r"((long)fd), "i"(SYS_CLOSE)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_exec(const char *path, char *const argv[], char *const envp[])
@@ -136,7 +252,7 @@ int sys_exec(const char *path, char *const argv[], char *const envp[])
                  : "=r"(res)
                  : "r"(path), "r"(argv), "r"(envp), "i"(SYS_EXEC)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_fork(void)
@@ -148,7 +264,7 @@ int sys_fork(void)
                  : "=r"(res)
                  : "i"(SYS_FORK)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_waitpid(int pid, int *status, int options)
@@ -163,7 +279,7 @@ int sys_waitpid(int pid, int *status, int options)
                  : "=r"(res)
                  : "r"((long)pid), "r"(status), "r"((long)options), "i"(SYS_WAITPID)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_pipe(int pipefd[2])
@@ -176,7 +292,7 @@ int sys_pipe(int pipefd[2])
                  : "=r"(res)
                  : "r"(pipefd), "i"(SYS_PIPE)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_dup2(int oldfd, int newfd)
@@ -190,7 +306,7 @@ int sys_dup2(int oldfd, int newfd)
                  : "=r"(res)
                  : "r"((long)oldfd), "r"((long)newfd), "i"(SYS_DUP2)
                  : "x0", "x1", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_signal(int sig, signal_handler_t handler)
@@ -204,7 +320,7 @@ int sys_signal(int sig, signal_handler_t handler)
                  : "=r"(res)
                  : "r"((long)sig), "r"(handler), "i"(SYS_SIGNAL)
                  : "x0", "x1", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_kill(int pid, int sig)
@@ -218,7 +334,7 @@ int sys_kill(int pid, int sig)
                  : "=r"(res)
                  : "r"((long)pid), "r"((long)sig), "i"(SYS_KILL)
                  : "x0", "x1", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 void sys_sigreturn(void)
@@ -252,7 +368,7 @@ int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
                  : "=r"(res)
                  : "r"((long)sig), "r"(act), "r"(oact), "i"(SYS_SIGACTION)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset)
@@ -267,7 +383,7 @@ int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset)
                  : "=r"(res)
                  : "r"((long)how), "r"(set), "r"(oset), "i"(SYS_SIGPROCMASK)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_sigpending(sigset_t *set)
@@ -280,7 +396,7 @@ int sys_sigpending(sigset_t *set)
                  : "=r"(res)
                  : "r"(set), "i"(SYS_SIGPENDING)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_sigsuspend(const sigset_t *mask)
@@ -293,7 +409,7 @@ int sys_sigsuspend(const sigset_t *mask)
                  : "=r"(res)
                  : "r"(mask), "i"(SYS_SIGSUSPEND)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_chdir(const char *path)
@@ -306,7 +422,7 @@ int sys_chdir(const char *path)
                  : "=r"(res)
                  : "r"(path), "i"(SYS_CHDIR)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_getcwd(char *buf, size_t size)
@@ -320,7 +436,7 @@ int sys_getcwd(char *buf, size_t size)
                  : "=r"(res)
                  : "r"(buf), "r"((long)size), "i"(SYS_GETCWD)
                  : "x0", "x1", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 int sys_stat(const char *path, struct stat *buf)
@@ -334,7 +450,7 @@ int sys_stat(const char *path, struct stat *buf)
                  : "=r"(res)
                  : "r"(path), "r"(buf), "i"(SYS_STAT)
                  : "x0", "x1", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
 
 void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
@@ -353,7 +469,7 @@ void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off
                  : "r"(addr), "r"(length), "r"((long)prot), "r"((long)flags), "r"((long)fd),
                    "r"(offset), "i"(SYS_MMAP)
                  : "x0", "x1", "x2", "x3", "x4", "x5", "x8", "memory");
-    return (void *)res;
+    return __syscall_mmap_ret(res);
 }
 
 off_t sys_lseek(int fd, off_t offset, int whence)
@@ -368,7 +484,7 @@ off_t sys_lseek(int fd, off_t offset, int whence)
                  : "=r"(res)
                  : "r"((long)fd), "r"((long)offset), "r"((long)whence), "i"(SYS_LSEEK)
                  : "x0", "x1", "x2", "x8", "memory");
-    return (off_t)res;
+    return __syscall_off_ret(res);
 }
 
 int sys_sync(void)
@@ -380,5 +496,5 @@ int sys_sync(void)
                  : "=r"(res)
                  : "i"(SYS_SYNC)
                  : "x0", "x8", "memory");
-    return (int)res;
+    return __syscall_ret(res);
 }
