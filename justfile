@@ -12,13 +12,33 @@ nproc := `nproc 2>/dev/null || sysctl -n hw.ncpu || echo 1`
 # Default recipe
 default: build
 
+# Kernel configuration options (Kconfig-lite)
+config_smp     := "ON"
+config_lockdep := "ON"
+config_nr_cpus := "4"
+
 # Setup and build the project (defaults to Debug)
 # Usage: just build [debug|release]
 @build type="Debug":
-    cmake -B {{build_dir}} -S . -DCMAKE_TOOLCHAIN_FILE={{toolchain}} -DCMAKE_BUILD_TYPE={{type}} -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    cmake -B {{build_dir}} -S . \
+        -DCMAKE_TOOLCHAIN_FILE={{toolchain}} \
+        -DCMAKE_BUILD_TYPE={{type}} \
+        -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+        -DCONFIG_SMP={{config_smp}} \
+        -DCONFIG_LOCKDEP={{config_lockdep}} \
+        -DCONFIG_NR_CPUS={{config_nr_cpus}}
     cmake --build {{build_dir}} -j {{nproc}}
     ln -sf {{build_dir}}/compile_commands.json compile_commands.json
     echo "Build ({{type}}) complete: pi4-boot/kernel8.img"
+
+# Show current kernel configuration
+@config:
+    echo "Kernel Configuration:"
+    echo "  CONFIG_SMP      = {{config_smp}}"
+    echo "  CONFIG_LOCKDEP  = {{config_lockdep}}"
+    echo "  CONFIG_NR_CPUS  = {{config_nr_cpus}}"
+    echo ""
+    echo "Override with: just config_smp=OFF config_lockdep=OFF build"
 
 # Run the kernel in QEMU
 @run: build
@@ -60,3 +80,58 @@ default: build
 # Check formatting
 @check-format:
     find kernel libc uapi user -name "*.c" -o -name "*.h" | xargs clang-format --dry-run --Werror
+
+# --- Network TAP Setup (for future networking support) ---
+
+tap_iface := "tap0"
+bridge_iface := "br0"
+host_iface := "en0"
+
+# Create a TAP interface for QEMU networking (macOS - requires tuntap kext)
+[macos]
+@net-setup:
+    echo "Setting up TAP interface {{tap_iface}}..."
+    sudo ifconfig {{tap_iface}} create || true
+    sudo ifconfig {{bridge_iface}} create || true
+    sudo ifconfig {{bridge_iface}} addm {{host_iface}} addm {{tap_iface}}
+    sudo ifconfig {{bridge_iface}} up
+    sudo ifconfig {{tap_iface}} up
+    echo "TAP interface ready: {{tap_iface}} bridged via {{bridge_iface}}"
+
+# Create a TAP interface for QEMU networking (Linux)
+[linux]
+@net-setup:
+    echo "Setting up TAP interface {{tap_iface}}..."
+    sudo ip tuntap add dev {{tap_iface}} mode tap user $(whoami)
+    sudo ip link set {{tap_iface}} up
+    sudo ip link add {{bridge_iface}} type bridge 2>/dev/null || true
+    sudo ip link set {{tap_iface}} master {{bridge_iface}}
+    sudo ip link set {{host_iface}} master {{bridge_iface}} 2>/dev/null || true
+    sudo ip link set {{bridge_iface}} up
+    sudo ip addr add 10.0.0.1/24 dev {{bridge_iface}} 2>/dev/null || true
+    echo "TAP interface ready: {{tap_iface}} bridged via {{bridge_iface}} (10.0.0.1/24)"
+
+# Tear down TAP/bridge networking
+[macos]
+@net-teardown:
+    sudo ifconfig {{bridge_iface}} destroy 2>/dev/null || true
+    sudo ifconfig {{tap_iface}} destroy 2>/dev/null || true
+    echo "TAP interface torn down."
+
+[linux]
+@net-teardown:
+    sudo ip link set {{bridge_iface}} down 2>/dev/null || true
+    sudo ip link delete {{bridge_iface}} 2>/dev/null || true
+    sudo ip link delete {{tap_iface}} 2>/dev/null || true
+    echo "TAP interface torn down."
+
+# Run QEMU with TAP networking enabled
+@run-net: build net-setup
+    cmake --build {{build_dir}} --target sdcard
+    qemu-system-aarch64 \
+        -M raspi4b -serial stdio -display none \
+        -dtb pi4-boot/bcm2711-rpi-4-b.dtb \
+        -kernel {{build_dir}}/kernel/kernel8.img \
+        -drive file={{build_dir}}/sdcard.img,format=raw,if=sd \
+        -netdev tap,id=net0,ifname={{tap_iface}},script=no,downscript=no \
+        -device usb-net,netdev=net0

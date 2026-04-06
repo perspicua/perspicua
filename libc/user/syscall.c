@@ -370,3 +370,15 @@ off_t sys_lseek(int fd, off_t offset, int whence)
                  : "x0", "x1", "x2", "x8", "memory");
     return (off_t)res;
 }
+
+int sys_sync(void)
+{
+    long res;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "i"(SYS_SYNC)
+                 : "x0", "x8", "memory");
+    return (int)res;
+}

@@ -112,7 +112,15 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         size_t pages_needed = (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
         if (cache_count >= BLOCK_CACHE_SIZE) {
             struct block_cache_entry *evict = lru_tail;
-            // TODO: for Write-Back cache, flush dirty blocks here before eviction
+
+            /* Flush dirty block to disk before eviction */
+            if (evict->dirty) {
+                struct block_ops_wrapper *evict_ops =
+                    (struct block_ops_wrapper *)evict->dev->private_data;
+                evict_ops->orig_write_blocks(evict->dev, evict->data, evict->block_nr, 1);
+                evict->dirty = 0;
+            }
+
             lru_remove(evict);
             size_t eh = block_hash(evict->dev, evict->block_nr);
             struct block_cache_entry **pp = &hash_table[eh];
@@ -182,6 +190,32 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
     spin_unlock_irqrestore(&cache_lock, flags);
 
     return PERS_SUCCESS;
+}
+
+/*
+ * block_cache_sync - Flushes all dirty cache entries to their backing devices.
+ */
+int block_cache_sync(void)
+{
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
+    int flushed = 0;
+
+    struct block_cache_entry *entry = lru_head;
+    while (entry) {
+        if (entry->dirty) {
+            struct block_ops_wrapper *ops =
+                (struct block_ops_wrapper *)entry->dev->private_data;
+            int res = ops->orig_write_blocks(entry->dev, entry->data, entry->block_nr, 1);
+            if (res == PERS_SUCCESS) {
+                entry->dirty = 0;
+                flushed++;
+            }
+        }
+        entry = entry->lru_next;
+    }
+
+    spin_unlock_irqrestore(&cache_lock, flags);
+    return flushed;
 }
 
 static struct block_device *devices[BLOCK_MAX_DEVICES];
