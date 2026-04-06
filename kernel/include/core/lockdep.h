@@ -25,8 +25,14 @@ void lockdep_release(spinlock_t *lock);
 #else /* !CONFIG_LOCKDEP */
 
 static inline void lockdep_init(void) {}
-static inline void lockdep_acquire(spinlock_t *lock) { (void)lock; }
-static inline void lockdep_release(spinlock_t *lock) { (void)lock; }
+static inline void lockdep_acquire(spinlock_t *lock)
+{
+    (void)lock;
+}
+static inline void lockdep_release(spinlock_t *lock)
+{
+    (void)lock;
+}
 
 #endif /* CONFIG_LOCKDEP */
 

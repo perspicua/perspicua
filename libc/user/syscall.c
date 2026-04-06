@@ -135,6 +135,7 @@ void sys_exit(int status)
                  :
                  : "r"((long)status), "i"(SYS_EXIT)
                  : "x0", "x8", "memory");
+    __builtin_unreachable();
 }
 
 int sys_write(int fd, const char *buf, size_t len)
