@@ -37,18 +37,30 @@ USER-SPACE & LIBC MATURITY:
       Details: Implement assert.h and a user-space libc test suite.
       Benefit: Ensures libc stability as complexity moves to user-land.
 
-TOOLING & WORKFLOW IMPROVEMENTS:
-  - Incremental SD Card Updates: Use mcopy to update only changed .elf files.
-  - GDB Python Helper Scripts: Custom commands for dumping tasks/page tables.
-  - Configurable Features: Kconfig-lite via CMake for SMP/Debug toggles.
-  - Network TAP Setup: Automate TAP/TUN interface bridging in Justfile.
+TOOLING & WORKFLOW IMPROVEMENTS (RESOLVED):
+  - Incremental SD Card Updates: [RESOLVED] SD image is created once, then
+      mcopy -o incrementally overwrites only changed .elf files.
+  - GDB Python Helper Scripts: [RESOLVED] scripts/gdb_helpers.py provides
+      tasks, ps, pagetable <pid>, and irqstats commands. Auto-loaded by
+      the gdb target.
+  - Configurable Features: [RESOLVED] CMake options CONFIG_SMP,
+      CONFIG_LOCKDEP, CONFIG_NR_CPUS. Toggle via:
+      just config_smp=OFF config_lockdep=OFF build
+  - Network TAP Setup: [RESOLVED] just net-setup / net-teardown / run-net
+      with platform-specific (macOS/Linux) TAP/bridge automation.
 
 LONG-TERM STRATEGIC IDEAS:
   - POSIX ABI Compatibility: Align syscall numbers with Linux/AArch64.
   - Graphics Server: Wayland-lite compositor designed for user-space.
   - Virtualization: Use EL2 extensions for hardware-assisted guest OS.
 
-HIDDEN RISKS & WARNINGS:
-  - Polled I/O Deadlock: Interrupt-driven I/O in SMP requires granular locking.
-  - Privilege Escalation: Must use ldtr/sttr for safe user pointer access.
-  - FAT32 Integrity: FS writes are prone to corruption; needs robust sync.
+HIDDEN RISKS & WARNINGS (RESOLVED):
+  - Polled I/O Deadlock: [RESOLVED] SD driver now uses spin_lock_irqsave to
+      serialize all SDHCI controller access across cores. UART TX was already
+      protected by uart_tx_lock; UART RX is interrupt-driven via TTY.
+  - Privilege Escalation: [RESOLVED] All user-space memory access uses
+      ldtrb/sttrb (uaccess.S) with validate_user_buffer() and exception fixup.
+      All 27 syscalls go through copy_from_user/copy_to_user.
+  - FAT32 Integrity: [RESOLVED] Block cache now flushes dirty entries on LRU
+      eviction. Added block_cache_sync() and SYS_SYNC syscall for explicit
+      writeback from userspace.

@@ -11,6 +11,21 @@ endif()
 option(USE_COLOR "Enable colored output" ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Kernel Configuration (Kconfig-lite)
+option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
+option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
+set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
+
+# Propagate config to compiler defines
+set(KERNEL_CONFIG_DEFS "")
+if(CONFIG_SMP)
+    list(APPEND KERNEL_CONFIG_DEFS CONFIG_SMP)
+endif()
+if(CONFIG_LOCKDEP)
+    list(APPEND KERNEL_CONFIG_DEFS CONFIG_LOCKDEP)
+endif()
+list(APPEND KERNEL_CONFIG_DEFS "CONFIG_NR_CPUS=${CONFIG_NR_CPUS}")
+
 # Build Type Logic
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build: Debug Release" FORCE)
@@ -51,16 +66,22 @@ set(QEMU_FLAGS -M raspi4b -serial stdio -display none -dtb ${DTB} -kernel ${KERN
 set(QEMU_FLAGS_GUI -M raspi4b -serial vc -dtb ${DTB} -kernel ${KERNEL_IMG})
 set(QEMU_SD_FLAGS -drive file=${SD_IMAGE},format=raw,if=sd)
 
-# SD Card Image target
-add_custom_target(sdcard
+# SD Card Image: create once, then incrementally update only changed files
+add_custom_command(
+    OUTPUT ${SD_IMAGE}
     COMMAND dd if=/dev/zero of=${SD_IMAGE} bs=1M count=32 status=none
     COMMAND ${MFORMAT} -i "${SD_IMAGE}" -F ::
     COMMAND ${MMD} -i "${SD_IMAGE}" ::/bin
-    COMMAND ${MCOPY} -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
-    COMMAND ${MCOPY} -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.txt" ::/
-    DEPENDS initrd
+    COMMENT "Creating FAT32 SD card image"
     VERBATIM
-    COMMENT "Generating FAT32 SD card image"
+)
+
+add_custom_target(sdcard
+    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
+    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.txt" ::/
+    DEPENDS ${SD_IMAGE} initrd
+    VERBATIM
+    COMMENT "Updating SD card image (incremental)"
 )
 
 # QEMU Run target
@@ -83,8 +104,13 @@ add_custom_target(debug
 )
 
 # Provide the GDB command directly as a target for convenience (run debug target in another terminal)
+set(GDB_HELPERS "${CMAKE_SOURCE_DIR}/scripts/gdb_helpers.py")
 add_custom_target(gdb
-    COMMAND ${CROSS_COMPILE}gdb -ex "target remote :1234" -ex "layout split" ${KERNEL_ELF}
+    COMMAND ${CROSS_COMPILE}gdb
+        -ex "source ${GDB_HELPERS}"
+        -ex "target remote :1234"
+        -ex "layout split"
+        ${KERNEL_ELF}
     DEPENDS kernel8.elf
     USES_TERMINAL
 )

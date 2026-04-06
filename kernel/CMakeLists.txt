@@ -27,7 +27,7 @@ target_include_directories(kernel8_pass1.elf PRIVATE
     ..
 )
 
-target_compile_definitions(kernel8_pass1.elf PRIVATE __KERNEL__)
+target_compile_definitions(kernel8_pass1.elf PRIVATE __KERNEL__ ${KERNEL_CONFIG_DEFS})
 target_link_libraries(kernel8_pass1.elf PRIVATE libk)
 
 target_link_options(kernel8_pass1.elf PRIVATE
@@ -53,7 +53,7 @@ target_include_directories(kernel8.elf PRIVATE
     ..
 )
 
-target_compile_definitions(kernel8.elf PRIVATE __KERNEL__)
+target_compile_definitions(kernel8.elf PRIVATE __KERNEL__ ${KERNEL_CONFIG_DEFS})
 target_link_libraries(kernel8.elf PRIVATE libk)
 
 target_link_options(kernel8.elf PRIVATE

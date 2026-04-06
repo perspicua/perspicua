@@ -102,7 +102,9 @@ int sched_get_core_pid(int cpu);
 /* Low-level assembly function to swap processor state. */
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
-#ifndef SCHED_NUM_CORES
+#ifdef CONFIG_NR_CPUS
+    #define SCHED_NUM_CORES CONFIG_NR_CPUS
+#else
     #define SCHED_NUM_CORES 4
 #endif
 

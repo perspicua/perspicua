@@ -59,6 +59,9 @@ off_t sys_lseek(int fd, off_t offset, int whence);
 /* Memory management */
 void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 
+/* Filesystem sync */
+int sys_sync(void);
+
 /* Signal handling */
 int sys_signal(int sig, signal_handler_t handler);
 int sys_kill(int pid, int sig);

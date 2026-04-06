@@ -37,5 +37,6 @@
 #define SYS_SIGSUSPEND  25
 #define SYS_STAT        26
 #define SYS_LSEEK       27
+#define SYS_SYNC        28
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

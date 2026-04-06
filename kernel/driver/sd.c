@@ -20,6 +20,10 @@
 #include "driver/block.h"
 #include "driver/uart.h"
 #include "driver/mailbox.h"
+#include "core/lock.h"
+
+/* Serializes all SDHCI controller access across cores */
+static spinlock_t sd_lock = SPINLOCK_INIT;
 
 typedef struct {
     volatile uint32_t arg2;
@@ -228,6 +232,8 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
     }
     uint32_t *buf = (uint32_t *)buffer;
 
+    unsigned long flags = spin_lock_irqsave(&sd_lock);
+
     for (size_t i = 0; i < num_blocks; i++) {
         uint32_t addr = (uint32_t)(start_block + i);
         if (!sd_is_sdhc) {
@@ -239,11 +245,13 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
         int res = sd_send_cmd(CMD17, addr);
         if (res != PERS_SUCCESS) {
             pr_err("sd: read failed at block %lu\n", start_block + i);
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
         if (res != PERS_SUCCESS) {
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
 
@@ -254,10 +262,12 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
 
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != PERS_SUCCESS) {
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
     }
 
+    spin_unlock_irqrestore(&sd_lock, flags);
     return PERS_SUCCESS;
 }
 
@@ -269,15 +279,19 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
     }
     const uint32_t *buf = (const uint32_t *)buffer;
 
+    unsigned long flags = spin_lock_irqsave(&sd_lock);
+
     for (size_t i = 0; i < num_blocks; i++) {
         regs->blk_size_cnt = (1 << 16) | 512;
         int res = sd_send_cmd(CMD24, (uint32_t)(start_block + i));
         if (res != PERS_SUCCESS) {
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
 
         res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
         if (res != PERS_SUCCESS) {
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
 
@@ -287,10 +301,12 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != PERS_SUCCESS) {
+            spin_unlock_irqrestore(&sd_lock, flags);
             return res;
         }
     }
 
+    spin_unlock_irqrestore(&sd_lock, flags);
     return PERS_SUCCESS;
 }
 
