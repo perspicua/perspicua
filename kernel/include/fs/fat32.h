@@ -87,6 +87,20 @@ struct fat32_dir_entry {
 } __attribute__((packed));
 
 /*
+ * struct fat32_lfn_entry - Long file name support for FAT.
+ */
+struct fat32_lfn_entry {
+    uint8_t sequence;
+    uint16_t name1[5];
+    uint8_t attributes;
+    uint8_t type;
+    uint8_t checksum;
+    uint16_t name2[6];
+    uint16_t first_cluster;
+    uint16_t name3[2];
+} __attribute__((packed));
+
+/*
  * struct fat32_fs - Runtime state of a mounted FAT32 filesystem.
  */
 struct fat32_fs {

@@ -92,6 +92,21 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
     return 1;
 }
 
+static void extract_lfn_part(struct fat32_lfn_entry *lfn, char *name_buf)
+{
+    int offset = ((lfn->sequence & 0x3F) - 1) * 13;
+
+    // name1 (5 chars)
+    for (int i = 0; i < 5; i++)
+        name_buf[offset + i] = (char)lfn->name1[i];
+    // name2 (6 chars)
+    for (int i = 0; i < 6; i++)
+        name_buf[offset + 5 + i] = (char)lfn->name2[i];
+    // name3 (2 chars)
+    for (int i = 0; i < 2; i++)
+        name_buf[offset + 11 + i] = (char)lfn->name3[i];
+}
+
 static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page_buffer)
 {
     uint32_t start_offset = page_index * PAGE_SIZE;
@@ -215,6 +230,10 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
     uint32_t cluster = (uint32_t)(uintptr_t)dir->internal_info;
     struct fat32_dir_entry dirs[16];
 
+    char lfn_name[256];
+    memset(lfn_name, 0, 256);
+    int has_lfn = 0;
+
     while (cluster < 0x0FFFFFF8) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
@@ -226,9 +245,17 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
                     return NULL;
                 }
                 if (dirs[i].name[0] == 0xE5) {
+                    goto reset_lfn;
+                }
+
+                if (dirs[i].attributes == 0x0F) {
+                    struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
+                    extract_lfn_part(lfn, lfn_name);
+                    has_lfn = 1;
                     continue;
                 }
-                if (name_match(filename, &dirs[i])) {
+                if ((has_lfn && strcmp(filename, lfn_name) == 0)
+                    || name_match(filename, &dirs[i])) {
                     struct vfs_vnode *node =
                         (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
                     if (!node) {
@@ -246,6 +273,9 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
                     node->refcount.counter = 1;
                     return node;
                 }
+reset_lfn:
+                has_lfn = 0;
+                memset(lfn_name, 0, 256);
             }
         }
         cluster = get_next_cluster(cluster);
@@ -274,6 +304,10 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
         }
     }
 
+    char lfn_name[256];
+    memset(lfn_name, 0, 256);
+    int has_lfn = 0;
+
     struct fat32_dir_entry dirs[16];
     while (cluster < 0x0FFFFFF8 && entries_read < (int)max_entries) {
         uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
@@ -290,34 +324,32 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
             for (int i = (int)start_entry; i < 16 && entries_read < (int)max_entries; i++) {
                 file->offset += 32;
 
-                if (dirs[i].name[0] == 0x00) {
+                if (dirs[i].name[0] == 0x00)
                     return entries_read;
-                }
-                if (dirs[i].name[0] == 0xE5 || dirs[i].attributes == 0x0F) {
+
+                if (dirs[i].name[0] == 0xE5) {
+                    has_lfn = 0;
                     continue;
                 }
-
+                if (dirs[i].attributes == 0x0F) {
+                    struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
+                    extract_lfn_part(lfn, lfn_name);
+                    has_lfn = 1;
+                    continue;
+                }
                 /* Skip . and .. entries from the FAT filesystem itself */
                 if (dirs[i].name[0] == '.') {
                     continue;
                 }
 
                 struct vfs_dirent *dirent = &dirent_buf[entries_read];
-                int idx = 0;
-                for (int k = 0; k < 8; k++) {
-                    uint8_t c = dirs[i].name[k];
-                    if (c == ' ' || c == 0) {
-                        continue;
-                    }
-                    if (c >= 'A' && c <= 'Z') {
-                        c = c - 'A' + 'a';
-                    }
-                    dirent->name[idx++] = (char)c;
-                }
-                if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0) {
-                    dirent->name[idx++] = '.';
-                    for (int k = 0; k < 3; k++) {
-                        uint8_t c = dirs[i].ext[k];
+                if (has_lfn) {
+                    strncpy(dirent->name, lfn_name, 255);
+                    dirent->name[255] = '\0';
+                } else {
+                    int idx = 0;
+                    for (int k = 0; k < 8; k++) {
+                        uint8_t c = dirs[i].name[k];
                         if (c == ' ' || c == 0) {
                             continue;
                         }
@@ -326,8 +358,24 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                         }
                         dirent->name[idx++] = (char)c;
                     }
+                    if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0) {
+                        dirent->name[idx++] = '.';
+                        for (int k = 0; k < 3; k++) {
+                            uint8_t c = dirs[i].ext[k];
+                            if (c == ' ' || c == 0) {
+                                continue;
+                            }
+                            if (c >= 'A' && c <= 'Z') {
+                                c = c - 'A' + 'a';
+                            }
+                            dirent->name[idx++] = (char)c;
+                        }
+                    }
+                    dirent->name[idx] = '\0';
                 }
-                dirent->name[idx] = '\0';
+
+                has_lfn = 0;
+                memset(lfn_name, 0, 256);
                 dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
                 entries_read++;
             }
