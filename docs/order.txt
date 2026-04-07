@@ -1,0 +1,34 @@
+  Phase 1: The Foundation (Stability & Tooling)
+  Goal: Make the system easier to debug and more predictable before touching complex logic.
+   2. User-Space System Integrity (assert.h & tests): Establish a testing culture for libc now so that memory management changes don't silently break strings or malloc.
+   3. Kernel-level Debugger (KDB): Having a basic UART console to dump registers and task lists will save you hundreds of hours when you start implementing Phase 2 and 3.
+
+  Phase 2: Developer Experience & Basic I/O
+  Goal: Turn the "kernel project" into a usable environment where you can actually work.
+
+   4. Fully Interrupt-Driven I/O: Move away from polling. This is necessary for a responsive shell and for high-performance networking later.
+   5. Core POSIX Utilities (ps, ls, mkdir, rm): These allow you to inspect the system state from within the system itself.
+   6. Shell (sh) Quality of Life: Add tab completion and history. It sounds minor, but it exponentially speeds up your "compile-run-test" loop.
+
+  Phase 3: Advanced Architecture (The "Heavy Lifting")
+  Goal: Implement the core features that define a modern operating system.
+
+   7. Advanced Block Cache: You need efficient disk I/O before you attempt Demand Paging or high-performance networking.
+   8. I/O Multiplexing (select/poll): This is the bridge between simple files and complex applications like network servers or a GUI.
+   9. Demand Paging: Significant performance boost. Since you already have the MMU and SD driver, this is the logical "Big Move."
+   10. Shared Memory IPC: Once you have demand paging, mapping the same physical page to two processes is the next logical step.
+
+  Phase 4: Concurrency & Security
+  Goal: Enable the system to handle multiple tasks efficiently and safely.
+
+   11. Threading Support (pthreads): This requires a clone() syscall and TLS. It’s much easier to do once your memory management (Phase 3) is rock solid.
+   12. Kernel Preemption: Move from cooperative/timer-only scheduling to a fully preemptive kernel to improve latency.
+   13. Security Mitigations (ASLR/Canaries): Now that the loader and stack management are mature, add protections to make the system resilient.
+
+  Phase 5: Strategic Extensions (Long-Term)
+  Goal: Broaden the system's capabilities into networking and graphics.
+
+   14. Network Stack (LWIP Integration): Depends on interrupts (Phase 2) and I/O multiplexing (Phase 3).
+   15. Graphics Server (Wayland-lite): Depends on Shared Memory IPC (Phase 3).
+   16. Dynamic Linking (ld.so): A massive task that is mostly a user-space loader challenge; do this once you have many large binaries.
+   17. Virtualization (EL2): The final frontier—running other OSes on top of Perspicua.
