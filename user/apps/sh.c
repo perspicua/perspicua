@@ -75,7 +75,7 @@ static void print_prompt(void);
 static void clear_completion_matches(void)
 {
     if (last_completion_lines > 0) {
-        printf("\r\033[%dA\033[0J", last_completion_lines + 2);
+        printf("\r\033[%dA\033[0J", last_completion_lines + 1);
         last_completion_lines = 0;
         last_completion_displayed = 0;
     }
