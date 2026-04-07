@@ -1,7 +1,6 @@
   Phase 2: Developer Experience & Basic I/O
   Goal: Turn the "kernel project" into a usable environment where you can actually work.
 
-   4. Fully Interrupt-Driven I/O: Move away from polling. This is necessary for a responsive shell and for high-performance networking later.
    5. Core POSIX Utilities (ps, ls, mkdir, rm): These allow you to inspect the system state from within the system itself.
    6. Shell (sh) Quality of Life: Add tab completion and history. It sounds minor, but it exponentially speeds up your "compile-run-test" loop.
 
