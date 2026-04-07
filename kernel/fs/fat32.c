@@ -689,6 +689,7 @@ static struct vfs_vnode_ops fat32_vnode_ops = {
     .write = fat32_vfs_write,
     .lookup = fat32_vfs_lookup,
     .readdir = fat32_vfs_readdir,
+    .write_page = fat32_write_page,
 };
 
 /*
