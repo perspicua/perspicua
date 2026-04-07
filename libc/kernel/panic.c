@@ -12,6 +12,7 @@
 #include "arch/exception.h"
 
 #include "core/timer.h"
+#include "debug/kdb.h"
 #include "driver/gic.h"
 #include "sched/sched.h"
 
@@ -121,7 +122,14 @@ static void panic_backtrace(unsigned long fp)
         unsigned long prev_fp = frame[0];
         unsigned long ret_addr = frame[1];
 
-        printf("  #%-2d  0x%016lx\n", i, ret_addr);
+        unsigned long offset = 0;
+        const char *sym_name = panic_resolve_symbol(ret_addr, &offset);
+
+        if (sym_name) {
+            printf("  #%-2d  0x%016lx <%s+0x%lx>\n", i, ret_addr, sym_name, offset);
+        } else {
+            printf("  #%-2d  0x%016lx\n", i, ret_addr);
+        }
 
         if (!prev_fp || prev_fp <= fp) {
             break;
@@ -182,6 +190,14 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
     } else {
         panic_dump_live_registers();
         panic_backtrace(fp);
+    }
+
+    printf("\n--- Entering KDB (type 'continue' to halt) ---\n\n");
+
+    if (tf) {
+        kdb_enter_tf("kernel panic", tf);
+    } else {
+        kdb_enter("kernel panic");
     }
 
     printf("\n--- All CPU cores halted ---\n\n");

@@ -167,18 +167,24 @@ void tty_init(struct tty *tty)
 }
 
 /*
+ * tty_handle_tx - Called from the UART TX interrupt to drain the TX ring buffer.
+ *
+ * Pumps as many bytes as the FIFO will accept, then wakes blocked writers and
+ * re-arms (or disarms) the TX interrupt based on buffer fullness.
+ */
+void tty_handle_tx(struct tty *tty)
+{
+    unsigned long flags = spin_lock_irqsave(&tty->lock);
+    tty_pump_tx(tty);
+    spin_unlock_irqrestore(&tty->lock, flags);
+}
+
+/*
  * tty_handle_rx - Dispatches received characters to the RX buffer or signals.
  */
 void tty_handle_rx(struct tty *tty, char c)
 {
     unsigned long flags = spin_lock_irqsave(&tty->lock);
-
-    /* Character 0 is used as a signal to pump the TX stream */
-    if (c == 0) {
-        tty_pump_tx(tty);
-        spin_unlock_irqrestore(&tty->lock, flags);
-        return;
-    }
 
     if (c == '\r') {
         c = '\n';

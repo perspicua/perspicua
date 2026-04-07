@@ -2,6 +2,7 @@
 #include "string.h"
 #include "stdio.h"
 #include "stdlib.h"
+#include "dirent.h"
 #include "uapi/stat.h"
 
 static void print_mode(uint32_t mode)
@@ -72,8 +73,8 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         return 0;
     }
 
-    int fd = sys_open(path, VFS_O_RDONLY);
-    if (fd < 0) {
+    DIR *dirp = opendir(path);
+    if (!dirp) {
         printf("ls: cannot open directory '%s'\n", path);
         return 1;
     }
@@ -81,49 +82,38 @@ static int list_path_with_options(const char *path, int long_format, int show_al
     if (long_format)
         print_header();
 
-    size_t num_dirents = 32;
-    struct vfs_dirent *dirents = malloc(sizeof(struct vfs_dirent) * num_dirents);
-    if (!dirents) {
-        printf("ls: memory allocation failed\n");
-        sys_close(fd);
-        return 1;
-    }
-
-    int res;
+    struct vfs_dirent *ent;
     char full_path[512];
     int path_len = strlen(path);
 
-    while ((res = sys_getdents(fd, dirents, sizeof(struct vfs_dirent) * num_dirents)) > 0) {
-        for (int i = 0; i < res; i++) {
-            if (dirents[i].name[0] == '.' && !show_all) {
-                continue;
-            }
+    while ((ent = readdir(dirp)) != NULL) {
+        if (ent->name[0] == '.' && !show_all) {
+            continue;
+        }
 
-            if (long_format) {
-                struct stat entry_st;
-                if (strcmp(path, ".") == 0) {
-                    strncpy(full_path, dirents[i].name, sizeof(full_path));
-                } else {
-                    strncpy(full_path, path, sizeof(full_path));
-                    if (path[path_len - 1] != '/') {
-                        strncat(full_path, "/", sizeof(full_path) - strlen(full_path) - 1);
-                    }
-                    strncat(full_path, dirents[i].name, sizeof(full_path) - strlen(full_path) - 1);
-                }
-
-                if (sys_stat(full_path, &entry_st) < 0) {
-                    printf("?---------      ?       ?       ?        ?  %s\n", dirents[i].name);
-                } else {
-                    print_entry(dirents[i].name, &entry_st, long_format);
-                }
+        if (long_format) {
+            struct stat entry_st;
+            if (strcmp(path, ".") == 0) {
+                strncpy(full_path, ent->name, sizeof(full_path));
             } else {
-                print_entry(dirents[i].name, NULL, long_format);
+                strncpy(full_path, path, sizeof(full_path));
+                if (path[path_len - 1] != '/') {
+                    strncat(full_path, "/", sizeof(full_path) - strlen(full_path) - 1);
+                }
+                strncat(full_path, ent->name, sizeof(full_path) - strlen(full_path) - 1);
             }
+
+            if (sys_stat(full_path, &entry_st) < 0) {
+                printf("?---------      ?       ?       ?        ?  %s\n", ent->name);
+            } else {
+                print_entry(ent->name, &entry_st, long_format);
+            }
+        } else {
+            print_entry(ent->name, NULL, long_format);
         }
     }
 
-    free(dirents);
-    sys_close(fd);
+    closedir(dirp);
     return 0;
 }
 

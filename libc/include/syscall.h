@@ -35,7 +35,7 @@ struct vfs_dirent {
 };
 
 /* Process and execution control */
-void sys_exit(int status);
+__attribute__((noreturn)) void sys_exit(int status);
 int sys_getpid(void);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
@@ -47,16 +47,20 @@ int sys_waitpid(int pid, int *status, int options);
 int sys_open(const char *path, int flags);
 int sys_close(int fd);
 int sys_read(int fd, void *buf, size_t len);
-void sys_write(int fd, const char *buf, size_t len);
+int sys_write(int fd, const char *buf, size_t len);
 int sys_getdents(int fd, void *buf, size_t count);
 int sys_pipe(int pipefd[2]);
 int sys_dup2(int oldfd, int newfd);
 int sys_chdir(const char *path);
 int sys_getcwd(char *buf, size_t size);
 int sys_stat(const char *path, struct stat *buf);
+off_t sys_lseek(int fd, off_t offset, int whence);
 
 /* Memory management */
 void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
+
+/* Filesystem sync */
+int sys_sync(void);
 
 /* Signal handling */
 int sys_signal(int sig, signal_handler_t handler);

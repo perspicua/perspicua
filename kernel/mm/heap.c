@@ -28,7 +28,15 @@ struct heap_block_header {
     unsigned char is_free;
 } __attribute__((aligned(16)));
 
+#define HEAP_REDZONE_MAGIC 0xDEADBEEF
+
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
+
+struct heap_block_footer {
+    unsigned int magic;
+} __attribute__((aligned(16)));
+
+#define HEAP_FOOTER_SIZE sizeof(struct heap_block_footer)
 
 static struct heap_block_header *heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
@@ -145,18 +153,24 @@ void *heap_malloc(unsigned long size)
                 }
 
                 /* Split if remainder is large enough for a header and usable space */
-                if (curr->size >= size + HEAP_HEADER_SIZE + 16) {
+                if (curr->size >= size + HEAP_FOOTER_SIZE + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
-                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
-                                                     + size);
-                    split->size = curr->size - size - HEAP_HEADER_SIZE;
+                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE + size
+                                                     + HEAP_FOOTER_SIZE);
+                    split->size = curr->size - size - HEAP_FOOTER_SIZE - HEAP_HEADER_SIZE;
                     split->is_free = 1;
                     split->next = NULL;
 
                     heap_insert_free(split);
                     curr->size = size;
+                } else {
+                    curr->size -= HEAP_FOOTER_SIZE;
                 }
 
+                struct heap_block_footer *footer =
+                    (struct heap_block_footer *)((unsigned char *)curr + HEAP_HEADER_SIZE
+                                                 + curr->size);
+                footer->magic = HEAP_REDZONE_MAGIC;
                 curr->is_free = 0;
                 curr->next = NULL;
                 heap_used_size += curr->size + HEAP_HEADER_SIZE;
@@ -199,11 +213,18 @@ void heap_free(void *ptr)
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
+    struct heap_block_footer *footer =
+        (struct heap_block_footer *)((unsigned char *)block + HEAP_HEADER_SIZE + block->size);
+    if (footer->magic != HEAP_REDZONE_MAGIC) {
+        PANIC("heap: buffer overflow detected (redzone corrupted)");
+    }
+
     if (block->is_free) {
         PANIC("heap: double free detected");
     }
 
     heap_used_size -= block->size + HEAP_HEADER_SIZE;
+    block->size += HEAP_FOOTER_SIZE;
     heap_insert_free(block);
 
     spin_unlock_irqrestore(&heap_lock, flags);

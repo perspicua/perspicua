@@ -22,10 +22,6 @@
 #include "core/lock.h"
 #include "sched/process.h"
 
-#ifndef SCHED_NUM_CORES
-    #define SCHED_NUM_CORES 4
-#endif
-
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
 _Static_assert(__builtin_offsetof(struct task, state) == 112,
                "task->state offset mismatch — update task_wrapper_asm");
@@ -51,6 +47,8 @@ static spinlock_t sched_sleep_lock = SPINLOCK_INIT;
 static struct task *sched_cleanup[SCHED_NUM_CORES];
 static struct task *sched_prev_task[SCHED_NUM_CORES];
 static int sched_core_pid[SCHED_NUM_CORES];
+
+struct sched_stats core_sched_stats[SCHED_NUM_CORES];
 
 /* Task ID allocation. */
 static unsigned long sched_next_id;
@@ -533,6 +531,11 @@ void schedule(void)
     asm volatile("isb");
 
     if (prev != next) {
+        core_sched_stats[cpu].context_switches++;
+        if (next == sched_idle[cpu]) {
+            core_sched_stats[cpu].idle_count++;
+        }
+
         if (next->context.lr == 0 || next->context.sp == 0) {
             PANIC("sched: corrupt task context");
         }

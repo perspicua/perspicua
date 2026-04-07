@@ -23,6 +23,7 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
+#include "driver/sd.h"
 
 extern struct tty console_tty;
 extern unsigned long __ex_table_start[];
@@ -41,6 +42,8 @@ extern unsigned long __ex_table_end[];
 #define FSC_TRANSLATION_L3 0x07
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
+
+struct irq_stats core_irq_stats[4];
 
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the
@@ -201,6 +204,7 @@ void exception_unhandled_vector(void)
 }
 
 static unsigned int uart_irq_cached = 0;
+static unsigned int sd_irq_cached = 0;
 
 /*
  * exception_irq_handler - Top-level IRQ dispatcher.
@@ -221,6 +225,9 @@ void exception_irq_handler(void)
     if (uart_irq_cached == 0) {
         uart_irq_cached = uart_get_irq();
     }
+    if (sd_irq_cached == 0) {
+        sd_irq_cached = sd_get_irq();
+    }
 
     unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
@@ -230,6 +237,8 @@ void exception_irq_handler(void)
         return;
     }
 
+    int current_core = get_core_id();
+
     if (irq_id == 0) {
         /* SGI 0: panic IPI broadcast */
         mmio_write(gic_c_eoir, iar);
@@ -238,11 +247,13 @@ void exception_irq_handler(void)
             asm volatile("wfe");
         }
     } else if (irq_id == GIC_TIMER_IRQ) {
+        core_irq_stats[current_core].timer_count++;
         timer_interrupt_reset();
         mmio_write(gic_c_eoir, iar);
         schedule();
         return;
     } else if (irq_id == uart_irq_cached) {
+        core_irq_stats[current_core].uart_count++;
         uint32_t mis = mmio_read(uart_mis);
 
         if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
@@ -253,10 +264,21 @@ void exception_irq_handler(void)
         }
 
         if (mis & UART_MIS_TXMIS) {
-            tty_handle_rx(&console_tty, 0);
+            tty_handle_tx(&console_tty);
         }
 
         uart_clear_interrupt(mis);
+    } else if (sd_irq_cached && irq_id == sd_irq_cached) {
+        /*
+         * SDHCI interrupt: let the SD driver read+clear the hardware
+         * register and unblock any waiting task, then reschedule
+         * immediately so the task doesn't wait until the next timer tick.
+         */
+        if (sd_handle_irq()) {
+            mmio_write(gic_c_eoir, iar);
+            schedule();
+            return;
+        }
     }
 
     mmio_write(gic_c_eoir, iar);

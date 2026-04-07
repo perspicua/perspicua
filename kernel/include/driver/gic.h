@@ -22,9 +22,12 @@ extern volatile unsigned int *gic_c_iar;
 extern volatile unsigned int *gic_c_eoir;
 
 /*
- * gic_init - Discovers and initializes the GIC hardware.
+ * gic_enable_irq - Enables an SPI in the GIC distributor and routes it to CPU0.
+ *
+ * Called by device drivers from their probe functions after obtaining an IRQ
+ * number via devm_get_irq(). Must be called after gic_probe() completes.
  */
-void gic_init(void);
+void gic_enable_irq(unsigned int irq);
 
 /*
  * gic_secondary_init - Performs per-core GIC setup for secondary CPUs.

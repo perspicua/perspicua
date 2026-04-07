@@ -96,45 +96,94 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
                               size_t num_blocks)
 {
     struct block_ops_wrapper *ops = (struct block_ops_wrapper *)dev->private_data;
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
 
     for (size_t i = 0; i < num_blocks; i++) {
         size_t block_nr = start_block + i;
-        unsigned long flags = spin_lock_irqsave(&cache_lock);
         struct block_cache_entry *entry = cache_lookup(dev, block_nr);
 
         if (entry) {
             memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
-            spin_unlock_irqrestore(&cache_lock, flags);
             continue;
         }
 
-        /* Miss: Evict if needed */
+        /* Miss: Must read from disk - release lock first to avoid holding it during I/O */
+        spin_unlock_irqrestore(&cache_lock, flags);
+
+        void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+        if (!temp_buf) {
+            return -PERS_ERR_OUT_OF_MEMORY;
+        }
+
+        int res = ops->orig_read_blocks(dev, temp_buf, block_nr, 1);
+        if (res != PERS_SUCCESS) {
+            pmm_free_pages(temp_buf, (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+            return res;
+        }
+
+        /* Re-acquire lock to update cache */
+        flags = spin_lock_irqsave(&cache_lock);
+
+        /* Check if another thread cached it while we were reading */
+        entry = cache_lookup(dev, block_nr);
+        if (entry) {
+            memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
+            pmm_free_pages(temp_buf, (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+            continue;
+        }
+
+        /* Evict if needed */
         size_t pages_needed = (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
         if (cache_count >= BLOCK_CACHE_SIZE) {
             struct block_cache_entry *evict = lru_tail;
-            // TODO: for Write-Back cache, flush dirty blocks here before eviction
+
+            /* Flush dirty block to disk before eviction */
+            if (evict->dirty) {
+                /* Must release lock during I/O */
+                void *evict_data = evict->data;
+                size_t evict_block_nr = evict->block_nr;
+                struct block_device *evict_dev = evict->dev;
+                spin_unlock_irqrestore(&cache_lock, flags);
+
+                struct block_ops_wrapper *evict_ops =
+                    (struct block_ops_wrapper *)evict_dev->private_data;
+                evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
+
+                flags = spin_lock_irqsave(&cache_lock);
+                /* Re-lookup evict entry as it might have changed */
+                evict = lru_tail;
+                if (!evict) {
+                    pmm_free_pages(temp_buf, pages_needed);
+                    spin_unlock_irqrestore(&cache_lock, flags);
+                    return -PERS_ERR_UNKNOWN;
+                }
+            }
+
             lru_remove(evict);
             size_t eh = block_hash(evict->dev, evict->block_nr);
             struct block_cache_entry **pp = &hash_table[eh];
-            while (*pp != evict)
+            while (*pp && *pp != evict)
                 pp = &((*pp)->next);
-            *pp = evict->next;
+            if (*pp == evict)
+                *pp = evict->next;
 
             /* If the evicted entry's buffer size doesn't match, reallocate */
             size_t old_pages = (evict->dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
             if (old_pages != pages_needed) {
                 pmm_free_pages(evict->data, old_pages);
-                evict->data = pmm_alloc_pages(pages_needed);
+                evict->data = temp_buf;
+            } else {
+                memcpy(evict->data, temp_buf, dev->block_size);
+                pmm_free_pages(temp_buf, pages_needed);
             }
             entry = evict;
         } else {
             entry = slab_alloc(sizeof(struct block_cache_entry));
-            entry->data = pmm_alloc_pages(pages_needed);
+            entry->data = temp_buf;
             cache_count++;
         }
 
         if (!entry->data) {
-            /* OOM - critical failure for cache */
             spin_unlock_irqrestore(&cache_lock, flags);
             return -PERS_ERR_OUT_OF_MEMORY;
         }
@@ -142,11 +191,8 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         entry->dev = dev;
         entry->block_nr = block_nr;
         entry->dirty = 0;
-        int res = ops->orig_read_blocks(dev, entry->data, block_nr, 1);
-        if (res != PERS_SUCCESS) {
-            /* Cleanup and fail */
-            spin_unlock_irqrestore(&cache_lock, flags);
-            return res;
+        if (entry->data != temp_buf) {
+            /* Data was copied to existing buffer */
         }
 
         size_t h = block_hash(dev, block_nr);
@@ -155,9 +201,9 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         lru_add_head(entry);
 
         memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
-        spin_unlock_irqrestore(&cache_lock, flags);
     }
 
+    spin_unlock_irqrestore(&cache_lock, flags);
     return PERS_SUCCESS;
 }
 
@@ -182,6 +228,31 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
     spin_unlock_irqrestore(&cache_lock, flags);
 
     return PERS_SUCCESS;
+}
+
+/*
+ * block_cache_sync - Flushes all dirty cache entries to their backing devices.
+ */
+int block_cache_sync(void)
+{
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
+    int flushed = 0;
+
+    struct block_cache_entry *entry = lru_head;
+    while (entry) {
+        if (entry->dirty) {
+            struct block_ops_wrapper *ops = (struct block_ops_wrapper *)entry->dev->private_data;
+            int res = ops->orig_write_blocks(entry->dev, entry->data, entry->block_nr, 1);
+            if (res == PERS_SUCCESS) {
+                entry->dirty = 0;
+                flushed++;
+            }
+        }
+        entry = entry->lru_next;
+    }
+
+    spin_unlock_irqrestore(&cache_lock, flags);
+    return flushed;
 }
 
 static struct block_device *devices[BLOCK_MAX_DEVICES];

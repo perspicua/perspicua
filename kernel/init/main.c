@@ -49,6 +49,8 @@
 extern void _entry(void);
 extern struct tty console_tty;
 
+#ifdef CONFIG_SMP
+
 /**
  * smp_init - Brings up secondary CPU cores.
  *
@@ -106,6 +108,15 @@ __attribute__((used)) void secondary_main(void)
     }
 }
 
+#else /* !CONFIG_SMP */
+
+static void smp_init(void)
+{
+    pr_info("smp: disabled (single-core mode)\n");
+}
+
+#endif /* CONFIG_SMP */
+
 /**
  * print_banner - Displays the kernel version string.
  */
@@ -134,20 +145,26 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     fdt_init(global_dtb_ptr);
 
     /* Stage 1: Basic hardware and console bring-up */
-    gpio_init();
-    uart_init();
-    mbox_init();
+    extern void driver_probe_core(void);
+    driver_probe_core();
+
     fb_init();
     fb_console_init();
     tty_init(&console_tty);
 
     print_banner();
 
+    extern void lockdep_init(void);
+    lockdep_init();
+
     /* Stage 2: Memory management initialization */
     fdt_parse_memory_reservations();
 
     pmm_init();
     mmu_init();
+
+    extern void pagecache_init(void);
+    pagecache_init();
 
     /* Re-base DTB pointers to virtual addresses post-MMU */
     fdt_rebase(P2V(global_dtb_ptr));
@@ -156,7 +173,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     heap_init();
 
     /* Stage 3: Interrupts and scheduling */
-    gic_init();
+    extern void driver_probe_irqs(void);
+    driver_probe_irqs();
+
     uart_enable_interrupts();
     timer_interrupt_init();
     sched_init();
@@ -171,7 +190,9 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     process_init();
     devfs_init();
     fb_register_device();
-    sd_init();
+
+    extern void driver_probe_devices(void);
+    driver_probe_devices();
 
     /* Root filesystem initialization (FAT32) */
     if (fat32_init("sd0") == PERS_SUCCESS) {
@@ -183,6 +204,8 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
+    run_all_tests();
+    run_scheduler_tests();
 
     /* Launch primary user-space application */
     if (process_create_from_file("/bin/init.elf", 1) != 0) {

@@ -67,6 +67,7 @@ struct vfs_vnode_ops {
     int (*close)(struct vfs_file *file);
     int (*stat)(struct vfs_vnode *node, struct stat *buf);
     int (*mmap)(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags);
+    int (*write_page)(struct vfs_vnode *node, size_t page_index, void *data, size_t valid_bytes);
 };
 
 /*

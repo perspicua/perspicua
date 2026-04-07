@@ -40,4 +40,9 @@ void block_device_register(struct block_device *dev);
  */
 struct block_device *block_device_lookup(const char *name);
 
+/*
+ * block_cache_sync - Flushes all dirty cache entries to their backing devices.
+ */
+int block_cache_sync(void);
+
 #endif /* PERSPICUA_DRIVER_BLOCK_H */

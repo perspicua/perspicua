@@ -6,6 +6,7 @@
  */
 
 #include "driver/gic.h"
+#include "driver/device.h"
 
 #include "io.h"
 #include "stdio.h"
@@ -38,38 +39,16 @@ void gic_send_panic_ipi(void)
 }
 
 /*
- * gic_init - Maps and configures the GIC distributor and primary CPU interface.
+ * gic_probe - Maps and configures the GIC distributor and primary CPU interface.
  */
-void gic_init(void)
+static int gic_probe(struct device *dev)
 {
-    const uint32_t *gic_node = fdt_find_node_by_compatible("arm,gic-400");
-    if (!gic_node) {
-        gic_node = fdt_find_node_by_compatible("arm,cortex-a15-gic");
-        if (!gic_node) {
-            PANIC("GIC: device node not found in DTB");
-        }
+    uintptr_t gicd_vbase = devm_get_io_base(dev, 0);
+    uintptr_t gicc_vbase = devm_get_io_base(dev, 1);
+
+    if (!gicd_vbase || !gicc_vbase) {
+        PANIC("GIC: missing or invalid 'reg' property");
     }
-
-    struct fdt_property reg_prop;
-    if (fdt_get_property(gic_node, "reg", &reg_prop) != 0) {
-        PANIC("GIC: missing 'reg' property");
-    }
-
-    const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
-    uint32_t gicd_phys = fdt32_to_cpu(reg_data[0]);
-    uint32_t gicc_phys = fdt32_to_cpu(reg_data[2]);
-
-    /* Handle BCM2711 legacy address translation quirks */
-    if (gicd_phys == 0x40041000) {
-        gicd_phys = 0xFF841000;
-        gicc_phys = 0xFF842000;
-    } else if (gicd_phys < 0xFC000000 && gicc_phys < 0xFC000000) {
-        gicd_phys = (gicd_phys & 0x01FFFFFF) | 0xFF800000;
-        gicc_phys = (gicc_phys & 0x01FFFFFF) | 0xFF800000;
-    }
-
-    uintptr_t gicd_vbase = P2V(gicd_phys);
-    uintptr_t gicc_vbase = P2V(gicc_phys);
 
     gic_d_ctlr = (volatile unsigned int *)(gicd_vbase + 0x000);
     gic_d_isenablern = (volatile unsigned int *)(gicd_vbase + 0x100);
@@ -99,9 +78,33 @@ void gic_init(void)
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
 
-    pr_info("gic: distributor @ 0x%lx, CPU @ 0x%lx\n", (unsigned long)gicd_vbase,
-            (unsigned long)gicc_vbase);
+    return 0;
 }
+
+/*
+ * gic_enable_irq - Enables an SPI and routes it to CPU0.
+ */
+void gic_enable_irq(unsigned int irq)
+{
+    if (!gic_d_isenablern) {
+        return;
+    }
+    mmio_write(&gic_d_isenablern[irq / 32], (1u << (irq % 32)));
+    mmio_write8(&gic_d_ipriorityr[irq], 0);
+    mmio_write8(&gic_d_itargetsr[irq], 0x01);
+}
+
+IRQ_DRIVER(gic_400) = {
+    .name = "gic-400",
+    .compatible = "arm,gic-400",
+    .probe = gic_probe,
+};
+
+IRQ_DRIVER(gic_a15) = {
+    .name = "cortex-a15-gic",
+    .compatible = "arm,cortex-a15-gic",
+    .probe = gic_probe,
+};
 
 /*
  * gic_secondary_init - Enables the local CPU interface and core-local IRQs.

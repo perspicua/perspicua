@@ -27,6 +27,7 @@
 #include "sched/sched.h"
 #include "sched/process.h"
 #include "driver/uart.h"
+#include "driver/block.h"
 
 /*
  * validate_user_buffer - Verifies that a memory range is valid for user access.
@@ -707,6 +708,20 @@ sigreturn_kill:
             }
             tf->x[0] = new_region;
 mmap_done:
+            break;
+        }
+
+        case SYS_LSEEK: {
+            int fd = (int)tf->x[0];
+            off_t offset = (off_t)tf->x[1];
+            int whence = (int)tf->x[2];
+            tf->x[0] = (uint64_t)vfs_lseek(fd, offset, whence);
+            break;
+        }
+
+        case SYS_SYNC: {
+            block_cache_sync();
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 

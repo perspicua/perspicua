@@ -12,6 +12,36 @@
 
 #include <stdarg.h>
 
+#define EOF (-1)
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+typedef struct _FILE {
+    int fd;
+    int error;
+    int eof;
+} FILE;
+
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+
+FILE *fopen(const char *pathname, const char *mode);
+int fclose(FILE *stream);
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
+int fseek(FILE *stream, off_t offset, int whence);
+off_t ftell(FILE *stream);
+int fgetc(FILE *stream);
+int fputc(int c, FILE *stream);
+int feof(FILE *stream);
+int ferror(FILE *stream);
+int fflush(FILE *stream);
+int fprintf(FILE *stream, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int vfprintf(FILE *stream, const char *fmt, va_list args);
+
 /* Formatted output to the console (UART). */
 int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

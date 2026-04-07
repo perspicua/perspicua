@@ -275,6 +275,32 @@ static void draw_meminfo(void)
     ptop_write("\n");
 }
 
+static void draw_interrupts(void)
+{
+    char buf[512];
+    if (read_proc_file("/proc/interrupts", buf, sizeof(buf)) < 0) {
+        ptop_write(C_WARN "  [interrupts unavailable]\n" C_RESET);
+        return;
+    }
+    ptop_write(C_LABEL "  Interrupts:\n" C_RESET);
+    ptop_write(C_VALUE);
+    ptop_write(buf);
+    ptop_write(C_RESET);
+}
+
+static void draw_schedstat(void)
+{
+    char buf[512];
+    if (read_proc_file("/proc/schedstat", buf, sizeof(buf)) < 0) {
+        ptop_write(C_WARN "  [schedstat unavailable]\n" C_RESET);
+        return;
+    }
+    ptop_write(C_LABEL "  Scheduler Stats:\n" C_RESET);
+    ptop_write(C_VALUE);
+    ptop_write(buf);
+    ptop_write(C_RESET);
+}
+
 static void draw_proc_table(struct proc_info *procs, int count)
 {
     char tmp[64];
@@ -475,6 +501,8 @@ int main(int argc, char **argv, char **envp)
         draw_header(iter, count);
         ptop_write("\n");
         draw_meminfo();
+        draw_interrupts();
+        draw_schedstat();
         draw_proc_table(procs, count);
         draw_footer();
 

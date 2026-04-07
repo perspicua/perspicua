@@ -9,11 +9,6 @@
 #define PERSPICUA_DRIVER_MAILBOX_H
 
 /*
- * mbox_init - Discovers the mailbox hardware and maps registers.
- */
-void mbox_init(void);
-
-/*
  * mbox_call - Performs a synchronous mailbox transaction with cache maintenance.
  */
 void mbox_call(unsigned int *buffer);
