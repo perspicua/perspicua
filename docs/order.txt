@@ -1,7 +1,6 @@
   Phase 1: The Foundation (Stability & Tooling)
   Goal: Make the system easier to debug and more predictable before touching complex logic.
-   2. User-Space System Integrity (assert.h & tests): Establish a testing culture for libc now so that memory management changes don't silently break strings or malloc.
-   3. Kernel-level Debugger (KDB): Having a basic UART console to dump registers and task lists will save you hundreds of hours when you start implementing Phase 2 and 3.
+   1. Kernel-level Debugger (KDB): Having a basic UART console to dump registers and task lists will save you hundreds of hours when you start implementing Phase 2 and 3.
 
   Phase 2: Developer Experience & Basic I/O
   Goal: Turn the "kernel project" into a usable environment where you can actually work.

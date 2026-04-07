@@ -1,0 +1,70 @@
+KERNEL DEBUGGER
+
+COMMANDS
+--------
+help
+  Print the command list.
+
+regs
+  Dump general-purpose and exception registers.
+  - If KDB was entered from an exception frame (panic, kdb_enter_tf):
+    shows x0-x30, ELR_EL1, SP_EL0, SPSR_EL1 from the saved frame.
+  - Otherwise: shows the live SP, LR, FP from the current EL1 context.
+
+sysregs
+  Dump key AArch64 system registers live from the CPU:
+    ESR_EL1, FAR_EL1, SPSR_EL1, TTBR0/1_EL1, SCTLR_EL1,
+    MAIR_EL1, TCR_EL1, MPIDR_EL1, MIDR_EL1, TPIDR_EL1
+
+tasks  (alias: ps)
+  List all non-empty entries in the process table:
+    PID  STATE  PPID  CODE_VA  KSTACK_VA  NAME
+  For each process, also shows its main task:
+    id, state, on_core, stack pointer
+  Followed by the current kernel task and per-core scheduler statistics
+  (context switches and idle ticks).
+
+mem
+  Show physical memory stats from the buddy allocator:
+    Total / In use / Free  (in pages and MiB)
+
+bt
+  Walk the AArch64 frame-pointer chain and print a backtrace.
+  Symbols are resolved using the kernel symbol table (2-pass build).
+  Output format:
+    #N  0x<addr>  <symbol+offset>
+
+rd <addr> [count]
+  Hex-dump memory starting at <addr>.
+  <addr> and <count> are hex values (0x prefix optional).
+  count defaults to 8, capped at 256 words (64-bit each).
+  Example:
+    kdb> rd 0xffffff8000080000 16
+
+wr <addr> <val>
+  Write a 64-bit value to <addr>. A DSB barrier is issued after the write.
+  Example:
+    kdb> wr 0xffffff8000090010 0xdeadbeef
+
+continue  (alias: c)
+  Exit the KDB REPL and return to the caller.
+  - After a panic: execution falls through to the WFE halt loop.
+  - After kdb_enter(): normal kernel execution resumes.
+
+
+LINE EDITING
+------------
+Backspace / DEL  Erase the last character.
+Enter            Submit the command.
+
+History and tab completion are not yet supported.
+
+
+NOTES
+-----
+- rd/wr perform no bounds checking. Accessing an unmapped address will
+  trigger a data abort and re-enter the panic handler.
+- KDB disables interrupts on entry. The scheduler does not run while
+  KDB is active.
+- On SMP systems, only the core that entered KDB is interactive. Other
+  cores are halted via IPI when the panic path is taken.
