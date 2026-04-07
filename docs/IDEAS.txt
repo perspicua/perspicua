@@ -22,10 +22,6 @@ KERNEL ARCHITECTURE & PERFORMANCE:
       Difficulty: Medium | Impact: High
       Details: Implement wait queues for file descriptors to support non-blocking I/O.
       Benefit: Essential for porting complex 3rd party tools and servers.
-  - Kernel-level Debugger (KDB/KGDB)
-      Difficulty: High | Impact: Medium
-      Details: Implement a UART-based debugger to inspect kernel state, memory, and tasks.
-      Benefit: Simplifies debugging of complex race conditions and panics.
   - Advanced Block Cache
       Difficulty: Medium | Impact: High
       Details: Implement LRU eviction and write-back caching for the SD card driver.
@@ -40,10 +36,6 @@ USER-SPACE & LIBC MATURITY:
       Difficulty: Medium | Impact: Medium
       Details: Add tab completion, globbing (*), and job control (fg, bg).
       Benefit: Exponentially improves interactive developer experience.
-  - User-Space System Integrity
-      Difficulty: Medium | Impact: High
-      Details: Implement assert.h and a user-space libc test suite.
-      Benefit: Ensures libc stability as complexity moves to user-land.
   - Threading Support (pthreads)
       Difficulty: High | Impact: High
       Details: Implement clone() syscall and thread-local storage (TLS) support.

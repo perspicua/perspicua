@@ -23,6 +23,7 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
+#include "driver/sd.h"
 
 extern struct tty console_tty;
 extern unsigned long __ex_table_start[];
@@ -203,6 +204,7 @@ void exception_unhandled_vector(void)
 }
 
 static unsigned int uart_irq_cached = 0;
+static unsigned int sd_irq_cached = 0;
 
 /*
  * exception_irq_handler - Top-level IRQ dispatcher.
@@ -222,6 +224,9 @@ void exception_irq_handler(void)
 
     if (uart_irq_cached == 0) {
         uart_irq_cached = uart_get_irq();
+    }
+    if (sd_irq_cached == 0) {
+        sd_irq_cached = sd_get_irq();
     }
 
     unsigned int iar = mmio_read(gic_c_iar);
@@ -259,10 +264,21 @@ void exception_irq_handler(void)
         }
 
         if (mis & UART_MIS_TXMIS) {
-            tty_handle_rx(&console_tty, 0);
+            tty_handle_tx(&console_tty);
         }
 
         uart_clear_interrupt(mis);
+    } else if (sd_irq_cached && irq_id == sd_irq_cached) {
+        /*
+         * SDHCI interrupt: let the SD driver read+clear the hardware
+         * register and unblock any waiting task, then reschedule
+         * immediately so the task doesn't wait until the next timer tick.
+         */
+        if (sd_handle_irq()) {
+            mmio_write(gic_c_eoir, iar);
+            schedule();
+            return;
+        }
     }
 
     mmio_write(gic_c_eoir, iar);

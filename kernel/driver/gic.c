@@ -81,6 +81,19 @@ static int gic_probe(struct device *dev)
     return 0;
 }
 
+/*
+ * gic_enable_irq - Enables an SPI and routes it to CPU0.
+ */
+void gic_enable_irq(unsigned int irq)
+{
+    if (!gic_d_isenablern) {
+        return;
+    }
+    mmio_write(&gic_d_isenablern[irq / 32], (1u << (irq % 32)));
+    mmio_write8(&gic_d_ipriorityr[irq], 0);
+    mmio_write8(&gic_d_itargetsr[irq], 0x01);
+}
+
 IRQ_DRIVER(gic_400) = {
     .name = "gic-400",
     .compatible = "arm,gic-400",
