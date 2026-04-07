@@ -168,6 +168,16 @@ int ferror(FILE *stream)
     return stream ? stream->error : 1;
 }
 
+int fflush(FILE *stream)
+{
+    /* In this simple implementation, writes are unbuffered, so fflush is a no-op.
+     * If stream is NULL, we would flush all open streams, but we don't track them.
+     * Returns 0 on success, EOF on error.
+     */
+    (void)stream;
+    return 0;
+}
+
 int vfprintf(FILE *stream, const char *fmt, va_list args)
 {
     char buf[256];

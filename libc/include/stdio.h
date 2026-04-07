@@ -38,6 +38,7 @@ int fgetc(FILE *stream);
 int fputc(int c, FILE *stream);
 int feof(FILE *stream);
 int ferror(FILE *stream);
+int fflush(FILE *stream);
 int fprintf(FILE *stream, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int vfprintf(FILE *stream, const char *fmt, va_list args);
 
