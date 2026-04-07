@@ -6,10 +6,6 @@ KERNEL ARCHITECTURE & PERFORMANCE:
       Difficulty: High | Impact: Very High
       Details: Load 4KB pages from SD on-demand during page faults.
       Benefit: Reduces process startup time and RAM usage significantly.
-  - Fully Interrupt-Driven I/O (SD & UART)
-      Difficulty: Medium | Impact: High
-      Details: Use GIC interrupts to wake blocked tasks instead of polling.
-      Benefit: Improves SMP utilization by unblocking the scheduler.
   - Kernel Preemption & Priority Scheduling
       Difficulty: High | Impact: Medium
       Details: Support EL1 preemption and Priority/MLFQ scheduling.
@@ -22,10 +18,6 @@ KERNEL ARCHITECTURE & PERFORMANCE:
       Difficulty: Medium | Impact: High
       Details: Implement wait queues for file descriptors to support non-blocking I/O.
       Benefit: Essential for porting complex 3rd party tools and servers.
-  - Advanced Block Cache
-      Difficulty: Medium | Impact: High
-      Details: Implement LRU eviction and write-back caching for the SD card driver.
-      Benefit: Drastically improves filesystem performance and reduces SD wear.
 
 USER-SPACE & LIBC MATURITY:
   - Core POSIX Utilities ("Base System")
@@ -34,7 +26,7 @@ USER-SPACE & LIBC MATURITY:
       Benefit: Transitions the project from experiment to usable system.
   - Shell (sh) Quality of Life
       Difficulty: Medium | Impact: Medium
-      Details: Add tab completion, globbing (*), and job control (fg, bg).
+      Details: Add globbing (*), and job control (fg, bg).
       Benefit: Exponentially improves interactive developer experience.
   - Threading Support (pthreads)
       Difficulty: High | Impact: High
