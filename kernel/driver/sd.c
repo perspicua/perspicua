@@ -26,17 +26,6 @@
 
 /*
  * SD Operation Serializer
- * -----------------------
- * Only one SD operation (read or write) may run at a time.  We cannot use a
- * plain spinlock held across schedule() because lockdep is per-core: any lock
- * in held_locks[core] when schedule() switches tasks bleeds into the new
- * task's lock-ordering records, creating false circular-dependency edges and
- * "release unheld lock" noise on SMP (task wakes on a different core).
- *
- * Instead we use a boolean "busy" flag protected by a short-held spinlock and
- * a FIFO wait queue of blocked tasks.  The task is REMOVED from the busy state
- * before any call to schedule(), so no lock is held while sleeping.
- *
  * sd_op_lock  - irqsave spinlock guarding sd_op_busy and the wait queue
  * sd_op_busy  - set while one task owns the SD controller
  * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->next)

@@ -3,6 +3,13 @@
  *
  * This module provides the infrastructure for mounting multiple filesystems
  * into a single unified hierarchy and dispatching calls to drivers.
+ *
+ * Lock Ordering:
+ *   vfs_lock -> process_table_lock -> process.fd_lock
+ *
+ * Critical: vfs_lock is only held briefly to access the mount table.
+ * Filesystem callbacks (lookup, readdir, etc.) are called WITHOUT holding vfs_lock
+ * to allow them to acquire process locks if needed.
  */
 
 #include "fs/vfs.h"
@@ -324,13 +331,117 @@ int vfs_unmount(const char *path)
 
 /*
  * vfs_resolve_path - Thread-safe path resolution from a given CWD.
+ *
+ * This function only holds vfs_lock when accessing the mount table.
+ * Path traversal and filesystem callbacks are done without holding vfs_lock
+ * to allow them to acquire process locks if needed.
  */
 struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int *error)
 {
-    unsigned long flags = spin_lock_irqsave(&vfs_lock);
-    struct vfs_vnode *res = vfs_resolve_path_locked(path, cwd, error);
-    spin_unlock_irqrestore(&vfs_lock, flags);
-    return res;
+    struct vfs_vnode *curr = NULL;
+    char filepath[VFS_MAX_PATH_LEN];
+    const char *path_remainder = path;
+
+    /* Handle absolute paths - find mount point with vfs_lock */
+    if (path[0] == '/') {
+        unsigned long flags = spin_lock_irqsave(&vfs_lock);
+        struct vfs_mount_entry *best_match = find_mount(path, error);
+        if (!best_match) {
+            spin_unlock_irqrestore(&vfs_lock, flags);
+            return NULL;
+        }
+
+        curr = best_match->root;
+        atomic_inc(&curr->refcount);
+        size_t len = strlen(best_match->path);
+
+        if (strcmp(path, best_match->path) == 0) {
+            spin_unlock_irqrestore(&vfs_lock, flags);
+            *error = PERS_SUCCESS;
+            return curr;
+        }
+
+        path_remainder = path + len;
+        if (*path_remainder == '/') {
+            path_remainder++;
+        }
+        spin_unlock_irqrestore(&vfs_lock, flags);
+    } else {
+        /* Relative path - use cwd */
+        if (!cwd) {
+            unsigned long flags = spin_lock_irqsave(&vfs_lock);
+            struct vfs_mount_entry *root_match = find_mount("/", error);
+            if (!root_match) {
+                spin_unlock_irqrestore(&vfs_lock, flags);
+                return NULL;
+            }
+            curr = root_match->root;
+            spin_unlock_irqrestore(&vfs_lock, flags);
+        } else {
+            curr = cwd;
+        }
+        atomic_inc(&curr->refcount);
+    }
+
+    if (*path_remainder == '\0') {
+        *error = PERS_SUCCESS;
+        return curr;
+    }
+
+    strncpy(filepath, path_remainder, VFS_MAX_PATH_LEN - 1);
+    filepath[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *saveptr = NULL;
+    char *token = strtok_r(filepath, "/", &saveptr);
+
+    while (token) {
+        struct vfs_vnode *next = NULL;
+        if (strcmp(token, ".") == 0) {
+            next = curr;
+            atomic_inc(&next->refcount);
+        } else if (strcmp(token, "..") == 0) {
+            next = curr->parent ? curr->parent : curr;
+            atomic_inc(&next->refcount);
+        } else {
+            struct vfs_vnode *mount_node = NULL;
+            unsigned long flags = spin_lock_irqsave(&vfs_lock);
+            for (size_t i = 1; i < (size_t)vfs_mount_count; i++) {
+                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr
+                    && strcmp(vfs_mount_table[i].root->name, token) == 0) {
+                    mount_node = vfs_mount_table[i].root;
+                    atomic_inc(&mount_node->refcount);
+                    break;
+                }
+            }
+            spin_unlock_irqrestore(&vfs_lock, flags);
+
+            if (mount_node) {
+                next = mount_node;
+            } else {
+                if (!curr->ops || !curr->ops->lookup) {
+                    vfs_vnode_put(curr);
+                    *error = -PERS_ERR_NOT_A_DIRECTORY;
+                    return NULL;
+                }
+
+                next = curr->ops->lookup(curr, token);
+                if (!next) {
+                    vfs_vnode_put(curr);
+                    *error = -PERS_ERR_NOT_FOUND;
+                    return NULL;
+                }
+                strncpy(next->name, token, sizeof(next->name) - 1);
+                next->name[sizeof(next->name) - 1] = '\0';
+            }
+        }
+
+        vfs_vnode_put(curr);
+        curr = next;
+        token = strtok_r(NULL, "/", &saveptr);
+    }
+
+    *error = PERS_SUCCESS;
+    return curr;
 }
 
 /*
