@@ -24,4 +24,25 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data);
  */
 void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index);
 
+/*
+ * pagecache_writeback - Writes all dirty pages for a specific vnode to disk.
+ *
+ * Returns the number of pages written, or a negative error code.
+ */
+int pagecache_writeback(struct vfs_vnode *node);
+
+/*
+ * pagecache_sync - Writes all dirty pages in the cache to disk.
+ *
+ * Returns the total number of pages written.
+ */
+int pagecache_sync(void);
+
+/*
+ * pagecache_invalidate - Removes all cached pages for a vnode.
+ *
+ * Dirty pages are written back before removal.
+ */
+void pagecache_invalidate(struct vfs_vnode *node);
+
 #endif /* PERSPICUA_FS_PAGECACHE_H */
