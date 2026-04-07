@@ -508,11 +508,10 @@ static int find_token_start(const char *buf, int cursor_pos)
 
     int pos = cursor_pos - 1;
 
-    while (pos > 0) {
+    while (pos >= 0) {
         if (buf[pos] == ' ' || buf[pos] == '\t')
             return pos + 1;
-        else
-            pos--;
+        pos--;
     }
 
     return 0;
@@ -530,6 +529,22 @@ static void sort_matches(char **matches, int count)
             }
         }
     }
+}
+
+// Find longest common prefix among all matches
+static int find_common_prefix_len(char **matches, int count)
+{
+    if (count == 0 || !matches[0])
+        return 0;
+
+    int common_len = strlen(matches[0]);
+    for (int i = 1; i < count; i++) {
+        int j = 0;
+        while (j < common_len && matches[i][j] && matches[0][j] == matches[i][j])
+            j++;
+        common_len = j;
+    }
+    return common_len;
 }
 
 // true if cmd; false if file/arg
@@ -665,17 +680,22 @@ static void split_path(const char *partial, char **dir_out, char **prefix_out)
 static char **find_file_matches(const char *dir, const char *prefix, int *count_out)
 {
     const char *search_dir = (dir == NULL || !strcmp(dir, "")) ? "." : dir;
+    int include_dir_prefix = (dir != NULL && strcmp(dir, "") != 0);
 
     size_t prefix_len = strlen(prefix);
     int prefix_is_hidden = (prefix_len > 0 && prefix[0] == '.');
 
-    // 2^vibe
     int capacity = 32;
     int matches_count = 0;
     char **matches = malloc(capacity * sizeof(char *));
+    if (!matches) {
+        *count_out = 0;
+        return NULL;
+    }
 
     DIR *d = opendir(search_dir);
     if (!d) {
+        free(matches);
         *count_out = 0;
         return NULL;
     }
@@ -688,7 +708,7 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         if (!strcmp(entry_name, ".") || !strcmp(entry_name, ".."))
             continue;
 
-        // handele hidden files
+        // handle hidden files
         if (entry_name[0] == '.' && !prefix_is_hidden)
             continue;
 
@@ -701,8 +721,8 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
             continue;
 
         // Add path separator if search_dir doesn't end with one
-        size_t dir_len = strlen(search_dir);
-        if (dir_len > 0 && search_dir[dir_len - 1] == '/')
+        size_t dir_len_tmp = strlen(search_dir);
+        if (dir_len_tmp > 0 && search_dir[dir_len_tmp - 1] == '/')
             snprintf(full_path, full_path_len, "%s%s", search_dir, entry_name);
         else
             snprintf(full_path, full_path_len, "%s/%s", search_dir, entry_name);
@@ -714,19 +734,54 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         }
         free(full_path);
 
+        // Build match string with directory prefix if needed
         char *match_str;
-        if (is_dir) {
-            match_str = malloc(strlen(entry_name) + 1 + 1);
-            snprintf(match_str, strlen(entry_name) + 2, "%s/", entry_name);
-        } else
-            match_str = sh_strdup(entry_name);
+        size_t match_len;
+        if (include_dir_prefix) {
+            // Include the directory prefix (e.g., "../foo" -> "../foobar/")
+            // Check if dir already ends with '/' to avoid double slashes
+            size_t dir_len = strlen(dir);
+            int dir_ends_slash = (dir_len > 0 && dir[dir_len - 1] == '/');
+
+            match_len =
+                dir_len + (dir_ends_slash ? 0 : 1) + strlen(entry_name) + (is_dir ? 1 : 0) + 1;
+            match_str = malloc(match_len);
+            if (!match_str)
+                continue;
+            if (dir_ends_slash) {
+                if (is_dir)
+                    snprintf(match_str, match_len, "%s%s/", dir, entry_name);
+                else
+                    snprintf(match_str, match_len, "%s%s", dir, entry_name);
+            } else {
+                if (is_dir)
+                    snprintf(match_str, match_len, "%s/%s/", dir, entry_name);
+                else
+                    snprintf(match_str, match_len, "%s/%s", dir, entry_name);
+            }
+        } else {
+            if (is_dir) {
+                match_str = malloc(strlen(entry_name) + 2);
+                if (!match_str)
+                    continue;
+                snprintf(match_str, strlen(entry_name) + 2, "%s/", entry_name);
+            } else {
+                match_str = sh_strdup(entry_name);
+                if (!match_str)
+                    continue;
+            }
+        }
 
         if (matches_count == capacity) {
             int new_capacity = 2 * capacity;
             char **tmp = realloc(matches, new_capacity * sizeof(char *));
             if (!tmp) {
+                for (int i = 0; i < matches_count; i++)
+                    free(matches[i]);
                 free(matches);
+                free(match_str);
                 *count_out = 0;
+                closedir(d);
                 return NULL;
             }
             capacity = new_capacity;
@@ -791,14 +846,19 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
         return cursor_pos;
     }
 
-    char *completion;
     int new_cursor = cursor_pos;
+
     if (match_count == 1) {
-        completion = matches[0];
+        // Single match - complete it fully
+        char *completion = matches[0];
         int completion_len = strlen(completion);
 
-        // + 1 for adding whitespace after completion
-        int insert_len = completion_len - prefix_len + 1;
+        // Check if completion ends with '/' (directory)
+        int is_directory = (completion_len > 0 && completion[completion_len - 1] == '/');
+
+        // Don't add space after directories (allows continuing to type)
+        int add_space = is_directory ? 0 : 1;
+        int insert_len = completion_len - prefix_len + add_space;
         int tail_len = *cmd_len - cursor_pos;
 
         // Ensure we have space for the insertion + null terminator
@@ -807,42 +867,64 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
 
         memmove(cmd_buffer + cursor_pos + insert_len, cmd_buffer + cursor_pos, tail_len);
 
-        memcpy(cmd_buffer + cursor_pos - prefix_len, completion, completion_len);
+        memcpy(cmd_buffer + token_start, completion, completion_len);
 
-        // add whitespace
-        cmd_buffer[cursor_pos - prefix_len + completion_len] = ' ';
+        if (add_space)
+            cmd_buffer[token_start + completion_len] = ' ';
 
         *cmd_len += insert_len;
-        cmd_buffer[*cmd_len] = 0;
+        cmd_buffer[*cmd_len] = '\0';
 
-        new_cursor = cursor_pos - prefix_len + completion_len + 1;
+        new_cursor = token_start + completion_len + add_space;
 
         // Reset since we modified the buffer
         last_completion_displayed = 0;
         last_completion_lines = 0;
     } else {
-        // Check if we've already displayed matches for this exact buffer
-        int already_displayed =
-            (last_completion_displayed && strcmp(cmd_buffer, last_completion_buffer) == 0);
+        // Multiple matches - try to complete common prefix first
+        int common_len = find_common_prefix_len(matches, match_count);
 
-        if (!already_displayed) {
-            // Multiple matches - display them
-            printf("\n");
-            for (int i = 0; i < match_count; i++) {
-                printf("%s\n", matches[i]);
+        if (common_len > prefix_len) {
+            // There's a common prefix we can complete to
+            int insert_len = common_len - prefix_len;
+            int tail_len = *cmd_len - cursor_pos;
+
+            if (*cmd_len + insert_len < CMD_MAX_LEN - 1) {
+                memmove(cmd_buffer + cursor_pos + insert_len, cmd_buffer + cursor_pos, tail_len);
+                memcpy(cmd_buffer + token_start, matches[0], common_len);
+
+                *cmd_len += insert_len;
+                cmd_buffer[*cmd_len] = '\0';
+
+                new_cursor = token_start + common_len;
+
+                // Reset completion display state since buffer changed
+                last_completion_displayed = 0;
+                last_completion_lines = 0;
             }
-            fflush(stdout);
+        } else {
+            // No additional common prefix - show all matches
+            int already_displayed =
+                (last_completion_displayed && strcmp(cmd_buffer, last_completion_buffer) == 0);
 
-            // Remember we displayed matches for this buffer
-            strncpy(last_completion_buffer, cmd_buffer, CMD_MAX_LEN - 1);
-            last_completion_buffer[CMD_MAX_LEN - 1] = '\0';
-            last_completion_displayed = 1;
-            last_completion_lines = match_count;
+            if (!already_displayed) {
+                printf("\n");
+                for (int i = 0; i < match_count; i++) {
+                    printf("%s\n", matches[i]);
+                }
+                fflush(stdout);
 
-            // Print prompt and buffer after showing matches
-            print_prompt();
-            printf("%s", cmd_buffer);
-            fflush(stdout);
+                // Remember we displayed matches for this buffer
+                strncpy(last_completion_buffer, cmd_buffer, CMD_MAX_LEN - 1);
+                last_completion_buffer[CMD_MAX_LEN - 1] = '\0';
+                last_completion_displayed = 1;
+                last_completion_lines = match_count;
+
+                // Print prompt and buffer after showing matches
+                print_prompt();
+                printf("%s", cmd_buffer);
+                fflush(stdout);
+            }
         }
     }
 
@@ -952,6 +1034,7 @@ int main(int argc, char *argv[], char *envp[])
                 last_completion_displayed = 0;
             }
         } else if (key == KEY_TAB) {
+            cmd_buffer[cmd_length] = '\0'; // Ensure null-terminated before completion
             do_completions(cmd_buffer, &cmd_length, cmd_length);
             // Redraw to show the updated buffer (important for single-match auto-complete)
             redraw_line(cmd_buffer);
@@ -960,9 +1043,11 @@ int main(int argc, char *argv[], char *envp[])
                 if (last_completion_displayed) {
                     clear_completion_matches();
                     cmd_buffer[cmd_length++] = (char)key;
+                    cmd_buffer[cmd_length] = '\0'; // Keep null-terminated
                     redraw_line(cmd_buffer);
                 } else {
                     cmd_buffer[cmd_length++] = (char)key;
+                    cmd_buffer[cmd_length] = '\0'; // Keep null-terminated
                     printf("%c", (char)key);
                 }
                 last_completion_displayed = 0;
