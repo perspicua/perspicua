@@ -53,6 +53,11 @@ void tty_init(struct tty *tty);
 void tty_handle_rx(struct tty *tty, char c);
 
 /*
+ * tty_handle_tx - Called from the UART TX interrupt to drain the TX ring buffer.
+ */
+void tty_handle_tx(struct tty *tty);
+
+/*
  * tty_read - Reads characters from the TTY receive buffer.
  */
 int tty_read(struct tty *tty, char *buf, size_t count);
