@@ -12,6 +12,7 @@
 #include "arch/exception.h"
 
 #include "core/timer.h"
+#include "debug/kdb.h"
 #include "driver/gic.h"
 #include "sched/sched.h"
 
@@ -189,6 +190,14 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
     } else {
         panic_dump_live_registers();
         panic_backtrace(fp);
+    }
+
+    printf("\n--- Entering KDB (type 'continue' to halt) ---\n\n");
+
+    if (tf) {
+        kdb_enter_tf("kernel panic", tf);
+    } else {
+        kdb_enter("kernel panic");
     }
 
     printf("\n--- All CPU cores halted ---\n\n");
