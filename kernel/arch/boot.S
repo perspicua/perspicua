@@ -2,7 +2,21 @@
 
 .global _entry
 
+    // ARM64 Image Header
+    .balign 8
 _entry:
+    b real_entry          // branch to executable code
+    .word 0               // reserved
+    .quad 0x80000         // text_offset
+    .quad 0               // image_size (0 = unknown/trust bootloader)
+    .quad 0               // flags (0 = default)
+    .quad 0               // res2
+    .quad 0               // res3
+    .quad 0               // res4
+    .word 0x644d5241      // magic: "ARM\x64"
+    .word 0               // res5
+
+real_entry:
     mov x20, x0      // save the dtb pointer for later use in main()
 
     mrs x0, CurrentEL
@@ -58,7 +72,7 @@ build_page_tables:
     mov x2, #0          // address start
     mov x3, #512        // 512 entries
     mov x4, x1          // pmd pointer
-    ldr x5, =0x401      // pte_valid | pte_block | pte_af
+    ldr x5, =0x701      // pte_valid | pte_block | pte_af | Inner-Shareable
 
 map_ram_loop:
     orr x6, x2, x5
@@ -71,7 +85,7 @@ map_ram_loop:
     mov x2, #0xC0000000 // address start (3gb)
     mov x3, #512
     mov x4, x7
-    ldr x5, =0x405      // pte_valid | pte_block | pte_af | AttrIndx=1 (Device memory)
+    ldr x5, =0x705      // pte_valid | pte_block | pte_af | Inner-Shareable | AttrIndx=1 (Device memory)
 
 map_periph_loop:
     orr x6, x2, x5

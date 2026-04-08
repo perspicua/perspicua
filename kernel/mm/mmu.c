@@ -149,13 +149,22 @@ void mmu_init(void)
         }
     }
 
-    /* Map remaining 3 GB as Device memory using 2 MB blocks */
+    /* Map remaining 3 GB of the 4 GB address space. Mark Peripheral range as Device */
     unsigned long *pmd_others[3] = {pmd_1, pmd_2, pmd_3};
     for (unsigned long p = 0; p < 3; p++) {
         for (unsigned long i = 0; i < PT_ENTRIES; i++) {
             unsigned long pa = ((p + 1) * (1024UL * 1024 * 1024)) + (i * (2UL * 1024 * 1024));
+            unsigned long attr;
+            
+            /* The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF */
+            if (pa >= 0xFC000000 && pa < 0x100000000ULL) {
+                attr = PTE_ATTR_D;
+            } else {
+                attr = PTE_ATTR_N | PTE_SH_INNER;
+            }
+            
             pmd_others[p][i] =
-                pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | PTE_ATTR_D;
+                pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | attr;
         }
     }
 
