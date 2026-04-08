@@ -460,8 +460,13 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
     sd_op_acquire();
 
     for (size_t i = 0; i < num_blocks; i++) {
+        uint32_t addr = (uint32_t)(start_block + i);
+        if (!sd_is_sdhc) {
+            addr *= 512;
+        }
+
         regs->blk_size_cnt = (1 << 16) | 512;
-        int res = sd_send_cmd(CMD24, (uint32_t)(start_block + i));
+        int res = sd_send_cmd(CMD24, addr);
         if (res != PERS_SUCCESS) {
             sd_op_release();
             return res;
@@ -489,7 +494,8 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
 static int sd_probe(struct device *dev)
 {
-    /* We only support a single SD card. If one was already initialized, skip other matching controllers. */
+    /* We only support a single SD card. If one was already initialized, skip other matching
+     * controllers. */
     if (sd_block_dev.present) {
         return -PERS_ERR_ALREADY_EXISTS;
     }
