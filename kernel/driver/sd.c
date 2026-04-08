@@ -489,6 +489,11 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
 static int sd_probe(struct device *dev)
 {
+    /* We only support a single SD card. If one was already initialized, skip other matching controllers. */
+    if (sd_block_dev.present) {
+        return -PERS_ERR_ALREADY_EXISTS;
+    }
+
     uintptr_t vbase = devm_get_io_base(dev, 0);
     if (!vbase) {
         return -PERS_ERR_NOT_FOUND;
