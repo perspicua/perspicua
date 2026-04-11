@@ -232,26 +232,57 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
 
 /*
  * block_cache_sync - Flushes all dirty cache entries to their backing devices.
+ *
+ * Releases the cache lock during I/O to avoid sleeping with a spinlock held
+ * (the SD driver's sd_op_acquire() can block).
  */
 int block_cache_sync(void)
 {
-    unsigned long flags = spin_lock_irqsave(&cache_lock);
     int flushed = 0;
+    int made_progress;
 
-    struct block_cache_entry *entry = lru_head;
-    while (entry) {
-        if (entry->dirty) {
-            struct block_ops_wrapper *ops = (struct block_ops_wrapper *)entry->dev->private_data;
-            int res = ops->orig_write_blocks(entry->dev, entry->data, entry->block_nr, 1);
-            if (res == PERS_SUCCESS) {
-                entry->dirty = 0;
-                flushed++;
+    do {
+        made_progress = 0;
+        unsigned long flags = spin_lock_irqsave(&cache_lock);
+
+        struct block_cache_entry *entry = lru_head;
+        while (entry) {
+            if (entry->dirty) {
+                /* Snapshot fields before releasing lock. */
+                struct block_device *dev = entry->dev;
+                size_t block_nr = entry->block_nr;
+                void *data = entry->data;
+                struct block_ops_wrapper *ops = (struct block_ops_wrapper *)dev->private_data;
+
+                spin_unlock_irqrestore(&cache_lock, flags);
+
+                int res = ops->orig_write_blocks(dev, data, block_nr, 1);
+
+                flags = spin_lock_irqsave(&cache_lock);
+
+                /* Re-lookup: the entry may have been evicted while unlocked. */
+                size_t h = block_hash(dev, block_nr);
+                struct block_cache_entry *cur = hash_table[h];
+                while (cur) {
+                    if (cur->dev == dev && cur->block_nr == block_nr)
+                        break;
+                    cur = cur->next;
+                }
+                if (cur && res == PERS_SUCCESS) {
+                    cur->dirty = 0;
+                    flushed++;
+                    made_progress = 1;
+                }
+
+                /* Restart scan from the head since list may have changed. */
+                break;
             }
+            entry = entry->lru_next;
         }
-        entry = entry->lru_next;
-    }
 
-    spin_unlock_irqrestore(&cache_lock, flags);
+        spin_unlock_irqrestore(&cache_lock, flags);
+    } while (made_progress);
+
     return flushed;
 }
 

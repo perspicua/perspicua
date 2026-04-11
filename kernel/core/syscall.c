@@ -690,7 +690,7 @@ sigreturn_kill:
             if (flags & MAP_ANONYMOUS) {
                 unsigned long mmu_flags = MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF
                                           | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER
-                                          | MMU_PXN | MMU_UXN;
+                                          | MMU_PXN | MMU_UXN | MMU_PTE_NG;
                 if (!(prot & PROT_WRITE)) {
                     mmu_flags |= MMU_AP_RO;
                 }

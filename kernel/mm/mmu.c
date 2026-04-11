@@ -155,14 +155,14 @@ void mmu_init(void)
         for (unsigned long i = 0; i < PT_ENTRIES; i++) {
             unsigned long pa = ((p + 1) * (1024UL * 1024 * 1024)) + (i * (2UL * 1024 * 1024));
             unsigned long attr;
-            
+
             /* The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF */
             if (pa >= 0xFC000000 && pa < 0x100000000ULL) {
                 attr = PTE_ATTR_D;
             } else {
                 attr = PTE_ATTR_N | PTE_SH_INNER;
             }
-            
+
             pmd_others[p][i] =
                 pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | attr;
         }

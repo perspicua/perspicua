@@ -78,10 +78,9 @@ static void smp_init(void)
         if (fdt_get_property(node, "cpu-release-addr", &prop) == 0) {
             unsigned long release_addr = 0;
             const uint32_t *val = (const uint32_t *)prop.value;
-            
+
             if (prop.size == 8) {
-                release_addr = ((unsigned long)fdt32_to_cpu(val[0]) << 32) |
-                                fdt32_to_cpu(val[1]);
+                release_addr = ((unsigned long)fdt32_to_cpu(val[0]) << 32) | fdt32_to_cpu(val[1]);
             } else if (prop.size == 4) {
                 release_addr = fdt32_to_cpu(val[0]);
             }
