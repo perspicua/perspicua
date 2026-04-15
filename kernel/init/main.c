@@ -51,10 +51,12 @@ extern struct tty console_tty;
 
 #ifdef CONFIG_SMP
 
+volatile int cores_online_count = 1;
+
 /**
  * smp_init - Brings up secondary CPU cores.
  *
- * Writes the kernel entry point to the BCM2711 ARM spin tables and signals
+ * Reads CPU release addresses from FDT spin tables and signals
  * an event to wake parked cores.
  */
 static void smp_init(void)
@@ -62,27 +64,46 @@ static void smp_init(void)
     pr_info("smp: Bringing up secondary cores...\n");
 
     unsigned long entry_phys = V2P((unsigned long)_entry);
+    int target_cores = 1;
 
-    /* BCM2711 ARM spin table addresses */
-    volatile unsigned long *spin_cpu1 = (unsigned long *)P2V(0xE0);
-    volatile unsigned long *spin_cpu2 = (unsigned long *)P2V(0xE8);
-    volatile unsigned long *spin_cpu3 = (unsigned long *)P2V(0xF0);
+    for (int i = 1; i < 4; i++) {
+        char path[32];
+        snprintf(path, sizeof(path), "/cpus/cpu@%d", i);
+        const uint32_t *node = fdt_find_node_by_path(path);
+        if (!node) {
+            continue;
+        }
 
-    *spin_cpu1 = entry_phys;
-    *spin_cpu2 = entry_phys;
-    *spin_cpu3 = entry_phys;
+        struct fdt_property prop;
+        if (fdt_get_property(node, "cpu-release-addr", &prop) == 0) {
+            unsigned long release_addr = 0;
+            const uint32_t *val = (const uint32_t *)prop.value;
+
+            if (prop.size == 8) {
+                release_addr = ((unsigned long)fdt32_to_cpu(val[0]) << 32) | fdt32_to_cpu(val[1]);
+            } else if (prop.size == 4) {
+                release_addr = fdt32_to_cpu(val[0]);
+            }
+
+            if (release_addr) {
+                volatile unsigned long *spin_table = (unsigned long *)P2V(release_addr);
+                *spin_table = entry_phys;
+                asm volatile("dc cvac, %0" : : "r"(spin_table));
+                target_cores++;
+            }
+        }
+    }
 
     /* Ensure memory writes are visible before signaling event */
-    asm volatile("dc cvac, %0" : : "r"(spin_cpu1));
-    asm volatile("dc cvac, %0" : : "r"(spin_cpu2));
-    asm volatile("dc cvac, %0" : : "r"(spin_cpu3));
     asm volatile("dsb sy");
 
     /* Wake up parked cores */
     asm volatile("sev");
 
-    /* Allow time for secondary cores to reach secondary_main */
-    sleep_ms(200);
+    /* Allow time for secondary cores to reach secondary_main and report status */
+    while (cores_online_count < target_cores) {
+        asm volatile("wfe");
+    }
 }
 
 /**
@@ -99,6 +120,9 @@ __attribute__((used)) void secondary_main(void)
     timer_interrupt_init();
 
     pr_info("smp: CPU%lu online\n", core_id);
+
+    __atomic_fetch_add(&cores_online_count, 1, __ATOMIC_SEQ_CST);
+    asm volatile("sev");
 
     sched_secondary_init();
 

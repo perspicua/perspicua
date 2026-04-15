@@ -19,6 +19,7 @@
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 #include "driver/gpio.h"
+#include "uapi/errors.h"
 
 extern struct tty console_tty;
 
@@ -46,6 +47,10 @@ static volatile uint32_t *uart_icr = NULL;
  */
 static int pl011_uart_probe(struct device *dev)
 {
+    if (uart_ready) {
+        return -PERS_ERR_ALREADY_EXISTS;
+    }
+
     uintptr_t vbase = devm_get_io_base(dev, 0);
     if (!vbase) {
         PANIC("UART: missing or invalid 'reg' property");

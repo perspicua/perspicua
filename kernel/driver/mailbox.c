@@ -75,9 +75,11 @@ void mbox_call(unsigned int *buffer)
         unsigned int response = *mbox_read;
 
         if ((response & 0xF) == 8) {
-            /* Invalidate buffer in cache to read the GPU's response from RAM */
+            /* Clean+invalidate to read the GPU's response from RAM without
+             * discarding dirty data in cache lines shared with adjacent
+             * stack variables. */
             for (unsigned long i = 0; i < size; i += 64) {
-                asm volatile("dc ivac, %0" : : "r"(addr + i));
+                asm volatile("dc civac, %0" : : "r"(addr + i));
             }
             asm volatile("dsb sy");
             asm volatile("isb");
