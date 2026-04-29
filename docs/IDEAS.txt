@@ -37,6 +37,132 @@ USER-SPACE & LIBC MATURITY:
       Details: Implement a user-space dynamic linker (ld.so) for shared libraries.
       Benefit: Reduces binary sizes and memory footprint for common libraries.
 
+FOUNDATION HARDENING (Fill Existing Holes):
+
+  SYSCALL LAYER:
+  - Add getppid() Syscall
+      Difficulty: Trivial | Impact: Medium
+      Details: process table already has parent field; expose it.
+      Benefit: Required by POSIX; many tools (shells, daemons) call it.
+  - Add dup() Syscall (dup2 exists, dup does not)
+      Difficulty: Trivial | Impact: Medium
+      Details: Allocate lowest free fd pointing to same file; one-liner on top of dup2.
+      Benefit: Many libc stdio internals rely on dup() not dup2().
+  - Add pread64 / pwrite64 Syscalls
+      Difficulty: Low | Impact: Medium
+      Details: Positional read/write without changing file offset; reuse lseek+read internally.
+      Benefit: Needed for concurrent file access; standard POSIX requirement.
+  - Add gettimeofday() Syscall
+      Difficulty: Low | Impact: Medium
+      Details: Expose get_system_time() as a timeval struct; wall clock via boot offset.
+      Benefit: Nearly every application needs timestamps; currently only available inside the kernel.
+  - Add fcntl() Syscall (F_GETFL / F_SETFL / F_GETFD / F_SETFD)
+      Difficulty: Low | Impact: High
+      Details: Store flags per file-descriptor; honor O_NONBLOCK in read/write paths; FD_CLOEXEC on exec.
+      Benefit: Unblocks non-blocking I/O patterns; required for correct fork+exec semantics.
+  - Add truncate() / ftruncate() Syscalls
+      Difficulty: Low-Med | Impact: Medium
+      Details: FAT32 cluster chain already supports shrink on close; expose as explicit syscall.
+      Benefit: Programs that write temp files or resize logs currently have no way to shrink them.
+  - Add mkdir() / rmdir() / unlink() / rename() Syscalls
+      Difficulty: Low-Med | Impact: High
+      Details: FAT32 driver already has the cluster/directory-entry logic; wire up syscall numbers.
+      Benefit: Currently impossible to create or delete files from userspace — massive usability gap.
+
+  SIGNALS:
+  - Implement SIGSTOP / SIGCONT
+      Difficulty: Low | Impact: Medium
+      Details: Set process state to STOPPED on SIGSTOP; wake it on SIGCONT; update scheduler.
+      Benefit: Shell already has fg/bg stubs; this completes job control end-to-end.
+  - Deliver SIGCHLD to Parent on Child Exit
+      Difficulty: Low | Impact: Medium
+      Details: In process_exit(), after marking zombie, send SIGCHLD to parent.
+      Benefit: Enables async child reaping via signal handler; prevents zombie accumulation in daemons.
+
+  MEMORY MANAGEMENT:
+  - Proper ASID Allocator
+      Difficulty: Low | Impact: Medium
+      Details: Replace (pid << 48) hack with a 256-slot ASID bitmap; flush TLB on rollover.
+      Benefit: Prevents silent TLB aliasing when PIDs exceed 255 or wrap; correctness fix.
+  - Expose /proc/meminfo
+      Difficulty: Low | Impact: Low
+      Details: PMM already tracks free/used page counts; format them as a procfs file.
+      Benefit: ptop and future monitoring tools can report memory usage without kernel symbols.
+
+  FILESYSTEM:
+  - fsync(fd) Per-File Flush
+      Difficulty: Low | Impact: Medium
+      Details: SYS_SYNC flushes all dirty blocks; add fsync() that flushes only pages belonging to one fd.
+      Benefit: Applications can guarantee durability for a single file without stalling all I/O.
+  - Page Cache Dirty Tracking & Writeback
+      Difficulty: Medium | Impact: High
+      Details: Mark pages dirty on write; run a background writeback pass from the timer tick.
+      Benefit: Without this, writes cached in page cache are silently lost if the system panics.
+  - Expose /proc/mounts
+      Difficulty: Low | Impact: Low
+      Details: Iterate the kernel mount table and format it as a text procfs file.
+      Benefit: Scripts and tools that parse /proc/mounts (busybox, etc.) need this to function.
+
+  LIBC:
+  - Add strerror()
+      Difficulty: Trivial | Impact: High
+      Details: Static table mapping errno → string; no syscall needed.
+      Benefit: Every error-printing code path currently prints raw numbers; usability is terrible.
+  - Add strdup() / strndup()
+      Difficulty: Trivial | Impact: High
+      Details: malloc + strcpy wrappers; not in current string.c.
+      Benefit: Extremely common; porting any third-party code that calls strdup will fail without it.
+  - Add memmove()
+      Difficulty: Trivial | Impact: Medium
+      Details: Overlapping-safe copy; current memcpy is undefined on overlap.
+      Benefit: Required by C standard; many string functions internally call memmove.
+  - Add setjmp() / longjmp()
+      Difficulty: Low | Impact: Medium
+      Details: Save/restore callee-saved registers + SP in a jmp_buf; AArch64 assembly.
+      Benefit: Error recovery in parsers, REPL, and ported tools depends on this.
+  - Add ctype.h Functions
+      Difficulty: Trivial | Impact: High
+      Details: isdigit, isalpha, isspace, isupper, islower, toupper, tolower — pure lookup tables.
+      Benefit: Essentially every string-processing utility needs these; currently missing entirely.
+  - Add getenv() / setenv() / environ Support
+      Difficulty: Low-Med | Impact: Medium
+      Details: Pass envp through exec; store as null-terminated char** at process startup; implement getenv as linear scan.
+      Benefit: Enables configurable userspace programs and is required for basic POSIX compliance.
+  - Add gettimeofday() Libc Wrapper
+      Difficulty: Trivial | Impact: Medium
+      Details: Thin wrapper over the gettimeofday syscall (once added); fills timeval struct.
+      Benefit: C programs expect this from <sys/time.h>; needed before porting any real software.
+
+  SHELL (sh.c):
+  - $? Exit Status Variable
+      Difficulty: Trivial | Impact: Medium
+      Details: Store last command exit code; expand $? in argument parsing.
+      Benefit: Shell scripts and interactive error-checking are impossible without it.
+  - Environment Variable Expansion ($VAR)
+      Difficulty: Low | Impact: Medium
+      Details: Scan arguments for $ prefix; look up in environ table.
+      Benefit: Prerequisite for any non-trivial shell scripting.
+  - Correct Exit Code Propagation Through Pipes
+      Difficulty: Low | Impact: Medium
+      Details: Shell currently may not surface the rightmost non-zero exit from a pipeline; track each child PID and waitpid all of them.
+      Benefit: Scripts that check `cmd1 | cmd2 || die` require accurate exit codes.
+
+  DRIVERS:
+  - Interrupt-Driven UART RX
+      Difficulty: Low | Impact: Medium
+      Details: UART TX already uses interrupts; RX uses a polling loop. Wire RX FIFO interrupt to a wait queue.
+      Benefit: Eliminates busy-waiting on terminal input; CPU is free to do other work while waiting for keystrokes.
+
+  TESTING:
+  - just test Target (Automated Kernel Test Run)
+      Difficulty: Low | Impact: Medium
+      Details: Add a justfile target that boots QEMU, runs the kernel test suite, captures output, and exits with pass/fail.
+      Benefit: Currently tests can only be run manually; without automation, regressions go unnoticed.
+  - VFS / FAT32 / Signal Test Coverage
+      Difficulty: Low-Med | Impact: Medium
+      Details: Add test_vfs.c, test_fat32.c, test_signals.c matching the style of existing test_pmm.c.
+      Benefit: Memory management has thorough tests; filesystem and signals have none — the riskiest subsystems are untested.
+
 LONG-TERM STRATEGIC IDEAS:
   - POSIX ABI Compatibility: Align syscall numbers with Linux/AArch64.
   - Graphics Server: Wayland-lite compositor designed for user-space.

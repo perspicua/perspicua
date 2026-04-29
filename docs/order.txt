@@ -1,8 +1,55 @@
+  Phase 1.5: Foundation Hardening (Fill the Holes)
+  Goal: Patch the gaps in what is already built so every feature is actually complete and reliable.
+        Do this before Phase 2 — a shaky foundation makes everything on top of it harder.
+
+   1.  mkdir / rmdir / unlink / rename Syscalls: FAT32 already has the cluster logic. Wire up the
+       syscall numbers so userspace can actually create and delete files. Without this, the filesystem
+       is effectively read-only from userspace.
+
+   2.  Page Cache Dirty Tracking & Writeback: Mark pages dirty on write and flush them from the timer
+       tick. Currently, cached writes can be lost on panic — this is a data-integrity bug.
+
+   3.  fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but
+       applications need per-file durability guarantees.
+
+   4.  fcntl() (F_GETFL / F_SETFL / FD_CLOEXEC): Store flags per-fd; honor O_NONBLOCK in read/write.
+       Required for correct fork+exec semantics and a prerequisite for non-blocking I/O later.
+
+   5.  SIGSTOP / SIGCONT: Set process state to STOPPED; wake on SIGCONT. Shell already has fg/bg
+       stubs — this is the missing kernel half of job control.
+
+   6.  SIGCHLD Delivery on Child Exit: Call kill(parent, SIGCHLD) inside process_exit(). Prevents
+       zombie accumulation in any daemon that wants async child reaping.
+
+   7.  Libc Essentials — strerror, strdup/strndup, memmove, ctype.h, setjmp/longjmp:
+       All trivial to add. Every porting attempt will hit these immediately. Do them all at once.
+
+   8.  getenv() / setenv() + environ in exec: Pass envp through execve; implement getenv as a linear
+       scan. Required before any configurable userspace program can function.
+
+   9.  getppid(), dup(), pread/pwrite, gettimeofday() Syscalls + libc wrappers:
+       Each is a one- or two-function addition. Collectively they close the most common POSIX gaps
+       that block porting real software.
+
+   10. ASID Allocator: Replace the (pid << 48) hack with a 256-slot bitmap + TLB flush on rollover.
+       Correctness fix — silent TLB aliasing is possible today with many processes.
+
+   11. Shell: $? variable, $VAR expansion, correct pipeline exit codes:
+       Three small additions to sh.c that make the shell usable for scripting.
+
+   12. Interrupt-Driven UART RX: Wire the RX FIFO interrupt to a wait queue. Eliminates busy-waiting
+       on terminal input and is a prerequisite for clean select/poll support on /dev/uart later.
+
+   13. just test + VFS/FAT32/Signal Tests: Add an automated QEMU test target and write test_vfs.c,
+       test_fat32.c, test_signals.c. Memory is well tested; the riskiest subsystems are not.
+
+   14. /proc/meminfo + /proc/mounts: Two trivial procfs files that expose data the kernel already
+       tracks. Required by basically any monitoring or scripting tool.
+
   Phase 2: Developer Experience & Basic I/O
   Goal: Turn the "kernel project" into a usable environment where you can actually work.
 
    5. Core POSIX Utilities (ps, ls, mkdir, rm): These allow you to inspect the system state from within the system itself.
-   6. Shell (sh) Quality of Life: Add tab completion and history. It sounds minor, but it exponentially speeds up your "compile-run-test" loop.
 
   Phase 3: Advanced Architecture (The "Heavy Lifting")
   Goal: Implement the core features that define a modern operating system.
