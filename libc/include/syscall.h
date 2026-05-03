@@ -55,6 +55,10 @@ int sys_chdir(const char *path);
 int sys_getcwd(char *buf, size_t size);
 int sys_stat(const char *path, struct stat *buf);
 off_t sys_lseek(int fd, off_t offset, int whence);
+int sys_mkdir(const char *path, int mode);
+int sys_rmdir(const char *path);
+int sys_unlink(const char *path);
+int sys_rename(const char *oldpath, const char *newpath);
 
 /* Memory management */
 void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
