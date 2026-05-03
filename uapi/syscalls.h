@@ -42,5 +42,6 @@
 #define SYS_RMDIR       30
 #define SYS_UNLINK      31
 #define SYS_RENAME      32
+#define SYS_FSYNC       33
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

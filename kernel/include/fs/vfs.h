@@ -169,6 +169,11 @@ int vfs_unlink(const char *path);
 int vfs_rename(const char *oldpath, const char *newpath);
 
 /*
+ * vfs_fsync - Flushes all dirty cached pages for a single file descriptor to disk.
+ */
+int vfs_fsync(int fd);
+
+/*
  * vfs_dup2 - Duplicates a descriptor to a specific target slot.
  */
 int vfs_dup2(int oldfd, int newfd);

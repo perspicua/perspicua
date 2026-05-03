@@ -23,6 +23,7 @@
 #include "mm/heap.h"
 #include "mm/slab.h"
 #include "fs/devfs.h"
+#include "fs/pagecache.h"
 #include "sched/process.h"
 
 /*
@@ -1252,4 +1253,35 @@ int vfs_rename(const char *oldpath, const char *newpath)
     vfs_vnode_put(old_parent_node);
 
     return res;
+}
+
+/*
+ * vfs_fsync - Flushes all dirty cached pages for a single file descriptor to disk.
+ */
+int vfs_fsync(int fd)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS) {
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_file *f = p->fd_table[fd];
+    if (!f || !f->node) {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    struct vfs_vnode *node = f->node;
+    atomic_inc(&node->refcount);
+    spin_unlock(&p->fd_lock);
+
+    int result = pagecache_writeback(node);
+
+    vfs_vnode_put(node);
+    return result >= 0 ? 0 : result;
 }

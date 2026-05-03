@@ -553,3 +553,16 @@ int sys_rename(const char *oldpath, const char *newpath)
                  : "x0", "x1", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_fsync(int fd)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "i"(SYS_FSYNC)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}

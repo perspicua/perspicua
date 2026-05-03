@@ -821,6 +821,12 @@ mmap_done:
             break;
         }
 
+        case SYS_FSYNC: {
+            int fd = (int)tf->x[0];
+            tf->x[0] = (uint64_t)vfs_fsync(fd);
+            break;
+        }
+
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;

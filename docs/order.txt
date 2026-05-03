@@ -8,7 +8,7 @@
    2.  [DONE] Page Cache Dirty Tracking & Writeback: Mark pages dirty on write and flush them from the timer
        tick. Currently, cached writes can be lost on panic — this is a data-integrity bug.
 
-   3.  fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but
+   3.  [DONE] fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but
        applications need per-file durability guarantees.
 
    4.  fcntl() (F_GETFL / F_SETFL / FD_CLOEXEC): Store flags per-fd; honor O_NONBLOCK in read/write.
