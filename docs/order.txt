@@ -1,12 +1,11 @@
   Phase 1.5: Foundation Hardening (Fill the Holes)
   Goal: Patch the gaps in what is already built so every feature is actually complete and reliable.
-        Do this before Phase 2 — a shaky foundation makes everything on top of it harder.
 
-   1.  mkdir / rmdir / unlink / rename Syscalls: FAT32 already has the cluster logic. Wire up the
+   1.  [DONE] mkdir / rmdir / unlink / rename Syscalls: FAT32 already has the cluster logic. Wire up the
        syscall numbers so userspace can actually create and delete files. Without this, the filesystem
        is effectively read-only from userspace.
 
-   2.  Page Cache Dirty Tracking & Writeback: Mark pages dirty on write and flush them from the timer
+   2.  [DONE] Page Cache Dirty Tracking & Writeback: Mark pages dirty on write and flush them from the timer
        tick. Currently, cached writes can be lost on panic — this is a data-integrity bug.
 
    3.  fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but

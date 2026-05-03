@@ -511,6 +511,8 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
             return bytes_written > 0 ? (int)bytes_written : write_result;
         }
 
+        pagecache_clear_dirty(file->node, page_index);
+
         bytes_written += to_copy;
     }
 

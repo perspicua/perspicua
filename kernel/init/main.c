@@ -28,6 +28,7 @@
 #include "fs/devfs.h"
 #include "fs/procfs.h"
 #include "fs/fat32.h"
+#include "fs/pagecache.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -161,6 +162,22 @@ static void dashboard_task(void)
 }
 
 /**
+ * writeback_daemon - Periodic background flush of dirty page cache entries.
+ *
+ * Runs every 5 seconds. Normally has nothing to flush (FAT32 is write-through),
+ * but clears any pages that were dirtied without a corresponding write-through
+ * (e.g. a failed write retry, or future write-back paths).
+ */
+static void writeback_daemon(void)
+{
+    while (1) {
+        sched_sleep_ms(5000);
+        pagecache_sync();
+        block_cache_sync();
+    }
+}
+
+/**
  * main - Primary kernel initialization routine.
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
@@ -221,6 +238,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Root filesystem initialization (FAT32) */
     if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
+        sched_create_task(writeback_daemon);
     }
 
     /* Mount auxiliary filesystems */

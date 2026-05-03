@@ -25,6 +25,11 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data);
 void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index);
 
 /*
+ * pagecache_clear_dirty - Clears the dirty flag for a cached page after it has been written.
+ */
+void pagecache_clear_dirty(struct vfs_vnode *node, size_t page_index);
+
+/*
  * pagecache_writeback - Writes all dirty pages for a specific vnode to disk.
  *
  * Returns the number of pages written, or a negative error code.

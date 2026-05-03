@@ -183,6 +183,24 @@ void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index)
     spin_unlock_irqrestore(&pagecache_lock, flags);
 }
 
+void pagecache_clear_dirty(struct vfs_vnode *node, size_t page_index)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    size_t h = page_hash(node, page_index);
+    struct page_cache_entry *curr = hash_table[h];
+
+    while (curr) {
+        if (curr->fs_ops == node->ops && curr->file_id == node->internal_info
+            && curr->page_index == page_index) {
+            curr->dirty = 0;
+            break;
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+}
+
 int pagecache_writeback(struct vfs_vnode *node)
 {
     if (!node || !node->ops || !node->ops->write_page) {
