@@ -28,6 +28,7 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 #include "driver/block.h"
+#include "fs/pagecache.h"
 
 /*
  * validate_user_buffer - Verifies that a memory range is valid for user access.
@@ -720,6 +721,7 @@ mmap_done:
         }
 
         case SYS_SYNC: {
+            pagecache_sync();
             block_cache_sync();
             tf->x[0] = PERS_SUCCESS;
             break;
