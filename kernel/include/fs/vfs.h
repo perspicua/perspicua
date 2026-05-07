@@ -68,6 +68,12 @@ struct vfs_vnode_ops {
     int (*stat)(struct vfs_vnode *node, struct stat *buf);
     int (*mmap)(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags);
     int (*write_page)(struct vfs_vnode *node, size_t page_index, void *data, size_t valid_bytes);
+    int (*mkdir)(struct vfs_vnode *parent, const char *name);
+    int (*create)(struct vfs_vnode *parent, const char *name);
+    int (*rmdir)(struct vfs_vnode *parent, const char *name);
+    int (*unlink)(struct vfs_vnode *parent, const char *name);
+    int (*rename)(struct vfs_vnode *old_parent, const char *old_name, struct vfs_vnode *new_parent,
+                  const char *new_name);
 };
 
 /*
@@ -147,6 +153,20 @@ int vfs_readdir(int fd, void *buffer, size_t count);
  * vfs_stat - Retrieves metadata for a file by path.
  */
 int vfs_stat(const char *path, struct stat *buf);
+
+/*
+ * vfs_mkdir - Creates a new directory from a given path.
+ */
+int vfs_mkdir(const char *path);
+
+/*
+ *  vfs_rmdir - Removes an existing directory from a given path.
+ */
+int vfs_rmdir(const char *path);
+
+int vfs_unlink(const char *path);
+
+int vfs_rename(const char *oldpath, const char *newpath);
 
 /*
  * vfs_dup2 - Duplicates a descriptor to a specific target slot.

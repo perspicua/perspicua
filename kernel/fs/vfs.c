@@ -456,7 +456,46 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
     struct vfs_vnode *node = vfs_resolve_path(path, process_table[pid].cwd, &error);
     if (!node) {
-        return error;
+        if (!(flags & VFS_O_CREAT)) /* not asking to create → just fail */
+            return error;
+
+        /* Split path into parent + name, resolve parent, call create */
+        char kpath[VFS_MAX_PATH_LEN];
+        strncpy(kpath, path, VFS_MAX_PATH_LEN - 1);
+        kpath[VFS_MAX_PATH_LEN - 1] = '\0';
+
+        char *slash = strrchr(kpath, '/');
+        const char *parent_path, *name;
+        if (!slash) {
+            parent_path = ".";
+            name = kpath;
+        } else if (slash == kpath) {
+            parent_path = "/";
+            name = slash + 1;
+        } else {
+            *slash = '\0';
+            parent_path = kpath;
+            name = slash + 1;
+        }
+
+        struct vfs_vnode *parent = vfs_resolve_path(parent_path, process_table[pid].cwd, &error);
+        if (!parent)
+            return error;
+
+        if (!parent->ops || !parent->ops->create) {
+            vfs_vnode_put(parent);
+            return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        }
+
+        int cres = parent->ops->create(parent, name);
+        vfs_vnode_put(parent);
+        if (cres != PERS_SUCCESS)
+            return cres;
+
+        /* Now resolve the newly-created file */
+        node = vfs_resolve_path(path, process_table[pid].cwd, &error);
+        if (!node)
+            return error;
     }
 
     spin_lock(&process_table[pid].fd_lock);
@@ -965,4 +1004,252 @@ int vfs_getcwd(char *buf, size_t size)
     vfs_vnode_put(curr_node);
 
     return PERS_SUCCESS;
+}
+
+/*
+ * vfs_mkdir - Creates a new directory from a given path.
+ */
+int vfs_mkdir(const char *path)
+{
+    char kpath[VFS_MAX_PATH_LEN];
+    strncpy(kpath, path, VFS_MAX_PATH_LEN);
+    kpath[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *slash = strrchr(kpath, '/');
+    const char *parent_path;
+    const char *name;
+
+    if (!slash) {
+        parent_path = ".";
+        name = kpath;
+    } else if (slash == kpath) {
+        parent_path = "/";
+        name = slash + 1;
+    } else {
+        *slash = '\0';
+        parent_path = kpath;
+        name = slash + 1;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    int error = 0;
+
+    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    if (!parent) {
+        return error;
+    }
+
+    if (parent->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    if (!parent->ops || !parent->ops->mkdir) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    int res = parent->ops->mkdir(parent, name);
+    vfs_vnode_put(parent);
+    return res;
+}
+
+/*
+ * vfs_rmdir - Removes an existing directory from a given path.
+ */
+int vfs_rmdir(const char *path)
+{
+    char kpath[VFS_MAX_PATH_LEN];
+    strncpy(kpath, path, VFS_MAX_PATH_LEN);
+    kpath[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *slash = strrchr(kpath, '/');
+    const char *parent_path;
+    const char *name;
+
+    if (!slash) {
+        parent_path = ".";
+        name = kpath;
+    } else if (slash == kpath) {
+        parent_path = "/";
+        name = slash + 1;
+    } else {
+        *slash = '\0';
+        parent_path = kpath;
+        name = slash + 1;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    int error = 0;
+
+    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    if (!parent) {
+        return error;
+    }
+
+    if (parent->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    if (!parent->ops || !parent->ops->rmdir) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    int res = parent->ops->rmdir(parent, name);
+    vfs_vnode_put(parent);
+    return res;
+}
+
+/*
+ * vfs_unlink - Unlinks a file from a given path.
+ */
+int vfs_unlink(const char *path)
+{
+    char kpath[VFS_MAX_PATH_LEN];
+    strncpy(kpath, path, VFS_MAX_PATH_LEN);
+    kpath[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *slash = strrchr(kpath, '/');
+    const char *parent_path;
+    const char *name;
+
+    if (!slash) {
+        parent_path = ".";
+        name = kpath;
+    } else if (slash == kpath) {
+        parent_path = "/";
+        name = slash + 1;
+    } else {
+        *slash = '\0';
+        parent_path = kpath;
+        name = slash + 1;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    int error = 0;
+
+    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    if (!parent) {
+        return error;
+    }
+
+    if (parent->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    if (!parent->ops || !parent->ops->unlink) {
+        vfs_vnode_put(parent);
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    int res = parent->ops->unlink(parent, name);
+    vfs_vnode_put(parent);
+    return res;
+}
+
+/*
+ * vfs_rename - Renames or moves a file or directory.
+ */
+int vfs_rename(const char *oldpath, const char *newpath)
+{
+    char kold[VFS_MAX_PATH_LEN];
+    strncpy(kold, oldpath, VFS_MAX_PATH_LEN);
+    kold[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *slash_old = strrchr(kold, '/');
+    const char *parent_old;
+    const char *name_old;
+
+    if (!slash_old) {
+        parent_old = ".";
+        name_old = kold;
+    } else if (slash_old == kold) {
+        parent_old = "/";
+        name_old = slash_old + 1;
+    } else {
+        *slash_old = '\0';
+        parent_old = kold;
+        name_old = slash_old + 1;
+    }
+
+    char knew[VFS_MAX_PATH_LEN];
+    strncpy(knew, newpath, VFS_MAX_PATH_LEN);
+    knew[VFS_MAX_PATH_LEN - 1] = '\0';
+
+    char *slash_new = strrchr(knew, '/');
+    const char *parent_new;
+    const char *name_new;
+
+    if (!slash_new) {
+        parent_new = ".";
+        name_new = knew;
+    } else if (slash_new == knew) {
+        parent_new = "/";
+        name_new = slash_new + 1;
+    } else {
+        *slash_new = '\0';
+        parent_new = knew;
+        name_new = slash_new + 1;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    int error = 0;
+
+    struct vfs_vnode *old_parent_node = vfs_resolve_path(parent_old, p->cwd, &error);
+    if (!old_parent_node) {
+        return error;
+    }
+
+    if (old_parent_node->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(old_parent_node);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    struct vfs_vnode *new_parent_node = vfs_resolve_path(parent_new, p->cwd, &error);
+    if (!new_parent_node) {
+        vfs_vnode_put(old_parent_node);
+        return error;
+    }
+
+    if (new_parent_node->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(new_parent_node);
+        vfs_vnode_put(old_parent_node);
+        return -PERS_ERR_NOT_A_DIRECTORY;
+    }
+
+    if (!old_parent_node->ops || !old_parent_node->ops->rename) {
+        vfs_vnode_put(new_parent_node);
+        vfs_vnode_put(old_parent_node);
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    int res = old_parent_node->ops->rename(old_parent_node, name_old, new_parent_node, name_new);
+
+    vfs_vnode_put(new_parent_node);
+    vfs_vnode_put(old_parent_node);
+
+    return res;
 }

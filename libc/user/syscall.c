@@ -499,3 +499,57 @@ int sys_sync(void)
                  : "x0", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_mkdir(const char *path, int mode)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "r"((long)mode), "i"(SYS_MKDIR)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_rmdir(const char *path)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "i"(SYS_RMDIR)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_unlink(const char *path)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(path), "i"(SYS_UNLINK)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_rename(const char *oldpath, const char *newpath)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(oldpath), "r"(newpath), "i"(SYS_RENAME)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}

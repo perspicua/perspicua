@@ -724,6 +724,100 @@ mmap_done:
             tf->x[0] = PERS_SUCCESS;
             break;
         }
+        case SYS_MKDIR: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_mkdir(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_RMDIR: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_rmdir(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_UNLINK: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_unlink(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_RENAME: {
+            const char *oldpath = (const char *)tf->x[0];
+            const char *newpath = (const char *)tf->x[1];
+            if (!validate_user_buffer(oldpath, 1, 0) || !validate_user_buffer(newpath, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *koldpath = heap_malloc(VFS_MAX_PATH_LEN);
+            char *knewpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!koldpath || !knewpath) {
+                if (koldpath)
+                    heap_free(koldpath);
+                if (knewpath)
+                    heap_free(knewpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied_old = strncpy_from_user(koldpath, oldpath, VFS_MAX_PATH_LEN);
+            long copied_new = strncpy_from_user(knewpath, newpath, VFS_MAX_PATH_LEN);
+            if (copied_old < 0 || copied_old >= VFS_MAX_PATH_LEN || copied_new < 0
+                || copied_new >= VFS_MAX_PATH_LEN) {
+                heap_free(koldpath);
+                heap_free(knewpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_rename(koldpath, knewpath);
+            heap_free(koldpath);
+            heap_free(knewpath);
+            break;
+        }
 
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
