@@ -232,7 +232,7 @@ void tty_handle_rx(struct tty *tty, char c)
 /*
  * tty_read - Reads characters, blocking if no line or data is available.
  */
-int tty_read(struct tty *tty, char *buf, size_t count)
+int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
     struct task *curr_task = sched_get_current();
     if (curr_task) {
@@ -246,6 +246,23 @@ int tty_read(struct tty *tty, char *buf, size_t count)
         int ready = (tty->rx_head != tty->rx_tail);
         if (tty->canon_enabled && !tty_has_line(tty)) {
             ready = 0;
+        }
+
+        if (!ready) {
+            if (file && (file->flags & VFS_O_NONBLOCK)) {
+                spin_unlock_irqrestore(&tty->lock, flags);
+                if (n == 0) {
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
+            spin_unlock_irqrestore(&tty->lock, flags);
+            if (n > 0) {
+                break;
+            }
+            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task);
+            schedule();
+            continue;
         }
 
         if (!ready) {

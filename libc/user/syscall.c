@@ -566,3 +566,18 @@ int sys_fsync(int fd)
                  : "x0", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_fcntl(int fd, int cmd, int arg)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x8, %4\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)cmd), "r"((long)arg), "i"(SYS_FCNTL)
+                 : "x0", "x1", "x2", "x8", "memory");
+    return __syscall_ret(res);
+}

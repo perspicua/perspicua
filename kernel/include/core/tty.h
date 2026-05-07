@@ -15,6 +15,8 @@
 
 #define TTY_BUFFER_SIZE 256
 
+struct vfs_file;
+
 /*
  * struct tty - Represents a terminal device with its buffers and state.
  *
@@ -60,7 +62,7 @@ void tty_handle_tx(struct tty *tty);
 /*
  * tty_read - Reads characters from the TTY receive buffer.
  */
-int tty_read(struct tty *tty, char *buf, size_t count);
+int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count);
 
 /*
  * tty_write - Writes characters to the TTY transmit buffer.
