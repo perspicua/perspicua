@@ -7,6 +7,7 @@
 
 #include "mm/mmu.h"
 
+#include "mm/asid.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -196,6 +197,7 @@ void mmu_init(void)
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys) : "memory");
     asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys) : "memory");
     tlbi_all_is();
+    asid_init();
 
     pr_info("mmu: TTBR1 -> 0x%lx, TTBR0 -> empty (0x%lx)\n", kernel_pgd_phys, empty_pgd_phys);
 }

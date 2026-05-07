@@ -67,6 +67,7 @@ struct process {
 
     unsigned long *user_pgd;
     unsigned long asid;
+    unsigned long asid_generation;
     unsigned long ttbr0;
 
     struct cpu_context context;
