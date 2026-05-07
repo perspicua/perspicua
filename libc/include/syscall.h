@@ -65,6 +65,7 @@ void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t off
 
 /* Filesystem sync */
 int sys_sync(void);
+int sys_fsync(int fd);
 
 /* Signal handling */
 int sys_signal(int sig, signal_handler_t handler);
