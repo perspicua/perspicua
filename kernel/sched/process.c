@@ -305,8 +305,10 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -385,8 +387,10 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -422,6 +426,20 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     struct process *p = &process_table[pid];
+    int fds_to_close[VFS_MAX_FDS];
+    int close_count = 0;
+
+    spin_lock(&p->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (p->fd_table[i] && (p->fd_flags[i] & VFS_FD_CLOEXEC)) {
+            fds_to_close[close_count++] = i;
+        }
+    }
+    spin_unlock(&p->fd_lock);
+
+    for (int i = 0; i < close_count; i++) {
+        vfs_close(fds_to_close[i]);
+    }
 
     /* Copy arguments before switching address space */
     char *kargv[128];
@@ -746,6 +764,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (parent->fd_table[i]) {
             child->fd_table[i] = parent->fd_table[i];
+            child->fd_flags[i] = parent->fd_flags[i];
             atomic_inc(&child->fd_table[i]->refcount);
         }
     }

@@ -74,6 +74,7 @@ struct process {
     struct va_allocator va;
 
     struct vfs_file *fd_table[VFS_MAX_FDS];
+    int fd_flags[VFS_MAX_FDS];
     spinlock_t fd_lock;
     struct vfs_vnode *cwd;
 

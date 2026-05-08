@@ -97,6 +97,13 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
             if (read > 0 || pipe->writers == 0) {
                 break;
             }
+            if (file->flags & VFS_O_NONBLOCK) {
+                if (read == 0) {
+                    spin_unlock(&pipe->lock);
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
     }
@@ -132,6 +139,13 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
             pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
         } else {
+            if (file->flags & VFS_O_NONBLOCK) {
+                if (written == 0) {
+                    spin_unlock(&pipe->lock);
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
@@ -251,7 +265,9 @@ int pipe_create(int pipefd[2])
 
     if (fd_r != -1 && fd_w != -1) {
         p->fd_table[fd_r] = f_read;
+        p->fd_flags[fd_r] = 0;
         p->fd_table[fd_w] = f_write;
+        p->fd_flags[fd_w] = 0;
     }
     spin_unlock(&p->fd_lock);
 
