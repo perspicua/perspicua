@@ -593,7 +593,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->name[sizeof(p->name) - 1] = '\0';
 
     mmu_switch_user(new_pgd, p->asid);
-    unsigned long asid_field = (unsigned long)(p->asid & 0xFFFFUL) << 48;
+    unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
     asm volatile("dsb ish" ::: "memory");
     asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
     asm volatile("dsb ish" ::: "memory");
@@ -663,7 +663,7 @@ void process_exit(uint32_t pid, int exit_status)
     unsigned long *pgd = p->user_pgd;
     p->user_pgd = NULL;
     if (pgd) {
-        unsigned long asid_field = (unsigned long)(p->asid & 0xFFFFUL) << 48;
+        unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
         asm volatile("dsb ish");
         asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
         asm volatile("dsb ish");
