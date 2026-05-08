@@ -826,6 +826,49 @@ mmap_done:
             tf->x[0] = (uint64_t)vfs_fsync(fd);
             break;
         }
+        case SYS_FCNTL: {
+            int fd = (int)tf->x[0];
+            int cmd = (int)tf->x[1];
+            int arg = (int)tf->x[2];
+
+            if (fd < 0 || fd >= VFS_MAX_FDS) {
+                tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
+                break;
+            }
+
+            struct process *p = &process_table[pid];
+
+            spin_lock(&p->fd_lock);
+            struct vfs_file *f = p->fd_table[fd];
+            if (!f) {
+                spin_unlock(&p->fd_lock);
+                tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
+                break;
+            }
+
+            int ret = 0;
+            switch (cmd) {
+                case VFS_F_GETFD:
+                    ret = p->fd_flags[fd];
+                    break;
+                case VFS_F_SETFD:
+                    p->fd_flags[fd] = arg;
+                    break;
+                case VFS_F_GETFL:
+                    ret = f->flags;
+                    break;
+                case VFS_F_SETFL:
+                    f->flags = (f->flags & VFS_O_ACCMODE) | (arg & ~VFS_O_ACCMODE);
+                    break;
+                default:
+                    ret = -PERS_ERR_INVALID_ARGUMENT;
+                    break;
+            }
+            spin_unlock(&p->fd_lock);
+
+            tf->x[0] = (uint64_t)ret;
+            break;
+        }
 
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);

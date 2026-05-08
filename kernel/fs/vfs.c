@@ -528,6 +528,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         if (!process_table[pid].fd_table[i]) {
             process_table[pid].fd_table[i] = new_file;
+            process_table[pid].fd_flags[i] = (flags & VFS_O_CLOEXEC) ? VFS_FD_CLOEXEC : 0;
             slot = (int)i;
             break;
         }
@@ -892,6 +893,7 @@ int vfs_dup2(int oldfd, int newfd)
     }
 
     p->fd_table[newfd] = old_f;
+    p->fd_flags[newfd] = 0; // POSIX specifies dup2 clears FD_CLOEXEC
     atomic_inc(&old_f->refcount);
     spin_unlock(&p->fd_lock);
 

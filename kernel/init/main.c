@@ -2,6 +2,7 @@
  * kernel/init/main.c - Kernel entry point and system initialization sequence.
  */
 
+#include "mm/asid.h"
 #include "uapi/errors.h"
 
 #include "types.h"
@@ -203,6 +204,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     pmm_init();
     mmu_init();
+    asid_init();
 
     extern void pagecache_init(void);
     pagecache_init();

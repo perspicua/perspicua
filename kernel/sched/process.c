@@ -9,6 +9,7 @@
  */
 #include "sched/process.h"
 
+#include "mm/asid.h"
 #include "uapi/wait.h"
 #include "uapi/errors.h"
 #include "arch/exception.h"
@@ -285,8 +286,9 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
 
     p->pid = pid;
     p->user_pgd = user_pgd;
-    p->asid = (unsigned long)pid;
-    p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
+    p->asid = 0;
+    p->asid_generation = 0;
+    p->ttbr0 = V2P(user_pgd);
     p->vaddr_code = vaddr_code;
     p->paddr_code = V2P(code_page);
     p->vaddr_user_stack = vaddr_user_stack;
@@ -303,8 +305,10 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -362,8 +366,9 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     p->pid = pid;
     p->user_pgd = user_pgd;
-    p->asid = (unsigned long)pid;
-    p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
+    p->asid = 0;
+    p->asid_generation = 0;
+    p->ttbr0 = V2P(user_pgd);
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = vaddr_stack;
     p->vaddr_kernel_stack = (uintptr_t)kstack;
@@ -382,8 +387,10 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -419,6 +426,20 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     struct process *p = &process_table[pid];
+    int fds_to_close[VFS_MAX_FDS];
+    int close_count = 0;
+
+    spin_lock(&p->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (p->fd_table[i] && (p->fd_flags[i] & VFS_FD_CLOEXEC)) {
+            fds_to_close[close_count++] = i;
+        }
+    }
+    spin_unlock(&p->fd_lock);
+
+    for (int i = 0; i < close_count; i++) {
+        vfs_close(fds_to_close[i]);
+    }
 
     /* Copy arguments before switching address space */
     char *kargv[128];
@@ -671,6 +692,8 @@ void process_exit(uint32_t pid, int exit_status)
         dying->state = SCHED_TASK_DEAD;
     }
 
+    asid_free(&process_table[pid].asid, &process_table[pid].asid_generation);
+
     schedule();
     __builtin_unreachable();
 }
@@ -715,8 +738,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
     }
 
     child->user_pgd = child_pgd;
-    child->asid = (uint32_t)child_pid;
-    child->ttbr0 = V2P(child_pgd) | ((uint64_t)child_pid << 48);
+    child->asid = 0;
+    child->asid_generation = 0;
+    child->ttbr0 = V2P(child_pgd);
     child->vaddr_code = parent->vaddr_code;
     child->vaddr_user_stack = parent->vaddr_user_stack;
     child->vaddr_kernel_stack = (uintptr_t)kstack;
@@ -740,6 +764,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (parent->fd_table[i]) {
             child->fd_table[i] = parent->fd_table[i];
+            child->fd_flags[i] = parent->fd_flags[i];
             atomic_inc(&child->fd_table[i]->refcount);
         }
     }
