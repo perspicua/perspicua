@@ -21,6 +21,22 @@
 struct tty console_tty;
 
 /*
+ * console_rx_adapter - Bridges the UART RX callback to the console TTY.
+ */
+static void console_rx_adapter(char c)
+{
+    tty_handle_rx(&console_tty, c);
+}
+
+/*
+ * console_tx_adapter - Bridges the UART TX callback to the console TTY.
+ */
+static void console_tx_adapter(void)
+{
+    tty_handle_tx(&console_tty);
+}
+
+/*
  * wait_queue_add - Appends a task to a TTY wait queue.
  */
 static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
@@ -162,6 +178,9 @@ void tty_init(struct tty *tty)
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
     tty->foreground_pid = 0;
+
+    uart_reg_rx_callback(console_rx_adapter);
+    uart_reg_tx_callback(console_tx_adapter);
 
     pr_info("tty: console tty initialized\n");
 }
