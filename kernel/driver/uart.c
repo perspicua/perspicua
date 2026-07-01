@@ -12,7 +12,6 @@
 #include "stdio.h"
 #include "types.h"
 
-#include "core/tty.h"
 #include "core/lock.h"
 #include "core/timer.h"
 #include "panic.h"
@@ -20,8 +19,6 @@
 #include "devicetree/fdt.h"
 #include "driver/gpio.h"
 #include "uapi/errors.h"
-
-extern struct tty console_tty;
 
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
@@ -41,6 +38,10 @@ static volatile uint32_t *uart_lcrh = NULL;
 static volatile uint32_t *uart_cr = NULL;
 static volatile uint32_t *uart_ifls = NULL;
 static volatile uint32_t *uart_icr = NULL;
+
+/* Registered interrupt callbacks */
+static uart_rx_cb_t uart_rx_callback = NULL;
+static uart_tx_cb_t uart_tx_callback = NULL;
 
 /*
  * pl011_uart_probe - Locates the PL011 UART and initializes it for 8n1 operation.
@@ -102,14 +103,6 @@ CORE_DRIVER(pl011_uart) = {
     .compatible = "arm,pl011-axi",
     .probe = pl011_uart_probe,
 };
-
-/*
- * uart_write - Directs output to the line-buffered TTY.
- */
-void uart_write(const char *buf, size_t len)
-{
-    tty_write(&console_tty, buf, len);
-}
 
 /*
  * uart_send_raw - Spin-waits for space and transmits a byte.
@@ -195,4 +188,44 @@ void uart_clear_interrupt(uint32_t mask)
 unsigned int uart_get_irq(void)
 {
     return cached_uart_irq;
+}
+
+/*
+ * uart_reg_rx_callback - Registers a function to be called for each received byte.
+ */
+void uart_reg_rx_callback(uart_rx_cb_t f)
+{
+    uart_rx_callback = f;
+}
+
+/*
+ * uart_reg_tx_callback - Registers a function to be called when the TX FIFO drains.
+ */
+void uart_reg_tx_callback(uart_tx_cb_t f)
+{
+    uart_tx_callback = f;
+}
+
+/*
+ * uart_handle_irq - Reads the interrupt status and dispatches to registered callbacks.
+ */
+void uart_handle_irq(void)
+{
+    uint32_t mis = mmio_read(uart_mis);
+
+    if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
+        while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
+            char c = (char)(mmio_read(uart_dr) & 0xFF);
+            if (uart_rx_callback != NULL) {
+                uart_rx_callback(c);
+            }
+        }
+    }
+    if (mis & UART_MIS_TXMIS) {
+        if (uart_tx_callback != NULL) {
+            uart_tx_callback();
+        }
+    }
+
+    uart_clear_interrupt(mis);
 }

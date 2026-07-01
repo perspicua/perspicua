@@ -30,7 +30,7 @@
        Each is a one- or two-function addition. Collectively they close the most common POSIX gaps
        that block porting real software.
 
-   10. ASID Allocator: Replace the (pid << 48) hack with a 256-slot bitmap + TLB flush on rollover.
+   10. [DONE] ASID Allocator: Replace the (pid << 48) hack with a 256-slot bitmap + TLB flush on rollover.
        Correctness fix — silent TLB aliasing is possible today with many processes.
 
    11. Shell: $? variable, $VAR expansion, correct pipeline exit codes:
