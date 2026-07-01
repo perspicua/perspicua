@@ -275,16 +275,11 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
                 }
                 break;
             }
-            spin_unlock_irqrestore(&tty->lock, flags);
             if (n > 0) {
+                spin_unlock_irqrestore(&tty->lock, flags);
                 break;
             }
-            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task);
-            schedule();
-            continue;
-        }
 
-        if (!ready) {
             struct task *curr_task_inner = sched_get_current();
             uint32_t pid = curr_task_inner->pid;
 
