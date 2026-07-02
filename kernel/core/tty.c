@@ -21,6 +21,22 @@
 struct tty console_tty;
 
 /*
+ * console_rx_adapter - Bridges the UART RX callback to the console TTY.
+ */
+static void console_rx_adapter(char c)
+{
+    tty_handle_rx(&console_tty, c);
+}
+
+/*
+ * console_tx_adapter - Bridges the UART TX callback to the console TTY.
+ */
+static void console_tx_adapter(void)
+{
+    tty_handle_tx(&console_tty);
+}
+
+/*
  * wait_queue_add - Appends a task to a TTY wait queue.
  */
 static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
@@ -53,6 +69,32 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
         }
     }
     return NULL;
+}
+
+/*
+ * wait_queue_remove_task - Unlinks a specific task from a TTY wait queue.
+ */
+static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
+{
+    struct task *curr = *head;
+    struct task *prev = NULL;
+
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                *head = curr->next;
+            }
+            if (curr == *tail) {
+                *tail = prev;
+            }
+            curr->next = NULL;
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
 }
 
 /*
@@ -163,6 +205,9 @@ void tty_init(struct tty *tty)
     tty->canon_enabled = 0;
     tty->foreground_pid = 0;
 
+    uart_reg_rx_callback(console_rx_adapter);
+    uart_reg_tx_callback(console_tx_adapter);
+
     pr_info("tty: console tty initialized\n");
 }
 
@@ -256,16 +301,11 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
                 }
                 break;
             }
-            spin_unlock_irqrestore(&tty->lock, flags);
             if (n > 0) {
+                spin_unlock_irqrestore(&tty->lock, flags);
                 break;
             }
-            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task);
-            schedule();
-            continue;
-        }
 
-        if (!ready) {
             struct task *curr_task_inner = sched_get_current();
             uint32_t pid = curr_task_inner->pid;
 
@@ -278,6 +318,12 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
+
+            /* Cleanup after wake */
+            unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
+            wait_queue_remove_task(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
+            spin_unlock_irqrestore(&tty->lock, flags_cleanup);
+
             continue;
         }
 
@@ -314,6 +360,9 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
             flags = spin_lock_irqsave(&tty->lock);
+
+            /* Cleanup after wake */
+            wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
         }
 
         char c = buf[i];

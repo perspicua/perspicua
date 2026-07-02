@@ -83,9 +83,9 @@ static void free_kernel_stack(void *stack_base)
 
 static void open_std_fds(uint32_t pid)
 {
-    vfs_open_pid("/dev/uart", VFS_O_RDONLY, pid);
-    vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
-    vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_RDONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
 }
 
 static void close_all_fds(struct process *p)

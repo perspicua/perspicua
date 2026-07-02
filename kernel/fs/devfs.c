@@ -170,7 +170,7 @@ void devfs_init(void)
     devfs_root_vnode->file_size = 0;
     devfs_root_vnode->refcount.counter = 1;
 
-    if (devfs_register_device("uart", &devfs_tty_ops, &console_tty) != 0) {
+    if (devfs_register_device("console", &devfs_tty_ops, &console_tty) != 0) {
         PANIC("devfs: console registration failed");
     }
 

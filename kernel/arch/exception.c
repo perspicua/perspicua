@@ -16,7 +16,6 @@
 
 #include "core/timer.h"
 #include "core/syscall.h"
-#include "core/tty.h"
 #include "mm/mmu.h"
 #include "mm/addr.h"
 #include "sched/sched.h"
@@ -25,7 +24,6 @@
 #include "driver/gic.h"
 #include "driver/sd.h"
 
-extern struct tty console_tty;
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 
@@ -254,20 +252,7 @@ void exception_irq_handler(void)
         return;
     } else if (irq_id == uart_irq_cached) {
         core_irq_stats[current_core].uart_count++;
-        uint32_t mis = mmio_read(uart_mis);
-
-        if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
-            while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
-                char c = (char)(mmio_read(uart_dr) & 0xFF);
-                tty_handle_rx(&console_tty, c);
-            }
-        }
-
-        if (mis & UART_MIS_TXMIS) {
-            tty_handle_tx(&console_tty);
-        }
-
-        uart_clear_interrupt(mis);
+        uart_handle_irq();
     } else if (sd_irq_cached && irq_id == sd_irq_cached) {
         /*
          * SDHCI interrupt: let the SD driver read+clear the hardware
