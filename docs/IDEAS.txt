@@ -80,10 +80,6 @@ FOUNDATION HARDENING (Fill Existing Holes):
       Benefit: Enables async child reaping via signal handler; prevents zombie accumulation in daemons.
 
   MEMORY MANAGEMENT:
-  - Proper ASID Allocator
-      Difficulty: Low | Impact: Medium
-      Details: Replace (pid << 48) hack with a 256-slot ASID bitmap; flush TLB on rollover.
-      Benefit: Prevents silent TLB aliasing when PIDs exceed 255 or wrap; correctness fix.
   - Expose /proc/meminfo
       Difficulty: Low | Impact: Low
       Details: PMM already tracks free/used page counts; format them as a procfs file.
@@ -146,12 +142,6 @@ FOUNDATION HARDENING (Fill Existing Holes):
       Difficulty: Low | Impact: Medium
       Details: Shell currently may not surface the rightmost non-zero exit from a pipeline; track each child PID and waitpid all of them.
       Benefit: Scripts that check `cmd1 | cmd2 || die` require accurate exit codes.
-
-  DRIVERS:
-  - Interrupt-Driven UART RX
-      Difficulty: Low | Impact: Medium
-      Details: UART TX already uses interrupts; RX uses a polling loop. Wire RX FIFO interrupt to a wait queue.
-      Benefit: Eliminates busy-waiting on terminal input; CPU is free to do other work while waiting for keystrokes.
 
   TESTING:
   - just test Target (Automated Kernel Test Run)

@@ -36,8 +36,8 @@
    11. Shell: $? variable, $VAR expansion, correct pipeline exit codes:
        Three small additions to sh.c that make the shell usable for scripting.
 
-   12. Interrupt-Driven UART RX: Wire the RX FIFO interrupt to a wait queue. Eliminates busy-waiting
-       on terminal input and is a prerequisite for clean select/poll support on /dev/uart later.
+   12. [DONE] Interrupt-Driven UART RX: Wire the RX FIFO interrupt to a wait queue. Eliminates busy-waiting
+       on terminal input and is a prerequisite for clean select/poll support on /dev/console later.
 
    13. just test + VFS/FAT32/Signal Tests: Add an automated QEMU test target and write test_vfs.c,
        test_fat32.c, test_signals.c. Memory is well tested; the riskiest subsystems are not.
