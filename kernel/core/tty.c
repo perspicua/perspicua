@@ -72,6 +72,33 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
 }
 
 /*
+ * wait_queue_remove_task - Unlinks a specific task from a TTY wait
+queue.
+ */
+static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
+{
+    struct task *curr = *head;
+    struct task *prev = NULL;
+
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                *head = curr->next;
+            }
+            if (curr == *tail) {
+                *tail = prev;
+            }
+            curr->next = NULL;
+            return;
+        }
+        prev = curr;
+        curr = curr->next;
+    }
+}
+
+/*
  * tty_pump_tx - Transfers software TX buffer to hardware UART FIFO.
  */
 static void tty_pump_tx(struct tty *tty)
@@ -292,6 +319,12 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
+
+            /* Cleanup after wake */
+            unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
+            wait_queue_remove_task(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
+            spin_unlock_irqrestore(&tty->lock, flags_cleanup);
+
             continue;
         }
 
@@ -328,6 +361,9 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
             flags = spin_lock_irqsave(&tty->lock);
+
+            /* Cleanup after wake */
+            wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
         }
 
         char c = buf[i];
