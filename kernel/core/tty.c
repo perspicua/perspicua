@@ -72,8 +72,7 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
 }
 
 /*
- * wait_queue_remove_task - Unlinks a specific task from a TTY wait
-queue.
+ * wait_queue_remove_task - Unlinks a specific task from a TTY wait queue.
  */
 static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
 {
