@@ -11,7 +11,7 @@
    3.  [DONE] fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but
        applications need per-file durability guarantees.
 
-   4.  fcntl() (F_GETFL / F_SETFL / FD_CLOEXEC): Store flags per-fd; honor O_NONBLOCK in read/write.
+   4.  [DONE] fcntl() (F_GETFL / F_SETFL / FD_CLOEXEC): Store flags per-fd; honor O_NONBLOCK in read/write.
        Required for correct fork+exec semantics and a prerequisite for non-blocking I/O later.
 
    5.  SIGSTOP / SIGCONT: Set process state to STOPPED; wake on SIGCONT. Shell already has fg/bg
