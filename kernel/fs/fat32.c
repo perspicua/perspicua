@@ -13,12 +13,21 @@
 #include "uapi/errors.h"
 
 #include "core/lock.h"
+#include "core/mutex.h"
 #include "mm/slab.h"
 #include "fs/pagecache.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"
 
 static struct fat32_fs current_fs;
+
+/*
+ * Coarse filesystem lock. FAT32 does blocking SD I/O, so this must be a
+ * sleeping mutex (a spinlock can't be held across schedule()). It is recursive
+ * because a read/write already holding it can re-enter write_page via the page
+ * cache eviction path.
+ */
+static struct kmutex fat32_lock = KMUTEX_INIT;
 
 /*
  * cluster_to_lba - Converts a FAT cluster number to a Logical Block Address.
@@ -1039,17 +1048,105 @@ static int fat32_create(struct vfs_vnode *parent, const char *name)
     return fat32_write_entry_to_parent(parent_cluster, &new_entry);
 }
 
+/*
+ * Registered vnode ops. Each is a thin wrapper that serializes a FAT32 entry
+ * point under fat32_lock; the internal helpers above assume the lock is held.
+ * The lock is recursive so page-cache eviction can re-enter write_page while a
+ * read/write already holds it.
+ */
+static int fat32_op_read(struct vfs_file *file, void *buffer, size_t size)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_vfs_read(file, buffer, size);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_write(struct vfs_file *file, const void *buffer, size_t size)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_vfs_write(file, buffer, size);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static struct vfs_vnode *fat32_op_lookup(struct vfs_vnode *dir, const char *name)
+{
+    kmutex_lock(&fat32_lock);
+    struct vfs_vnode *n = fat32_vfs_lookup(dir, name);
+    kmutex_unlock(&fat32_lock);
+    return n;
+}
+
+static int fat32_op_readdir(struct vfs_file *file, void *buffer, size_t count)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_vfs_readdir(file, buffer, count);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_write_page(struct vfs_vnode *node, size_t page_index, void *page_buffer,
+                               size_t valid_bytes)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_write_page(node, page_index, page_buffer, valid_bytes);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_mkdir(struct vfs_vnode *parent, const char *name)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_mkdir(parent, name);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_create(struct vfs_vnode *parent, const char *name)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_create(parent, name);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_rmdir(struct vfs_vnode *parent, const char *name)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_rmdir(parent, name);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_unlink(struct vfs_vnode *parent, const char *name)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_unlink(parent, name);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static int fat32_op_rename(struct vfs_vnode *old_parent, const char *old_name,
+                           struct vfs_vnode *new_parent, const char *new_name)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_rename(old_parent, old_name, new_parent, new_name);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
 static struct vfs_vnode_ops fat32_vnode_ops = {
-    .read = fat32_vfs_read,
-    .write = fat32_vfs_write,
-    .lookup = fat32_vfs_lookup,
-    .readdir = fat32_vfs_readdir,
-    .write_page = fat32_write_page,
-    .mkdir = fat32_mkdir,
-    .create = fat32_create,
-    .rmdir = fat32_rmdir,
-    .unlink = fat32_unlink,
-    .rename = fat32_rename,
+    .read = fat32_op_read,
+    .write = fat32_op_write,
+    .lookup = fat32_op_lookup,
+    .readdir = fat32_op_readdir,
+    .write_page = fat32_op_write_page,
+    .mkdir = fat32_op_mkdir,
+    .create = fat32_op_create,
+    .rmdir = fat32_op_rmdir,
+    .unlink = fat32_op_unlink,
+    .rename = fat32_op_rename,
 };
 
 /*
