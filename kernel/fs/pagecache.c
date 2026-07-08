@@ -26,6 +26,7 @@ struct page_cache_entry {
     size_t page_index;
     void *data;
     int dirty;
+    int pincount; /* In-use references; a pinned entry cannot be evicted/freed */
     struct page_cache_entry *next;
     struct page_cache_entry *lru_next;
     struct page_cache_entry *lru_prev;
@@ -89,6 +90,7 @@ void *pagecache_get_page(struct vfs_vnode *node, size_t page_index)
             && curr->page_index == page_index) {
             lru_remove(curr);
             lru_add_head(curr);
+            curr->pincount++; /* Held until the caller calls pagecache_put_page */
             void *data = curr->data;
             spin_unlock_irqrestore(&pagecache_lock, flags);
             return data;
@@ -98,6 +100,26 @@ void *pagecache_get_page(struct vfs_vnode *node, size_t page_index)
 
     spin_unlock_irqrestore(&pagecache_lock, flags);
     return NULL;
+}
+
+void pagecache_put_page(struct vfs_vnode *node, size_t page_index)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    size_t h = page_hash(node, page_index);
+    struct page_cache_entry *curr = hash_table[h];
+
+    while (curr) {
+        if (curr->fs_ops == node->ops && curr->file_id == node->internal_info
+            && curr->page_index == page_index) {
+            if (curr->pincount > 0) {
+                curr->pincount--;
+            }
+            break;
+        }
+        curr = curr->next;
+    }
+
+    spin_unlock_irqrestore(&pagecache_lock, flags);
 }
 
 int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
@@ -116,19 +138,22 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         curr = curr->next;
     }
 
-    struct page_cache_entry *entry;
-
+    /* Evict the least-recently-used UNPINNED entry when the cache is full. */
+    struct page_cache_entry *entry = NULL;
     if (cache_count >= PAGECACHE_MAX_PAGES) {
-        entry = lru_tail;
+        for (struct page_cache_entry *v = lru_tail; v; v = v->lru_prev) {
+            if (v->pincount == 0) {
+                entry = v;
+                break;
+            }
+        }
+    }
+
+    if (entry) {
         lru_remove(entry);
 
-        /* Write back dirty page before eviction */
-        if (entry->dirty && entry->vnode && entry->vnode->ops && entry->vnode->ops->write_page) {
-            spin_unlock_irqrestore(&pagecache_lock, flags);
-            entry->vnode->ops->write_page(entry->vnode, entry->page_index, entry->data, PAGE_SIZE);
-            flags = spin_lock_irqsave(&pagecache_lock);
-        }
-
+        /* Unhook from the hash before any unlocked writeback so a concurrent
+         * lookup cannot find and pin a page that is being evicted. */
         size_t eh = ((uintptr_t)entry->fs_ops + (uintptr_t)entry->file_id + entry->page_index)
                     % PAGECACHE_HASH_SIZE;
         struct page_cache_entry **pp = &hash_table[eh];
@@ -139,9 +164,16 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
             *pp = entry->next;
         }
 
-        /* Reclaim the old page's physical memory */
+        /* Write back dirty page before reclaiming it */
+        if (entry->dirty && entry->vnode && entry->vnode->ops && entry->vnode->ops->write_page) {
+            spin_unlock_irqrestore(&pagecache_lock, flags);
+            entry->vnode->ops->write_page(entry->vnode, entry->page_index, entry->data, PAGE_SIZE);
+            flags = spin_lock_irqsave(&pagecache_lock);
+        }
+
         pmm_free_pages(entry->data, 1);
     } else {
+        /* Under cap, or every entry is currently pinned: allocate a new slot. */
         entry = slab_alloc(sizeof(struct page_cache_entry));
         if (!entry) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
@@ -156,6 +188,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
     entry->page_index = page_index;
     entry->data = data;
     entry->dirty = 0;
+    entry->pincount = 1; /* Caller holds a pin until pagecache_put_page */
 
     entry->next = hash_table[h];
     hash_table[h] = entry;
@@ -280,23 +313,27 @@ void pagecache_invalidate(struct vfs_vnode *node)
         struct page_cache_entry **pp = &hash_table[h];
         while (*pp) {
             struct page_cache_entry *entry = *pp;
-            if (entry->fs_ops == node->ops && entry->file_id == node->internal_info) {
-                *pp = entry->next;
-                lru_remove(entry);
 
-                /* Write back if dirty before invalidating */
-                if (entry->dirty && node->ops && node->ops->write_page) {
-                    spin_unlock_irqrestore(&pagecache_lock, flags);
-                    node->ops->write_page(node, entry->page_index, entry->data, PAGE_SIZE);
-                    flags = spin_lock_irqsave(&pagecache_lock);
-                }
-
-                pmm_free_pages(entry->data, 1);
-                slab_free(entry);
-                cache_count--;
-            } else {
+            /* Skip other files' pages and any page currently pinned in use. */
+            if (entry->fs_ops != node->ops || entry->file_id != node->internal_info
+                || entry->pincount != 0) {
                 pp = &((*pp)->next);
+                continue;
             }
+
+            *pp = entry->next;
+            lru_remove(entry);
+
+            /* Write back if dirty before invalidating */
+            if (entry->dirty && node->ops && node->ops->write_page) {
+                spin_unlock_irqrestore(&pagecache_lock, flags);
+                node->ops->write_page(node, entry->page_index, entry->data, PAGE_SIZE);
+                flags = spin_lock_irqsave(&pagecache_lock);
+            }
+
+            pmm_free_pages(entry->data, 1);
+            slab_free(entry);
+            cache_count--;
         }
     }
 
