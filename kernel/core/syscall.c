@@ -667,6 +667,12 @@ sigreturn_kill:
                 break;
             }
 
+            /* Reject an out-of-range fd before it indexes fd_table[] */
+            if (fd != -1 && (fd < 0 || fd >= VFS_MAX_FDS)) {
+                tf->x[0] = (uintptr_t)MAP_FAILED;
+                break;
+            }
+
             size_t pages_needed = (length + PAGE_SIZE - 1) / PAGE_SIZE;
             uintptr_t new_region = process_va_alloc(&p->va, pages_needed);
             if (new_region == 0) {
@@ -676,7 +682,7 @@ sigreturn_kill:
 
             if (fd != -1) {
                 struct vfs_file *file = p->fd_table[fd];
-                if (file == NULL) {
+                if (file == NULL || file->node == NULL || file->node->ops == NULL) {
                     tf->x[0] = (uintptr_t)MAP_FAILED;
                     break;
                 }
