@@ -146,6 +146,36 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
     return vbase;
 }
 
+/*
+ * stack_copy_in - Copies kernel data into a not-yet-active user address space.
+ *
+ * The freshly-allocated destination pages are not physically contiguous, so a
+ * single memcpy that crosses a page boundary would run off one frame into an
+ * unrelated one. Resolve and copy one page at a time via the target pgd.
+ */
+static void stack_copy_in(unsigned long *pgd, uintptr_t user_dst, const void *src, size_t len)
+{
+    const uint8_t *s = (const uint8_t *)src;
+
+    while (len > 0) {
+        unsigned long paddr;
+        if (!mmu_user_query(pgd, user_dst & ~0xFFFUL, &paddr, NULL)) {
+            return;
+        }
+
+        size_t page_off = (size_t)(user_dst & 0xFFFUL);
+        size_t chunk = PAGE_SIZE - page_off;
+        if (chunk > len) {
+            chunk = len;
+        }
+
+        memcpy((void *)(P2V(paddr) + page_off), s, chunk);
+        user_dst += chunk;
+        s += chunk;
+        len -= chunk;
+    }
+}
+
 void process_flush_icache_range(void *start, size_t size)
 {
     unsigned long addr = (unsigned long)start & ~63UL;
@@ -513,10 +543,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < argc; i++) {
         size_t len = strlen(kargv[i]) + 1;
         user_sp = (user_sp - len) & ~7UL;
-        unsigned long paddr;
-        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL)) {
-            memcpy((void *)(P2V(paddr) + (user_sp & 0xFFF)), kargv[i], len);
-        }
+        stack_copy_in(new_pgd, user_sp, kargv[i], len);
         karg_user_vaddrs[i] = user_sp;
     }
 
@@ -544,10 +571,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < envc; i++) {
         size_t len = strlen(kenvp[i]) + 1;
         user_sp = (user_sp - len) & ~7UL;
-        unsigned long paddr;
-        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL)) {
-            memcpy((void *)(P2V(paddr) + (user_sp & 0xFFF)), kenvp[i], len);
-        }
+        stack_copy_in(new_pgd, user_sp, kenvp[i], len);
         kenv_user_vaddrs[i] = user_sp;
     }
 
