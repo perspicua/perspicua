@@ -179,13 +179,13 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             entry = evict;
         } else {
             entry = slab_alloc(sizeof(struct block_cache_entry));
+            if (!entry) {
+                pmm_free_pages(temp_buf, pages_needed);
+                spin_unlock_irqrestore(&cache_lock, flags);
+                return -PERS_ERR_OUT_OF_MEMORY;
+            }
             entry->data = temp_buf;
             cache_count++;
-        }
-
-        if (!entry->data) {
-            spin_unlock_irqrestore(&cache_lock, flags);
-            return -PERS_ERR_OUT_OF_MEMORY;
         }
 
         entry->dev = dev;
@@ -356,6 +356,10 @@ void block_device_register(struct block_device *dev)
 
     /* Wrap operations with cache */
     struct block_ops_wrapper *wrapper = slab_alloc(sizeof(struct block_ops_wrapper));
+    if (!wrapper) {
+        pr_err("block: OOM allocating cache wrapper for /dev/%s\n", dev->name);
+        return;
+    }
     wrapper->orig_read_blocks = dev->read_blocks;
     wrapper->orig_write_blocks = dev->write_blocks;
 
