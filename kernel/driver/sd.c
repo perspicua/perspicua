@@ -28,7 +28,7 @@
  * SD Operation Serializer
  * sd_op_lock  - irqsave spinlock guarding sd_op_busy and the wait queue
  * sd_op_busy  - set while one task owns the SD controller
- * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->next)
+ * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->wait_next)
  */
 static spinlock_t sd_op_lock = SPINLOCK_INIT;
 static int sd_op_busy = 0;
@@ -121,10 +121,43 @@ static int sd_is_sdhc = 0;
  * schedule() calls inside the operation do not pollute lockdep's per-core
  * held-lock tracking.
  */
+/*
+ * sd_op_wq_remove - Unlink a task from the SD wait queue if still present.
+ *
+ * Caller holds sd_op_lock. A task woken by a signal rather than sd_op_release()
+ * stays linked via wait_next; drop it before it retries so it is never
+ * double-enqueued or dequeued twice.
+ */
+static void sd_op_wq_remove(struct task *t)
+{
+    struct task **pp = &sd_op_wq_head;
+    struct task *prev = NULL;
+
+    while (*pp) {
+        if (*pp == t) {
+            *pp = t->wait_next;
+            if (sd_op_wq_tail == t) {
+                sd_op_wq_tail = prev;
+            }
+            t->wait_next = NULL;
+            return;
+        }
+        prev = *pp;
+        pp = &(*pp)->wait_next;
+    }
+}
+
 static void sd_op_acquire(void)
 {
+    struct task *cur = sched_get_current();
+
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&sd_op_lock);
+
+        /* If a signal woke us while still queued, unlink before retrying. */
+        if (cur) {
+            sd_op_wq_remove(cur);
+        }
 
         if (!sd_op_busy) {
             sd_op_busy = 1;
@@ -132,7 +165,6 @@ static void sd_op_acquire(void)
             return;
         }
 
-        struct task *cur = sched_get_current();
         if (!cur) {
             /* Early boot before scheduler: busy-wait (no tasks to switch to). */
             spin_unlock_irqrestore(&sd_op_lock, flags);
@@ -141,12 +173,11 @@ static void sd_op_acquire(void)
             continue;
         }
 
-        /* Enqueue and block.  task->next is safe to use here because a
-         * BLOCKED task is not in any scheduler queue. */
+        /* Enqueue on the controller wait queue and block. */
         cur->state = SCHED_TASK_BLOCKED;
-        cur->next = NULL;
+        cur->wait_next = NULL;
         if (sd_op_wq_tail) {
-            sd_op_wq_tail->next = cur;
+            sd_op_wq_tail->wait_next = cur;
             sd_op_wq_tail = cur;
         } else {
             sd_op_wq_head = sd_op_wq_tail = cur;
@@ -169,9 +200,10 @@ static void sd_op_release(void)
 
     struct task *t = sd_op_wq_head;
     if (t) {
-        sd_op_wq_head = t->next;
+        sd_op_wq_head = t->wait_next;
         if (!sd_op_wq_head)
             sd_op_wq_tail = NULL;
+        t->wait_next = NULL;
         sched_unblock(t);
     }
 

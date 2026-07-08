@@ -41,9 +41,9 @@ static void console_tx_adapter(void)
  */
 static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
 {
-    t->next = NULL;
+    t->wait_next = NULL;
     if (*tail) {
-        (*tail)->next = t;
+        (*tail)->wait_next = t;
         *tail = t;
     } else {
         *head = *tail = t;
@@ -57,11 +57,11 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
 {
     while (*head) {
         struct task *t = *head;
-        *head = t->next;
+        *head = t->wait_next;
         if (*head == NULL) {
             *tail = NULL;
         }
-        t->next = NULL;
+        t->wait_next = NULL;
 
         /* Skip tasks that were woken up by other signals or timeouts */
         if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_BLOCKED) {
@@ -82,18 +82,18 @@ static void wait_queue_remove_task(struct task **head, struct task **tail, struc
     while (curr) {
         if (curr == target) {
             if (prev) {
-                prev->next = curr->next;
+                prev->wait_next = curr->wait_next;
             } else {
-                *head = curr->next;
+                *head = curr->wait_next;
             }
             if (curr == *tail) {
                 *tail = prev;
             }
-            curr->next = NULL;
+            curr->wait_next = NULL;
             return;
         }
         prev = curr;
-        curr = curr->next;
+        curr = curr->wait_next;
     }
 }
 

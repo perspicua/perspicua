@@ -52,7 +52,9 @@ struct task {
     unsigned long id;            /* Unique numeric task identifier */
     uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
     unsigned char *stack;        /* Pointer to the allocated stack region */
-    struct task *next;           /* Link for ready and sleep queues */
+    struct task *rq_next;        /* Link for the per-core ready queue */
+    struct task *sleep_next;     /* Link for the timed sleep queue */
+    struct task *wait_next;      /* Link for a driver wait queue (tty/pipe/sd) */
     int skip_signals;            /* Flag to indicate if signal handling should be deferred */
     volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
