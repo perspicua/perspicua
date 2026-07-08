@@ -1036,16 +1036,43 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
 
 static int fat32_create(struct vfs_vnode *parent, const char *name)
 {
+    /*
+     * Allocate the first cluster up front so the file has a unique, stable
+     * start cluster from creation. internal_info (the start cluster) is the
+     * page-cache key; leaving it 0 until the first write makes every empty
+     * file alias the same key and cross-contaminate their cached pages.
+     */
+    uint32_t new_cluster = allocate_cluster();
+    if (new_cluster == 0) {
+        return -PERS_ERR_NO_SPACE_LEFT;
+    }
+
+    /* Zero the cluster so stale data from a deleted file cannot surface. */
+    uint8_t zero_sector[512];
+    memset(zero_sector, 0, sizeof(zero_sector));
+    for (uint32_t s = 0; s < current_fs.sectors_per_cluster; s++) {
+        if (current_fs.dev->write_blocks(current_fs.dev, zero_sector,
+                                         cluster_to_lba(new_cluster) + s, 1)
+            != 0) {
+            fat32_free_cluster_chain(new_cluster);
+            return -PERS_ERR_IO_ERROR;
+        }
+    }
+
     struct fat32_dir_entry new_entry;
     memset(&new_entry, 0, sizeof(new_entry));
     name_to_83(name, new_entry.name, new_entry.ext);
     new_entry.attributes = 0x20; /* archive = regular file */
-    new_entry.cluster_high = 0;
-    new_entry.cluster_low = 0;
+    new_entry.cluster_high = (uint16_t)(new_cluster >> 16);
+    new_entry.cluster_low = (uint16_t)(new_cluster & 0xFFFF);
     new_entry.size = 0;
 
     uint32_t parent_cluster = (uint32_t)(uintptr_t)parent->internal_info;
-    return fat32_write_entry_to_parent(parent_cluster, &new_entry);
+    int res = fat32_write_entry_to_parent(parent_cluster, &new_entry);
+    if (res != PERS_SUCCESS) {
+        fat32_free_cluster_chain(new_cluster);
+    }
+    return res;
 }
 
 /*
