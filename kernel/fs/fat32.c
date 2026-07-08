@@ -427,15 +427,17 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            page_data = pmm_alloc_pages(1);
-            if (!page_data) {
+            void *fresh = pmm_alloc_pages(1);
+            if (!fresh) {
                 return bytes_read > 0 ? (int)bytes_read : -PERS_ERR_OUT_OF_MEMORY;
             }
 
-            fat32_read_page(file->node, page_index, page_data);
+            fat32_read_page(file->node, page_index, fresh);
 
-            if (pagecache_add_page(file->node, page_index, page_data) != PERS_SUCCESS) {
-                pmm_free_pages(page_data, 1);
+            if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
+                page_data = fresh; /* add_page pinned it */
+            } else {
+                pmm_free_pages(fresh, 1);
                 page_data = pagecache_get_page(file->node, page_index);
             }
         }
@@ -444,6 +446,7 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
             for (size_t i = 0; i < to_copy; i++) {
                 out_buf[bytes_read + i] = ((uint8_t *)page_data)[offset_in_page + i];
             }
+            pagecache_put_page(file->node, page_index);
         } else {
             break;
         }
@@ -481,19 +484,21 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            page_data = pmm_alloc_pages(1);
-            if (!page_data) {
+            void *fresh = pmm_alloc_pages(1);
+            if (!fresh) {
                 return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_OUT_OF_MEMORY;
             }
-            memset(page_data, 0, PAGE_SIZE);
+            memset(fresh, 0, PAGE_SIZE);
 
             /* Read existing data if we're writing within or extending the file */
             if (page_index * PAGE_SIZE < (size_t)file->node->file_size) {
-                fat32_read_page(file->node, page_index, page_data);
+                fat32_read_page(file->node, page_index, fresh);
             }
 
-            if (pagecache_add_page(file->node, page_index, page_data) != PERS_SUCCESS) {
-                pmm_free_pages(page_data, 1);
+            if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
+                page_data = fresh; /* add_page pinned it */
+            } else {
+                pmm_free_pages(fresh, 1);
                 page_data = pagecache_get_page(file->node, page_index);
                 if (!page_data) {
                     return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_OUT_OF_MEMORY;
@@ -517,10 +522,12 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
 
         int write_result = fat32_write_page(file->node, page_index, page_data, valid_in_page);
         if (write_result < 0) {
+            pagecache_put_page(file->node, page_index);
             return bytes_written > 0 ? (int)bytes_written : write_result;
         }
 
         pagecache_clear_dirty(file->node, page_index);
+        pagecache_put_page(file->node, page_index);
 
         bytes_written += to_copy;
     }
