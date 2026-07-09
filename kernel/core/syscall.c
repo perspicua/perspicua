@@ -18,6 +18,7 @@
 #include "arch/uaccess.h"
 
 #include "core/signals.h"
+#include "core/timer.h"
 #include "fs/vfs.h"
 #include "fs/pipe.h"
 #include "mm/pmm.h"
@@ -551,14 +552,26 @@ sigreturn_kill:
             }
 
             struct process *p = &process_table[pid];
+            sigset_t saved_mask = p->blocked_signals;
             p->blocked_signals = kmask;
             p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
 
-            while (!(p->pending_signals & ~p->blocked_signals)) {
+            /* Block until a signal is pending. Mask IRQs across the pending
+             * check and the state transition so a signal delivered on this core
+             * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
+            for (;;) {
+                unsigned long irqf = irq_save();
+                if (p->pending_signals & ~p->blocked_signals) {
+                    irq_restore(irqf);
+                    break;
+                }
                 curr->state = SCHED_TASK_BLOCKED;
+                irq_restore(irqf);
                 schedule();
             }
 
+            /* POSIX: sigsuspend restores the caller's original mask on return. */
+            p->blocked_signals = saved_mask;
             tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
             break;
         }
@@ -683,13 +696,11 @@ sigreturn_kill:
             if (fd != -1) {
                 struct vfs_file *file = p->fd_table[fd];
                 if (file == NULL || file->node == NULL || file->node->ops == NULL) {
-                    tf->x[0] = (uintptr_t)MAP_FAILED;
-                    break;
+                    goto mmap_fail;
                 }
                 if (file->node->ops->mmap != NULL) {
                     if (file->node->ops->mmap(file, new_region, length, prot, flags) < 0) {
-                        tf->x[0] = (uintptr_t)MAP_FAILED;
-                        break;
+                        goto mmap_fail;
                     }
                 }
             }
@@ -705,8 +716,7 @@ sigreturn_kill:
                 for (size_t i = 0; i < pages_needed; i++) {
                     void *kaddr = pmm_alloc_page();
                     if (!kaddr) {
-                        tf->x[0] = (uintptr_t)MAP_FAILED;
-                        goto mmap_done;
+                        goto mmap_fail;
                     }
                     memset(kaddr, 0, PAGE_SIZE);
                     mmu_user_map_page(p->user_pgd, new_region + i * PAGE_SIZE,
@@ -714,7 +724,16 @@ sigreturn_kill:
                 }
             }
             tf->x[0] = new_region;
-mmap_done:
+            break;
+
+mmap_fail:
+            /* Unmap anything mapped so far (frees those pages) and release the
+             * reserved VA region so a failed mmap leaks neither. */
+            for (size_t j = 0; j < pages_needed; j++) {
+                mmu_user_unmap_page(p->user_pgd, new_region + j * PAGE_SIZE);
+            }
+            process_va_free(&p->va, new_region);
+            tf->x[0] = (uintptr_t)MAP_FAILED;
             break;
         }
 

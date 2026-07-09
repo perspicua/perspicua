@@ -23,6 +23,12 @@
 #define ELF_PROG_FLAG_W 0x2
 #define ELF_PROG_FLAG_R 0x4
 
+/* Upper bound on program headers we will load, to cap the header allocation. */
+#define ELF_MAX_PHDRS 64
+
+/* Top of the user (TTBR0) address space: 39-bit VA. */
+#define ELF_USER_VA_TOP 0x8000000000ULL
+
 /*
  * elf_check_header - Validates the ELF file identity and machine type.
  *
@@ -83,6 +89,12 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 
     *entry_point = ehdr.entry;
 
+    if (ehdr.ph_num == 0 || ehdr.ph_num > ELF_MAX_PHDRS) {
+        pr_err("elf: bad program header count (%u)\n", ehdr.ph_num);
+        vfs_close(fd);
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+    }
+
     size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
     struct elf64_program_header *phdrs = heap_malloc(phdr_table_size);
     if (!phdrs) {
@@ -109,6 +121,23 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         uint64_t filesz = phdrs[i].file_size;
         uint64_t offset = phdrs[i].offset;
         uint32_t flags = phdrs[i].flags;
+
+        if (filesz > memsz) {
+            pr_err("elf: segment filesz > memsz\n");
+            heap_free(phdrs);
+            vfs_close(fd);
+            return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        }
+        if (memsz == 0) {
+            continue;
+        }
+        /* Reject overflow and segments that fall outside the user address space */
+        if (vaddr + memsz < vaddr || vaddr + memsz > ELF_USER_VA_TOP) {
+            pr_err("elf: segment out of user address range\n");
+            heap_free(phdrs);
+            vfs_close(fd);
+            return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        }
 
         uint64_t start_vpage = vaddr & ~0xFFFULL;
         uint64_t end_vpage = (vaddr + memsz + 0xFFFULL) & ~0xFFFULL;

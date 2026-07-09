@@ -702,14 +702,23 @@ void process_exit(uint32_t pid, int exit_status)
     p->state = PROCESS_STATE_ZOMBIE;
 
     uint32_t ppid = p->parent_pid;
-    if (ppid != 0 && ppid < PROCESS_TABLE_SIZE
-        && process_table[ppid].state != PROCESS_STATE_EMPTY) {
+    int notify_parent = (ppid != 0 && ppid < PROCESS_TABLE_SIZE
+                         && process_table[ppid].state != PROCESS_STATE_EMPTY);
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    /* Notify the parent outside the lock (signal_send now takes it itself), and
+     * wake a parent blocked in waitpid() even if it ignores SIGCHLD. Re-validate
+     * under the lock before touching main_task in case the slot was reused. */
+    if (notify_parent) {
         signal_send(ppid, SIGNAL_CHLD);
-        if (process_table[ppid].main_task != NULL) {
+
+        flags = spin_lock_irqsave(&process_table_lock);
+        if (process_table[ppid].state != PROCESS_STATE_EMPTY
+            && process_table[ppid].main_task != NULL) {
             sched_unblock(process_table[ppid].main_task);
         }
+        spin_unlock_irqrestore(&process_table_lock, flags);
     }
-    spin_unlock_irqrestore(&process_table_lock, flags);
 
     struct task *dying = sched_get_current();
     if (dying) {
