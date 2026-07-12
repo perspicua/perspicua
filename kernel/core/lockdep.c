@@ -10,6 +10,13 @@
 #include "stdio.h"
 #include "panic.h"
 
+/*
+ * When CONFIG_LOCKDEP is disabled, lockdep.h supplies inline no-op stubs and
+ * this translation unit compiles to nothing, so a release build carries no
+ * lock-tracking overhead (and no global lockdep lock on every spin_lock).
+ */
+#ifdef CONFIG_LOCKDEP
+
 #define MAX_HELD_LOCKS 16
 #define MAX_LOCK_NODES 1024
 
@@ -208,3 +215,5 @@ void lockdep_release(spinlock_t *lock)
     raw_spin_unlock(&lockdep_lock);
     lockdep_disabled[core] = 0;
 }
+
+#endif /* CONFIG_LOCKDEP */
