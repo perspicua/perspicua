@@ -17,6 +17,7 @@
 #include "mm/slab.h"
 
 #include "core/lock.h"
+#include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/tty.h"
 #include "core/initrd.h"
@@ -196,7 +197,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     print_banner();
 
-    extern void lockdep_init(void);
     lockdep_init();
 
     /* Stage 2: Memory management initialization */

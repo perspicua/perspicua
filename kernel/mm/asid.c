@@ -1,8 +1,27 @@
 #include "mm/asid.h"
 #include "core/lock.h"
 
+#define ASID_MAX_CORES 4
+
 static struct asid_pool_t asid_pool;
 static spinlock_t asid_lock = SPINLOCK_INIT;
+
+/*
+ * Last ASID generation each core has synchronized with. A core whose value is
+ * behind asid_pool.generation may hold TLB entries for ASIDs that have since
+ * been recycled into a new generation, so it must flush its local TLB once
+ * before using any ASID of the current generation. This closes the aliasing
+ * window that a broadcast rollover flush alone leaves open for a process that
+ * keeps running (and refilling its TLB) on another core across the rollover.
+ */
+static unsigned long cpu_asid_gen[ASID_MAX_CORES];
+
+static inline int asid_core_id(void)
+{
+    unsigned long mpidr;
+    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
+    return (int)(mpidr & (ASID_MAX_CORES - 1));
+}
 
 void asid_init(void)
 {
@@ -36,6 +55,18 @@ static int get_free_asid(void)
 void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
 {
     spin_lock(&asid_lock);
+
+    /* If this core has not yet caught up to the current generation, its local
+     * TLB may hold stale entries for recycled ASIDs. Flush once (local only)
+     * before using any ASID of this generation. */
+    int cpu = asid_core_id();
+    if (cpu_asid_gen[cpu] != asid_pool.generation) {
+        asm volatile("tlbi vmalle1\n"
+                     "dsb nsh\n"
+                     "isb");
+        cpu_asid_gen[cpu] = asid_pool.generation;
+    }
+
     if (*gen_out == asid_pool.generation && *asid_out != 0) {
         spin_unlock(&asid_lock);
         return; // Current ASID is still valid
@@ -52,10 +83,15 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
             asid_pool.bitmap[i] = 0;
         }
 
-        // Flush TLB
+        // Flush all cores' TLBs (broadcast) for the rollover.
         asm volatile("tlbi vmalle1is\n"
                      "dsb ish\n"
                      "isb");
+
+        /* This core just flushed and is switching to the newly allocated ASID,
+         * so it is caught up. Other cores stay behind and will flush locally on
+         * their next asid_get_active(). */
+        cpu_asid_gen[cpu] = asid_pool.generation;
 
         new_asid = get_free_asid();
     }
