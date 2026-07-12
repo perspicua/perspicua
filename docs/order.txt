@@ -1,74 +1,104 @@
-  Phase 1.5: Foundation Hardening (Fill the Holes)
-  Goal: Patch the gaps in what is already built so every feature is actually complete and reliable.
+Perspicua Build Order
+=====================
 
-   1.  [DONE] mkdir / rmdir / unlink / rename Syscalls: FAT32 already has the cluster logic. Wire up the
-       syscall numbers so userspace can actually create and delete files. Without this, the filesystem
-       is effectively read-only from userspace.
+This file is the ORDER in which to build things so every layer rests on a solid
+one below it. The full catalog of ideas lives in IDEAS.txt; this file is about
+sequencing and dependencies, not describing every feature.
 
-   2.  [DONE] Page Cache Dirty Tracking & Writeback: Mark pages dirty on write and flush them from the timer
-       tick. Currently, cached writes can be lost on panic — this is a data-integrity bug.
+Guiding rule: correctness of the foundation before breadth of features. A bug in
+the scheduler, the MMU, or the buffer cache costs 10x more once demand paging,
+threads, and a network stack sit on top of it.
 
-   3.  [DONE] fsync(fd): Flush dirty pages for a single file descriptor. The global SYS_SYNC exists but
-       applications need per-file durability guarantees.
+================================================================================
+PHASE 1: FOUNDATION HARDENING  (finish filling the holes)
+Goal: Complete the half-built features so the base is dependable.
+================================================================================
 
-   4.  [DONE] fcntl() (F_GETFL / F_SETFL / FD_CLOEXEC): Store flags per-fd; honor O_NONBLOCK in read/write.
-       Required for correct fork+exec semantics and a prerequisite for non-blocking I/O later.
+   1. Libc essentials: ctype.h, strerror, strdup/strndup, setjmp/longjmp.
+      Every porting attempt hits these immediately; all are small.
+   2. Remaining POSIX syscalls: getppid, dup, pread/pwrite, gettimeofday +
+      clock_gettime, nanosleep, fstat, truncate/ftruncate. One or two functions each.
+   3. SIGSTOP / SIGCONT (STOPPED state + wake on CONT) — the kernel half of job control.
+   4. /proc/mounts, /proc/cpuinfo, /proc/stat — trivial procfs files tools expect.
+   5. Shell: $? , $VAR expansion, correct pipeline exit codes.
+   6. `just test` target + test_vfs / test_fat32 / test_signals / test_pipe.
+      The riskiest subsystems (FS, signals, IPC) currently have no tests.
+   7. Core POSIX utility *binaries*: ps, kill, mkdir, rm, cp, mv, touch, wc, grep.
+      (The syscalls exist; the programs don't — you can't create a file from the
+      shell except via > redirection.)
 
-   5.  SIGSTOP / SIGCONT: Set process state to STOPPED; wake on SIGCONT. Shell already has fg/bg
-       stubs — this is the missing kernel half of job control.
 
-   6.  SIGCHLD Delivery on Child Exit: Call kill(parent, SIGCHLD) inside process_exit(). Prevents
-       zombie accumulation in any daemon that wants async child reaping.
+================================================================================
+PHASE 2: ROBUSTNESS PRIMITIVES  (the load-bearing infrastructure)
+Goal: Build the reusable mechanisms that every advanced feature depends on, so we
+build them ONCE and correctly rather than re-inventing ad-hoc versions.
+================================================================================
+   1. Generic wait-queue / condition-variable primitive.
+      Replaces the hand-rolled queues in tty/pipe/sd. Prerequisite for select/poll,
+      futexes, and any new blocking driver.
+   2. Sleeping-lock family on top of it: rwsem, semaphore, completion (kmutex exists).
+   3. preempt_count (preemption safety) so ordinary spinlocks are safe across a tick.
+   4. Graceful OOM: replace PANIC-on-allocation-failure with unwinding error returns.
+   5. Unified buffer cache: collapse the duplicate page cache + block cache into one.
+   6. VFS inode/dentry cache with refcounted vnodes (stop allocating a vnode per
+      lookup; gives stable inode identity).
+   7. Panic backtrace via the existing symbol table + a dmesg ring buffer.
 
-   7.  Libc Essentials — strerror, strdup/strndup, memmove, ctype.h, setjmp/longjmp:
-       All trivial to add. Every porting attempt will hit these immediately. Do them all at once.
+  Rationale: Phases 3+ (poll, demand paging, threads) all assume these exist. Doing
+  them now avoids retrofitting correctness into ten call sites later.
 
-   8.  getenv() / setenv() + environ in exec: Pass envp through execve; implement getenv as a linear
-       scan. Required before any configurable userspace program can function.
 
-   9.  getppid(), dup(), pread/pwrite, gettimeofday() Syscalls + libc wrappers:
-       Each is a one- or two-function addition. Collectively they close the most common POSIX gaps
-       that block porting real software.
+================================================================================
+PHASE 3: DEVELOPER EXPERIENCE & BASIC I/O
+Goal: Make Perspicua a place you can actually work and observe.
+================================================================================
+   1. I/O multiplexing: select / poll (needs the wait-queue primitive).
+   2. Core /dev nodes: /dev/null, /dev/zero, /dev/tty, /dev/random, /dev/urandom.
+   3. RTC / wall-clock driver so timestamps survive reboots.
+   4. Shell quality of life: globbing, history, tab completion; then scripting
+      (if/for/while, &&/||).
+   5. A ramdisk block backend + tmpfs — fast scratch space and better test fixtures.
 
-   10. [DONE] ASID Allocator: Replace the (pid << 48) hack with a 256-slot bitmap + TLB flush on rollover.
-       Correctness fix — silent TLB aliasing is possible today with many processes.
 
-   11. Shell: $? variable, $VAR expansion, correct pipeline exit codes:
-       Three small additions to sh.c that make the shell usable for scripting.
+================================================================================
+PHASE 4: ADVANCED MEMORY & STORAGE  (the heavy lifting)
+Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
+================================================================================
+   1. munmap / mprotect / a real VMA list (mmap can't be undone today).
+   2. brk/sbrk or anonymous-VMA heap so libc malloc grows properly.
+   3. Demand paging: fault-in ELF and file pages from the unified buffer cache
+      instead of loading eagerly. Big win for startup time and RAM.
+   4. Shared-memory IPC (MAP_SHARED / shm) — needed for a graphics server.
+   5. A second, inode-based filesystem (ext2 or a small journaling FS): validates
+      the VFS abstraction and provides the crash consistency FAT32 lacks.
 
-   12. [DONE] Interrupt-Driven UART RX: Wire the RX FIFO interrupt to a wait queue. Eliminates busy-waiting
-       on terminal input and is a prerequisite for clean select/poll support on /dev/console later.
 
-   13. just test + VFS/FAT32/Signal Tests: Add an automated QEMU test target and write test_vfs.c,
-       test_fat32.c, test_signals.c. Memory is well tested; the riskiest subsystems are not.
+================================================================================
+PHASE 5: CONCURRENCY & SECURITY
+Goal: Use the hardware fully and safely.
+================================================================================
+   1. Threads: clone() + TLS (tpidr_el0) + per-thread signal state. Revisit the
+      one-task-per-process assumptions (schedule()'s lock-free process read,
+      main_task-targeted signal delivery) at this point.
+   2. Futexes -> a real pthreads library.
+   3. Full preemptive, priority/MLFQ scheduling with cross-core load balancing.
+   4. Security: W^X audit, ASLR + user stack canaries, PAN/SMAP-equivalent, then a
+      uid/gid + capability model.
 
-   14. /proc/meminfo + /proc/mounts: Two trivial procfs files that expose data the kernel already
-       tracks. Required by basically any monitoring or scripting tool.
 
-  Phase 2: Developer Experience & Basic I/O
-  Goal: Turn the "kernel project" into a usable environment where you can actually work.
+================================================================================
+PHASE 6: STRATEGIC EXTENSIONS  (long-term)
+Goal: Broaden into networking, graphics, and beyond.
+================================================================================
+   1. Network stack (a NIC driver via USB/PCIe, then LWIP or a minimal UDP/IP).
+      Depends on I/O multiplexing (Phase 3) and a real device stack.
+   2. Graphics server (Wayland-lite). Depends on shared-memory IPC (Phase 4) + input.
+   3. Dynamic linking (ld.so + shared objects) — mostly a user-space loader problem;
+      do it once there are many large binaries.
+   4. Virtualization via EL2 — running guest OSes on top of Perspicua.
 
-   5. Core POSIX Utilities (ps, ls, mkdir, rm): These allow you to inspect the system state from within the system itself.
 
-  Phase 3: Advanced Architecture (The "Heavy Lifting")
-  Goal: Implement the core features that define a modern operating system.
-
-   7. Advanced Block Cache: You need efficient disk I/O before you attempt Demand Paging or high-performance networking.
-   8. I/O Multiplexing (select/poll): This is the bridge between simple files and complex applications like network servers or a GUI.
-   9. Demand Paging: Significant performance boost. Since you already have the MMU and SD driver, this is the logical "Big Move."
-   10. Shared Memory IPC: Once you have demand paging, mapping the same physical page to two processes is the next logical step.
-
-  Phase 4: Concurrency & Security
-  Goal: Enable the system to handle multiple tasks efficiently and safely.
-
-   11. Threading Support (pthreads): This requires a clone() syscall and TLS. It’s much easier to do once your memory management (Phase 3) is rock solid.
-   12. Kernel Preemption: Move from cooperative/timer-only scheduling to a fully preemptive kernel to improve latency.
-   13. Security Mitigations (ASLR/Canaries): Now that the loader and stack management are mature, add protections to make the system resilient.
-
-  Phase 5: Strategic Extensions (Long-Term)
-  Goal: Broaden the system's capabilities into networking and graphics.
-
-   14. Network Stack (LWIP Integration): Depends on interrupts (Phase 2) and I/O multiplexing (Phase 3).
-   15. Graphics Server (Wayland-lite): Depends on Shared Memory IPC (Phase 3).
-   16. Dynamic Linking (ld.so): A massive task that is mostly a user-space loader challenge; do this once you have many large binaries.
-   17. Virtualization (EL2): The final frontier—running other OSes on top of Perspicua.
+================================================================================
+When in doubt: correctness of the foundation beats breadth of features. Finish and
+test a layer before building the next one on top of it.
+================================================================================

@@ -1,168 +1,283 @@
 Perspicua Development Ideas
 ===========================
 
-KERNEL ARCHITECTURE & PERFORMANCE:
+This is the feature/idea BACKLOG (the "what"). For the recommended build ORDER
+(the "when"), see order.txt. Items are tagged [DONE] / [PARTIAL] / [TODO].
+Difficulty and Impact are rough planning estimates, not promises.
+
+--------------------------------------------------------------------------------
+1. ROBUSTNESS & CORRECTNESS  (make the base bullet-proof — highest priority)
+--------------------------------------------------------------------------------
+These are the load-bearing pieces. Features built on a shaky base inherit the
+shakiness; harden here first.
+
+  - Generic Wait-Queue / Condition-Variable Primitive
+      Difficulty: Medium | Impact: Very High
+      Details: One reusable wait_queue_t with prepare_to_wait / wake_one / wake_all
+        and a condition-check loop, replacing the hand-rolled per-subsystem queues
+        in tty, pipe, sd, and the sleep queue. Should be signal-interruptible.
+      Benefit: Removes the class of lost-wakeup / double-enqueue bugs; prerequisite
+        for clean select/poll, futexes, and blocking drivers.
+  - Sleeping-Lock Family (build on the existing kmutex)
+      Difficulty: Medium | Impact: High
+      Details: Add rwsem (read/write), semaphore, and completion on top of the wait
+        queue. Give lockdep coverage to sleeping locks too.
+      Benefit: Lets read-mostly structures (mount table, process table) scale, and
+        makes long/blocking critical sections correct without busy-waiting.
+  - Kernel Preemption Safety (preempt_count)
+      Difficulty: Medium-High | Impact: High
+      Details: A per-CPU preempt_disable/enable count; the timer tick only reschedules
+        when preemptible. Makes plain spinlocks safe to hold across a tick.
+      Benefit: Fixes the latent priority-inversion hazard of holding non-irqsave
+        spinlocks across preemption; prerequisite for a preemptive kernel.
+  - Graceful Out-of-Memory Handling
+      Difficulty: Medium | Impact: High
+      Details: Replace PANIC-on-allocation-failure (pmm/mmu/process/elf paths) with
+        error returns that unwind cleanly; add an OOM policy for user allocations.
+      Benefit: A single failed 4KB allocation should never take down the whole system.
+  - Unified Buffer Cache
+      Difficulty: Medium-High | Impact: High
+      Details: The page cache (fs/pagecache.c) and the block cache (driver/block.c)
+        cache the same data twice. Collapse into one cache keyed by (device, block)
+        or (inode, offset), read through it from the FS.
+      Benefit: Halves cache memory, removes a second coherence problem, simplifies
+        writeback.
+  - VFS Inode / Dentry Cache with Refcounted Vnodes
+      Difficulty: Medium-High | Impact: High
+      Details: Today lookup() allocates a fresh vnode per path resolution. Cache
+        vnodes by identity, refcount them, and add a name (dentry) cache.
+      Benefit: Avoids repeated disk directory scans, gives stable inode identity
+        (also cleans up the page-cache keying), enables hardlinks and rename safety.
+  - Filesystem Crash Consistency
+      Difficulty: High | Impact: High
+      Details: FAT32 has no ordering/journaling — a panic mid-write can cross-link
+        clusters or corrupt directories. Options: (a) an fsck-lite pass at mount,
+        (b) ordered metadata writes, (c) move to a journaling FS (see ext2 + journal).
+      Benefit: Survives power loss / panic without silent filesystem corruption.
+  - Robust User-Memory Access
+      Difficulty: Low-Med | Impact: Medium
+      Details: validate_user_buffer has a TOCTOU vs. concurrent unmap; rely on the
+        fault-fixup copy_to/from_user path as the source of truth and treat the
+        pre-check as advisory. Add access_ok-style range checks uniformly.
+      Benefit: Removes a race that matters once threads share an address space.
+  - Full sigaction Semantics
+      Difficulty: Medium | Impact: Medium
+      Details: SA_RESTART (restart interrupted syscalls), SA_SIGINFO + siginfo_t,
+        sigaltstack, real-time (queued) signals, and correct mask save/restore.
+      Benefit: Real programs and language runtimes depend on these; current signal
+        support is minimal.
+  - Panic / Oops with Stack Unwind + dmesg Ring Buffer
+      Difficulty: Low-Med | Impact: Medium
+      Details: We already generate a symbol table (gen_symtab.py); use it to print a
+        symbolized backtrace on panic. Add an in-memory kernel log ring exposed via
+        a dmesg syscall or /proc/kmsg.
+      Benefit: Turns "it hung" into an actionable stack trace; essential for debugging.
+  - Hung-Task / Watchdog Detector
+      Difficulty: Low | Impact: Medium
+      Details: A periodic check that flags tasks blocked far too long or a core that
+        stops taking timer ticks; optionally a hardware watchdog on real HW.
+      Benefit: Surfaces deadlocks and livelocks instead of silent hangs.
+  - RCU or Seqlocks for Read-Mostly State
+      Difficulty: High | Impact: Medium
+      Details: The process table and mount table are read constantly (schedule,
+        signals, path resolution) but written rarely. A seqlock/RCU removes them
+        from the hot lock path.
+      Benefit: SMP scalability; removes lock contention the current design will hit.
+  - Consistent errno / Error Mapping
+      Difficulty: Low | Impact: Medium
+      Details: Map internal -PERS_ERR_* codes to POSIX errno at the syscall boundary
+        consistently, and set errno in every libc wrapper.
+      Benefit: Ported software and users see meaningful, standard error codes.
+
+
+--------------------------------------------------------------------------------
+2. KERNEL ARCHITECTURE & PERFORMANCE
+--------------------------------------------------------------------------------
   - Demand Paging (On-Demand ELF Loading)
       Difficulty: High | Impact: Very High
-      Details: Load 4KB pages from SD on-demand during page faults.
-      Benefit: Reduces process startup time and RAM usage significantly.
-  - Kernel Preemption & Priority Scheduling
-      Difficulty: High | Impact: Medium
-      Details: Support EL1 preemption and Priority/MLFQ scheduling.
-      Benefit: Improves system responsiveness and prevents kernel task lag.
-  - Shared Memory IPC (shm)
+      Details: Load 4KB pages from SD on page fault instead of eagerly in elf_load;
+        needs the unified buffer cache and a per-vma backing map.
+      Benefit: Faster process start, much lower RAM use, enables large binaries.
+  - munmap / mprotect / mremap  (mmap currently has no way to unmap!)
       Difficulty: Medium | Impact: High
-      Details: Support shared physical page frames via mmap(MAP_SHARED).
-      Benefit: Enables high-performance graphics and complex IPC.
-  - I/O Multiplexing (select/poll/epoll)
+      Details: mmap reserves and maps but there is no munmap or mprotect, so mapped
+        regions leak and permissions are fixed. Track VMAs and support teardown and
+        permission change.
+      Benefit: Correct memory lifecycle; prerequisite for a real allocator and JITs.
+  - brk / sbrk (or a real anonymous-VMA heap)
+      Difficulty: Low-Med | Impact: Medium
+      Details: Give libc malloc a growable heap instead of leaning on fixed mmap.
+      Benefit: Standard allocator behavior; less fragmentation.
+  - Kernel Preemption & Priority / MLFQ Scheduling
+      Difficulty: High | Impact: Medium-High
+      Details: EL1 preemption (needs preempt_count) plus priorities, fair scheduling,
+        and cross-core load balancing on top of the existing per-core runqueues.
+      Benefit: Responsiveness under load; prevents a CPU-bound task starving others.
+  - Shared Memory IPC (mmap MAP_SHARED, shm_open)
       Difficulty: Medium | Impact: High
-      Details: Implement wait queues for file descriptors to support non-blocking I/O.
-      Benefit: Essential for porting complex 3rd party tools and servers.
+      Details: Share physical frames between address spaces via the page cache /
+        anonymous shared objects.
+      Benefit: High-performance IPC; foundation for a graphics server.
+  - I/O Multiplexing (select / poll / epoll)
+      Difficulty: Medium | Impact: High
+      Details: Per-fd readiness + wait queues (needs the generic wait-queue primitive).
+      Benefit: Non-blocking servers, event loops, and porting complex tools.
+  - Futexes
+      Difficulty: Medium | Impact: High
+      Details: Fast userspace mutex support (needs shared memory + wait queues).
+      Benefit: Efficient user-space locking; required for real pthreads/mutexes.
+  - Tickless / High-Resolution Timers
+      Difficulty: Medium | Impact: Low-Med
+      Details: Program the generic timer for the next event instead of a fixed 100Hz
+        tick; a monotonic clock source and hrtimer wheel.
+      Benefit: Lower idle power, accurate sleeps, real timerfd/nanosleep.
 
-USER-SPACE & LIBC MATURITY:
-  - Core POSIX Utilities ("Base System")
-      Difficulty: Low-Med | Impact: High
-      Details: Implement mkdir, rm, cp, mv, ps, kill, grep, wc, etc.
-      Benefit: Transitions the project from experiment to usable system.
-  - Shell (sh) Quality of Life
-      Difficulty: Medium | Impact: Medium
-      Details: Add globbing (*), and job control (fg, bg).
-      Benefit: Exponentially improves interactive developer experience.
-  - Threading Support (pthreads)
+
+--------------------------------------------------------------------------------
+3. SYSCALL LAYER (fill the POSIX gaps)
+--------------------------------------------------------------------------------
+  - getppid()                      Trivial | Medium  — parent field already tracked.
+  - dup()                          Trivial | Medium  — lowest free fd; one-liner on dup2.
+  - dup3() / O_CLOEXEC on dup      Trivial | Low
+  - pread64 / pwrite64             Low     | Medium  — positional I/O; reuse lseek+rw.
+  - gettimeofday / clock_gettime   Low     | High    — realtime + monotonic clocks;
+                                                        needs a boot wall-clock offset
+                                                        (ideally an RTC driver).
+  - nanosleep                      Low     | Medium  — sub-ms sleep vs. current SYS_SLEEP.
+  - truncate / ftruncate           Low-Med | Medium  — FAT32 can shrink chains; expose it.
+  - fstat (by fd) / lstat          Low     | Medium  — STAT is path-only today.
+  - munmap / mprotect              Medium  | High    — see section 2.
+  - access / faccessat             Trivial | Low
+  - umask / chmod / chown (stubs)  Low     | Low     — FAT has no perms; stub for ports.
+  - getrusage / times              Low     | Low     — schedstat already tracks a lot.
+  - poll / select / ppoll          Medium  | High    — see section 2.
+  - SIGSTOP / SIGCONT + job control Low    | Medium  — set STOPPED state, wake on CONT.
+  - reboot / poweroff              Trivial | Low     — clean shutdown + sync.
+  Note: consider aligning syscall numbers with Linux/AArch64 to ease porting.
+
+
+--------------------------------------------------------------------------------
+4. FILESYSTEM & STORAGE
+--------------------------------------------------------------------------------
+  - A Second Filesystem (ext2 or a simple journaling FS)
       Difficulty: High | Impact: High
-      Details: Implement clone() syscall and thread-local storage (TLS) support.
-      Benefit: Allows multi-threaded applications to leverage multiple cores.
-  - Dynamic Linking (ELF SO)
-      Difficulty: Very High | Impact: Medium
-      Details: Implement a user-space dynamic linker (ld.so) for shared libraries.
-      Benefit: Reduces binary sizes and memory footprint for common libraries.
-
-FOUNDATION HARDENING (Fill Existing Holes):
-
-  SYSCALL LAYER:
-  - Add getppid() Syscall
-      Difficulty: Trivial | Impact: Medium
-      Details: process table already has parent field; expose it.
-      Benefit: Required by POSIX; many tools (shells, daemons) call it.
-  - Add dup() Syscall (dup2 exists, dup does not)
-      Difficulty: Trivial | Impact: Medium
-      Details: Allocate lowest free fd pointing to same file; one-liner on top of dup2.
-      Benefit: Many libc stdio internals rely on dup() not dup2().
-  - Add pread64 / pwrite64 Syscalls
-      Difficulty: Low | Impact: Medium
-      Details: Positional read/write without changing file offset; reuse lseek+read internally.
-      Benefit: Needed for concurrent file access; standard POSIX requirement.
-  - Add gettimeofday() Syscall
-      Difficulty: Low | Impact: Medium
-      Details: Expose get_system_time() as a timeval struct; wall clock via boot offset.
-      Benefit: Nearly every application needs timestamps; currently only available inside the kernel.
-  - Add fcntl() Syscall (F_GETFL / F_SETFL / F_GETFD / F_SETFD)
-      Difficulty: Low | Impact: High
-      Details: Store flags per file-descriptor; honor O_NONBLOCK in read/write paths; FD_CLOEXEC on exec.
-      Benefit: Unblocks non-blocking I/O patterns; required for correct fork+exec semantics.
-  - Add truncate() / ftruncate() Syscalls
+      Details: Implementing a real inode-based FS both exercises/validates the VFS
+        abstraction and gives crash consistency FAT32 can't.
+      Benefit: Proves the VFS is truly generic; a journal gives durability.
+  - tmpfs / working ramfs write path
       Difficulty: Low-Med | Impact: Medium
-      Details: FAT32 cluster chain already supports shrink on close; expose as explicit syscall.
-      Benefit: Programs that write temp files or resize logs currently have no way to shrink them.
-  - Add mkdir() / rmdir() / unlink() / rename() Syscalls
-      Difficulty: Low-Med | Impact: High
-      Details: FAT32 driver already has the cluster/directory-entry logic; wire up syscall numbers.
-      Benefit: Currently impossible to create or delete files from userspace — massive usability gap.
+      Details: A memory-backed FS for /tmp; make ramfs actually writable.
+      Benefit: Fast scratch space; needed by many build/porting workflows.
+  - FAT32 Long-File-Name (LFN) *creation*
+      Difficulty: Medium | Impact: Medium
+      Details: Reads LFN today but create/mkdir write truncated 8.3 names; generate
+        LFN directory entries + checksums on write.
+      Benefit: Real filenames survive a round-trip through the shell.
+  - Partition Tables (MBR is parsed; add GPT) + multiple partitions/mounts
+      Difficulty: Low-Med | Impact: Low-Med
+  - /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
+      Difficulty: Low | Impact: Medium — many tools parse these.
+  - Symlinks / hardlinks (needs inode FS), atime/mtime, statfs
+      Difficulty: Medium | Impact: Medium
+  - Additional block backends: ramdisk (easy, great for tests), later USB mass
+      storage / NVMe.
 
-  SIGNALS:
-  - Implement SIGSTOP / SIGCONT
-      Difficulty: Low | Impact: Medium
-      Details: Set process state to STOPPED on SIGSTOP; wake it on SIGCONT; update scheduler.
-      Benefit: Shell already has fg/bg stubs; this completes job control end-to-end.
-  - Deliver SIGCHLD to Parent on Child Exit
-      Difficulty: Low | Impact: Medium
-      Details: In process_exit(), after marking zombie, send SIGCHLD to parent.
-      Benefit: Enables async child reaping via signal handler; prevents zombie accumulation in daemons.
 
-  MEMORY MANAGEMENT:
-  - Expose /proc/meminfo
-      Difficulty: Low | Impact: Low
-      Details: PMM already tracks free/used page counts; format them as a procfs file.
-      Benefit: ptop and future monitoring tools can report memory usage without kernel symbols.
+--------------------------------------------------------------------------------
+5. DRIVERS & DEVICES
+--------------------------------------------------------------------------------
+  - Core /dev nodes: /dev/null, /dev/zero, /dev/full, /dev/tty, /dev/random +
+      /dev/urandom (needs an entropy source).      Low | High
+  - RTC / hardware clock driver (wall-clock time across boots).  Low-Med | Medium
+  - Watchdog driver (real HW).                                    Low     | Medium
+  - Device model maturity: support multiple instances of a driver (probe currently
+      binds only the first matching FDT node), a persistent struct device with a
+      lifetime, and orderly teardown.                             Medium  | Medium
+  - Framebuffer: double-buffering / vsync; a /dev/fb ioctl set.   Medium  | Medium
+  - Input: USB HID keyboard/mouse (big) or a simpler console path. High   | Medium
+  - PCIe + USB host stacks (large, unlock networking + storage).  Very High | High
 
-  FILESYSTEM:
-  - fsync(fd) Per-File Flush
-      Difficulty: Low | Impact: Medium
-      Details: SYS_SYNC flushes all dirty blocks; add fsync() that flushes only pages belonging to one fd.
-      Benefit: Applications can guarantee durability for a single file without stalling all I/O.
-  - Page Cache Dirty Tracking & Writeback
-      Difficulty: Medium | Impact: High
-      Details: Mark pages dirty on write; run a background writeback pass from the timer tick.
-      Benefit: Without this, writes cached in page cache are silently lost if the system panics.
-  - Expose /proc/mounts
-      Difficulty: Low | Impact: Low
-      Details: Iterate the kernel mount table and format it as a text procfs file.
-      Benefit: Scripts and tools that parse /proc/mounts (busybox, etc.) need this to function.
 
-  LIBC:
-  - Add strerror()
-      Difficulty: Trivial | Impact: High
-      Details: Static table mapping errno → string; no syscall needed.
-      Benefit: Every error-printing code path currently prints raw numbers; usability is terrible.
-  - Add strdup() / strndup()
-      Difficulty: Trivial | Impact: High
-      Details: malloc + strcpy wrappers; not in current string.c.
-      Benefit: Extremely common; porting any third-party code that calls strdup will fail without it.
-  - Add memmove()
-      Difficulty: Trivial | Impact: Medium
-      Details: Overlapping-safe copy; current memcpy is undefined on overlap.
-      Benefit: Required by C standard; many string functions internally call memmove.
-  - Add setjmp() / longjmp()
-      Difficulty: Low | Impact: Medium
-      Details: Save/restore callee-saved registers + SP in a jmp_buf; AArch64 assembly.
-      Benefit: Error recovery in parsers, REPL, and ported tools depends on this.
-  - Add ctype.h Functions
-      Difficulty: Trivial | Impact: High
-      Details: isdigit, isalpha, isspace, isupper, islower, toupper, tolower — pure lookup tables.
-      Benefit: Essentially every string-processing utility needs these; currently missing entirely.
-  - Add getenv() / setenv() / environ Support
-      Difficulty: Low-Med | Impact: Medium
-      Details: Pass envp through exec; store as null-terminated char** at process startup; implement getenv as linear scan.
-      Benefit: Enables configurable userspace programs and is required for basic POSIX compliance.
-  - Add gettimeofday() Libc Wrapper
-      Difficulty: Trivial | Impact: Medium
-      Details: Thin wrapper over the gettimeofday syscall (once added); fills timeval struct.
-      Benefit: C programs expect this from <sys/time.h>; needed before porting any real software.
+--------------------------------------------------------------------------------
+6. USER-SPACE, LIBC & SHELL
+--------------------------------------------------------------------------------
+  LIBC (missing pieces confirmed absent):
+  - ctype.h (isdigit/isalpha/isspace/toupper/...)   Trivial | High — pure tables.
+  - strerror()                                       Trivial | High — errno -> string.
+  - strdup() / strndup()                             Trivial | High — malloc+copy.
+  - setjmp() / longjmp()                             Low     | Medium — AArch64 asm.
+  - time.h (time, gmtime, localtime, strftime)       Low-Med | Medium — needs clock syscalls.
+  - Proper buffered stdio (FILE*), fgets/fputs/scanf family, snprintf bounds.
+  - qsort / bsearch; printf float support; a minimal libm.
+  - Consistent errno in every wrapper (see section 1).
+
+  CORE POSIX UTILITIES ("base system"):
+  - Currently missing as binaries: mkdir, rm, cp, mv, ps, kill, grep, wc, touch,
+      head/tail, env, sleep, clear, mount.
+      Difficulty: Low-Med | Impact: High — transitions from experiment to usable system.
+      (Note: the mkdir/rm *syscalls* exist; the *binaries* don't — the shell can
+       only create files via > redirection today.)
 
   SHELL (sh.c):
-  - $? Exit Status Variable
-      Difficulty: Trivial | Impact: Medium
-      Details: Store last command exit code; expand $? in argument parsing.
-      Benefit: Shell scripts and interactive error-checking are impossible without it.
-  - Environment Variable Expansion ($VAR)
-      Difficulty: Low | Impact: Medium
-      Details: Scan arguments for $ prefix; look up in environ table.
-      Benefit: Prerequisite for any non-trivial shell scripting.
-  - Correct Exit Code Propagation Through Pipes
-      Difficulty: Low | Impact: Medium
-      Details: Shell currently may not surface the rightmost non-zero exit from a pipeline; track each child PID and waitpid all of them.
-      Benefit: Scripts that check `cmd1 | cmd2 || die` require accurate exit codes.
+  - $? exit-status variable + $VAR expansion         Trivial-Low | Medium.
+  - Correct pipeline exit-code propagation           Low | Medium.
+  - Globbing (*, ?, [..])                            Low-Med | Medium.
+  - Job control (fg/bg/jobs) — needs SIGSTOP/CONT     Medium | Medium.
+  - Scripting: if/for/while, &&/||, ; , subshells, here-docs.  Medium | Medium.
+  - Line editing: history, tab completion.            Medium | Medium.
 
-  TESTING:
-  - just test Target (Automated Kernel Test Run)
-      Difficulty: Low | Impact: Medium
-      Details: Add a justfile target that boots QEMU, runs the kernel test suite, captures output, and exits with pass/fail.
-      Benefit: Currently tests can only be run manually; without automation, regressions go unnoticed.
-  - VFS / FAT32 / Signal Test Coverage
-      Difficulty: Low-Med | Impact: Medium
-      Details: Add test_vfs.c, test_fat32.c, test_signals.c matching the style of existing test_pmm.c.
-      Benefit: Memory management has thorough tests; filesystem and signals have none — the riskiest subsystems are untested.
 
-LONG-TERM STRATEGIC IDEAS:
-  - POSIX ABI Compatibility: Align syscall numbers with Linux/AArch64.
-  - Graphics Server: Wayland-lite compositor designed for user-space.
-  - Virtualization: Use EL2 extensions for hardware-assisted guest OS.
-  - Network Stack (LWIP Integration)
-      Difficulty: High | Impact: Very High
-      Details: Port LWIP or implement a basic UDP/IP stack for networking support.
-      Benefit: Enables remote access (SSH/Telnet) and web applications.
-  - Security Mitigations (ASLR/Canaries)
-      Difficulty: Medium | Impact: Medium
-      Details: Implement Address Space Layout Randomization and stack protection.
-      Benefit: Improves system resilience against memory corruption exploits.
+--------------------------------------------------------------------------------
+7. THREADS & CONCURRENCY
+--------------------------------------------------------------------------------
+  - Threading (clone() + TLS)
+      Difficulty: High | Impact: High
+      Details: Multiple tasks sharing one address space + fd table; per-thread
+        signal mask, TID, TLS via tpidr_el0. Depends on solid MM (section 1/2),
+        futexes, and per-task (not per-process) signal state.
+      Benefit: Multi-threaded apps use all cores; unlocks pthreads.
+  - pthreads library on top of clone + futex.        Medium | High.
+  - Note: several current structures assume one task per process (e.g. schedule()
+    reads the owning process's ASID lock-free; signal delivery targets main_task).
+    These must be revisited when threads land.
 
+
+--------------------------------------------------------------------------------
+8. SECURITY & HARDENING
+--------------------------------------------------------------------------------
+  - W^X enforcement everywhere (kernel already sets PXN/UXN; audit user mappings).
+  - ASLR (user stack/mmap/PIE base) + user stack canaries.   Medium | Medium.
+  - PAN / privileged-access-never (SMAP-equivalent) so the kernel can't accidentally
+      deref user pointers outside the uaccess helpers.          Low-Med | Medium.
+  - KASLR for the kernel image.                                  Medium | Low-Med.
+  - A privilege/permission model (uid/gid, capabilities) — large, needed for
+      multi-user.                                                High | Medium.
+  - seccomp-style syscall filtering (long-term).
+
+
+--------------------------------------------------------------------------------
+9. OBSERVABILITY & TESTING
+--------------------------------------------------------------------------------
+  - `just test` target: boot QEMU, run the kernel self-tests, capture serial, exit
+      pass/fail (enables CI).                                     Low | High.
+  - Missing test suites: test_vfs, test_fat32, test_signals, test_pipe, test_uaccess,
+      test_mutex; a userspace syscall test harness.               Low-Med | Medium.
+  - Syscall-layer fuzzing (feed random/boundary args; catch OOB like the mmap-fd bug
+      before users do).                                           Medium | Medium.
+  - dmesg ring buffer + kernel log levels; /proc/kmsg.           Low | Medium.
+  - ftrace-lite: function/latency tracing; per-subsystem counters (schedstat exists).
+  - Split tests out of the shipped image (they compile into every build today).
+
+
+--------------------------------------------------------------------------------
+10. LONG-TERM STRATEGIC
+--------------------------------------------------------------------------------
+  - Network Stack (LWIP integration or a minimal UDP/IP)
+      Difficulty: High | Impact: Very High — remote access, servers; needs a NIC
+      driver (USB/PCIe) and I/O multiplexing.
+  - Graphics Server (Wayland-lite compositor) — needs shared-memory IPC + input.
+  - Dynamic Linking (ld.so + shared objects) — mostly a user-space loader challenge.
+  - POSIX ABI compatibility: align syscall numbers/structs with Linux/AArch64.
+  - Namespaces / containers, cgroup-style resource limits.
+  - Virtualization via EL2 (run guest OSes) — the final frontier.
+  - Power management: CPU idle states, DVFS, suspend.
