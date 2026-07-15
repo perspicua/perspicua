@@ -35,7 +35,10 @@ struct cpio_newc_header {
 
 /*
  * initrd_init - Parses the CPIO archive and registers files into RAMFS.
+ *
+ * initrd_size bounds the archive so a malformed or truncated image cannot walk
+ * the parser off the end of memory.
  */
-void initrd_init(void *initrd_start);
+void initrd_init(void *initrd_start, size_t initrd_size);
 
 #endif /* PERSPICUA_CORE_INITRD_H */

@@ -109,6 +109,10 @@ void free(void *ptr)
 
 void *calloc(size_t nmemb, size_t size)
 {
+    /* Reject nmemb * size overflow before it produces an undersized buffer. */
+    if (size != 0 && nmemb > (size_t)-1 / size) {
+        return NULL;
+    }
     size_t total = nmemb * size;
     void *ptr = malloc(total);
     if (ptr)
