@@ -7,6 +7,8 @@
 
 #include "fs/procfs.h"
 
+#include <stdarg.h>
+
 #include "stdio.h"
 #include "string.h"
 
@@ -70,6 +72,28 @@ static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t si
         buf[0] = '\0';
     }
     return len;
+}
+
+/*
+ * procfs_append - Bounded snprintf accumulator.
+ *
+ * vsnprintf returns the would-be length, so naively doing pos += snprintf() lets
+ * pos run past the buffer; the next call would then be handed a negative (wrapped
+ * to huge) size and write out of bounds. This guards *pos against the size so the
+ * size argument is always valid.
+ */
+static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
+{
+    if (*pos < 0 || *pos >= size) {
+        return;
+    }
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf + *pos, (size_t)(size - *pos), fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+        *pos += n;
+    }
 }
 
 static int procfs_version_read(struct vfs_file *file, void *buffer, size_t size)
@@ -146,19 +170,19 @@ static int procfs_interrupts_read(struct vfs_file *file, void *buffer, size_t si
         return -PERS_ERR_OUT_OF_MEMORY;
 
     int pos = 0;
-    pos += snprintf(buf + pos, 1024 - pos, "           ");
+    procfs_append(buf, &pos, 1024,"           ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        pos += snprintf(buf + pos, 1024 - pos, "CPU%-10d", i);
+        procfs_append(buf, &pos, 1024,"CPU%-10d", i);
     }
-    pos += snprintf(buf + pos, 1024 - pos, "\nTimer:     ");
+    procfs_append(buf, &pos, 1024,"\nTimer:     ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        pos += snprintf(buf + pos, 1024 - pos, "%-13lu", core_irq_stats[i].timer_count);
+        procfs_append(buf, &pos, 1024,"%-13lu", core_irq_stats[i].timer_count);
     }
-    pos += snprintf(buf + pos, 1024 - pos, "\nUART:      ");
+    procfs_append(buf, &pos, 1024,"\nUART:      ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        pos += snprintf(buf + pos, 1024 - pos, "%-13lu", core_irq_stats[i].uart_count);
+        procfs_append(buf, &pos, 1024,"%-13lu", core_irq_stats[i].uart_count);
     }
-    pos += snprintf(buf + pos, 1024 - pos, "\n");
+    procfs_append(buf, &pos, 1024,"\n");
 
     size_t len = strlen(buf);
     if (file->offset >= (vfs_off_t)len) {
@@ -183,9 +207,9 @@ static int procfs_schedstat_read(struct vfs_file *file, void *buffer, size_t siz
         return -PERS_ERR_OUT_OF_MEMORY;
 
     int pos = 0;
-    pos += snprintf(buf + pos, 1024 - pos, "cpu  context_switches  idle_entries\n");
+    procfs_append(buf, &pos, 1024,"cpu  context_switches  idle_entries\n");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        pos += snprintf(buf + pos, 1024 - pos, "%-5d%-18lu%-13lu\n", i,
+        procfs_append(buf, &pos, 1024,"%-5d%-18lu%-13lu\n", i,
                         core_sched_stats[i].context_switches, core_sched_stats[i].idle_count);
     }
 
@@ -222,8 +246,8 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
 
     for (size_t i = 0; i < process_table[pid].va.count; i++) {
         struct va_region *r = &process_table[pid].va.regions[i];
-        pos += snprintf(buf + pos, 2048 - pos, "%016lx-%016lx %lu pages\n", r->base,
-                        r->base + r->pages * PAGE_SIZE, r->pages);
+        procfs_append(buf, &pos, 2048, "%016lx-%016lx %lu pages\n", r->base,
+                      r->base + r->pages * PAGE_SIZE, r->pages);
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
@@ -496,6 +520,9 @@ static struct vfs_vnode *procfs_pid_fd_lookup(struct vfs_vnode *dir, const char 
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+    if (!node) {
+        return NULL;
+    }
     memset(node, 0, sizeof(struct vfs_vnode));
     node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &procfs_pid_fd_entry_ops;
@@ -539,6 +566,9 @@ static struct vfs_vnode *procfs_pid_lookup(struct vfs_vnode *dir, const char *fi
     for (size_t i = 0; i < 5; i++) {
         if (strcmp(filename, names[i]) == 0) {
             struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+            if (!node) {
+                return NULL;
+            }
             memset(node, 0, sizeof(struct vfs_vnode));
             node->type = types[i];
             node->ops = ops[i];
@@ -641,6 +671,9 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
         if (process_table[pid].state != PROCESS_STATE_EMPTY) {
             spin_unlock_irqrestore(&process_table_lock, flags);
             struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+            if (!node) {
+                return NULL; /* process_table_lock already released above */
+            }
             memset(node, 0, sizeof(struct vfs_vnode));
             node->type = VFS_VNODE_TYPE_DIR;
             node->ops = &procfs_pid_dir_ops;

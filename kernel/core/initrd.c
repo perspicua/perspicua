@@ -34,12 +34,17 @@ static uint32_t hex8_to_u32(const char *s)
 /*
  * initrd_init - Iterates through the CPIO archive and registers files.
  */
-void initrd_init(void *initrd_start)
+void initrd_init(void *initrd_start, size_t initrd_size)
 {
     char *ptr = (char *)initrd_start;
+    char *end = ptr + initrd_size;
     int count = 0;
 
     while (1) {
+        /* A full header must fit in the remaining archive. */
+        if (ptr < (char *)initrd_start || (size_t)(end - ptr) < sizeof(struct cpio_newc_header)) {
+            break;
+        }
         struct cpio_newc_header *hdr = (struct cpio_newc_header *)ptr;
 
         if (memcmp(hdr->magic, "070701", 6) != 0) {
@@ -52,6 +57,12 @@ void initrd_init(void *initrd_start)
         uint32_t mode = hex8_to_u32(hdr->mode);
         char *filename = ptr + sizeof(struct cpio_newc_header);
 
+        /* Filename must fit and be NUL-terminated inside the archive. */
+        if (name_size == 0 || (size_t)(end - filename) < name_size
+            || filename[name_size - 1] != '\0') {
+            break;
+        }
+
         if (strcmp(filename, "TRAILER!!!") == 0) {
             break;
         }
@@ -60,6 +71,11 @@ void initrd_init(void *initrd_start)
         char *data = ptr + sizeof(struct cpio_newc_header) + name_size;
         data = (char *)(((uintptr_t)data + 3) & ~3UL);
 
+        /* File data must fit within the archive. */
+        if (data > end || (size_t)(end - data) < file_size) {
+            break;
+        }
+
         /* Only S_IFREG (0x8000) files are currently registered */
         if ((mode & 0xF000) == 0x8000) {
             ramfs_register_file(filename, data, file_size);
@@ -67,8 +83,14 @@ void initrd_init(void *initrd_start)
         }
 
         /* Account for 4-byte padding after file data */
-        ptr = data + file_size;
-        ptr = (char *)(((uintptr_t)ptr + 3) & ~3UL);
+        char *next = data + file_size;
+        next = (char *)(((uintptr_t)next + 3) & ~3UL);
+
+        /* Must strictly advance and stay in bounds. */
+        if (next <= ptr || next > end) {
+            break;
+        }
+        ptr = next;
     }
 
     pr_info("boot: initrd parsed: %d files registered\n", count);
