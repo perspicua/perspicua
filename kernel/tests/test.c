@@ -25,6 +25,11 @@ void run_all_tests(void)
     test_sd();
     test_mmu();
     test_mmu_user();
+    test_vfs();
+    test_fat32();
+    test_pipe();
+    test_mutex();
+    test_uaccess();
     // test_kasan_heap();
     // test_kasan_slab();
 
@@ -61,6 +66,37 @@ void run_scheduler_tests(void)
     } else {
         pr_err("test: scheduler: %d of %d tests failed [FAILED]\n", sched_failed,
                sched_passed + sched_failed);
+    }
+
+    printk("\n");
+}
+
+/*
+ * run_post_init_tests - Suites that need a live user process to exist.
+ *
+ * Called after init has been created, so these can target a real PID rather
+ * than the boot task's placeholder pid 0.
+ */
+void run_post_init_tests(void)
+{
+    int pre_passed = tests_passed;
+    int pre_failed = tests_failed;
+
+    printk("\n");
+
+    test_signals();
+
+    printk("\n");
+
+    int post_passed = tests_passed - pre_passed;
+    int post_failed = tests_failed - pre_failed;
+
+    if (post_failed == 0) {
+        pr_info("test: post-init: all %d tests passed [OK]\n", post_passed);
+        pr_info("test: reached target: post-init test complete [OK]\n");
+    } else {
+        pr_err("test: post-init: %d of %d tests failed [FAILED]\n", post_failed,
+               post_passed + post_failed);
     }
 
     printk("\n");

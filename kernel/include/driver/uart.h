@@ -42,6 +42,9 @@ extern volatile uint32_t *uart_mis;
 extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
+typedef void (*uart_rx_cb_t)(char c);
+typedef void (*uart_tx_cb_t)(void);
+
 /*
  * uart_send - Transmits a single character with full synchronization.
  */
@@ -68,11 +71,6 @@ void uart_puts(const char *str);
 void uart_puts_locked(const char *str);
 
 /*
- * uart_write - Wrapper for tty_write targeting the console TTY.
- */
-void uart_write(const char *buf, size_t len);
-
-/*
  * uart_data_ready - Returns non-zero if RX FIFO is not empty.
  */
 int uart_data_ready(void);
@@ -91,5 +89,20 @@ void uart_clear_interrupt(uint32_t mask);
  * uart_get_irq - Returns the cached IRQ number for the UART.
  */
 unsigned int uart_get_irq(void);
+
+/*
+ * uart_reg_rx_callback - Registers a function to be called for each received byte.
+ */
+void uart_reg_rx_callback(uart_rx_cb_t f);
+
+/*
+ * uart_reg_tx_callback - Registers a function to be called when the TX FIFO drains.
+ */
+void uart_reg_tx_callback(uart_tx_cb_t f);
+
+/*
+ * uart_handle_irq - Reads the interrupt status and dispatches to registered callbacks.
+ */
+void uart_handle_irq(void);
 
 #endif /* PERSPICUA_DRIVER_UART_H */

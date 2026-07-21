@@ -28,7 +28,7 @@
  * SD Operation Serializer
  * sd_op_lock  - irqsave spinlock guarding sd_op_busy and the wait queue
  * sd_op_busy  - set while one task owns the SD controller
- * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->next)
+ * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->wait_next)
  */
 static spinlock_t sd_op_lock = SPINLOCK_INIT;
 static int sd_op_busy = 0;
@@ -121,10 +121,43 @@ static int sd_is_sdhc = 0;
  * schedule() calls inside the operation do not pollute lockdep's per-core
  * held-lock tracking.
  */
+/*
+ * sd_op_wq_remove - Unlink a task from the SD wait queue if still present.
+ *
+ * Caller holds sd_op_lock. A task woken by a signal rather than sd_op_release()
+ * stays linked via wait_next; drop it before it retries so it is never
+ * double-enqueued or dequeued twice.
+ */
+static void sd_op_wq_remove(struct task *t)
+{
+    struct task **pp = &sd_op_wq_head;
+    struct task *prev = NULL;
+
+    while (*pp) {
+        if (*pp == t) {
+            *pp = t->wait_next;
+            if (sd_op_wq_tail == t) {
+                sd_op_wq_tail = prev;
+            }
+            t->wait_next = NULL;
+            return;
+        }
+        prev = *pp;
+        pp = &(*pp)->wait_next;
+    }
+}
+
 static void sd_op_acquire(void)
 {
+    struct task *cur = sched_get_current();
+
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&sd_op_lock);
+
+        /* If a signal woke us while still queued, unlink before retrying. */
+        if (cur) {
+            sd_op_wq_remove(cur);
+        }
 
         if (!sd_op_busy) {
             sd_op_busy = 1;
@@ -132,7 +165,6 @@ static void sd_op_acquire(void)
             return;
         }
 
-        struct task *cur = sched_get_current();
         if (!cur) {
             /* Early boot before scheduler: busy-wait (no tasks to switch to). */
             spin_unlock_irqrestore(&sd_op_lock, flags);
@@ -141,12 +173,11 @@ static void sd_op_acquire(void)
             continue;
         }
 
-        /* Enqueue and block.  task->next is safe to use here because a
-         * BLOCKED task is not in any scheduler queue. */
+        /* Enqueue on the controller wait queue and block. */
         cur->state = SCHED_TASK_BLOCKED;
-        cur->next = NULL;
+        cur->wait_next = NULL;
         if (sd_op_wq_tail) {
-            sd_op_wq_tail->next = cur;
+            sd_op_wq_tail->wait_next = cur;
             sd_op_wq_tail = cur;
         } else {
             sd_op_wq_head = sd_op_wq_tail = cur;
@@ -169,9 +200,10 @@ static void sd_op_release(void)
 
     struct task *t = sd_op_wq_head;
     if (t) {
-        sd_op_wq_head = t->next;
+        sd_op_wq_head = t->wait_next;
         if (!sd_op_wq_head)
             sd_op_wq_tail = NULL;
+        t->wait_next = NULL;
         sched_unblock(t);
     }
 
@@ -355,6 +387,25 @@ static int sd_init_host(void)
     return PERS_SUCCESS;
 }
 
+/*
+ * sd_csd_field - Extracts CSD[hi:lo] from a 136-bit R2 response.
+ *
+ * The controller strips the CRC byte, so the four RESP registers hold
+ * CSD[127:8]: CSD bit n lives at bit (n - 8) of that 120-bit value, with
+ * csd[0] holding the least significant word.
+ */
+static uint32_t sd_csd_field(const uint32_t csd[4], int hi, int lo)
+{
+    uint32_t out = 0;
+
+    for (int bit = hi; bit >= lo; bit--) {
+        int pos = bit - 8;
+        out = (out << 1) | ((csd[pos / 32] >> (pos % 32)) & 1);
+    }
+
+    return out;
+}
+
 static int sd_init_card(void)
 {
     if (sd_send_cmd(CMD0, 0) != PERS_SUCCESS) {
@@ -387,8 +438,27 @@ static int sd_init_card(void)
     sd_rca = regs->resp[0] & 0xFFFF0000;
 
     if (sd_send_cmd(CMD9, sd_rca) == PERS_SUCCESS) {
-        uint32_t c_size = ((regs->resp[2] & 0x3F) << 16) | (regs->resp[1] >> 16);
-        sd_block_dev.block_count = (c_size + 1) * 1024;
+        uint32_t csd[4] = {regs->resp[0], regs->resp[1], regs->resp[2], regs->resp[3]};
+
+        /*
+         * The capacity fields differ between CSD versions, and a card small
+         * enough to still use v1.0 (as the QEMU-attached image does) decodes
+         * to nonsense under the v2.0 formula. Dispatch on CSD_STRUCTURE.
+         */
+        if (sd_csd_field(csd, 127, 126) == 1) {
+            /* v2.0 (SDHC/SDXC): capacity is (C_SIZE + 1) * 512 KB. */
+            uint32_t c_size = sd_csd_field(csd, 69, 48);
+            sd_block_dev.block_count = ((uint64_t)c_size + 1) * 1024;
+        } else {
+            /* v1.0 (SDSC): (C_SIZE + 1) * 2^(C_SIZE_MULT + 2) blocks of
+             * 2^READ_BL_LEN bytes, normalised to 512-byte blocks. */
+            uint32_t c_size = sd_csd_field(csd, 73, 62);
+            uint32_t c_mult = sd_csd_field(csd, 49, 47);
+            uint32_t read_bl = sd_csd_field(csd, 83, 80);
+
+            uint64_t bytes = ((uint64_t)c_size + 1) * (1ULL << (c_mult + 2)) * (1ULL << read_bl);
+            sd_block_dev.block_count = bytes / 512;
+        }
     }
 
     if (sd_send_cmd(CMD7, sd_rca) != PERS_SUCCESS) {
@@ -405,6 +475,18 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
 {
     if (!dev->present)
         return -PERS_ERR_NOT_FOUND;
+
+    if (!buffer)
+        return -PERS_ERR_INVALID_ARGUMENT;
+
+    /*
+     * Reject out-of-range requests here: issuing CMD17 past the end of the
+     * card leaves the controller in an error state that fails every later
+     * transfer, so an isolated bad request would otherwise take down all
+     * subsequent I/O.
+     */
+    if (start_block + num_blocks > dev->block_count || start_block + num_blocks < start_block)
+        return -PERS_ERR_INVALID_ARGUMENT;
 
     uint32_t *buf = (uint32_t *)buffer;
 
@@ -454,6 +536,13 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 {
     if (!dev->present)
         return -PERS_ERR_NOT_FOUND;
+
+    if (!buffer)
+        return -PERS_ERR_INVALID_ARGUMENT;
+
+    /* See sd_read_blocks: an out-of-range command poisons the controller. */
+    if (start_block + num_blocks > dev->block_count || start_block + num_blocks < start_block)
+        return -PERS_ERR_INVALID_ARGUMENT;
 
     const uint32_t *buf = (const uint32_t *)buffer;
 
@@ -544,7 +633,8 @@ static int sd_probe(struct device *dev)
     block_device_register(&sd_block_dev);
 
     size_t mb = (sd_block_dev.block_count * 512) / (1024 * 1024);
-    pr_info("sd: SDHC card found: %lu MB\n", mb);
+    pr_info("sd: %s card found: %lu MB (%lu blocks)\n", sd_is_sdhc ? "SDHC" : "SDSC", mb,
+            sd_block_dev.block_count);
     return 0;
 }
 

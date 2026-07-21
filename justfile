@@ -4,6 +4,9 @@ set shell := ["bash", "-c"]
 
 # Build directory and toolchain
 build_dir := "build"
+# Test builds use a separate tree so toggling CONFIG_TESTS never forces a
+# full reconfigure and rebuild of the normal one.
+test_build_dir := "build-test"
 toolchain := "cmake/aarch64-none-elf.cmake"
 
 # Number of cores for parallel build
@@ -17,19 +20,42 @@ config_smp     := "ON"
 config_lockdep := "ON"
 config_nr_cpus := "4"
 
-# Setup and build the project (defaults to Debug)
-# Usage: just build [debug|release]
-@build type="Debug":
-    cmake -B {{build_dir}} -S . \
+# Configure and build into a given tree with a given CONFIG_TESTS setting
+@_cmake dir type tests:
+    cmake -B {{dir}} -S . \
         -DCMAKE_TOOLCHAIN_FILE={{toolchain}} \
         -DCMAKE_BUILD_TYPE={{type}} \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCONFIG_SMP={{config_smp}} \
         -DCONFIG_LOCKDEP={{config_lockdep}} \
-        -DCONFIG_NR_CPUS={{config_nr_cpus}}
-    cmake --build {{build_dir}} -j {{nproc}}
+        -DCONFIG_NR_CPUS={{config_nr_cpus}} \
+        -DCONFIG_TESTS={{tests}}
+    cmake --build {{dir}} -j {{nproc}}
+
+# Setup and build the project (defaults to Debug)
+# Usage: just build [debug|release]
+@build type="Debug":
+    just _cmake {{build_dir}} {{type}} OFF
     ln -sf {{build_dir}}/compile_commands.json compile_commands.json
     echo "Build ({{type}}) complete: pi4-boot/kernel8.img"
+
+# Build with the in-kernel test suites enabled
+# Usage: just build-tests [debug|release]
+@build-tests type="Debug":
+    just _cmake {{test_build_dir}} {{type}} ON
+    echo "Test build ({{type}}) complete: {{test_build_dir}}/kernel/kernel8.img"
+
+# Build and run the in-kernel test suites headless; exits non-zero on failure
+@test type="Debug": (build-tests type)
+    cmake --build {{test_build_dir}} --target sdcard
+    ./scripts/run_tests.sh \
+        {{test_build_dir}}/kernel/kernel8.img \
+        pi4-boot/bcm2711-rpi-4-b.dtb \
+        {{test_build_dir}}/sdcard.img
+
+# Build and run the test kernel interactively in QEMU (drops to the shell)
+@test-shell type="Debug": (build-tests type)
+    cmake --build {{test_build_dir}} --target run
 
 # Show current kernel configuration
 @config:
@@ -37,6 +63,7 @@ config_nr_cpus := "4"
     echo "  CONFIG_SMP      = {{config_smp}}"
     echo "  CONFIG_LOCKDEP  = {{config_lockdep}}"
     echo "  CONFIG_NR_CPUS  = {{config_nr_cpus}}"
+    echo "  CONFIG_TESTS    = OFF (ON for 'just test')"
     echo ""
     echo "Override with: just config_smp=OFF config_lockdep=OFF build"
 
@@ -63,7 +90,7 @@ config_nr_cpus := "4"
 
 # Clean build artifacts
 @clean:
-    rm -rf {{build_dir}} compile_commands.json sdcard.img
+    rm -rf {{build_dir}} {{test_build_dir}} compile_commands.json sdcard.img
 
 # Show kernel binary size
 @size: build

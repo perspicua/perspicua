@@ -12,6 +12,7 @@
 
 /* String length and copying */
 size_t strlen(const char *str);
+size_t strnlen(const char *str, size_t size);
 char *strcpy(char *dest, const char *src);
 char *strncpy(char *dest, const char *src, size_t count);
 
@@ -38,5 +39,11 @@ int memcmp(const void *ptr1, const void *ptr2, size_t num);
 void *memset(void *dest, int val, size_t num);
 void *memcpy(void *dest, const void *src, size_t count);
 void *memmove(void *dest, const void *src, size_t count);
+
+char *strdup(const char *str);
+char *strndup(const char *str, size_t size);
+
+/* Error reporting */
+char *strerror(int errnum);
 
 #endif /* PERSPICUA_LIBC_STRING_H */

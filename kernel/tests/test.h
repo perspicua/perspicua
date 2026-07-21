@@ -73,10 +73,19 @@ void test_timer(void);
 void test_sd(void);
 void test_mmu(void);
 void test_mmu_user(void);
+void test_vfs(void);
+void test_fat32(void);
+void test_pipe(void);
+void test_mutex(void);
+void test_uaccess(void);
 void test_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
+
+/* post-init tests (must be called after a user process exists) */
+void run_post_init_tests(void);
+void test_signals(void);
 
 void test_kasan_heap(void);
 void test_kasan_slab(void);

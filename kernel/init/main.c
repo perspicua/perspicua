@@ -2,6 +2,7 @@
  * kernel/init/main.c - Kernel entry point and system initialization sequence.
  */
 
+#include "mm/asid.h"
 #include "uapi/errors.h"
 
 #include "types.h"
@@ -16,6 +17,7 @@
 #include "mm/slab.h"
 
 #include "core/lock.h"
+#include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/tty.h"
 #include "core/initrd.h"
@@ -28,6 +30,7 @@
 #include "fs/devfs.h"
 #include "fs/procfs.h"
 #include "fs/fat32.h"
+#include "fs/pagecache.h"
 
 #include "driver/gpio.h"
 #include "driver/uart.h"
@@ -40,7 +43,10 @@
 #include "driver/block.h"
 
 #include "devicetree/fdt.h"
-#include "test.h"
+
+#ifdef CONFIG_TESTS
+    #include "test.h"
+#endif
 
 /* Kernel metadata and versioning */
 #define KERNEL_VERSION "0.1"
@@ -161,6 +167,22 @@ static void dashboard_task(void)
 }
 
 /**
+ * writeback_daemon - Periodic background flush of dirty page cache entries.
+ *
+ * Runs every 5 seconds. Normally has nothing to flush (FAT32 is write-through),
+ * but clears any pages that were dirtied without a corresponding write-through
+ * (e.g. a failed write retry, or future write-back paths).
+ */
+static void writeback_daemon(void)
+{
+    while (1) {
+        sched_sleep_ms(5000);
+        pagecache_sync();
+        block_cache_sync();
+    }
+}
+
+/**
  * main - Primary kernel initialization routine.
  */
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
@@ -178,7 +200,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     print_banner();
 
-    extern void lockdep_init(void);
     lockdep_init();
 
     /* Stage 2: Memory management initialization */
@@ -186,6 +207,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     pmm_init();
     mmu_init();
+    asid_init();
 
     extern void pagecache_init(void);
     pagecache_init();
@@ -221,6 +243,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     /* Root filesystem initialization (FAT32) */
     if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
+        sched_create_task(writeback_daemon);
     }
 
     /* Mount auxiliary filesystems */
@@ -228,13 +251,21 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
+
+#ifdef CONFIG_TESTS
     run_all_tests();
     run_scheduler_tests();
+#endif
 
     /* Launch primary user-space application */
     if (process_create_from_file("/bin/init.elf", 1) != 0) {
         pr_err("init: Failed to load init\n");
     }
+
+#ifdef CONFIG_TESTS
+    /* Suites that need a live process to target run once init exists. */
+    run_post_init_tests();
+#endif
 
     /* Main thread parks while scheduler handles execution */
     while (1) {

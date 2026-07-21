@@ -95,7 +95,7 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 static int devfs_tty_read(struct vfs_file *file, void *buffer, size_t size)
 {
     struct tty *tty = (struct tty *)file->node->internal_info;
-    return tty_read(tty, (char *)buffer, size);
+    return tty_read(tty, file, (char *)buffer, size);
 }
 
 static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t size)
@@ -170,7 +170,7 @@ void devfs_init(void)
     devfs_root_vnode->file_size = 0;
     devfs_root_vnode->refcount.counter = 1;
 
-    if (devfs_register_device("uart", &devfs_tty_ops, &console_tty) != 0) {
+    if (devfs_register_device("console", &devfs_tty_ops, &console_tty) != 0) {
         PANIC("devfs: console registration failed");
     }
 

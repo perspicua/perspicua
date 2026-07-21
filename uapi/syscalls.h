@@ -38,5 +38,11 @@
 #define SYS_STAT        26
 #define SYS_LSEEK       27
 #define SYS_SYNC        28
+#define SYS_MKDIR       29
+#define SYS_RMDIR       30
+#define SYS_UNLINK      31
+#define SYS_RENAME      32
+#define SYS_FSYNC       33
+#define SYS_FCNTL       34
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

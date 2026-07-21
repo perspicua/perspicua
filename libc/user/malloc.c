@@ -109,6 +109,10 @@ void free(void *ptr)
 
 void *calloc(size_t nmemb, size_t size)
 {
+    /* Reject nmemb * size overflow before it produces an undersized buffer. */
+    if (size != 0 && nmemb > (size_t)-1 / size) {
+        return NULL;
+    }
     size_t total = nmemb * size;
     void *ptr = malloc(total);
     if (ptr)
@@ -140,32 +144,4 @@ void *realloc(void *ptr, size_t size)
 void exit(int status)
 {
     sys_exit(status);
-}
-
-int atoi(const char *nptr)
-{
-    int res = 0, sign = 1;
-    while (*nptr == ' ')
-        nptr++;
-    if (*nptr == '-') {
-        sign = -1;
-        nptr++;
-    }
-    while (*nptr >= '0' && *nptr <= '9')
-        res = res * 10 + (*nptr++ - '0');
-    return res * sign;
-}
-
-long atol(const char *nptr)
-{
-    long res = 0, sign = 1;
-    while (*nptr == ' ')
-        nptr++;
-    if (*nptr == '-') {
-        sign = -1;
-        nptr++;
-    }
-    while (*nptr >= '0' && *nptr <= '9')
-        res = res * 10 + (*nptr++ - '0');
-    return res * sign;
 }

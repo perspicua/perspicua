@@ -8,6 +8,16 @@
 #ifndef PERSPICUA_LIBC_SYSCALL_H
 #define PERSPICUA_LIBC_SYSCALL_H
 
+/*
+ * Guard the userspace/kernel boundary at compile time. Without this, a
+ * syscall-dependent source added to LIBC_SRC_COMMON still compiles into libk
+ * and only fails at the unrelated, much later link that first references it.
+ * Kernel code dispatches syscalls through core/syscall.h instead.
+ */
+#ifdef __KERNEL__
+    #error "syscall.h is userspace-only; kernel code uses core/syscall.h"
+#endif
+
 #include "types.h"
 #include "signals.h"
 
@@ -19,9 +29,20 @@
 #define VFS_O_RDWR    0x0002
 #define VFS_O_ACCMODE 0x0003
 
-#define VFS_O_CREAT  0x0100
-#define VFS_O_TRUNC  0x0200
-#define VFS_O_APPEND 0x0400
+#define VFS_O_CREAT    0x0100
+#define VFS_O_TRUNC    0x0200
+#define VFS_O_APPEND   0x0400
+#define VFS_O_CLOEXEC  0x0800
+#define VFS_O_NONBLOCK 0x1000
+
+/* fcntl commands */
+#define VFS_F_GETFD 1
+#define VFS_F_SETFD 2
+#define VFS_F_GETFL 3
+#define VFS_F_SETFL 4
+
+/* fcntl file descriptor flags */
+#define VFS_FD_CLOEXEC 1
 
 /* Seek mode constants. */
 #define VFS_SEEK_SET 0
@@ -55,12 +76,18 @@ int sys_chdir(const char *path);
 int sys_getcwd(char *buf, size_t size);
 int sys_stat(const char *path, struct stat *buf);
 off_t sys_lseek(int fd, off_t offset, int whence);
+int sys_mkdir(const char *path, int mode);
+int sys_rmdir(const char *path);
+int sys_unlink(const char *path);
+int sys_rename(const char *oldpath, const char *newpath);
+int sys_fcntl(int fd, int cmd, int arg);
 
 /* Memory management */
 void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset);
 
 /* Filesystem sync */
 int sys_sync(void);
+int sys_fsync(int fd);
 
 /* Signal handling */
 int sys_signal(int sig, signal_handler_t handler);

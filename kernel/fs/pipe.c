@@ -41,6 +41,37 @@ struct pipe {
 };
 
 /*
+ * pipe_queue_remove - Unlinks a task from a pipe wait queue if still present.
+ *
+ * A task woken by a signal (sched_unblock) rather than pipe_wake stays linked
+ * via wait_next; it must be removed before it can re-enqueue or be freed.
+ */
+static void pipe_queue_remove(struct task **queue, struct task *t)
+{
+    while (*queue) {
+        if (*queue == t) {
+            *queue = t->wait_next;
+            t->wait_next = NULL;
+            return;
+        }
+        queue = &(*queue)->wait_next;
+    }
+}
+
+/*
+ * pipe_signal_pending - True if the caller has an unblocked pending signal.
+ */
+static int pipe_signal_pending(void)
+{
+    int pid = process_find_current();
+    if (pid < 0) {
+        return 0;
+    }
+    struct process *p = &process_table[pid];
+    return (p->pending_signals & ~p->blocked_signals) != 0;
+}
+
+/*
  * pipe_wait - Blocks the current task on a pipe's specific wait queue.
  */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
@@ -50,15 +81,16 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
 
     /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
     self->state = SCHED_TASK_BLOCKED;
-    self->next = *queue;
+    self->wait_next = *queue;
     *queue = self;
 
     spin_unlock(lock);
     schedule();
 
-    /* schedule() restored IRQs; re-acquire lock and restore original mask */
-    irq_restore(flags);
     spin_lock(lock);
+    /* A signal wake (rather than pipe_wake) leaves us queued: unlink now. */
+    pipe_queue_remove(queue, self);
+    irq_restore(flags);
 }
 
 /*
@@ -70,7 +102,8 @@ static void pipe_wake(struct task **queue)
     *queue = NULL; /* Prevent races with new waiters during unblocking */
 
     while (t) {
-        struct task *next = t->next;
+        struct task *next = t->wait_next;
+        t->wait_next = NULL;
         sched_unblock(t);
         t = next;
     }
@@ -96,6 +129,17 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
         } else {
             if (read > 0 || pipe->writers == 0) {
                 break;
+            }
+            if (file->flags & VFS_O_NONBLOCK) {
+                if (read == 0) {
+                    spin_unlock(&pipe->lock);
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
+            if (pipe_signal_pending()) {
+                spin_unlock(&pipe->lock);
+                return read > 0 ? (int)read : -PERS_ERR_INTERRUPTED;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
@@ -132,6 +176,17 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
             pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
         } else {
+            if (file->flags & VFS_O_NONBLOCK) {
+                if (written == 0) {
+                    spin_unlock(&pipe->lock);
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
+            if (pipe_signal_pending()) {
+                spin_unlock(&pipe->lock);
+                return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
+            }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
@@ -251,7 +306,9 @@ int pipe_create(int pipefd[2])
 
     if (fd_r != -1 && fd_w != -1) {
         p->fd_table[fd_r] = f_read;
+        p->fd_flags[fd_r] = 0;
         p->fd_table[fd_w] = f_write;
+        p->fd_flags[fd_w] = 0;
     }
     spin_unlock(&p->fd_lock);
 

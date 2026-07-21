@@ -14,6 +14,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Kernel Configuration (Kconfig-lite)
 option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
 option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
+option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
 set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
 
 # Propagate config to compiler defines
@@ -23,6 +24,9 @@ if(CONFIG_SMP)
 endif()
 if(CONFIG_LOCKDEP)
     list(APPEND KERNEL_CONFIG_DEFS CONFIG_LOCKDEP)
+endif()
+if(CONFIG_TESTS)
+    list(APPEND KERNEL_CONFIG_DEFS CONFIG_TESTS)
 endif()
 list(APPEND KERNEL_CONFIG_DEFS "CONFIG_NR_CPUS=${CONFIG_NR_CPUS}")
 

@@ -1,7 +1,8 @@
 /*
  * test_libc.c - User-space libc integrity test suite.
  *
- * Covers: string functions, malloc/free/realloc, printf/snprintf, and errno.
+ * Covers: string functions, malloc/free/realloc, printf/snprintf, ctype
+ * classification/case-conversion, and errno.
  * Each test group prints a PASS/FAIL summary line. Individual check failures
  * print the source location so regressions are easy to pinpoint.
  *
@@ -9,7 +10,9 @@
  */
 
 #include "assert.h"
+#include "ctype.h"
 #include "errno.h"
+#include "setjmp.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -189,6 +192,64 @@ static void test_memcpy(void)
     CHECK(d3[0] == 'x' && d3[1] == 'y' && d3[2] == 'z');
 }
 
+static void test_strnlen(void)
+{
+    CHECK(strnlen("abc", 10) == 3); /* Terminator found before the limit. */
+    CHECK(strnlen("abc", 3) == 3);
+    CHECK(strnlen("abcdef", 3) == 3); /* Limit reached first. */
+    CHECK(strnlen("abc", 0) == 0);
+    CHECK(strnlen("", 5) == 0);
+    CHECK(strnlen(NULL, 5) == 0);
+
+    /* No terminator within the limit: must stop at n, not scan past the end. */
+    char unterminated[4] = {'a', 'b', 'c', 'd'};
+    CHECK(strnlen(unterminated, 4) == 4);
+}
+
+static void test_strdup(void)
+{
+    const char *src = "duplicate me";
+    char *dup = strdup(src);
+    CHECK(dup != NULL);
+    CHECK(strcmp(dup, src) == 0);
+    CHECK(dup != src); /* A copy, not the same storage. */
+    dup[0] = 'D';
+    CHECK(src[0] == 'd'); /* Writing the copy must not touch the source. */
+    free(dup);
+
+    char *empty = strdup("");
+    CHECK(empty != NULL && strlen(empty) == 0);
+    free(empty);
+
+    CHECK(strdup(NULL) == NULL);
+}
+
+static void test_strndup(void)
+{
+    char *trunc = strndup("abcdef", 3);
+    CHECK(trunc != NULL);
+    CHECK(strcmp(trunc, "abc") == 0);
+    free(trunc);
+
+    char *whole = strndup("abc", 10); /* n longer than the source. */
+    CHECK(whole != NULL && strcmp(whole, "abc") == 0);
+    free(whole);
+
+    char *none = strndup("abc", 0);
+    CHECK(none != NULL && strlen(none) == 0);
+    free(none);
+
+    /* Must terminate at n even when the source has no NUL in range. */
+    char unterminated[3] = {'x', 'y', 'z'};
+    char *bounded = strndup(unterminated, 3);
+    CHECK(bounded != NULL);
+    CHECK(strlen(bounded) == 3);
+    CHECK(memcmp(bounded, "xyz", 3) == 0);
+    free(bounded);
+
+    CHECK(strndup(NULL, 5) == NULL);
+}
+
 static void test_memmove(void)
 {
     /* Forward overlap: src < dst. */
@@ -363,6 +424,276 @@ static void test_snprintf_percent(void)
     CHECK(strcmp(buf, "100%") == 0);
 }
 
+/* --- ctype.h ------------------------------------------------------------ */
+
+static void test_isalnum(void)
+{
+    CHECK(isalnum('a') && isalnum('z') && isalnum('A') && isalnum('Z'));
+    CHECK(isalnum('0') && isalnum('9'));
+    CHECK(!isalnum(' ') && !isalnum('!') && !isalnum('\n') && !isalnum('_'));
+}
+
+static void test_isalpha(void)
+{
+    CHECK(isalpha('a') && isalpha('Z'));
+    CHECK(!isalpha('0') && !isalpha('9')); /* Digits are not alpha. */
+    CHECK(!isalpha(' ') && !isalpha('.'));
+}
+
+static void test_isupper(void)
+{
+    CHECK(isupper('A') && isupper('M') && isupper('Z'));
+    CHECK(!isupper('a') && !isupper('z')); /* Lowercase is not upper. */
+    CHECK(!isupper('5') && !isupper(' ') && !isupper('!'));
+}
+
+static void test_islower(void)
+{
+    CHECK(islower('a') && islower('m') && islower('z'));
+    CHECK(!islower('A') && !islower('Z')); /* Uppercase is not lower. */
+    CHECK(!islower('5') && !islower(' ') && !islower('!'));
+}
+
+static void test_isdigit(void)
+{
+    for (char c = '0'; c <= '9'; c++) {
+        CHECK(isdigit(c));
+    }
+    CHECK(!isdigit('a') && !isdigit(' ') && !isdigit('/') && !isdigit(':'));
+    /* '/' and ':' are the bytes immediately outside the '0'-'9' range. */
+}
+
+static void test_isspace(void)
+{
+    CHECK(isspace(' ') && isspace('\t') && isspace('\n'));
+    CHECK(isspace('\v') && isspace('\f') && isspace('\r'));
+    CHECK(!isspace('a') && !isspace('0'));
+}
+
+static void test_isblank(void)
+{
+    /* isblank is narrower than isspace: only space and tab. */
+    CHECK(isblank(' ') && isblank('\t'));
+    CHECK(!isblank('\n') && !isblank('\v') && !isblank('\f') && !isblank('\r'));
+}
+
+static void test_ispunct(void)
+{
+    CHECK(ispunct('!') && ispunct('.') && ispunct('@') && ispunct('~'));
+    CHECK(ispunct('[') && ispunct('_') && ispunct('`'));
+    CHECK(!ispunct('a') && !ispunct('5') && !ispunct(' '));
+}
+
+static void test_iscntrl(void)
+{
+    CHECK(iscntrl('\0') && iscntrl('\n') && iscntrl(0x1F) && iscntrl(0x7F)); /* DEL */
+    CHECK(!iscntrl('a') && !iscntrl(' ') && !iscntrl('~'));
+}
+
+static void test_isxdigit(void)
+{
+    CHECK(isxdigit('0') && isxdigit('9'));
+    CHECK(isxdigit('a') && isxdigit('f') && isxdigit('A') && isxdigit('F'));
+    CHECK(!isxdigit('g') && !isxdigit('G') && !isxdigit('z'));
+}
+
+static void test_isgraph(void)
+{
+    /* isgraph: any printable character EXCEPT space. */
+    CHECK(isgraph('a') && isgraph('Z') && isgraph('5'));
+    CHECK(isgraph('!') && isgraph('~')); /* Punctuation counts. */
+    CHECK(!isgraph(' '));                /* Space is excluded. */
+    CHECK(!isgraph('\t') && !isgraph('\n') && !isgraph(0x1F) && !isgraph(0x7F));
+}
+
+static void test_isprint(void)
+{
+    /* isprint: any printable character INCLUDING space. */
+    CHECK(isprint('a') && isprint('Z') && isprint('5'));
+    CHECK(isprint('!') && isprint('~'));
+    CHECK(isprint(' ')); /* The one difference from isgraph. */
+    CHECK(!isprint('\t') && !isprint('\n') && !isprint(0x1F) && !isprint(0x7F));
+}
+
+static void test_toupper(void)
+{
+    CHECK(toupper('a') == 'A');
+    CHECK(toupper('z') == 'Z');
+    CHECK(toupper('A') == 'A'); /* Already upper: unchanged. */
+    CHECK(toupper('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(toupper('!') == '!');
+}
+
+static void test_tolower(void)
+{
+    CHECK(tolower('A') == 'a');
+    CHECK(tolower('Z') == 'z');
+    CHECK(tolower('a') == 'a'); /* Already lower: unchanged. */
+    CHECK(tolower('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(tolower('!') == '!');
+}
+
+static void test_ctype_bounds(void)
+{
+    /* EOF and out-of-range values must be handled without indexing OOB. */
+    CHECK(!isalnum(EOF));
+    CHECK(!isalpha(EOF));
+    CHECK(!isdigit(EOF));
+    CHECK(!isspace(EOF));
+    CHECK(!isupper(EOF));
+    CHECK(!islower(EOF));
+    CHECK(!isgraph(EOF));
+    CHECK(!isprint(EOF));
+
+    CHECK(!isalnum(128));
+    CHECK(!isalnum(255));
+    CHECK(!isalnum(1000));
+    CHECK(!isalnum(-100));
+    CHECK(!isupper(200) && !islower(200));
+    CHECK(!isgraph(200) && !isprint(200));
+
+    /* toupper/tolower must return the argument unchanged, not crash or
+     * table-index out of bounds. */
+    CHECK(toupper(EOF) == EOF);
+    CHECK(tolower(EOF) == EOF);
+    CHECK(toupper(200) == 200);
+    CHECK(tolower(200) == 200);
+}
+
+/* --- setjmp / longjmp --------------------------------------------------- */
+
+static jmp_buf g_basic_jb;
+static jmp_buf g_zero_jb;
+static jmp_buf g_nest_jb;
+
+static void test_setjmp_direct(void)
+{
+    jmp_buf local;
+    /* A setjmp with no matching longjmp reports the first-time return. */
+    CHECK(setjmp(local) == 0);
+}
+
+static void test_longjmp_value(void)
+{
+    volatile int before_jump = 0;
+    int rc = setjmp(g_basic_jb);
+
+    if (rc == 0) {
+        before_jump = 1;
+        longjmp(g_basic_jb, 42);
+        /* Unreached: falling through here would leave rc at 0 below. */
+    }
+
+    CHECK(rc == 42);         /* setjmp returned longjmp's value */
+    CHECK(before_jump == 1); /* volatile local survived the jump */
+}
+
+static void test_longjmp_zero(void)
+{
+    /* longjmp(buf, 0) must surface as 1 so it is never mistaken for the
+     * first-time return. The guard stops a runaway loop if that rule breaks. */
+    static volatile int attempts = 0;
+
+    int rc = setjmp(g_zero_jb);
+    if (rc == 0) {
+        attempts++;
+        if (attempts > 2) {
+            CHECK(0); /* longjmp(buf, 0) kept returning 0 */
+            return;
+        }
+        longjmp(g_zero_jb, 0);
+    }
+
+    CHECK(rc == 1);
+}
+
+/* Jumps out of three nested frames at once. */
+static void nest_level3(void)
+{
+    longjmp(g_nest_jb, 7);
+}
+
+static void nest_level2(void)
+{
+    nest_level3();
+}
+
+static void nest_level1(void)
+{
+    nest_level2();
+}
+
+/* Recurses so a wrong sp after longjmp shows up as a wrong sum or a fault. */
+static int sum_to(int n)
+{
+    return n <= 0 ? 0 : n + sum_to(n - 1);
+}
+
+static void test_longjmp_nested(void)
+{
+    int rc = setjmp(g_nest_jb);
+    if (rc == 0) {
+        nest_level1();
+    }
+
+    CHECK(rc == 7);
+    /* The abandoned frames must leave a usable stack behind. */
+    CHECK(sum_to(10) == 55);
+}
+
+static void test_setjmp_independent(void)
+{
+    /* Two buffers must not alias: jumping through one leaves the other set. */
+    jmp_buf a, b;
+    volatile int hops = 0;
+
+    if (setjmp(a) == 0) {
+        if (setjmp(b) == 0) {
+            hops = 1;
+            longjmp(b, 3);
+        }
+        CHECK(hops == 1);
+        hops = 2;
+        longjmp(a, 5);
+    }
+
+    CHECK(hops == 2);
+}
+
+/* --- strerror ----------------------------------------------------------- */
+
+static void test_strerror_keying(void)
+{
+    /* Guards the numbering collision: the internal PERS_ERR_IO_ERROR is 9 and
+     * so is EBADF, so a table keyed on the internal codes would return the
+     * I/O-error text for value 9. These must stay distinct and correct. */
+    CHECK(EBADF == 9);
+    CHECK(strcmp(strerror(9), "Bad file descriptor") == 0);
+    CHECK(strcmp(strerror(EIO), "I/O error") == 0);
+    CHECK(strcmp(strerror(EIO), strerror(EBADF)) != 0);
+
+    /* PERS_ERR_NOT_FOUND is 1 while ENOENT is 2 — an off-by-one keying would
+     * report "Operation not permitted" for a missing file. */
+    CHECK(strcmp(strerror(1), "Operation not permitted") == 0);
+    CHECK(strcmp(strerror(2), "No such file or directory") == 0);
+}
+
+static void test_strerror_end_to_end(void)
+{
+    /* The real path: a failed syscall sets errno, and strerror must describe
+     * it. This is what proves the table is keyed on the same numbering that
+     * __pers_to_errno() produces. */
+    errno = 0;
+    int fd = sys_open("/no/such/file", VFS_O_RDONLY);
+    CHECK(fd == -1);
+    CHECK(strcmp(strerror(errno), "No such file or directory") == 0);
+
+    errno = 0;
+    int ret = sys_close(9999);
+    CHECK(ret == -1);
+    CHECK(strcmp(strerror(errno), "Bad file descriptor") == 0);
+}
+
 /* --- errno ------------------------------------------------------------- */
 
 static void test_errno_open(void)
@@ -392,6 +723,87 @@ static void test_errno_preserved(void)
     CHECK(errno == EINVAL); /* Unchanged by the successful call. */
 }
 
+/* --- strerror ------------------------------------------------------------ */
+
+static void test_strerror_known(void)
+{
+    CHECK(strcmp(strerror(EPERM), "Operation not permitted") == 0);
+    CHECK(strcmp(strerror(ENOENT), "No such file or directory") == 0);
+    CHECK(strcmp(strerror(EIO), "I/O error") == 0);
+    CHECK(strcmp(strerror(EBADF), "Bad file descriptor") == 0);
+    CHECK(strcmp(strerror(ENOMEM), "Out of memory") == 0);
+    CHECK(strcmp(strerror(EACCES), "Permission denied") == 0);
+    CHECK(strcmp(strerror(EEXIST), "File exists") == 0);
+    CHECK(strcmp(strerror(EINVAL), "Invalid argument") == 0);
+    CHECK(strcmp(strerror(ENOSPC), "No space left on device") == 0);
+    CHECK(strcmp(strerror(EPIPE), "Broken pipe") == 0);
+    CHECK(strcmp(strerror(ENAMETOOLONG), "File name too long") == 0);
+    CHECK(strcmp(strerror(ENOSYS), "Function not implemented") == 0);
+    CHECK(strcmp(strerror(ELOOP), "Too many levels of symbolic links") == 0);
+    CHECK(strcmp(strerror(ETIMEDOUT), "Connection timed out") == 0);
+    CHECK(strcmp(strerror(ECONNREFUSED), "Connection refused") == 0);
+}
+
+static void test_strerror_aliases(void)
+{
+    /* EWOULDBLOCK and EOPNOTSUPP are #defined to EAGAIN/ENOTSUP, so they
+     * must resolve to the exact same message rather than a separate,
+     * possibly-diverging table entry. */
+    CHECK(strcmp(strerror(EAGAIN), strerror(EWOULDBLOCK)) == 0);
+    CHECK(strcmp(strerror(ENOTSUP), strerror(EOPNOTSUPP)) == 0);
+    CHECK(strcmp(strerror(EWOULDBLOCK), "Resource temporarily unavailable") == 0);
+    CHECK(strcmp(strerror(EOPNOTSUPP), "Operation not supported") == 0);
+}
+
+static void test_strerror_gaps(void)
+{
+    /* Numbers with no #define on this platform (holes in the errno
+     * numbering) must fall back to "Unknown error <n>", not crash or
+     * return a stale/garbage string. */
+    char expected[32];
+    int gaps[] = {15, 26, 31, 33, 37};
+
+    for (size_t i = 0; i < sizeof(gaps) / sizeof(gaps[0]); i++) {
+        snprintf(expected, sizeof(expected), "Unknown error %d", gaps[i]);
+        CHECK(strcmp(strerror(gaps[i]), expected) == 0);
+    }
+}
+
+static void test_strerror_out_of_range(void)
+{
+    char expected[32];
+
+    /* Negative values. */
+    snprintf(expected, sizeof(expected), "Unknown error %d", -1);
+    CHECK(strcmp(strerror(-1), expected) == 0);
+
+    /* Just past the highest defined code (ECONNREFUSED == 111). */
+    snprintf(expected, sizeof(expected), "Unknown error %d", 112);
+    CHECK(strcmp(strerror(112), expected) == 0);
+
+    /* Far out of range, well beyond any lookup table bound. */
+    snprintf(expected, sizeof(expected), "Unknown error %d", 999999);
+    CHECK(strcmp(strerror(999999), expected) == 0);
+
+    /* INT_MIN produces the longest possible text (25 chars). The comparison
+     * buffer is deliberately wider than strerror's own, so a too-small buffer
+     * there fails here instead of matching an equally-truncated expectation. */
+    const int int_min = -2147483647 - 1;
+    char wide[64];
+    snprintf(wide, sizeof(wide), "Unknown error %d", int_min);
+    CHECK(strcmp(strerror(int_min), wide) == 0);
+    CHECK(strlen(strerror(int_min)) == 25);
+}
+
+static void test_strerror_nonnull(void)
+{
+    /* strerror() must never return NULL, even for nonsense input, since
+     * callers commonly pass the result straight to printf("%s", ...). */
+    CHECK(strerror(EINVAL) != NULL);
+    CHECK(strerror(-12345) != NULL);
+    CHECK(strerror(0) != NULL);
+}
+
 /* --- Entry point ------------------------------------------------------- */
 
 int main(void)
@@ -410,6 +822,9 @@ int main(void)
     run_group("strrchr", test_strrchr);
     run_group("strstr", test_strstr);
     run_group("strtok_r", test_strtok_r);
+    run_group("strnlen", test_strnlen);
+    run_group("strdup", test_strdup);
+    run_group("strndup", test_strndup);
     run_group("memset", test_memset);
     run_group("memcpy", test_memcpy);
     run_group("memmove", test_memmove);
@@ -419,12 +834,39 @@ int main(void)
     run_group("malloc coalesce", test_malloc_coalesce);
     run_group("calloc", test_calloc);
     run_group("realloc", test_realloc);
+    run_group("isalnum", test_isalnum);
+    run_group("isalpha", test_isalpha);
+    run_group("isupper", test_isupper);
+    run_group("islower", test_islower);
+    run_group("isdigit", test_isdigit);
+    run_group("isspace", test_isspace);
+    run_group("isblank", test_isblank);
+    run_group("ispunct", test_ispunct);
+    run_group("iscntrl", test_iscntrl);
+    run_group("isxdigit", test_isxdigit);
+    run_group("isgraph", test_isgraph);
+    run_group("isprint", test_isprint);
+    run_group("toupper", test_toupper);
+    run_group("tolower", test_tolower);
+    run_group("ctype bounds", test_ctype_bounds);
     run_group("snprintf basic", test_snprintf_basic);
     run_group("snprintf bounds", test_snprintf_bounds);
     run_group("snprintf %%", test_snprintf_percent);
+    run_group("setjmp direct", test_setjmp_direct);
+    run_group("longjmp value", test_longjmp_value);
+    run_group("longjmp zero", test_longjmp_zero);
+    run_group("longjmp nested", test_longjmp_nested);
+    run_group("setjmp independent", test_setjmp_independent);
     run_group("errno ENOENT", test_errno_open);
     run_group("errno EBADF", test_errno_close);
     run_group("errno preserved", test_errno_preserved);
+    run_group("strerror known", test_strerror_known);
+    run_group("strerror aliases", test_strerror_aliases);
+    run_group("strerror gaps", test_strerror_gaps);
+    run_group("strerror out of range", test_strerror_out_of_range);
+    run_group("strerror non-null", test_strerror_nonnull);
+    run_group("strerror keying", test_strerror_keying);
+    run_group("strerror end-to-end", test_strerror_end_to_end);
 
     printf("\n[RESULT] %d passed, %d failed\n", g_passed, g_failed);
 

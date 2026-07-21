@@ -291,6 +291,10 @@ static void run_exec(Command *cmd)
     char path[256];
     char *name = cmd->argv[0];
 
+    /* The shell ignores SIGINT so Ctrl-C doesn't kill it, and exec preserves
+     * SIG_IGN. Restore the default so a foreground command responds to Ctrl-C. */
+    sys_signal(SIGNAL_INT, SIGNAL_DFL);
+
     // If command contains a slash, try to exec it directly
     if (strchr(name, '/')) {
         sys_exec(name, cmd->argv, environ);

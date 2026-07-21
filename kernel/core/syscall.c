@@ -18,6 +18,7 @@
 #include "arch/uaccess.h"
 
 #include "core/signals.h"
+#include "core/timer.h"
 #include "fs/vfs.h"
 #include "fs/pipe.h"
 #include "mm/pmm.h"
@@ -28,6 +29,7 @@
 #include "sched/process.h"
 #include "driver/uart.h"
 #include "driver/block.h"
+#include "fs/pagecache.h"
 
 /*
  * validate_user_buffer - Verifies that a memory range is valid for user access.
@@ -550,14 +552,26 @@ sigreturn_kill:
             }
 
             struct process *p = &process_table[pid];
+            sigset_t saved_mask = p->blocked_signals;
             p->blocked_signals = kmask;
             p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
 
-            while (!(p->pending_signals & ~p->blocked_signals)) {
+            /* Block until a signal is pending. Mask IRQs across the pending
+             * check and the state transition so a signal delivered on this core
+             * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
+            for (;;) {
+                unsigned long irqf = irq_save();
+                if (p->pending_signals & ~p->blocked_signals) {
+                    irq_restore(irqf);
+                    break;
+                }
                 curr->state = SCHED_TASK_BLOCKED;
+                irq_restore(irqf);
                 schedule();
             }
 
+            /* POSIX: sigsuspend restores the caller's original mask on return. */
+            p->blocked_signals = saved_mask;
             tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
             break;
         }
@@ -666,6 +680,12 @@ sigreturn_kill:
                 break;
             }
 
+            /* Reject an out-of-range fd before it indexes fd_table[] */
+            if (fd != -1 && (fd < 0 || fd >= VFS_MAX_FDS)) {
+                tf->x[0] = (uintptr_t)MAP_FAILED;
+                break;
+            }
+
             size_t pages_needed = (length + PAGE_SIZE - 1) / PAGE_SIZE;
             uintptr_t new_region = process_va_alloc(&p->va, pages_needed);
             if (new_region == 0) {
@@ -675,14 +695,12 @@ sigreturn_kill:
 
             if (fd != -1) {
                 struct vfs_file *file = p->fd_table[fd];
-                if (file == NULL) {
-                    tf->x[0] = (uintptr_t)MAP_FAILED;
-                    break;
+                if (file == NULL || file->node == NULL || file->node->ops == NULL) {
+                    goto mmap_fail;
                 }
                 if (file->node->ops->mmap != NULL) {
                     if (file->node->ops->mmap(file, new_region, length, prot, flags) < 0) {
-                        tf->x[0] = (uintptr_t)MAP_FAILED;
-                        break;
+                        goto mmap_fail;
                     }
                 }
             }
@@ -698,8 +716,7 @@ sigreturn_kill:
                 for (size_t i = 0; i < pages_needed; i++) {
                     void *kaddr = pmm_alloc_page();
                     if (!kaddr) {
-                        tf->x[0] = (uintptr_t)MAP_FAILED;
-                        goto mmap_done;
+                        goto mmap_fail;
                     }
                     memset(kaddr, 0, PAGE_SIZE);
                     mmu_user_map_page(p->user_pgd, new_region + i * PAGE_SIZE,
@@ -707,7 +724,16 @@ sigreturn_kill:
                 }
             }
             tf->x[0] = new_region;
-mmap_done:
+            break;
+
+mmap_fail:
+            /* Unmap anything mapped so far (frees those pages) and release the
+             * reserved VA region so a failed mmap leaks neither. */
+            for (size_t j = 0; j < pages_needed; j++) {
+                mmu_user_unmap_page(p->user_pgd, new_region + j * PAGE_SIZE);
+            }
+            process_va_free(&p->va, new_region);
+            tf->x[0] = (uintptr_t)MAP_FAILED;
             break;
         }
 
@@ -720,8 +746,152 @@ mmap_done:
         }
 
         case SYS_SYNC: {
+            pagecache_sync();
             block_cache_sync();
             tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+        case SYS_MKDIR: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_mkdir(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_RMDIR: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_rmdir(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_UNLINK: {
+            const char *path = (const char *)tf->x[0];
+            if (!validate_user_buffer(path, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!kpath) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
+                heap_free(kpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_unlink(kpath);
+            heap_free(kpath);
+            break;
+        }
+        case SYS_RENAME: {
+            const char *oldpath = (const char *)tf->x[0];
+            const char *newpath = (const char *)tf->x[1];
+            if (!validate_user_buffer(oldpath, 1, 0) || !validate_user_buffer(newpath, 1, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            char *koldpath = heap_malloc(VFS_MAX_PATH_LEN);
+            char *knewpath = heap_malloc(VFS_MAX_PATH_LEN);
+            if (!koldpath || !knewpath) {
+                if (koldpath)
+                    heap_free(koldpath);
+                if (knewpath)
+                    heap_free(knewpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+            long copied_old = strncpy_from_user(koldpath, oldpath, VFS_MAX_PATH_LEN);
+            long copied_new = strncpy_from_user(knewpath, newpath, VFS_MAX_PATH_LEN);
+            if (copied_old < 0 || copied_old >= VFS_MAX_PATH_LEN || copied_new < 0
+                || copied_new >= VFS_MAX_PATH_LEN) {
+                heap_free(koldpath);
+                heap_free(knewpath);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            tf->x[0] = vfs_rename(koldpath, knewpath);
+            heap_free(koldpath);
+            heap_free(knewpath);
+            break;
+        }
+
+        case SYS_FSYNC: {
+            int fd = (int)tf->x[0];
+            tf->x[0] = (uint64_t)vfs_fsync(fd);
+            break;
+        }
+        case SYS_FCNTL: {
+            int fd = (int)tf->x[0];
+            int cmd = (int)tf->x[1];
+            int arg = (int)tf->x[2];
+
+            if (fd < 0 || fd >= VFS_MAX_FDS) {
+                tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
+                break;
+            }
+
+            struct process *p = &process_table[pid];
+
+            spin_lock(&p->fd_lock);
+            struct vfs_file *f = p->fd_table[fd];
+            if (!f) {
+                spin_unlock(&p->fd_lock);
+                tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
+                break;
+            }
+
+            int ret = 0;
+            switch (cmd) {
+                case VFS_F_GETFD:
+                    ret = p->fd_flags[fd];
+                    break;
+                case VFS_F_SETFD:
+                    p->fd_flags[fd] = arg;
+                    break;
+                case VFS_F_GETFL:
+                    ret = f->flags;
+                    break;
+                case VFS_F_SETFL:
+                    f->flags = (f->flags & VFS_O_ACCMODE) | (arg & ~VFS_O_ACCMODE);
+                    break;
+                default:
+                    ret = -PERS_ERR_INVALID_ARGUMENT;
+                    break;
+            }
+            spin_unlock(&p->fd_lock);
+
+            tf->x[0] = (uint64_t)ret;
             break;
         }
 

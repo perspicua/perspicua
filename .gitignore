@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+build-test/
 compile_commands.json
 *.o
 *.d

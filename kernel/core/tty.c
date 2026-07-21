@@ -21,13 +21,29 @@
 struct tty console_tty;
 
 /*
+ * console_rx_adapter - Bridges the UART RX callback to the console TTY.
+ */
+static void console_rx_adapter(char c)
+{
+    tty_handle_rx(&console_tty, c);
+}
+
+/*
+ * console_tx_adapter - Bridges the UART TX callback to the console TTY.
+ */
+static void console_tx_adapter(void)
+{
+    tty_handle_tx(&console_tty);
+}
+
+/*
  * wait_queue_add - Appends a task to a TTY wait queue.
  */
 static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
 {
-    t->next = NULL;
+    t->wait_next = NULL;
     if (*tail) {
-        (*tail)->next = t;
+        (*tail)->wait_next = t;
         *tail = t;
     } else {
         *head = *tail = t;
@@ -41,11 +57,11 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
 {
     while (*head) {
         struct task *t = *head;
-        *head = t->next;
+        *head = t->wait_next;
         if (*head == NULL) {
             *tail = NULL;
         }
-        t->next = NULL;
+        t->wait_next = NULL;
 
         /* Skip tasks that were woken up by other signals or timeouts */
         if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_BLOCKED) {
@@ -53,6 +69,32 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
         }
     }
     return NULL;
+}
+
+/*
+ * wait_queue_remove_task - Unlinks a specific task from a TTY wait queue.
+ */
+static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
+{
+    struct task *curr = *head;
+    struct task *prev = NULL;
+
+    while (curr) {
+        if (curr == target) {
+            if (prev) {
+                prev->wait_next = curr->wait_next;
+            } else {
+                *head = curr->wait_next;
+            }
+            if (curr == *tail) {
+                *tail = prev;
+            }
+            curr->wait_next = NULL;
+            return;
+        }
+        prev = curr;
+        curr = curr->wait_next;
+    }
 }
 
 /*
@@ -163,6 +205,9 @@ void tty_init(struct tty *tty)
     tty->canon_enabled = 0;
     tty->foreground_pid = 0;
 
+    uart_reg_rx_callback(console_rx_adapter);
+    uart_reg_tx_callback(console_tx_adapter);
+
     pr_info("tty: console tty initialized\n");
 }
 
@@ -232,7 +277,7 @@ void tty_handle_rx(struct tty *tty, char c)
 /*
  * tty_read - Reads characters, blocking if no line or data is available.
  */
-int tty_read(struct tty *tty, char *buf, size_t count)
+int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
     struct task *curr_task = sched_get_current();
     if (curr_task) {
@@ -249,6 +294,18 @@ int tty_read(struct tty *tty, char *buf, size_t count)
         }
 
         if (!ready) {
+            if (file && (file->flags & VFS_O_NONBLOCK)) {
+                spin_unlock_irqrestore(&tty->lock, flags);
+                if (n == 0) {
+                    return -PERS_ERR_TRY_AGAIN;
+                }
+                break;
+            }
+            if (n > 0) {
+                spin_unlock_irqrestore(&tty->lock, flags);
+                break;
+            }
+
             struct task *curr_task_inner = sched_get_current();
             uint32_t pid = curr_task_inner->pid;
 
@@ -261,6 +318,12 @@ int tty_read(struct tty *tty, char *buf, size_t count)
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
+
+            /* Cleanup after wake */
+            unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
+            wait_queue_remove_task(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
+            spin_unlock_irqrestore(&tty->lock, flags_cleanup);
+
             continue;
         }
 
@@ -297,6 +360,9 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
             flags = spin_lock_irqsave(&tty->lock);
+
+            /* Cleanup after wake */
+            wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
         }
 
         char c = buf[i];

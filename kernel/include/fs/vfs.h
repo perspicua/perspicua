@@ -24,10 +24,20 @@
 #define VFS_O_RDWR    0x0002
 #define VFS_O_ACCMODE 0x0003
 
-#define VFS_O_CREAT   0x0100
-#define VFS_O_TRUNC   0x0200
-#define VFS_O_APPEND  0x0400
-#define VFS_O_CLOEXEC 0x0800
+#define VFS_O_CREAT    0x0100
+#define VFS_O_TRUNC    0x0200
+#define VFS_O_APPEND   0x0400
+#define VFS_O_CLOEXEC  0x0800
+#define VFS_O_NONBLOCK 0x1000
+
+/* fcntl commands */
+#define VFS_F_GETFD 1
+#define VFS_F_SETFD 2
+#define VFS_F_GETFL 3
+#define VFS_F_SETFL 4
+
+/* fcntl file descriptor flags */
+#define VFS_FD_CLOEXEC 1
 
 /* Seek mode constants */
 #define VFS_SEEK_SET 0
@@ -68,6 +78,12 @@ struct vfs_vnode_ops {
     int (*stat)(struct vfs_vnode *node, struct stat *buf);
     int (*mmap)(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags);
     int (*write_page)(struct vfs_vnode *node, size_t page_index, void *data, size_t valid_bytes);
+    int (*mkdir)(struct vfs_vnode *parent, const char *name);
+    int (*create)(struct vfs_vnode *parent, const char *name);
+    int (*rmdir)(struct vfs_vnode *parent, const char *name);
+    int (*unlink)(struct vfs_vnode *parent, const char *name);
+    int (*rename)(struct vfs_vnode *old_parent, const char *old_name, struct vfs_vnode *new_parent,
+                  const char *new_name);
 };
 
 /*
@@ -147,6 +163,25 @@ int vfs_readdir(int fd, void *buffer, size_t count);
  * vfs_stat - Retrieves metadata for a file by path.
  */
 int vfs_stat(const char *path, struct stat *buf);
+
+/*
+ * vfs_mkdir - Creates a new directory from a given path.
+ */
+int vfs_mkdir(const char *path);
+
+/*
+ *  vfs_rmdir - Removes an existing directory from a given path.
+ */
+int vfs_rmdir(const char *path);
+
+int vfs_unlink(const char *path);
+
+int vfs_rename(const char *oldpath, const char *newpath);
+
+/*
+ * vfs_fsync - Flushes all dirty cached pages for a single file descriptor to disk.
+ */
+int vfs_fsync(int fd);
 
 /*
  * vfs_dup2 - Duplicates a descriptor to a specific target slot.

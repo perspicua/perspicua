@@ -9,6 +9,7 @@
  */
 #include "sched/process.h"
 
+#include "mm/asid.h"
 #include "uapi/wait.h"
 #include "uapi/errors.h"
 #include "arch/exception.h"
@@ -82,9 +83,9 @@ static void free_kernel_stack(void *stack_base)
 
 static void open_std_fds(uint32_t pid)
 {
-    vfs_open_pid("/dev/uart", VFS_O_RDONLY, pid);
-    vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
-    vfs_open_pid("/dev/uart", VFS_O_WRONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_RDONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
+    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
 }
 
 static void close_all_fds(struct process *p)
@@ -143,6 +144,36 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
         mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA);
     }
     return vbase;
+}
+
+/*
+ * stack_copy_in - Copies kernel data into a not-yet-active user address space.
+ *
+ * The freshly-allocated destination pages are not physically contiguous, so a
+ * single memcpy that crosses a page boundary would run off one frame into an
+ * unrelated one. Resolve and copy one page at a time via the target pgd.
+ */
+static void stack_copy_in(unsigned long *pgd, uintptr_t user_dst, const void *src, size_t len)
+{
+    const uint8_t *s = (const uint8_t *)src;
+
+    while (len > 0) {
+        unsigned long paddr;
+        if (!mmu_user_query(pgd, user_dst & ~0xFFFUL, &paddr, NULL)) {
+            return;
+        }
+
+        size_t page_off = (size_t)(user_dst & 0xFFFUL);
+        size_t chunk = PAGE_SIZE - page_off;
+        if (chunk > len) {
+            chunk = len;
+        }
+
+        memcpy((void *)(P2V(paddr) + page_off), s, chunk);
+        user_dst += chunk;
+        s += chunk;
+        len -= chunk;
+    }
 }
 
 void process_flush_icache_range(void *start, size_t size)
@@ -285,8 +316,9 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
 
     p->pid = pid;
     p->user_pgd = user_pgd;
-    p->asid = (unsigned long)pid;
-    p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
+    p->asid = 0;
+    p->asid_generation = 0;
+    p->ttbr0 = V2P(user_pgd);
     p->vaddr_code = vaddr_code;
     p->paddr_code = V2P(code_page);
     p->vaddr_user_stack = vaddr_user_stack;
@@ -303,8 +335,10 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -362,8 +396,9 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     p->pid = pid;
     p->user_pgd = user_pgd;
-    p->asid = (unsigned long)pid;
-    p->ttbr0 = V2P(user_pgd) | ((uint64_t)pid << 48);
+    p->asid = 0;
+    p->asid_generation = 0;
+    p->ttbr0 = V2P(user_pgd);
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = vaddr_stack;
     p->vaddr_kernel_stack = (uintptr_t)kstack;
@@ -382,8 +417,10 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++)
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
         p->fd_table[i] = NULL;
+        p->fd_flags[i] = 0;
+    }
     open_std_fds(pid);
 
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
@@ -419,6 +456,20 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     struct process *p = &process_table[pid];
+    int fds_to_close[VFS_MAX_FDS];
+    int close_count = 0;
+
+    spin_lock(&p->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (p->fd_table[i] && (p->fd_flags[i] & VFS_FD_CLOEXEC)) {
+            fds_to_close[close_count++] = i;
+        }
+    }
+    spin_unlock(&p->fd_lock);
+
+    for (int i = 0; i < close_count; i++) {
+        vfs_close(fds_to_close[i]);
+    }
 
     /* Copy arguments before switching address space */
     char *kargv[128];
@@ -492,10 +543,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < argc; i++) {
         size_t len = strlen(kargv[i]) + 1;
         user_sp = (user_sp - len) & ~7UL;
-        unsigned long paddr;
-        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL)) {
-            memcpy((void *)(P2V(paddr) + (user_sp & 0xFFF)), kargv[i], len);
-        }
+        stack_copy_in(new_pgd, user_sp, kargv[i], len);
         karg_user_vaddrs[i] = user_sp;
     }
 
@@ -523,10 +571,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     for (int i = 0; i < envc; i++) {
         size_t len = strlen(kenvp[i]) + 1;
         user_sp = (user_sp - len) & ~7UL;
-        unsigned long paddr;
-        if (mmu_user_query(new_pgd, user_sp & ~0xFFFUL, &paddr, NULL)) {
-            memcpy((void *)(P2V(paddr) + (user_sp & 0xFFF)), kenvp[i], len);
-        }
+        stack_copy_in(new_pgd, user_sp, kenvp[i], len);
         kenv_user_vaddrs[i] = user_sp;
     }
 
@@ -572,7 +617,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->name[sizeof(p->name) - 1] = '\0';
 
     mmu_switch_user(new_pgd, p->asid);
-    unsigned long asid_field = (unsigned long)(p->asid & 0xFFFFUL) << 48;
+    unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
     asm volatile("dsb ish" ::: "memory");
     asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
     asm volatile("dsb ish" ::: "memory");
@@ -642,7 +687,7 @@ void process_exit(uint32_t pid, int exit_status)
     unsigned long *pgd = p->user_pgd;
     p->user_pgd = NULL;
     if (pgd) {
-        unsigned long asid_field = (unsigned long)(p->asid & 0xFFFFUL) << 48;
+        unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
         asm volatile("dsb ish");
         asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
         asm volatile("dsb ish");
@@ -657,19 +702,30 @@ void process_exit(uint32_t pid, int exit_status)
     p->state = PROCESS_STATE_ZOMBIE;
 
     uint32_t ppid = p->parent_pid;
-    if (ppid != 0 && ppid < PROCESS_TABLE_SIZE
-        && process_table[ppid].state != PROCESS_STATE_EMPTY) {
+    int notify_parent = (ppid != 0 && ppid < PROCESS_TABLE_SIZE
+                         && process_table[ppid].state != PROCESS_STATE_EMPTY);
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    /* Notify the parent outside the lock (signal_send now takes it itself), and
+     * wake a parent blocked in waitpid() even if it ignores SIGCHLD. Re-validate
+     * under the lock before touching main_task in case the slot was reused. */
+    if (notify_parent) {
         signal_send(ppid, SIGNAL_CHLD);
-        if (process_table[ppid].main_task != NULL) {
+
+        flags = spin_lock_irqsave(&process_table_lock);
+        if (process_table[ppid].state != PROCESS_STATE_EMPTY
+            && process_table[ppid].main_task != NULL) {
             sched_unblock(process_table[ppid].main_task);
         }
+        spin_unlock_irqrestore(&process_table_lock, flags);
     }
-    spin_unlock_irqrestore(&process_table_lock, flags);
 
     struct task *dying = sched_get_current();
     if (dying) {
         dying->state = SCHED_TASK_DEAD;
     }
+
+    asid_free(&process_table[pid].asid, &process_table[pid].asid_generation);
 
     schedule();
     __builtin_unreachable();
@@ -715,8 +771,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
     }
 
     child->user_pgd = child_pgd;
-    child->asid = (uint32_t)child_pid;
-    child->ttbr0 = V2P(child_pgd) | ((uint64_t)child_pid << 48);
+    child->asid = 0;
+    child->asid_generation = 0;
+    child->ttbr0 = V2P(child_pgd);
     child->vaddr_code = parent->vaddr_code;
     child->vaddr_user_stack = parent->vaddr_user_stack;
     child->vaddr_kernel_stack = (uintptr_t)kstack;
@@ -740,6 +797,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (parent->fd_table[i]) {
             child->fd_table[i] = parent->fd_table[i];
+            child->fd_flags[i] = parent->fd_flags[i];
             atomic_inc(&child->fd_table[i]->refcount);
         }
     }

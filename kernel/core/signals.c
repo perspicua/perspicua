@@ -160,12 +160,19 @@ int signal_send(uint32_t target_pid, int sig)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE
-        || process_table[target_pid].state == PROCESS_STATE_EMPTY) {
+    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE) {
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
     struct process *p = &process_table[target_pid];
+
+    /* Hold the process table lock so the target cannot be reaped and its slot
+     * reused between the existence check and dereferencing main_task. */
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    if (p->state == PROCESS_STATE_EMPTY) {
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
 
     __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
 
@@ -175,5 +182,6 @@ int signal_send(uint32_t target_pid, int sig)
         }
     }
 
+    spin_unlock_irqrestore(&process_table_lock, flags);
     return PERS_SUCCESS;
 }

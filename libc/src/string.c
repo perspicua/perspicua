@@ -8,6 +8,9 @@
 #include "string.h"
 
 #include "types.h"
+#include "stdlib.h"
+#include "errno.h"
+#include "stdio.h"
 
 #ifdef __KERNEL__
     #include "core/lock.h"
@@ -25,6 +28,19 @@ size_t strlen(const char *str)
         size++;
     }
     return size;
+}
+
+size_t strnlen(const char *str, size_t size)
+{
+    if (!str) {
+        return 0;
+    }
+
+    size_t sz = 0;
+    while (sz < size && str[sz] != '\0') {
+        sz++;
+    }
+    return sz;
 }
 
 char *strcpy(char *dest, const char *src)
@@ -308,4 +324,94 @@ void *memmove(void *dest, const void *src, size_t count)
         }
     }
     return dest;
+}
+
+char *strdup(const char *str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+
+    size_t len = strlen(str) + 1;
+    char *dup = malloc(len);
+
+    if (dup == NULL) {
+        return NULL;
+    }
+
+    return memcpy(dup, str, len);
+}
+
+char *strndup(const char *str, size_t size)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+
+    size_t len = strnlen(str, size);
+
+    char *dup = malloc(len + 1);
+    if (dup == NULL) {
+        return NULL;
+    }
+
+    dup[len] = '\0';
+    return memcpy(dup, str, len);
+}
+static const char *const error_table[] = {
+    [0] = "Success",
+    [EPERM] = "Operation not permitted",
+    [ENOENT] = "No such file or directory",
+    [ESRCH] = "No such process",
+    [EINTR] = "Interrupted system call",
+    [EIO] = "I/O error",
+    [ENXIO] = "No such device or address",
+    [E2BIG] = "Argument list too long",
+    [ENOEXEC] = "Exec format error",
+    [EBADF] = "Bad file descriptor",
+    [ECHILD] = "No child processes",
+    [EAGAIN] = "Resource temporarily unavailable",
+    [ENOMEM] = "Out of memory",
+    [EACCES] = "Permission denied",
+    [EFAULT] = "Bad address",
+    [EBUSY] = "Device or resource busy",
+    [EEXIST] = "File exists",
+    [EXDEV] = "Cross-device link",
+    [ENODEV] = "No such device",
+    [ENOTDIR] = "Not a directory",
+    [EISDIR] = "Is a directory",
+    [EINVAL] = "Invalid argument",
+    [ENFILE] = "Too many open files in system",
+    [EMFILE] = "Too many open files",
+    [ENOTTY] = "Inappropriate ioctl for device",
+    [EFBIG] = "File too large",
+    [ENOSPC] = "No space left on device",
+    [ESPIPE] = "Illegal seek",
+    [EROFS] = "Read-only file system",
+    [EPIPE] = "Broken pipe",
+    [ERANGE] = "Result too large",
+    [EDEADLK] = "Resource deadlock avoided",
+    [ENAMETOOLONG] = "File name too long",
+    [ENOSYS] = "Function not implemented",
+    [ENOTEMPTY] = "Directory not empty",
+    [ELOOP] = "Too many levels of symbolic links",
+    [ENOTSUP] = "Operation not supported",
+    [ETIMEDOUT] = "Connection timed out",
+    [ECONNREFUSED] = "Connection refused",
+};
+
+#define ERROR_TABLE_SIZE (sizeof(error_table) / sizeof(error_table[0]))
+
+char *strerror(int errnum)
+{
+    /* Shared buffer, so strerror is not reentrant. string.c is linked into
+     * libk too: a kernel caller would race here across cores. */
+    static char unknown_buf[32];
+
+    if (errnum >= 0 && (size_t)errnum < ERROR_TABLE_SIZE && error_table[errnum] != NULL) {
+        return (char *)error_table[errnum];
+    }
+
+    snprintf(unknown_buf, sizeof(unknown_buf), "Unknown error %d", errnum);
+    return unknown_buf;
 }

@@ -7,6 +7,7 @@
 
 #include "sched/sched.h"
 
+#include "mm/asid.h"
 #include "types.h"
 #include "stdio.h"
 #include "string.h"
@@ -127,13 +128,13 @@ static void rq_enqueue(int cpu, struct task *t)
     unsigned long flags = spin_lock_irqsave(&sched_rq_lock[cpu]);
 
     t->state = SCHED_TASK_READY;
-    t->next = NULL;
+    t->rq_next = NULL;
 
     if (!sched_rq_head[cpu]) {
         sched_rq_head[cpu] = t;
         sched_rq_tail[cpu] = t;
     } else {
-        sched_rq_tail[cpu]->next = t;
+        sched_rq_tail[cpu]->rq_next = t;
         sched_rq_tail[cpu] = t;
     }
 
@@ -150,9 +151,9 @@ static struct task *rq_dequeue(int cpu, int allow_pid0)
     while (curr) {
         if ((allow_pid0 || curr->pid != 0) && curr->on_core == -1) {
             if (prev) {
-                prev->next = curr->next;
+                prev->rq_next = curr->rq_next;
             } else {
-                sched_rq_head[cpu] = curr->next;
+                sched_rq_head[cpu] = curr->rq_next;
             }
 
             if (curr == sched_rq_tail[cpu]) {
@@ -163,12 +164,12 @@ static struct task *rq_dequeue(int cpu, int allow_pid0)
                 sched_rq_tail[cpu] = NULL;
             }
 
-            curr->next = NULL;
+            curr->rq_next = NULL;
             spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
             return curr;
         }
         prev = curr;
-        curr = curr->next;
+        curr = curr->rq_next;
     }
 
     spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
@@ -181,19 +182,19 @@ static void sleep_enqueue(struct task *t)
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
 
     if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0) {
-        t->next = sched_sleep_head;
+        t->sleep_next = sched_sleep_head;
         sched_sleep_head = t;
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
         return;
     }
 
     struct task *curr = sched_sleep_head;
-    while (curr->next && (long)(t->wake_time - curr->next->wake_time) >= 0) {
-        curr = curr->next;
+    while (curr->sleep_next && (long)(t->wake_time - curr->sleep_next->wake_time) >= 0) {
+        curr = curr->sleep_next;
     }
 
-    t->next = curr->next;
-    curr->next = t;
+    t->sleep_next = curr->sleep_next;
+    curr->sleep_next = t;
 
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
@@ -206,8 +207,8 @@ static void sleep_drain(int cpu)
 
     while (sched_sleep_head && (long)(now - sched_sleep_head->wake_time) >= 0) {
         struct task *w = sched_sleep_head;
-        sched_sleep_head = w->next;
-        w->next = NULL;
+        sched_sleep_head = w->sleep_next;
+        w->sleep_next = NULL;
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
 
         /* Only enqueue if still blocked; prevents race with unblock. */
@@ -526,6 +527,15 @@ void schedule(void)
     sched_core_pid[cpu] = (int)next->pid;
 
     asm volatile("msr tpidr_el1, %0" ::"r"(next));
+
+    if (next->pid > 0) {
+        struct process *p = &process_table[next->pid];
+        asid_get_active(&p->asid, &p->asid_generation);
+
+        // ttbr0 reconstruct using ASID
+        next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+    }
+
     asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));
     asm volatile("dsb sy");
     asm volatile("isb");
