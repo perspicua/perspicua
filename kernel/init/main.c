@@ -43,7 +43,10 @@
 #include "driver/block.h"
 
 #include "devicetree/fdt.h"
-#include "test.h"
+
+#ifdef CONFIG_KTEST
+    #include "test.h"
+#endif
 
 /* Kernel metadata and versioning */
 #define KERNEL_VERSION "0.1"
@@ -248,8 +251,11 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
+
+#ifdef CONFIG_KTEST
     run_all_tests();
     run_scheduler_tests();
+#endif
 
     /* Launch primary user-space application */
     if (process_create_from_file("/bin/init.elf", 1) != 0) {

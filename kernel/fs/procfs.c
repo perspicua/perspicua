@@ -170,19 +170,19 @@ static int procfs_interrupts_read(struct vfs_file *file, void *buffer, size_t si
         return -PERS_ERR_OUT_OF_MEMORY;
 
     int pos = 0;
-    procfs_append(buf, &pos, 1024,"           ");
+    procfs_append(buf, &pos, 1024, "           ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024,"CPU%-10d", i);
+        procfs_append(buf, &pos, 1024, "CPU%-10d", i);
     }
-    procfs_append(buf, &pos, 1024,"\nTimer:     ");
+    procfs_append(buf, &pos, 1024, "\nTimer:     ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024,"%-13lu", core_irq_stats[i].timer_count);
+        procfs_append(buf, &pos, 1024, "%-13lu", core_irq_stats[i].timer_count);
     }
-    procfs_append(buf, &pos, 1024,"\nUART:      ");
+    procfs_append(buf, &pos, 1024, "\nUART:      ");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024,"%-13lu", core_irq_stats[i].uart_count);
+        procfs_append(buf, &pos, 1024, "%-13lu", core_irq_stats[i].uart_count);
     }
-    procfs_append(buf, &pos, 1024,"\n");
+    procfs_append(buf, &pos, 1024, "\n");
 
     size_t len = strlen(buf);
     if (file->offset >= (vfs_off_t)len) {
@@ -207,10 +207,10 @@ static int procfs_schedstat_read(struct vfs_file *file, void *buffer, size_t siz
         return -PERS_ERR_OUT_OF_MEMORY;
 
     int pos = 0;
-    procfs_append(buf, &pos, 1024,"cpu  context_switches  idle_entries\n");
+    procfs_append(buf, &pos, 1024, "cpu  context_switches  idle_entries\n");
     for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024,"%-5d%-18lu%-13lu\n", i,
-                        core_sched_stats[i].context_switches, core_sched_stats[i].idle_count);
+        procfs_append(buf, &pos, 1024, "%-5d%-18lu%-13lu\n", i,
+                      core_sched_stats[i].context_switches, core_sched_stats[i].idle_count);
     }
 
     size_t len = strlen(buf);

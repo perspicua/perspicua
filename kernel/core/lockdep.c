@@ -17,8 +17,8 @@
  */
 #ifdef CONFIG_LOCKDEP
 
-#define MAX_HELD_LOCKS 16
-#define MAX_LOCK_NODES 1024
+    #define MAX_HELD_LOCKS 16
+    #define MAX_LOCK_NODES 1024
 
 static spinlock_t lockdep_lock = SPINLOCK_INIT;
 static int lockdep_disabled[4] = {0}; // Indexed by core ID

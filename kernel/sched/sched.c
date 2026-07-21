@@ -529,11 +529,11 @@ void schedule(void)
     asm volatile("msr tpidr_el1, %0" ::"r"(next));
 
     if (next->pid > 0) {
-      struct process *p = &process_table[next->pid];
-      asid_get_active(&p->asid, &p->asid_generation);
+        struct process *p = &process_table[next->pid];
+        asid_get_active(&p->asid, &p->asid_generation);
 
-      // ttbr0 reconstruct using ASID
-      next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+        // ttbr0 reconstruct using ASID
+        next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
     }
 
     asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));

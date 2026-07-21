@@ -191,6 +191,64 @@ static void test_memcpy(void)
     CHECK(d3[0] == 'x' && d3[1] == 'y' && d3[2] == 'z');
 }
 
+static void test_strnlen(void)
+{
+    CHECK(strnlen("abc", 10) == 3); /* Terminator found before the limit. */
+    CHECK(strnlen("abc", 3) == 3);
+    CHECK(strnlen("abcdef", 3) == 3); /* Limit reached first. */
+    CHECK(strnlen("abc", 0) == 0);
+    CHECK(strnlen("", 5) == 0);
+    CHECK(strnlen(NULL, 5) == 0);
+
+    /* No terminator within the limit: must stop at n, not scan past the end. */
+    char unterminated[4] = {'a', 'b', 'c', 'd'};
+    CHECK(strnlen(unterminated, 4) == 4);
+}
+
+static void test_strdup(void)
+{
+    const char *src = "duplicate me";
+    char *dup = strdup(src);
+    CHECK(dup != NULL);
+    CHECK(strcmp(dup, src) == 0);
+    CHECK(dup != src); /* A copy, not the same storage. */
+    dup[0] = 'D';
+    CHECK(src[0] == 'd'); /* Writing the copy must not touch the source. */
+    free(dup);
+
+    char *empty = strdup("");
+    CHECK(empty != NULL && strlen(empty) == 0);
+    free(empty);
+
+    CHECK(strdup(NULL) == NULL);
+}
+
+static void test_strndup(void)
+{
+    char *trunc = strndup("abcdef", 3);
+    CHECK(trunc != NULL);
+    CHECK(strcmp(trunc, "abc") == 0);
+    free(trunc);
+
+    char *whole = strndup("abc", 10); /* n longer than the source. */
+    CHECK(whole != NULL && strcmp(whole, "abc") == 0);
+    free(whole);
+
+    char *none = strndup("abc", 0);
+    CHECK(none != NULL && strlen(none) == 0);
+    free(none);
+
+    /* Must terminate at n even when the source has no NUL in range. */
+    char unterminated[3] = {'x', 'y', 'z'};
+    char *bounded = strndup(unterminated, 3);
+    CHECK(bounded != NULL);
+    CHECK(strlen(bounded) == 3);
+    CHECK(memcmp(bounded, "xyz", 3) == 0);
+    free(bounded);
+
+    CHECK(strndup(NULL, 5) == NULL);
+}
+
 static void test_memmove(void)
 {
     /* Forward overlap: src < dst. */
@@ -548,6 +606,9 @@ int main(void)
     run_group("strrchr", test_strrchr);
     run_group("strstr", test_strstr);
     run_group("strtok_r", test_strtok_r);
+    run_group("strnlen", test_strnlen);
+    run_group("strdup", test_strdup);
+    run_group("strndup", test_strndup);
     run_group("memset", test_memset);
     run_group("memcpy", test_memcpy);
     run_group("memmove", test_memmove);
