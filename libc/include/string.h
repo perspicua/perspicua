@@ -12,6 +12,7 @@
 
 /* String length and copying */
 size_t strlen(const char *str);
+size_t strnlen(const char *str, size_t size);
 char *strcpy(char *dest, const char *src);
 char *strncpy(char *dest, const char *src, size_t count);
 
@@ -32,6 +33,9 @@ size_t strspn(const char *s, const char *accept);
 size_t strcspn(const char *s, const char *reject);
 char *strtok(char *str, const char *delim);
 char *strtok_r(char *str, const char *delim, char **saveptr);
+
+char *strdup(const char *str);
+char *strndup(const char *str, size_t size);
 
 /* Raw memory operations */
 int memcmp(const void *ptr1, const void *ptr2, size_t num);

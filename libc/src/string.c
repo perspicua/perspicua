@@ -8,6 +8,7 @@
 #include "string.h"
 
 #include "types.h"
+#include "stdlib.h"
 
 #ifdef __KERNEL__
     #include "core/lock.h"
@@ -25,6 +26,19 @@ size_t strlen(const char *str)
         size++;
     }
     return size;
+}
+
+size_t strnlen(const char *str, size_t size)
+{
+    if (!str) {
+        return 0;
+    }
+
+    size_t sz = 0;
+    while (sz < size && str[sz] != '\0') {
+        sz++;
+    }
+    return sz;
 }
 
 char *strcpy(char *dest, const char *src)
@@ -171,6 +185,39 @@ size_t strcspn(const char *s, const char *reject)
         count++;
     }
     return count;
+}
+
+char *strdup(const char *str)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+
+    size_t len = strlen(str) + 1;
+    char *dup = malloc(len);
+
+    if (dup == NULL) {
+        return NULL;
+    }
+
+    return memcpy(dup, str, len);
+}
+
+char *strndup(const char *str, size_t size)
+{
+    if (str == NULL) {
+        return NULL;
+    }
+
+    size_t len = strnlen(str, size);
+
+    char *dup = malloc(len + 1);
+    if (dup == NULL) {
+        return NULL;
+    }
+
+    dup[len] = '\0';
+    return memcpy(dup, str, len);
 }
 
 char *strtok_r(char *str, const char *delim, char **saveptr)
