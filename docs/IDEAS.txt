@@ -201,9 +201,8 @@ shakiness; harden here first.
 --------------------------------------------------------------------------------
 6. USER-SPACE, LIBC & SHELL
 --------------------------------------------------------------------------------
-  LIBC (still missing; ctype.h and strdup/strndup are DONE):
-  - strerror()                                       Trivial | High — errno -> string.
-  - setjmp() / longjmp()                             Low     | Medium — AArch64 asm.
+  LIBC (still missing; ctype.h, strdup/strndup, setjmp/longjmp, strerror are
+  DONE — note setjmp saves integer regs + sp only, not d8-d15):
   - time.h (time, gmtime, localtime, strftime)       Low-Med | Medium — needs clock syscalls.
   - Proper buffered stdio (FILE*), fgets/fputs/scanf family, snprintf bounds.
   - qsort / bsearch; printf float support; a minimal libm.

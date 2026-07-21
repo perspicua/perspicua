@@ -4,11 +4,14 @@
 # the link that finally pulls it out. Keep the tiers honest.
 
 # Freestanding: self-contained, no syscalls and no kernel subsystems.
+# arch/ holds the AArch64 assembly members; ASM is enabled project-wide by
+# the top-level project(perspicua C ASM), so no per-target language setup.
 set(LIBC_SRC_COMMON
     src/string.c
     src/printf.c
     src/stdlib.c
     src/ctype.c
+    arch/setjmp.S
 )
 
 # Depends on kernel subsystems (heap, UART, panic).

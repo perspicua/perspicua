@@ -34,13 +34,16 @@ size_t strcspn(const char *s, const char *reject);
 char *strtok(char *str, const char *delim);
 char *strtok_r(char *str, const char *delim, char **saveptr);
 
-char *strdup(const char *str);
-char *strndup(const char *str, size_t size);
-
 /* Raw memory operations */
 int memcmp(const void *ptr1, const void *ptr2, size_t num);
 void *memset(void *dest, int val, size_t num);
 void *memcpy(void *dest, const void *src, size_t count);
 void *memmove(void *dest, const void *src, size_t count);
+
+char *strdup(const char *str);
+char *strndup(const char *str, size_t size);
+
+/* Error reporting */
+char *strerror(int errnum);
 
 #endif /* PERSPICUA_LIBC_STRING_H */

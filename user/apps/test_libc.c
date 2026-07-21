@@ -12,6 +12,7 @@
 #include "assert.h"
 #include "ctype.h"
 #include "errno.h"
+#include "setjmp.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -559,6 +560,140 @@ static void test_ctype_bounds(void)
     CHECK(tolower(200) == 200);
 }
 
+/* --- setjmp / longjmp --------------------------------------------------- */
+
+static jmp_buf g_basic_jb;
+static jmp_buf g_zero_jb;
+static jmp_buf g_nest_jb;
+
+static void test_setjmp_direct(void)
+{
+    jmp_buf local;
+    /* A setjmp with no matching longjmp reports the first-time return. */
+    CHECK(setjmp(local) == 0);
+}
+
+static void test_longjmp_value(void)
+{
+    volatile int before_jump = 0;
+    int rc = setjmp(g_basic_jb);
+
+    if (rc == 0) {
+        before_jump = 1;
+        longjmp(g_basic_jb, 42);
+        /* Unreached: falling through here would leave rc at 0 below. */
+    }
+
+    CHECK(rc == 42);         /* setjmp returned longjmp's value */
+    CHECK(before_jump == 1); /* volatile local survived the jump */
+}
+
+static void test_longjmp_zero(void)
+{
+    /* longjmp(buf, 0) must surface as 1 so it is never mistaken for the
+     * first-time return. The guard stops a runaway loop if that rule breaks. */
+    static volatile int attempts = 0;
+
+    int rc = setjmp(g_zero_jb);
+    if (rc == 0) {
+        attempts++;
+        if (attempts > 2) {
+            CHECK(0); /* longjmp(buf, 0) kept returning 0 */
+            return;
+        }
+        longjmp(g_zero_jb, 0);
+    }
+
+    CHECK(rc == 1);
+}
+
+/* Jumps out of three nested frames at once. */
+static void nest_level3(void)
+{
+    longjmp(g_nest_jb, 7);
+}
+
+static void nest_level2(void)
+{
+    nest_level3();
+}
+
+static void nest_level1(void)
+{
+    nest_level2();
+}
+
+/* Recurses so a wrong sp after longjmp shows up as a wrong sum or a fault. */
+static int sum_to(int n)
+{
+    return n <= 0 ? 0 : n + sum_to(n - 1);
+}
+
+static void test_longjmp_nested(void)
+{
+    int rc = setjmp(g_nest_jb);
+    if (rc == 0) {
+        nest_level1();
+    }
+
+    CHECK(rc == 7);
+    /* The abandoned frames must leave a usable stack behind. */
+    CHECK(sum_to(10) == 55);
+}
+
+static void test_setjmp_independent(void)
+{
+    /* Two buffers must not alias: jumping through one leaves the other set. */
+    jmp_buf a, b;
+    volatile int hops = 0;
+
+    if (setjmp(a) == 0) {
+        if (setjmp(b) == 0) {
+            hops = 1;
+            longjmp(b, 3);
+        }
+        CHECK(hops == 1);
+        hops = 2;
+        longjmp(a, 5);
+    }
+
+    CHECK(hops == 2);
+}
+
+/* --- strerror ----------------------------------------------------------- */
+
+static void test_strerror_keying(void)
+{
+    /* Guards the numbering collision: the internal PERS_ERR_IO_ERROR is 9 and
+     * so is EBADF, so a table keyed on the internal codes would return the
+     * I/O-error text for value 9. These must stay distinct and correct. */
+    CHECK(EBADF == 9);
+    CHECK(strcmp(strerror(9), "Bad file descriptor") == 0);
+    CHECK(strcmp(strerror(EIO), "I/O error") == 0);
+    CHECK(strcmp(strerror(EIO), strerror(EBADF)) != 0);
+
+    /* PERS_ERR_NOT_FOUND is 1 while ENOENT is 2 — an off-by-one keying would
+     * report "Operation not permitted" for a missing file. */
+    CHECK(strcmp(strerror(1), "Operation not permitted") == 0);
+    CHECK(strcmp(strerror(2), "No such file or directory") == 0);
+}
+
+static void test_strerror_end_to_end(void)
+{
+    /* The real path: a failed syscall sets errno, and strerror must describe
+     * it. This is what proves the table is keyed on the same numbering that
+     * __pers_to_errno() produces. */
+    errno = 0;
+    int fd = sys_open("/no/such/file", VFS_O_RDONLY);
+    CHECK(fd == -1);
+    CHECK(strcmp(strerror(errno), "No such file or directory") == 0);
+
+    errno = 0;
+    int ret = sys_close(9999);
+    CHECK(ret == -1);
+    CHECK(strcmp(strerror(errno), "Bad file descriptor") == 0);
+}
+
 /* --- errno ------------------------------------------------------------- */
 
 static void test_errno_open(void)
@@ -586,6 +721,87 @@ static void test_errno_preserved(void)
     int pid = sys_getpid();
     CHECK(pid > 0);
     CHECK(errno == EINVAL); /* Unchanged by the successful call. */
+}
+
+/* --- strerror ------------------------------------------------------------ */
+
+static void test_strerror_known(void)
+{
+    CHECK(strcmp(strerror(EPERM), "Operation not permitted") == 0);
+    CHECK(strcmp(strerror(ENOENT), "No such file or directory") == 0);
+    CHECK(strcmp(strerror(EIO), "I/O error") == 0);
+    CHECK(strcmp(strerror(EBADF), "Bad file descriptor") == 0);
+    CHECK(strcmp(strerror(ENOMEM), "Out of memory") == 0);
+    CHECK(strcmp(strerror(EACCES), "Permission denied") == 0);
+    CHECK(strcmp(strerror(EEXIST), "File exists") == 0);
+    CHECK(strcmp(strerror(EINVAL), "Invalid argument") == 0);
+    CHECK(strcmp(strerror(ENOSPC), "No space left on device") == 0);
+    CHECK(strcmp(strerror(EPIPE), "Broken pipe") == 0);
+    CHECK(strcmp(strerror(ENAMETOOLONG), "File name too long") == 0);
+    CHECK(strcmp(strerror(ENOSYS), "Function not implemented") == 0);
+    CHECK(strcmp(strerror(ELOOP), "Too many levels of symbolic links") == 0);
+    CHECK(strcmp(strerror(ETIMEDOUT), "Connection timed out") == 0);
+    CHECK(strcmp(strerror(ECONNREFUSED), "Connection refused") == 0);
+}
+
+static void test_strerror_aliases(void)
+{
+    /* EWOULDBLOCK and EOPNOTSUPP are #defined to EAGAIN/ENOTSUP, so they
+     * must resolve to the exact same message rather than a separate,
+     * possibly-diverging table entry. */
+    CHECK(strcmp(strerror(EAGAIN), strerror(EWOULDBLOCK)) == 0);
+    CHECK(strcmp(strerror(ENOTSUP), strerror(EOPNOTSUPP)) == 0);
+    CHECK(strcmp(strerror(EWOULDBLOCK), "Resource temporarily unavailable") == 0);
+    CHECK(strcmp(strerror(EOPNOTSUPP), "Operation not supported") == 0);
+}
+
+static void test_strerror_gaps(void)
+{
+    /* Numbers with no #define on this platform (holes in the errno
+     * numbering) must fall back to "Unknown error <n>", not crash or
+     * return a stale/garbage string. */
+    char expected[32];
+    int gaps[] = {15, 26, 31, 33, 37};
+
+    for (size_t i = 0; i < sizeof(gaps) / sizeof(gaps[0]); i++) {
+        snprintf(expected, sizeof(expected), "Unknown error %d", gaps[i]);
+        CHECK(strcmp(strerror(gaps[i]), expected) == 0);
+    }
+}
+
+static void test_strerror_out_of_range(void)
+{
+    char expected[32];
+
+    /* Negative values. */
+    snprintf(expected, sizeof(expected), "Unknown error %d", -1);
+    CHECK(strcmp(strerror(-1), expected) == 0);
+
+    /* Just past the highest defined code (ECONNREFUSED == 111). */
+    snprintf(expected, sizeof(expected), "Unknown error %d", 112);
+    CHECK(strcmp(strerror(112), expected) == 0);
+
+    /* Far out of range, well beyond any lookup table bound. */
+    snprintf(expected, sizeof(expected), "Unknown error %d", 999999);
+    CHECK(strcmp(strerror(999999), expected) == 0);
+
+    /* INT_MIN produces the longest possible text (25 chars). The comparison
+     * buffer is deliberately wider than strerror's own, so a too-small buffer
+     * there fails here instead of matching an equally-truncated expectation. */
+    const int int_min = -2147483647 - 1;
+    char wide[64];
+    snprintf(wide, sizeof(wide), "Unknown error %d", int_min);
+    CHECK(strcmp(strerror(int_min), wide) == 0);
+    CHECK(strlen(strerror(int_min)) == 25);
+}
+
+static void test_strerror_nonnull(void)
+{
+    /* strerror() must never return NULL, even for nonsense input, since
+     * callers commonly pass the result straight to printf("%s", ...). */
+    CHECK(strerror(EINVAL) != NULL);
+    CHECK(strerror(-12345) != NULL);
+    CHECK(strerror(0) != NULL);
 }
 
 /* --- Entry point ------------------------------------------------------- */
@@ -636,9 +852,21 @@ int main(void)
     run_group("snprintf basic", test_snprintf_basic);
     run_group("snprintf bounds", test_snprintf_bounds);
     run_group("snprintf %%", test_snprintf_percent);
+    run_group("setjmp direct", test_setjmp_direct);
+    run_group("longjmp value", test_longjmp_value);
+    run_group("longjmp zero", test_longjmp_zero);
+    run_group("longjmp nested", test_longjmp_nested);
+    run_group("setjmp independent", test_setjmp_independent);
     run_group("errno ENOENT", test_errno_open);
     run_group("errno EBADF", test_errno_close);
     run_group("errno preserved", test_errno_preserved);
+    run_group("strerror known", test_strerror_known);
+    run_group("strerror aliases", test_strerror_aliases);
+    run_group("strerror gaps", test_strerror_gaps);
+    run_group("strerror out of range", test_strerror_out_of_range);
+    run_group("strerror non-null", test_strerror_nonnull);
+    run_group("strerror keying", test_strerror_keying);
+    run_group("strerror end-to-end", test_strerror_end_to_end);
 
     printf("\n[RESULT] %d passed, %d failed\n", g_passed, g_failed);
 
