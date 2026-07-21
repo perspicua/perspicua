@@ -44,7 +44,7 @@
 
 #include "devicetree/fdt.h"
 
-#ifdef CONFIG_KTEST
+#ifdef CONFIG_TESTS
     #include "test.h"
 #endif
 
@@ -252,7 +252,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     enable_interrupts();
 
-#ifdef CONFIG_KTEST
+#ifdef CONFIG_TESTS
     run_all_tests();
     run_scheduler_tests();
 #endif
@@ -261,6 +261,11 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     if (process_create_from_file("/bin/init.elf", 1) != 0) {
         pr_err("init: Failed to load init\n");
     }
+
+#ifdef CONFIG_TESTS
+    /* Suites that need a live process to target run once init exists. */
+    run_post_init_tests();
+#endif
 
     /* Main thread parks while scheduler handles execution */
     while (1) {

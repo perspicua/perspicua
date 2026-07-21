@@ -18,43 +18,36 @@ architecturally hard — it is the accumulated "we'll do it later" list, and it 
 what makes the system usable enough to develop against.
 ================================================================================
 
-   1. Libc essentials: ctype.h, strerror, strdup/strndup, setjmp/longjmp
+   1. Libc essentials: strerror, setjmp/longjmp
       Effort: S | Unlocks: porting literally anything; readable error messages
-      Scope: ctype is pure lookup tables; strerror is an errno->string table;
-        strdup/strndup are malloc+copy; setjmp/longjmp is AArch64 asm saving
-        x19-x30 + sp (mirror the register set in arch/switch.S).
+      Scope: strerror is an errno->string table; setjmp/longjmp is AArch64 asm
+        saving x19-x30 + sp (mirror the register set in arch/switch.S).
       Done: test_libc covers each; strerror on a real errno prints text not a number.
-      Note: libc/include currently has no ctype.h, setjmp.h, or time.h at all.
+      Note: ctype.h and strdup/strndup are DONE and covered by test_libc.
+        libc/include still has no setjmp.h or time.h at all.
 
-   2. Consistent errno mapping
-      Effort: S-M | Unlocks: makes item 1's strerror actually meaningful
-      Scope: map internal -PERS_ERR_* (uapi/errors.h) to POSIX errno once at the
-        syscall boundary; every libc wrapper sets errno on failure.
-      Done: a failing open/read reports a sensible errno from userspace.
-      Note: do this WITH strerror or the error text will be wrong from day one.
-        libc/include/errno.h (Linux-numbered constants) and the global errno in
-        libc/user/errno.c already exist — the missing piece is only the
-        PERS_ERR_*->errno table. The two numberings differ (PERS_ERR_NOT_FOUND
-        is 1, ENOENT is 2), so a real translation table is required, not a cast.
-
-   3. Remaining POSIX syscalls
+   2. Remaining POSIX syscalls
       Effort: S each | Unlocks: closes the most common porting gaps
-      Scope: getppid, dup, pread/pwrite, gettimeofday + clock_gettime (realtime +
+      Scope: getppid, pread/pwrite, gettimeofday + clock_gettime (realtime +
         monotonic), nanosleep, fstat (STAT is path-only today), truncate/ftruncate.
       Done: a userspace test calls each and checks the result.
-      Note: parent_pid is already tracked; dup is one line on top of dup2; FAT32
-        can already shrink cluster chains, so ftruncate is mostly plumbing.
+      Note: parent_pid is already tracked; SYS_DUP already exists; FAT32 can
+        already shrink cluster chains, so ftruncate is mostly plumbing.
+        VFS_O_TRUNC is defined in fs/vfs.h but acted on NOWHERE in the kernel,
+        so open(..., O_TRUNC) on an existing file silently keeps the old
+        contents — found by test_fat32, which documents the gap in place of an
+        assertion. Fix it alongside truncate/ftruncate.
         CLOCK_REALTIME will be boot-relative until the RTC lands (Phase 3 item 3)
         — implement the interface now, wire the wall clock in later.
 
-   4. SIGSTOP / SIGCONT  (the kernel half of job control)
+   3. SIGSTOP / SIGCONT  (the kernel half of job control)
       Effort: S-M | Unlocks: shell fg/bg/jobs (Phase 3 item 4)
       Scope: a STOPPED process state the scheduler won't pick; SIGCONT wakes it.
       Done: a looping program can be stopped and resumed from the shell.
       Note: signals.c currently early-returns for STOP/TSTP/TTIN/TTOU with an
         "ignored until job control is implemented" comment — that is the hook.
 
-   5. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
+   4. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
       Effort: S | Unlocks: monitoring tools and scripts that parse /proc
       Scope: iterate the mount table / cpu info / global counters as text.
       Done: cat of each returns well-formed output.
@@ -62,34 +55,19 @@ what makes the system usable enough to develop against.
         `pos += snprintf(buf+pos, SIZE-pos, ...)` idiom overflows (that was a real
         heap-smash bug in /proc/<pid>/maps).
 
-   6. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
+   5. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
       Effort: S-M | Unlocks: any non-trivial shell usage or scripting
       Scope: track the last exit status; expand $NAME from environ; propagate the
         rightmost non-zero exit through a pipeline.
       Done: `false; echo $?` prints 1; `echo $PATH` expands.
       Note: sh.c already has expand_operators() for redirection — extend that pass.
 
-   7. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
+   6. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
       Effort: M | Unlocks: turns the project from experiment into usable system
       Scope: small programs over existing syscalls.
       Done: you can create/inspect/delete files from the shell without redirection.
       Note: the mkdir/rm *syscalls* already exist — only the programs are missing.
         Today `> file` redirection is the ONLY way to create a file.
-
-   8. `just test` + missing test suites
-      Effort: S-M | Unlocks: CI; regressions stop going unnoticed
-      Scope: a just target that boots QEMU headless, runs the self-tests, scrapes
-        serial, exits pass/fail. Add test_vfs, test_fat32, test_signals, test_pipe,
-        test_mutex, test_uaccess.
-      Done: `just test` returns non-zero on a deliberately broken build.
-      Note: memory management is well covered; FS, signals, and IPC — the riskiest
-        subsystems — have zero tests.
-
-   9. Split tests out of the shipped image
-      Effort: S | Unlocks: a smaller, faster, production-shaped kernel
-      Scope: a CONFIG_TESTS switch; kernel/CMakeLists.txt currently GLOBs tests/*.c
-        into every build and main() calls run_all_tests() on every boot.
-      Done: CONFIG_TESTS=OFF builds a kernel with no test code linked in.
 
 
 ================================================================================
@@ -226,7 +204,7 @@ Goal: Make Perspicua a place you can actually work in and observe.
    4. Shell quality of life: globbing, history, tab completion, then scripting
       Effort: M | Unlocks: an interactive environment you don't fight
       Scope: glob (*, ?, [..]); line editing w/ history; then if/for/while, &&/||,
-        subshells; job control (fg/bg/jobs) once Phase 1 item 4 lands.
+        subshells; job control (fg/bg/jobs) once Phase 1 item 3 lands.
       Done: a multi-line shell script runs correctly.
 
    5. Ramdisk block backend + tmpfs

@@ -9,9 +9,9 @@ file(GLOB_RECURSE KERNEL_SRCS CONFIGURE_DEPENDS
     "init/*.c"
 )
 
-# Test suites are compiled in only under CONFIG_KTEST, so a shipping kernel
+# Test suites are compiled in only under CONFIG_TESTS, so a shipping kernel
 # carries no test code at all rather than merely not calling it.
-if(CONFIG_KTEST)
+if(CONFIG_TESTS)
     file(GLOB_RECURSE KERNEL_TEST_SRCS CONFIGURE_DEPENDS "tests/*.c")
     list(APPEND KERNEL_SRCS ${KERNEL_TEST_SRCS})
 endif()
@@ -74,8 +74,8 @@ add_custom_command(TARGET kernel8.elf POST_BUILD
 )
 
 # pi4-boot is what gets flashed to real hardware, so only a normal build
-# publishes there; a CONFIG_KTEST image stays inside its own build tree.
-if(NOT CONFIG_KTEST)
+# publishes there; a CONFIG_TESTS image stays inside its own build tree.
+if(NOT CONFIG_TESTS)
     add_custom_command(TARGET kernel8.elf POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy kernel8.img ${CMAKE_SOURCE_DIR}/pi4-boot/kernel8.img
         COMMENT "Copying kernel8.img to pi4-boot"

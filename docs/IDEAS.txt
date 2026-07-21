@@ -201,15 +201,12 @@ shakiness; harden here first.
 --------------------------------------------------------------------------------
 6. USER-SPACE, LIBC & SHELL
 --------------------------------------------------------------------------------
-  LIBC (missing pieces confirmed absent):
-  - ctype.h (isdigit/isalpha/isspace/toupper/...)   Trivial | High — pure tables.
+  LIBC (still missing; ctype.h and strdup/strndup are DONE):
   - strerror()                                       Trivial | High — errno -> string.
-  - strdup() / strndup()                             Trivial | High — malloc+copy.
   - setjmp() / longjmp()                             Low     | Medium — AArch64 asm.
   - time.h (time, gmtime, localtime, strftime)       Low-Med | Medium — needs clock syscalls.
   - Proper buffered stdio (FILE*), fgets/fputs/scanf family, snprintf bounds.
   - qsort / bsearch; printf float support; a minimal libm.
-  - Consistent errno in every wrapper (see section 1).
 
   CORE POSIX UTILITIES ("base system"):
   - Currently missing as binaries: mkdir, rm, cp, mv, ps, kill, grep, wc, touch,
@@ -258,15 +255,12 @@ shakiness; harden here first.
 --------------------------------------------------------------------------------
 9. OBSERVABILITY & TESTING
 --------------------------------------------------------------------------------
-  - `just test` target: boot QEMU, run the kernel self-tests, capture serial, exit
-      pass/fail (enables CI).                                     Low | High.
-  - Missing test suites: test_vfs, test_fat32, test_signals, test_pipe, test_uaccess,
-      test_mutex; a userspace syscall test harness.               Low-Med | Medium.
+  - A userspace syscall test harness (kernel suites for vfs/fat32/signals/pipe/
+      mutex/uaccess are DONE).                                    Low-Med | Medium.
   - Syscall-layer fuzzing (feed random/boundary args; catch OOB like the mmap-fd bug
       before users do).                                           Medium | Medium.
   - dmesg ring buffer + kernel log levels; /proc/kmsg.           Low | Medium.
   - ftrace-lite: function/latency tracing; per-subsystem counters (schedstat exists).
-  - Split tests out of the shipped image (they compile into every build today).
 
 
 --------------------------------------------------------------------------------

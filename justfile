@@ -4,7 +4,7 @@ set shell := ["bash", "-c"]
 
 # Build directory and toolchain
 build_dir := "build"
-# Test builds use a separate tree so toggling CONFIG_KTEST never forces a
+# Test builds use a separate tree so toggling CONFIG_TESTS never forces a
 # full reconfigure and rebuild of the normal one.
 test_build_dir := "build-test"
 toolchain := "cmake/aarch64-none-elf.cmake"
@@ -20,8 +20,8 @@ config_smp     := "ON"
 config_lockdep := "ON"
 config_nr_cpus := "4"
 
-# Configure and build into a given tree with a given CONFIG_KTEST setting
-@_cmake dir type ktest:
+# Configure and build into a given tree with a given CONFIG_TESTS setting
+@_cmake dir type tests:
     cmake -B {{dir}} -S . \
         -DCMAKE_TOOLCHAIN_FILE={{toolchain}} \
         -DCMAKE_BUILD_TYPE={{type}} \
@@ -29,7 +29,7 @@ config_nr_cpus := "4"
         -DCONFIG_SMP={{config_smp}} \
         -DCONFIG_LOCKDEP={{config_lockdep}} \
         -DCONFIG_NR_CPUS={{config_nr_cpus}} \
-        -DCONFIG_KTEST={{ktest}}
+        -DCONFIG_TESTS={{tests}}
     cmake --build {{dir}} -j {{nproc}}
 
 # Setup and build the project (defaults to Debug)
@@ -45,8 +45,16 @@ config_nr_cpus := "4"
     just _cmake {{test_build_dir}} {{type}} ON
     echo "Test build ({{type}}) complete: {{test_build_dir}}/kernel/kernel8.img"
 
-# Build and run the in-kernel test suites in QEMU
+# Build and run the in-kernel test suites headless; exits non-zero on failure
 @test type="Debug": (build-tests type)
+    cmake --build {{test_build_dir}} --target sdcard
+    ./scripts/run_tests.sh \
+        {{test_build_dir}}/kernel/kernel8.img \
+        pi4-boot/bcm2711-rpi-4-b.dtb \
+        {{test_build_dir}}/sdcard.img
+
+# Build and run the test kernel interactively in QEMU (drops to the shell)
+@test-shell type="Debug": (build-tests type)
     cmake --build {{test_build_dir}} --target run
 
 # Show current kernel configuration
@@ -55,7 +63,7 @@ config_nr_cpus := "4"
     echo "  CONFIG_SMP      = {{config_smp}}"
     echo "  CONFIG_LOCKDEP  = {{config_lockdep}}"
     echo "  CONFIG_NR_CPUS  = {{config_nr_cpus}}"
-    echo "  CONFIG_KTEST    = OFF (ON for 'just test')"
+    echo "  CONFIG_TESTS    = OFF (ON for 'just test')"
     echo ""
     echo "Override with: just config_smp=OFF config_lockdep=OFF build"
 
