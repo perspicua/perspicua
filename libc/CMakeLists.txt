@@ -5,6 +5,7 @@ set(LIBC_SRC_COMMON
     src/env.c
     src/dirent.c
     src/file.c
+    src/ctype.c
 )
 
 set(LIBC_SRC_KERNEL

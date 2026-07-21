@@ -3,99 +3,410 @@ Perspicua Build Order
 
 This file is the ORDER in which to build things so every layer rests on a solid
 one below it. The full catalog of ideas lives in IDEAS.txt; this file is about
-sequencing and dependencies, not describing every feature.
+sequencing, dependencies, and what "done" means for each step.
 
 Guiding rule: correctness of the foundation before breadth of features. A bug in
 the scheduler, the MMU, or the buffer cache costs 10x more once demand paging,
 threads, and a network stack sit on top of it.
 
+
+
 ================================================================================
 PHASE 1: FOUNDATION HARDENING  (finish filling the holes)
-Goal: Complete the half-built features so the base is dependable.
+Goal: Complete the half-built features so the base is dependable. Nothing here is
+architecturally hard — it is the accumulated "we'll do it later" list, and it is
+what makes the system usable enough to develop against.
 ================================================================================
 
-   1. Libc essentials: ctype.h, strerror, strdup/strndup, setjmp/longjmp.
-      Every porting attempt hits these immediately; all are small.
-   2. Remaining POSIX syscalls: getppid, dup, pread/pwrite, gettimeofday +
-      clock_gettime, nanosleep, fstat, truncate/ftruncate. One or two functions each.
-   3. SIGSTOP / SIGCONT (STOPPED state + wake on CONT) — the kernel half of job control.
-   4. /proc/mounts, /proc/cpuinfo, /proc/stat — trivial procfs files tools expect.
-   5. Shell: $? , $VAR expansion, correct pipeline exit codes.
-   6. `just test` target + test_vfs / test_fat32 / test_signals / test_pipe.
-      The riskiest subsystems (FS, signals, IPC) currently have no tests.
-   7. Core POSIX utility *binaries*: ps, kill, mkdir, rm, cp, mv, touch, wc, grep.
-      (The syscalls exist; the programs don't — you can't create a file from the
-      shell except via > redirection.)
+   1. Libc essentials: ctype.h, strerror, strdup/strndup, setjmp/longjmp
+      Effort: S | Unlocks: porting literally anything; readable error messages
+      Scope: ctype is pure lookup tables; strerror is an errno->string table;
+        strdup/strndup are malloc+copy; setjmp/longjmp is AArch64 asm saving
+        x19-x30 + sp (mirror the register set in arch/switch.S).
+      Done: test_libc covers each; strerror on a real errno prints text not a number.
+      Note: libc/include currently has no ctype.h, setjmp.h, or time.h at all.
+
+   2. Consistent errno mapping
+      Effort: S-M | Unlocks: makes item 1's strerror actually meaningful
+      Scope: map internal -PERS_ERR_* (uapi/errors.h) to POSIX errno once at the
+        syscall boundary; every libc wrapper sets errno on failure.
+      Done: a failing open/read reports a sensible errno from userspace.
+      Note: do this WITH strerror or the error text will be wrong from day one.
+        libc/include/errno.h (Linux-numbered constants) and the global errno in
+        libc/user/errno.c already exist — the missing piece is only the
+        PERS_ERR_*->errno table. The two numberings differ (PERS_ERR_NOT_FOUND
+        is 1, ENOENT is 2), so a real translation table is required, not a cast.
+
+   3. Remaining POSIX syscalls
+      Effort: S each | Unlocks: closes the most common porting gaps
+      Scope: getppid, dup, pread/pwrite, gettimeofday + clock_gettime (realtime +
+        monotonic), nanosleep, fstat (STAT is path-only today), truncate/ftruncate.
+      Done: a userspace test calls each and checks the result.
+      Note: parent_pid is already tracked; dup is one line on top of dup2; FAT32
+        can already shrink cluster chains, so ftruncate is mostly plumbing.
+        CLOCK_REALTIME will be boot-relative until the RTC lands (Phase 3 item 3)
+        — implement the interface now, wire the wall clock in later.
+
+   4. SIGSTOP / SIGCONT  (the kernel half of job control)
+      Effort: S-M | Unlocks: shell fg/bg/jobs (Phase 3 item 4)
+      Scope: a STOPPED process state the scheduler won't pick; SIGCONT wakes it.
+      Done: a looping program can be stopped and resumed from the shell.
+      Note: signals.c currently early-returns for STOP/TSTP/TTIN/TTOU with an
+        "ignored until job control is implemented" comment — that is the hook.
+
+   5. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
+      Effort: S | Unlocks: monitoring tools and scripts that parse /proc
+      Scope: iterate the mount table / cpu info / global counters as text.
+      Done: cat of each returns well-formed output.
+      Note: use the bounded procfs_append() helper — the raw
+        `pos += snprintf(buf+pos, SIZE-pos, ...)` idiom overflows (that was a real
+        heap-smash bug in /proc/<pid>/maps).
+
+   6. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
+      Effort: S-M | Unlocks: any non-trivial shell usage or scripting
+      Scope: track the last exit status; expand $NAME from environ; propagate the
+        rightmost non-zero exit through a pipeline.
+      Done: `false; echo $?` prints 1; `echo $PATH` expands.
+      Note: sh.c already has expand_operators() for redirection — extend that pass.
+
+   7. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
+      Effort: M | Unlocks: turns the project from experiment into usable system
+      Scope: small programs over existing syscalls.
+      Done: you can create/inspect/delete files from the shell without redirection.
+      Note: the mkdir/rm *syscalls* already exist — only the programs are missing.
+        Today `> file` redirection is the ONLY way to create a file.
+
+   8. `just test` + missing test suites
+      Effort: S-M | Unlocks: CI; regressions stop going unnoticed
+      Scope: a just target that boots QEMU headless, runs the self-tests, scrapes
+        serial, exits pass/fail. Add test_vfs, test_fat32, test_signals, test_pipe,
+        test_mutex, test_uaccess.
+      Done: `just test` returns non-zero on a deliberately broken build.
+      Note: memory management is well covered; FS, signals, and IPC — the riskiest
+        subsystems — have zero tests.
+
+   9. Split tests out of the shipped image
+      Effort: S | Unlocks: a smaller, faster, production-shaped kernel
+      Scope: a CONFIG_TESTS switch; kernel/CMakeLists.txt currently GLOBs tests/*.c
+        into every build and main() calls run_all_tests() on every boot.
+      Done: CONFIG_TESTS=OFF builds a kernel with no test code linked in.
 
 
 ================================================================================
 PHASE 2: ROBUSTNESS PRIMITIVES  (the load-bearing infrastructure)
 Goal: Build the reusable mechanisms that every advanced feature depends on, so we
 build them ONCE and correctly rather than re-inventing ad-hoc versions.
-================================================================================
-   1. Generic wait-queue / condition-variable primitive.
-      Replaces the hand-rolled queues in tty/pipe/sd. Prerequisite for select/poll,
-      futexes, and any new blocking driver.
-   2. Sleeping-lock family on top of it: rwsem, semaphore, completion (kmutex exists).
-   3. preempt_count (preemption safety) so ordinary spinlocks are safe across a tick.
-   4. Graceful OOM: replace PANIC-on-allocation-failure with unwinding error returns.
-   5. Unified buffer cache: collapse the duplicate page cache + block cache into one.
-   6. VFS inode/dentry cache with refcounted vnodes (stop allocating a vnode per
-      lookup; gives stable inode identity).
-   7. Panic backtrace via the existing symbol table + a dmesg ring buffer.
 
-  Rationale: Phases 3+ (poll, demand paging, threads) all assume these exist. Doing
-  them now avoids retrofitting correctness into ten call sites later.
+Rationale: Phases 3+ (poll, demand paging, threads) all assume these exist. Doing
+them now avoids retrofitting correctness into ten call sites later. This is the
+single highest-leverage phase in the file.
+================================================================================
+
+   1. Generic wait-queue / condition-variable primitive
+      Effort: M | Unlocks: select/poll, futexes, every future blocking driver
+      Scope: one wait_queue_t with prepare_to_wait / wake_one / wake_all and a
+        condition re-check loop; signal-interruptible (returns -EINTR).
+      Done: tty, pipe, sd, AND kmutex are all converted to it and their bespoke
+        queues are deleted; a test covers wake, signal-interrupt, and spurious
+        wakeup.
+      Note: struct task already has a dedicated wait_next link (separate from
+        rq_next/sleep_next) — that is the hook. The bespoke queues in tty/pipe/sd
+        each re-derive remove-on-wake logic slightly differently; that duplication
+        is exactly what caused the earlier lost-wakeup/corruption class of bugs.
+        kmutex (core/mutex.c) is a FOURTH bespoke user of wait_next — the sched.h
+        comment only mentions tty/pipe/sd, which is already stale. The shared link
+        means a task can be on at most one wait queue at a time; make the new
+        primitive assert that invariant instead of silently corrupting the list.
+
+   2. Sleeping-lock family
+      Effort: M | Unlocks: scalable read-mostly structures; safe long critical sections
+      Scope: rwsem, semaphore, and completion on top of the wait queue; extend
+        lockdep to cover sleeping locks too.
+      Done: FAT32's coarse kmutex can be split (e.g. rwsem for lookups) without
+        hand-rolling anything.
+      Note: kmutex (recursive sleeping mutex) already exists in core/mutex.c — build
+        the family around it, don't start from scratch.
+
+   3. preempt_count (preemption safety)
+      Effort: M-L | Unlocks: a genuinely preemptive kernel (Phase 5 item 3)
+      Scope: per-CPU preempt_disable/enable; the timer tick only reschedules when
+        preemptible; spin_lock bumps the count.
+      Done: holding a plain spinlock across a timer tick can no longer schedule.
+      Note: exception_irq_handler() currently calls schedule() unconditionally on
+        every timer IRQ. Non-irqsave spinlocks (fd_lock, pipe->lock, devfs_lock)
+        are held with IRQs enabled — that is the latent priority-inversion hazard.
+
+   4. Graceful out-of-memory handling
+      Effort: M | Unlocks: a kernel that degrades instead of dying
+      Scope: replace PANIC-on-allocation-failure with unwinding error returns;
+        define an OOM policy for user allocations.
+      Done: a fault-injected allocation failure returns -ENOMEM to userspace
+        instead of taking down the machine.
+      Note: runtime sites that must unwind: mmu alloc_table_page(),
+        process_create() user-stack and kernel-stack paths, elf_load() ("ELF: Out
+        of memory during loading"), sched_create_task(). Boot-time init PANICs
+        (heap_init, slab_init, idle-task allocation) are fine to keep — don't
+        spend effort unwinding code that runs before userspace exists.
+
+   5. Unified buffer cache
+      Effort: M-L | Unlocks: demand paging; halves cache memory
+      Scope: collapse the page cache and block cache into one cache; the FS reads
+        through it.
+      Done: one cache layer, one writeback path, one eviction policy; FAT32 reads
+        no longer populate two caches with the same bytes.
+      Note: fs/pagecache.c keys on (node->ops, node->internal_info, page_index);
+        driver/block.c keys on (dev, block_nr). A FAT32 read currently populates
+        BOTH. Keep the pin/refcount discipline the page cache already has — pages
+        handed out must not be evictable.
+
+   6. VFS inode / dentry cache with refcounted vnodes
+      Effort: M-L | Unlocks: hardlinks, safe rename, stable inode identity, perf
+      Scope: cache vnodes by stable identity, refcount them, add a name cache.
+      Done: opening the same file twice yields the same vnode; a directory scan
+        isn't re-read from disk on every lookup.
+      Note: fat32_vfs_lookup() and the procfs lookups slab_alloc a BRAND NEW vnode
+        on every path resolution. This is also why the page cache had to key on the
+        start cluster (and why empty files once aliased). A real inode identity
+        fixes that class of problem at the root.
+
+   7. Robust user-memory access
+      Effort: S-M | Unlocks: safety once threads share an address space
+      Scope: treat validate_user_buffer() as advisory; make the fault-fixup
+        copy_to/from_user path the source of truth; uniform access_ok range checks.
+      Done: no syscall depends on a pre-check that a concurrent unmap can invalidate.
+      Note: validate_user_buffer walks the page tables then drops the lock before
+        the copy — a TOCTOU that only bites once two tasks share a pgd.
+
+   8. Panic/oops with symbolized backtrace + dmesg ring buffer
+      Effort: S-M | Unlocks: debuggability; turns "it hung" into a stack trace
+      Scope: walk frame pointers, resolve via the symbol table, print on panic; an
+        in-memory log ring exposed as /proc/kmsg or a dmesg syscall.
+      Done: a deliberate NULL deref prints a symbolized call chain.
+      Note: scripts/gen_symtab.py and the two-pass build already produce a full
+        kernel symbol table — the data is there, it just isn't used for unwinding.
+
+   9. Hung-task / watchdog detector
+      Effort: S | Unlocks: deadlocks surface instead of hanging silently
+      Scope: periodic check for tasks blocked beyond a threshold or a core that
+        stopped taking timer ticks; optionally the BCM2711 hardware watchdog.
+      Done: an artificial deadlock prints a warning naming the stuck task.
+
+  10. Per-CPU data API
+      Effort: S-M | Unlocks: cleaner SMP code; prerequisite for scalable counters
+      Scope: a small this_cpu()/per_cpu() abstraction.
+      Note: the kernel currently uses bare `array[get_core_id()]` everywhere
+        (sched_rq_lock[], core_irq_stats[], cpu_asid_gen[], lockdep held_locks[]).
+        Fine at 4 cores, but it hides the intent and invites off-by-one bugs.
 
 
 ================================================================================
 PHASE 3: DEVELOPER EXPERIENCE & BASIC I/O
-Goal: Make Perspicua a place you can actually work and observe.
+Goal: Make Perspicua a place you can actually work in and observe.
 ================================================================================
-   1. I/O multiplexing: select / poll (needs the wait-queue primitive).
-   2. Core /dev nodes: /dev/null, /dev/zero, /dev/tty, /dev/random, /dev/urandom.
-   3. RTC / wall-clock driver so timestamps survive reboots.
-   4. Shell quality of life: globbing, history, tab completion; then scripting
-      (if/for/while, &&/||).
-   5. A ramdisk block backend + tmpfs — fast scratch space and better test fixtures.
+
+   1. I/O multiplexing: select / poll
+      Effort: M | Unlocks: event loops, servers, and most non-trivial ports
+      Scope: per-fd readiness reporting + a poll_wait hook per driver.
+      Done: a userspace program multiplexes console + a pipe without busy-waiting.
+      Depends: Phase 2 item 1 (wait queue). Do not attempt before it.
+
+   2. Core /dev nodes: /dev/null, /dev/zero, /dev/full, /dev/tty, /dev/random+urandom
+      Effort: S | Unlocks: scripts, test fixtures, and anything expecting a real /dev
+      Done: `cat /dev/zero | wc -c` style pipelines behave.
+      Note: devfs registers "console", "fb0", and block devices ("sd0" via
+        block.c) today — no /dev/null-style pseudo-devices. /dev/random needs an
+        entropy source — the generic timer's low bits are a starting point.
+
+   3. RTC / wall-clock driver
+      Effort: S-M | Unlocks: real timestamps; makes gettimeofday meaningful
+      Done: file mtimes and `date` survive a reboot.
+      Note: get_system_time() is monotonic-since-boot only — there is no wall clock
+        anywhere in the system today.
+
+   4. Shell quality of life: globbing, history, tab completion, then scripting
+      Effort: M | Unlocks: an interactive environment you don't fight
+      Scope: glob (*, ?, [..]); line editing w/ history; then if/for/while, &&/||,
+        subshells; job control (fg/bg/jobs) once Phase 1 item 4 lands.
+      Done: a multi-line shell script runs correctly.
+
+   5. Ramdisk block backend + tmpfs
+      Effort: S-M | Unlocks: fast scratch space; deterministic FS test fixtures
+      Done: /tmp is writable and FS tests run without touching the SD card.
+      Note: ramfs.c and initrd.c exist but are currently unwired (no callers) —
+        decide to wire them up or delete them rather than leaving dead code.
+
+   6. Syscall tracing (strace-lite) + kernel log levels
+      Effort: S-M | Unlocks: debugging userspace without a debugger
+      Scope: an opt-in trace of syscall entry/exit per process; runtime log levels.
+      Done: you can see why a ported program fails without adding printfs.
+
+   7. eventfd / timerfd / signalfd
+      Effort: S-M | Unlocks: clean event loops
+      Depends: Phase 3 item 1 (poll).
 
 
 ================================================================================
 PHASE 4: ADVANCED MEMORY & STORAGE  (the heavy lifting)
 Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
 ================================================================================
-   1. munmap / mprotect / a real VMA list (mmap can't be undone today).
-   2. brk/sbrk or anonymous-VMA heap so libc malloc grows properly.
-   3. Demand paging: fault-in ELF and file pages from the unified buffer cache
-      instead of loading eagerly. Big win for startup time and RAM.
-   4. Shared-memory IPC (MAP_SHARED / shm) — needed for a graphics server.
-   5. A second, inode-based filesystem (ext2 or a small journaling FS): validates
-      the VFS abstraction and provides the crash consistency FAT32 lacks.
+
+   1. munmap / mprotect / mremap + a real VMA list
+      Effort: M | Unlocks: a correct memory lifecycle; prerequisite for everything below
+      Scope: track VMAs per process (base, len, prot, flags, backing); implement
+        teardown and permission change.
+      Done: a program can map, protect, and unmap; nothing leaks across the cycle.
+      Note: SYS_MMAP exists but there is NO munmap or mprotect — mapped regions
+        can never be released. The va_allocator is a bump allocator with a 64-region
+        array (process_va_free exists but is only used on the mmap failure path).
+        This is the most glaring memory-management gap in the kernel today.
+        Budget for TLB invalidation: munmap/mprotect must broadcast-invalidate
+        (TLBI ...IS by ASID) BEFORE freeing pages back to the PMM, or a stale
+        entry on another core becomes a use-after-free — the same class as the
+        ASID-generation aliasing bug already fixed.
+
+   2. brk / sbrk (or an anonymous-VMA heap)
+      Effort: S-M | Unlocks: a normal libc malloc
+      Note: userspace malloc currently mmaps 1MB chunks and can never return them
+        (no munmap), so every process's footprint only grows.
+
+   3. Demand paging (fault-in ELF and file pages)
+      Effort: L | Unlocks: fast process start, big binaries, low RAM use
+      Scope: on a translation fault, resolve the VMA, fetch the page through the
+        unified buffer cache, map it.
+      Done: exec of a large binary maps only the pages actually touched.
+      Depends: Phase 2 item 5 (unified cache), Phase 4 item 1 (VMAs).
+      Note: handle_abort() already routes permission faults to COW — the
+        translation-fault path is the natural hook. elf_load() currently reads every
+        segment eagerly at exec time.
+
+   4. File-backed mmap
+      Effort: M | Unlocks: mmap'd I/O; a prerequisite for dynamic linking
+      Note: the vnode ops table already has an ->mmap hook, SYS_MMAP already
+        calls it when present, and the framebuffer ALREADY implements it (fb.c
+        wires fb_mmap) — but no filesystem does. Beware: mmap of a regular-file
+        fd today "succeeds" while mapping zero pages (the hook is simply absent),
+        so the first access faults.
+
+   5. Shared-memory IPC (MAP_SHARED, shm_open)
+      Effort: M | Unlocks: high-performance IPC; the graphics server
+      Depends: Phase 4 items 1 and 3.
+
+   6. COW and reclaim refinements
+      Effort: M | Unlocks: lower memory pressure
+      Scope: skip the copy when refcount == 1; demand-zero pages; an LRU reclaim
+        path under pressure; guard pages + auto-grow for user stacks.
+      Note: mmu_handle_cow() always allocates and copies, even when the faulting
+        process is the only owner of the page.
+
+   7. A second, inode-based filesystem (ext2, or a small journaling FS)
+      Effort: L | Unlocks: proof the VFS is generic; crash consistency
+      Done: both FAT32 and the new FS mount and pass the same FS test suite.
+      Note: this is the real test of the VFS abstraction — FAT32 currently stores
+        its start cluster in vnode->internal_info, and the VFS has quietly shaped
+        itself around that. Expect to find leaks in the abstraction.
+
+   8. Filesystem crash consistency
+      Effort: L | Unlocks: surviving power loss
+      Scope: ordered metadata writes / a journal; or an fsck-lite pass at mount.
+      Note: FAT32 today can cross-link clusters or corrupt a directory if it panics
+        mid-write. The per-FS lock makes operations atomic against each other, not
+        against a crash.
+
+   9. Storage breadth: GPT, multiple partitions/mounts, >1GB RAM
+      Effort: M | Unlocks: real hardware configurations
+      Note: pmm_init() reads a SINGLE size cell from /memory@0 (reg[2]) and the MMU
+        maps a fixed 4GB — so a 4GB/8GB Pi 4 is capped at 1GB usable today. Fix the
+        DTB parse (honor #address-cells/#size-cells) alongside this.
 
 
 ================================================================================
 PHASE 5: CONCURRENCY & SECURITY
 Goal: Use the hardware fully and safely.
 ================================================================================
-   1. Threads: clone() + TLS (tpidr_el0) + per-thread signal state. Revisit the
-      one-task-per-process assumptions (schedule()'s lock-free process read,
-      main_task-targeted signal delivery) at this point.
-   2. Futexes -> a real pthreads library.
-   3. Full preemptive, priority/MLFQ scheduling with cross-core load balancing.
-   4. Security: W^X audit, ASLR + user stack canaries, PAN/SMAP-equivalent, then a
-      uid/gid + capability model.
+
+   1. Threads: clone() + TLS + per-thread state
+      Effort: L | Unlocks: multi-core applications; pthreads
+      Scope: multiple tasks sharing one address space and fd table; TID; TLS via
+        tpidr_el0; per-thread signal mask.
+      Done: a multi-threaded program measurably uses more than one core.
+      Note: several structures assume ONE task per process and must be revisited:
+        schedule() reads process_table[next->pid] lock-free (only safe because a
+        task's process can't be exec/exit-ing itself), signal delivery targets
+        p->main_task, and signal state lives on the process not the task.
+
+   2. Futexes -> a real pthreads library
+      Effort: L | Depends: Phase 2 item 1 (wait queue), Phase 4 item 5 (shm).
+
+   3. Preemptive, priority/MLFQ scheduling + load balancing
+      Effort: L | Unlocks: responsiveness under load
+      Depends: Phase 2 item 3 (preempt_count).
+      Note: per-core runqueues and work stealing already exist; what's missing is
+        priorities, fairness, and a real balancing policy (today it's round-robin
+        with an on_core guard).
+
+   4. RCU / seqlocks for read-mostly state
+      Effort: L | Unlocks: SMP scalability
+      Note: the process table and mount table are read on every schedule, signal,
+        and path resolution but written rarely — they will become the contention
+        point once the coarse locks above are in place.
+
+   5. Security hardening
+      Effort: M-L | Unlocks: resilience against memory-corruption bugs
+      Scope: W^X audit of user mappings; ASLR (stack/mmap/PIE) + user stack
+        canaries; PAN/SMAP-equivalent so the kernel can't deref user pointers
+        outside the uaccess helpers; KASLR later.
+      Note: the kernel already sets PXN/UXN and enforces per-segment permissions —
+        this is about extending the same discipline to userspace.
+
+   6. Multi-user: uid/gid + a permission model
+      Effort: L | Unlocks: login, real access control
+      Note: FAT32 has no permission bits — this likely waits on Phase 4 item 7.
 
 
 ================================================================================
 PHASE 6: STRATEGIC EXTENSIONS  (long-term)
 Goal: Broaden into networking, graphics, and beyond.
 ================================================================================
-   1. Network stack (a NIC driver via USB/PCIe, then LWIP or a minimal UDP/IP).
-      Depends on I/O multiplexing (Phase 3) and a real device stack.
-   2. Graphics server (Wayland-lite). Depends on shared-memory IPC (Phase 4) + input.
-   3. Dynamic linking (ld.so + shared objects) — mostly a user-space loader problem;
-      do it once there are many large binaries.
-   4. Virtualization via EL2 — running guest OSes on top of Perspicua.
+
+   1. A real device stack: PCIe + USB host
+      Effort: XL | Unlocks: networking, input, mass storage — most of Phase 6
+      Note: this is the hidden prerequisite behind "add networking" on the Pi 4;
+        budget for it explicitly rather than discovering it later. The current
+        driver model also probes only the FIRST matching FDT node and builds a
+        stack-local struct device — it needs a real device lifetime first.
+
+   2. Network stack (NIC driver, then LWIP or a minimal UDP/IP)
+      Effort: XL | Unlocks: remote access, servers
+      Depends: item 1 above, Phase 3 item 1 (poll).
+
+   3. Input stack (USB HID keyboard/mouse)
+      Effort: L | Depends: item 1 above.
+
+   4. Graphics server (Wayland-lite compositor)
+      Effort: XL | Depends: Phase 4 item 5 (shm) + item 3 above (input).
+
+   5. Dynamic linking (ld.so + shared objects)
+      Effort: L | Unlocks: smaller binaries
+      Depends: Phase 4 item 4 (file-backed mmap). Mostly a user-space loader
+        problem; do it once there are many large binaries to justify it.
+
+   6. POSIX ABI compatibility
+      Effort: M-L | Unlocks: porting prebuilt software
+      Scope: align syscall numbers and struct layouts with Linux/AArch64.
+
+   7. Self-hosting toolchain
+      Effort: XL | Unlocks: the classic milestone — build Perspicua on Perspicua.
+      Note: a good forcing function; it will surface every libc and FS gap at once.
+
+   8. Namespaces / containers, cgroup-style limits
+      Effort: XL | Depends: Phase 5 item 6.
+
+   9. Virtualization via EL2
+      Effort: XL | Unlocks: running guest OSes on top of Perspicua.
+
+  10. Power management: CPU idle states, DVFS, suspend
+      Effort: L | Note: the scheduler already parks idle cores on WFE — real idle
+        states and frequency scaling build from there.
 
 
 ================================================================================
