@@ -1,7 +1,8 @@
 /*
  * test_libc.c - User-space libc integrity test suite.
  *
- * Covers: string functions, malloc/free/realloc, printf/snprintf, and errno.
+ * Covers: string functions, malloc/free/realloc, printf/snprintf, ctype
+ * classification/case-conversion, and errno.
  * Each test group prints a PASS/FAIL summary line. Individual check failures
  * print the source location so regressions are easy to pinpoint.
  *
@@ -9,6 +10,7 @@
  */
 
 #include "assert.h"
+#include "ctype.h"
 #include "errno.h"
 #include "stdio.h"
 #include "stdlib.h"
@@ -363,6 +365,142 @@ static void test_snprintf_percent(void)
     CHECK(strcmp(buf, "100%") == 0);
 }
 
+/* --- ctype.h ------------------------------------------------------------ */
+
+static void test_isalnum(void)
+{
+    CHECK(isalnum('a') && isalnum('z') && isalnum('A') && isalnum('Z'));
+    CHECK(isalnum('0') && isalnum('9'));
+    CHECK(!isalnum(' ') && !isalnum('!') && !isalnum('\n') && !isalnum('_'));
+}
+
+static void test_isalpha(void)
+{
+    CHECK(isalpha('a') && isalpha('Z'));
+    CHECK(!isalpha('0') && !isalpha('9')); /* Digits are not alpha. */
+    CHECK(!isalpha(' ') && !isalpha('.'));
+}
+
+static void test_isupper(void)
+{
+    CHECK(isupper('A') && isupper('M') && isupper('Z'));
+    CHECK(!isupper('a') && !isupper('z')); /* Lowercase is not upper. */
+    CHECK(!isupper('5') && !isupper(' ') && !isupper('!'));
+}
+
+static void test_islower(void)
+{
+    CHECK(islower('a') && islower('m') && islower('z'));
+    CHECK(!islower('A') && !islower('Z')); /* Uppercase is not lower. */
+    CHECK(!islower('5') && !islower(' ') && !islower('!'));
+}
+
+static void test_isdigit(void)
+{
+    for (char c = '0'; c <= '9'; c++) {
+        CHECK(isdigit(c));
+    }
+    CHECK(!isdigit('a') && !isdigit(' ') && !isdigit('/') && !isdigit(':'));
+    /* '/' and ':' are the bytes immediately outside the '0'-'9' range. */
+}
+
+static void test_isspace(void)
+{
+    CHECK(isspace(' ') && isspace('\t') && isspace('\n'));
+    CHECK(isspace('\v') && isspace('\f') && isspace('\r'));
+    CHECK(!isspace('a') && !isspace('0'));
+}
+
+static void test_isblank(void)
+{
+    /* isblank is narrower than isspace: only space and tab. */
+    CHECK(isblank(' ') && isblank('\t'));
+    CHECK(!isblank('\n') && !isblank('\v') && !isblank('\f') && !isblank('\r'));
+}
+
+static void test_ispunct(void)
+{
+    CHECK(ispunct('!') && ispunct('.') && ispunct('@') && ispunct('~'));
+    CHECK(ispunct('[') && ispunct('_') && ispunct('`'));
+    CHECK(!ispunct('a') && !ispunct('5') && !ispunct(' '));
+}
+
+static void test_iscntrl(void)
+{
+    CHECK(iscntrl('\0') && iscntrl('\n') && iscntrl(0x1F) && iscntrl(0x7F)); /* DEL */
+    CHECK(!iscntrl('a') && !iscntrl(' ') && !iscntrl('~'));
+}
+
+static void test_isxdigit(void)
+{
+    CHECK(isxdigit('0') && isxdigit('9'));
+    CHECK(isxdigit('a') && isxdigit('f') && isxdigit('A') && isxdigit('F'));
+    CHECK(!isxdigit('g') && !isxdigit('G') && !isxdigit('z'));
+}
+
+static void test_isgraph(void)
+{
+    /* isgraph: any printable character EXCEPT space. */
+    CHECK(isgraph('a') && isgraph('Z') && isgraph('5'));
+    CHECK(isgraph('!') && isgraph('~')); /* Punctuation counts. */
+    CHECK(!isgraph(' '));                /* Space is excluded. */
+    CHECK(!isgraph('\t') && !isgraph('\n') && !isgraph(0x1F) && !isgraph(0x7F));
+}
+
+static void test_isprint(void)
+{
+    /* isprint: any printable character INCLUDING space. */
+    CHECK(isprint('a') && isprint('Z') && isprint('5'));
+    CHECK(isprint('!') && isprint('~'));
+    CHECK(isprint(' ')); /* The one difference from isgraph. */
+    CHECK(!isprint('\t') && !isprint('\n') && !isprint(0x1F) && !isprint(0x7F));
+}
+
+static void test_toupper(void)
+{
+    CHECK(toupper('a') == 'A');
+    CHECK(toupper('z') == 'Z');
+    CHECK(toupper('A') == 'A'); /* Already upper: unchanged. */
+    CHECK(toupper('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(toupper('!') == '!');
+}
+
+static void test_tolower(void)
+{
+    CHECK(tolower('A') == 'a');
+    CHECK(tolower('Z') == 'z');
+    CHECK(tolower('a') == 'a'); /* Already lower: unchanged. */
+    CHECK(tolower('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(tolower('!') == '!');
+}
+
+static void test_ctype_bounds(void)
+{
+    /* EOF and out-of-range values must be handled without indexing OOB. */
+    CHECK(!isalnum(EOF));
+    CHECK(!isalpha(EOF));
+    CHECK(!isdigit(EOF));
+    CHECK(!isspace(EOF));
+    CHECK(!isupper(EOF));
+    CHECK(!islower(EOF));
+    CHECK(!isgraph(EOF));
+    CHECK(!isprint(EOF));
+
+    CHECK(!isalnum(128));
+    CHECK(!isalnum(255));
+    CHECK(!isalnum(1000));
+    CHECK(!isalnum(-100));
+    CHECK(!isupper(200) && !islower(200));
+    CHECK(!isgraph(200) && !isprint(200));
+
+    /* toupper/tolower must return the argument unchanged, not crash or
+     * table-index out of bounds. */
+    CHECK(toupper(EOF) == EOF);
+    CHECK(tolower(EOF) == EOF);
+    CHECK(toupper(200) == 200);
+    CHECK(tolower(200) == 200);
+}
+
 /* --- errno ------------------------------------------------------------- */
 
 static void test_errno_open(void)
@@ -419,6 +557,21 @@ int main(void)
     run_group("malloc coalesce", test_malloc_coalesce);
     run_group("calloc", test_calloc);
     run_group("realloc", test_realloc);
+    run_group("isalnum", test_isalnum);
+    run_group("isalpha", test_isalpha);
+    run_group("isupper", test_isupper);
+    run_group("islower", test_islower);
+    run_group("isdigit", test_isdigit);
+    run_group("isspace", test_isspace);
+    run_group("isblank", test_isblank);
+    run_group("ispunct", test_ispunct);
+    run_group("iscntrl", test_iscntrl);
+    run_group("isxdigit", test_isxdigit);
+    run_group("isgraph", test_isgraph);
+    run_group("isprint", test_isprint);
+    run_group("toupper", test_toupper);
+    run_group("tolower", test_tolower);
+    run_group("ctype bounds", test_ctype_bounds);
     run_group("snprintf basic", test_snprintf_basic);
     run_group("snprintf bounds", test_snprintf_bounds);
     run_group("snprintf %%", test_snprintf_percent);
