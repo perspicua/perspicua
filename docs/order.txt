@@ -2,7 +2,7 @@ Perspicua Build Order
 =====================
 
 This file is the ORDER in which to build things so every layer rests on a solid
-one below it. The full catalog of ideas lives in IDEAS.txt; this file is about
+one below it. The full catalog of ideas lives in ideas.txt; this file is about
 sequencing, dependencies, and what "done" means for each step.
 
 Guiding rule: correctness of the foundation before breadth of features. A bug in
