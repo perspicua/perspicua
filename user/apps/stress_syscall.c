@@ -17,6 +17,10 @@ int main(int argc, char *argv[])
     sys_read(9999, buf, sizeof(buf));
     sys_write(-1, "test", 4);
     sys_write(9999, "test", 4);
+    sys_pread(-1, buf, sizeof(buf), 0);
+    sys_pread(9999, buf, sizeof(buf), 0);
+    sys_pwrite(-1, "test", 4, 0);
+    sys_pwrite(9999, "test", 4, 0);
     sys_close(-1);
     sys_close(9999);
     sys_getdents(-1, buf, sizeof(buf));
@@ -25,8 +29,11 @@ int main(int argc, char *argv[])
     /* 2. Invalid Pointers */
     printf("[ STRESS ] Testing null/invalid pointers...\n");
     sys_read(0, NULL, 10);
+    sys_pread(0, NULL, 10, 0);
     sys_write(1, NULL, 10);
+    sys_pwrite(1, NULL, 10, 0);
     sys_write(1, (void *)0xdeadbeef, 10);
+    sys_pwrite(1, (void *)0xdeadbeef, 10, 0);
     sys_open(NULL, 0);
     sys_open((void *)0xffffffffffffffff, 0);
     sys_chdir(NULL);
@@ -60,7 +67,13 @@ int main(int argc, char *argv[])
     sys_sigaction(-1, NULL, NULL);
     sys_sigprocmask(-1, NULL, NULL);
 
-    /* 7. Invalid Sleep/Yield */
+    /* 7. New syscalls fuzzing */
+    printf("[ STRESS ] Testing extreme offsets and getppid...\n");
+    sys_pread(0, buf, 10, -1);
+    sys_pwrite(1, "test", 4, -1);
+    sys_getppid();
+
+    /* 8. Invalid Sleep/Yield */
     printf("[ STRESS ] Testing boundary sleep/yield...\n");
     sys_sleep(0xffffffff); /* Extremely long sleep, should ideally not overflow or block forever
                               unexpectedly if checked */
