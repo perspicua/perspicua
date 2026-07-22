@@ -150,9 +150,19 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
 int vfs_read(int fd, void *buffer, size_t count);
 
 /*
+ * vfs_pread - Synchronous data retrieval from a descriptor at a specific offset.
+ */
+int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset);
+
+/*
  * vfs_write - Synchronous data submission to a descriptor.
  */
 int vfs_write(int fd, const void *buffer, size_t count);
+
+/*
+ * vfs_pwrite - Synchronous data submission to a descriptor at a specific offset.
+ */
+int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset);
 
 /*
  * vfs_readdir - Retrieves directory entries from a descriptor.

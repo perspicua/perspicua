@@ -314,6 +314,7 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
         PANIC("process_create: kernel stack OOM");
     }
 
+    p->parent_pid = 0;
     p->pid = pid;
     p->user_pgd = user_pgd;
     p->asid = 0;
@@ -394,6 +395,7 @@ int process_create_from_file(const char *path, uint32_t pid)
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
+    p->parent_pid = 0;
     p->pid = pid;
     p->user_pgd = user_pgd;
     p->asid = 0;

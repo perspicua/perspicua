@@ -677,6 +677,50 @@ int vfs_read(int fd, void *buffer, size_t count)
 }
 
 /*
+ * vfs_pread - Dispatches pread request to the underlying vnode driver with an offset.
+ */
+int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS) {
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    if (offset < 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_file *f = p->fd_table[fd];
+    if (!f) {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    atomic_inc(&f->refcount);
+    spin_unlock(&p->fd_lock);
+
+    int mode = f->flags & VFS_O_ACCMODE;
+    if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
+        atomic_dec_and_test(&f->refcount);
+        return -PERS_ERR_PERMISSION_DENIED;
+    }
+
+    struct vfs_file temp_f;
+    temp_f.node = f->node;
+    temp_f.offset = offset;
+    temp_f.flags = f->flags;
+
+    int bytes = temp_f.node->ops->read(&temp_f, buffer, count);
+    atomic_dec_and_test(&f->refcount);
+    return bytes;
+}
+
+/*
  * vfs_readdir - Reads raw driver entries and appends VFS mount points.
  */
 int vfs_readdir(int fd, void *buffer, size_t count)
@@ -831,6 +875,55 @@ int vfs_write(int fd, const void *buffer, size_t count)
     }
 
     int bytes = f->node->ops->write(f, buffer, count);
+    atomic_dec_and_test(&f->refcount);
+    return bytes;
+}
+
+/*
+ * vfs_pwrite - Dispatches write request to the underlying vnode driver with an offset.
+ */
+int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS) {
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    if (offset < 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    int pid = process_find_current();
+    if (pid < 0) {
+        return pid;
+    }
+
+    struct process *p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_file *f = p->fd_table[fd];
+    if (!f) {
+        spin_unlock(&p->fd_lock);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    atomic_inc(&f->refcount);
+    spin_unlock(&p->fd_lock);
+
+    int mode = f->flags & VFS_O_ACCMODE;
+    if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
+        atomic_dec_and_test(&f->refcount);
+        return -PERS_ERR_PERMISSION_DENIED;
+    }
+
+    struct vfs_file temp_f;
+    temp_f.node = f->node;
+    temp_f.flags = f->flags;
+
+    if (f->flags & VFS_O_APPEND) {
+        temp_f.offset = f->node->file_size;
+    } else {
+        temp_f.offset = offset;
+    }
+
+    int bytes = f->node->ops->write(&temp_f, buffer, count);
     atomic_dec_and_test(&f->refcount);
     return bytes;
 }
