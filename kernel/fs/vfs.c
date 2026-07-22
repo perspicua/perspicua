@@ -714,7 +714,6 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     temp_f.node = f->node;
     temp_f.offset = offset;
     temp_f.flags = f->flags;
-    temp_f.refcount = f->refcount;
 
     int bytes = temp_f.node->ops->read(&temp_f, buffer, count);
     atomic_dec_and_test(&f->refcount);

@@ -30,6 +30,8 @@ void test_pread_pwrite(void)
     res = sys_pread(fd, buf, 5, 2);
     assert(res == 5);
     assert(strcmp(buf, "abcde") == 0);
+    /* pread must not have moved the cursor: it is still at 13 from step 3. */
+    assert(sys_lseek(fd, 0, VFS_SEEK_CUR) == 13);
 
     /* 5. Verify the entire file.
           Expected content: "01" + "abcde" + "789" + "XYZ" = "01abcde789XYZ" */
