@@ -153,6 +153,22 @@ int sys_write(int fd, const char *buf, size_t len)
     return __syscall_ret(res);
 }
 
+int sys_pwrite(int fd, const char *buf, size_t len, off_t offset)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x3, %4\n"
+                 "mov x8, %5\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"(buf), "r"((long)len), "r"((long)offset), "i"(SYS_PWRITE)
+                 : "x0", "x1", "x2", "x3", "x8", "memory");
+    return __syscall_ret(res);
+}
+
 int sys_getpid(void)
 {
     long pid;
@@ -163,6 +179,18 @@ int sys_getpid(void)
                  : "i"(SYS_GETPID)
                  : "x0", "x8", "memory");
     return __syscall_ret(pid);
+}
+
+int sys_getppid(void)
+{
+    long ppid;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(ppid)
+                 : "i"(SYS_GETPPID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(ppid);
 }
 
 void sys_yield(void)
@@ -210,6 +238,22 @@ int sys_read(int fd, void *buf, size_t len)
                  : "=r"(bytes)
                  : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_READ)
                  : "x0", "x1", "x2", "x8", "memory");
+    return __syscall_ret(bytes);
+}
+
+int sys_pread(int fd, void *buf, size_t count, off_t offset)
+{
+    long bytes;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x2, %3\n"
+                 "mov x3, %4\n"
+                 "mov x8, %5\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(bytes)
+                 : "r"((long)fd), "r"(buf), "r"((long)count), "r"((long)offset), "i"(SYS_PREAD)
+                 : "x0", "x1", "x2", "x3", "x8", "memory");
     return __syscall_ret(bytes);
 }
 

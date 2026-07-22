@@ -131,6 +131,41 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
+        case SYS_PWRITE: {
+            int fd = (int)(tf->x[0]);
+            const char *buf = (const char *)(tf->x[1]);
+            size_t len = (size_t)(tf->x[2]);
+            vfs_off_t offset = (vfs_off_t)(tf->x[3]);
+
+            /* Enforce maximum RW size to prevent excessive heap usage */
+            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!validate_user_buffer(buf, len, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            char *kbuf = heap_malloc(len);
+            if (!kbuf) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            if (copy_from_user(kbuf, buf, len) != 0) {
+                heap_free(kbuf);
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            int bytes = vfs_pwrite(fd, kbuf, len, offset);
+            heap_free(kbuf);
+            tf->x[0] = (uint64_t)bytes;
+            break;
+        }
+
         case SYS_EXIT: {
             int status = (int)tf->x[0];
             process_exit(pid, status);
@@ -141,6 +176,11 @@ void syscall_handle(struct exception_trap_frame *tf)
 
         case SYS_GETPID: {
             tf->x[0] = (uint64_t)pid;
+            break;
+        }
+
+        case SYS_GETPPID: {
+            tf->x[0] = (uint64_t)process_table[pid].parent_pid;
             break;
         }
 
@@ -195,6 +235,39 @@ void syscall_handle(struct exception_trap_frame *tf)
             }
 
             int bytes = vfs_read(fd, kbuf, len);
+            if (bytes > 0) {
+                if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
+                    bytes = -PERS_ERR_OUT_OF_MEMORY;
+                }
+            }
+            heap_free(kbuf);
+            tf->x[0] = (uint64_t)bytes;
+            break;
+        }
+
+        case SYS_PREAD: {
+            int fd = (int)(tf->x[0]);
+            char *buf = (char *)(tf->x[1]);
+            size_t len = (size_t)(tf->x[2]);
+            vfs_off_t offset = (vfs_off_t)(tf->x[3]);
+
+            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!validate_user_buffer(buf, len, 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            char *kbuf = heap_malloc(len);
+            if (!kbuf) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            int bytes = vfs_pread(fd, kbuf, len, offset);
             if (bytes > 0) {
                 if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
                     bytes = -PERS_ERR_OUT_OF_MEMORY;

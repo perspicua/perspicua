@@ -44,5 +44,8 @@
 #define SYS_RENAME      32
 #define SYS_FSYNC       33
 #define SYS_FCNTL       34
+#define SYS_PREAD       35
+#define SYS_PWRITE      36
+#define SYS_GETPPID     37
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */
