@@ -685,6 +685,10 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
+    if (offset < 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
     int pid = process_find_current();
     if (pid < 0) {
         return pid;
@@ -877,12 +881,16 @@ int vfs_write(int fd, const void *buffer, size_t count)
 }
 
 /*
- * vfs_write - Dispatches write request to the underlying vnode driver with an offset.
+ * vfs_pwrite - Dispatches write request to the underlying vnode driver with an offset.
  */
 int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
 {
     if (fd < 0 || fd >= VFS_MAX_FDS) {
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+
+    if (offset < 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
     }
 
     int pid = process_find_current();
@@ -906,15 +914,15 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
-    if (f->flags & VFS_O_APPEND) {
-        f->offset = f->node->file_size;
-    }
-
     struct vfs_file temp_f;
     temp_f.node = f->node;
-    temp_f.offset = offset;
     temp_f.flags = f->flags;
-    temp_f.refcount = f->refcount;
+
+    if (f->flags & VFS_O_APPEND) {
+        temp_f.offset = f->node->file_size;
+    } else {
+        temp_f.offset = offset;
+    }
 
     int bytes = f->node->ops->write(&temp_f, buffer, count);
     atomic_dec_and_test(&f->refcount);

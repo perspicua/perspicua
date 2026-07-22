@@ -160,7 +160,7 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset);
 int vfs_write(int fd, const void *buffer, size_t count);
 
 /*
- * vfs_ppwrite - Synchronous data submission to a descriptor at a specific offset.
+ * vfs_pwrite - Synchronous data submission to a descriptor at a specific offset.
  */
 int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset);
 
