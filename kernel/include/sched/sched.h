@@ -23,6 +23,7 @@ enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,
     SCHED_TASK_BLOCKED,
+    SCHED_TASK_STOPPED,
     SCHED_TASK_DEAD
 };
 
@@ -94,6 +95,12 @@ void sched_block(void);
 
 /* Transitions a specific task from blocked to ready state. */
 void sched_unblock(struct task *t);
+
+/* Transitions the current task to stopped state */
+void sched_stop(void);
+
+/* Transitions a specific task from stopped to ready state. */
+void sched_continue(struct task *t);
 
 /* Returns a pointer to the task currently running on the calling CPU core. */
 struct task *sched_get_current(void);

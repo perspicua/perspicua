@@ -176,10 +176,38 @@ static struct task *rq_dequeue(int cpu, int allow_pid0)
     return NULL;
 }
 
+/* Removes a task from the sleep queue if present. Caller holds sched_sleep_lock. */
+static void sleep_unlink_locked(struct task *t)
+{
+    if (sched_sleep_head == t) {
+        sched_sleep_head = t->sleep_next;
+        t->sleep_next = NULL;
+        return;
+    }
+
+    struct task *scan = sched_sleep_head;
+    while (scan && scan->sleep_next != t) {
+        scan = scan->sleep_next;
+    }
+    if (scan) {
+        scan->sleep_next = t->sleep_next;
+        t->sleep_next = NULL;
+    }
+}
+
 /* Inserts task into ordered sleep queue. */
 static void sleep_enqueue(struct task *t)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+
+    /*
+     * A task woken early from sleep (e.g. by a signal delivering through
+     * sched_unblock) stays linked in this queue until sleep_drain reaches its
+     * wake_time. If it sleeps again before then, inserting it a second time
+     * would splice the node into the list twice and form a cycle. Unlink any
+     * stale entry first so a task appears at most once.
+     */
+    sleep_unlink_locked(t);
 
     if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0) {
         t->sleep_next = sched_sleep_head;
@@ -449,6 +477,39 @@ void sched_unblock(struct task *t)
     }
 }
 
+void sched_stop(void)
+{
+    unsigned long flags = irq_save();
+    int cpu = get_core_id();
+    struct task *curr = sched_get_current();
+
+    if (!curr || curr == sched_idle[cpu]) {
+        irq_restore(flags);
+        return;
+    }
+
+    curr->state = SCHED_TASK_STOPPED;
+    schedule();
+    irq_restore(flags);
+}
+
+void sched_continue(struct task *t)
+{
+    if (!t) {
+        return;
+    }
+
+    if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_READY) {
+        return;
+    }
+
+    enum sched_task_state expected = SCHED_TASK_STOPPED;
+    if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
+                                    __ATOMIC_SEQ_CST)) {
+        rq_enqueue(get_core_id(), t);
+    }
+}
+
 /* Returns the active task on the calling CPU. */
 struct task *sched_get_current(void)
 {
@@ -497,6 +558,7 @@ void schedule(void)
             }
             break;
         case SCHED_TASK_BLOCKED:
+        case SCHED_TASK_STOPPED:
         case SCHED_TASK_READY:
             break;
         case SCHED_TASK_DEAD:

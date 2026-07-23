@@ -74,6 +74,29 @@ void test_signals(void)
     }
     TEST_PASS("delivery is idempotent");
 
+    // POSIX mutual discard: stop signals clear pending SIGCONT, and SIGCONT clears pending stop
+    // signals
+    {
+        TEST_ASSERT_EQ("send SIGCONT", signal_send(INIT_PID, SIGNAL_CONT), 0);
+        uint32_t pending = process_table[INIT_PID].pending_signals;
+        TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+
+        TEST_ASSERT_EQ("send SIGSTOP", signal_send(INIT_PID, SIGNAL_STOP), 0);
+        pending = process_table[INIT_PID].pending_signals;
+        TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
+        TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
+
+        TEST_ASSERT_EQ("send SIGCONT again", signal_send(INIT_PID, SIGNAL_CONT), 0);
+        pending = process_table[INIT_PID].pending_signals;
+        TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+        TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
+
+        /* Cleanup */
+        process_table[INIT_PID].pending_signals &=
+            ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
+    }
+    TEST_PASS("POSIX mutual signal discard");
+
     /*
      * Clear what this suite queued so init is not left holding signals it
      * never asked for once it runs.

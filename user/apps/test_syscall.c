@@ -19,12 +19,12 @@ void test_pread_pwrite(void)
     res = sys_pwrite(fd, "abcde", 5, 2);
     assert(res == 5);
 
-    /* 3. Normal write. Because pwrite didn't move the cursor, 
+    /* 3. Normal write. Because pwrite didn't move the cursor,
           this should write starting at offset 10. */
     res = sys_write(fd, "XYZ", 3);
     assert(res == 3);
 
-    /* 4. pread from offset 2. Should read "abcde". 
+    /* 4. pread from offset 2. Should read "abcde".
           This must NOT move the cursor from 13. */
     char buf[16] = {0};
     res = sys_pread(fd, buf, 5, 2);
@@ -55,7 +55,7 @@ void test_getppid(void)
     if (child_pid == 0) {
         // We are in the child process
         int my_ppid = sys_getppid();
-        
+
         if (my_ppid != parent_pid) {
             printf("ERROR: getppid() returned %d, expected %d\n", my_ppid, parent_pid);
             sys_exit(1);
@@ -76,7 +76,7 @@ void test_getppid(void)
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
-    
+
     test_pread_pwrite();
     test_getppid();
 
