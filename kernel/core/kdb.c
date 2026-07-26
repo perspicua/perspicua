@@ -225,6 +225,8 @@ static const char *task_state_str(enum sched_task_state s)
             return "READY  ";
         case SCHED_TASK_BLOCKED:
             return "BLOCKED";
+        case SCHED_TASK_STOPPED:
+            return "STOPPED";
         case SCHED_TASK_DEAD:
             return "DEAD   ";
         default:

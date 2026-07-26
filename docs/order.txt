@@ -32,13 +32,6 @@ what makes the system usable enough to develop against.
         CLOCK_REALTIME will be boot-relative until the RTC lands (Phase 3 item 3)
         — implement the interface now, wire the wall clock in later.
 
-   2. SIGSTOP / SIGCONT  (the kernel half of job control)
-      Effort: S-M | Unlocks: shell fg/bg/jobs (Phase 3 item 4)
-      Scope: a STOPPED process state the scheduler won't pick; SIGCONT wakes it.
-      Done: a looping program can be stopped and resumed from the shell.
-      Note: signals.c currently early-returns for STOP/TSTP/TTIN/TTOU with an
-        "ignored until job control is implemented" comment — that is the hook.
-
    3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
       Effort: S | Unlocks: monitoring tools and scripts that parse /proc
       Scope: iterate the mount table / cpu info / global counters as text.

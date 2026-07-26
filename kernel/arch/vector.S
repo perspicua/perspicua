@@ -177,7 +177,7 @@ irq_handler:
 
 .global ret_to_user
 ret_to_user:
-    mrs x0, spsr_el1
+    ldr x0, [sp, #24]          // tf->spsr_el1 (saved), not the live register
     and x0, x0, #0xf
     cbnz x0, 1f
 
