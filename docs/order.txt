@@ -9,7 +9,835 @@ Guiding rule: correctness of the foundation before breadth of features. A bug in
 the scheduler, the MMU, or the buffer cache costs 10x more once demand paging,
 threads, and a network stack sit on top of it.
 
+================================================================================
+KERNEL AUDIT 
+================================================================================
 
+Scope: mm/{pmm,mmu,slab,heap,asid}, sched/{sched,process}, arch/{boot,vector,
+switch,uaccess,exception}, core/{syscall,signals,lock,mutex}, fs/{vfs,fat32,pipe}.
+Ordered by exploitability and blast radius. Line numbers are from the audited
+tree (branch `dev`, at 3ea7927).
+
+
+## 1. CRITICAL & HIGH PRIORITY BUGS
+
+### [BUG-001] FAT32 long-filename parser writes out of bounds on the kernel stack
+- **Location**: `kernel/fs/fat32.c:189` (`extract_lfn_part`)
+- **Severity**: Critical
+- **Description**: The write offset is derived directly from an on-disk byte with
+  no validation:
+  `int offset = ((lfn->sequence & 0x3F) - 1) * 13;`
+  `sequence & 0x3F` spans 0..63, so `offset` spans -13 .. 806. Both callers pass a
+  256-byte **stack** array (`char lfn_name[256]` in `fat32_vfs_readdir` and in
+  `fat32_lookup`), and the function then writes 13 bytes at `name_buf[offset..
+  offset+12]`. A crafted or merely corrupt directory entry with `sequence == 0`
+  writes *below* the buffer; `sequence == 0x3F` writes ~560 bytes *past* it,
+  straight through saved registers and the return address of a frame that runs at
+  EL1. This is a full kernel-stack smash driven entirely by untrusted media
+  content — reachable from any unprivileged `ls` of an attacker-supplied SD image.
+- **Suggested Fix**: Validate the sequence number and clamp the write:
+  ```c
+  static void extract_lfn_part(struct fat32_lfn_entry *lfn, char *name_buf,
+                               size_t buf_len)
+  {
+      unsigned seq = lfn->sequence & 0x3F;
+      if (seq < 1 || seq > 20) {          /* 20 * 13 = 260 > 255 max name */
+          return;                          /* malformed LFN chain: ignore */
+      }
+      size_t offset = (size_t)(seq - 1) * 13;
+      if (offset + 13 > buf_len - 1) {
+          return;
+      }
+      /* ... existing copies ... */
+  }
+  ```
+  Also reset `has_lfn`/`lfn_name` whenever the sequence numbers are not strictly
+  descending, so a partial chain cannot splice stale bytes into a name.
+
+### [BUG-002] `getdents()` with a small buffer overflows the kernel heap
+- **Location**: `kernel/fs/vfs.c`, `vfs_readdir` — the `dot_idx == 0` branch
+- **Severity**: Critical
+- **Description**: `max_entries = count / sizeof(struct vfs_dirent)` (260 bytes per
+  entry). The `".."` write and every filesystem entry are guarded by
+  `res < max_entries`, but the very first write — the `"."` entry — is not:
+  ```c
+  if (dot_idx < 2) {
+      if (dot_idx == 0) {
+          strncpy(dirents[res].name, ".", 255);   /* no max_entries check */
+          dirents[res].ino = 1;
+  ```
+  A user calling `getdents(fd, buf, 1)` makes `max_entries == 0`, and the syscall
+  layer allocates `heap_malloc(1)` — a 16-byte slab object. The 260-byte dirent
+  write runs 244 bytes past it, corrupting adjacent slab objects, the free-list
+  pointers, and the `struct slab_page` header of the next page. Trivially
+  reachable from userspace and directly exploitable into arbitrary kernel write.
+- **Suggested Fix**: Guard the `"."` write like the others, and reject undersized
+  buffers up front:
+  ```c
+  if (count < sizeof(struct vfs_dirent)) {
+      return -PERS_ERR_INVALID_ARGUMENT;
+  }
+  ```
+  then `if (dot_idx == 0 && (size_t)res < max_entries) { ... }`. Add a syscall-level
+  cap on `count` as well (see BUG-019).
+
+### [BUG-003] Heap allocator can return a block smaller than the requested size
+- **Location**: `kernel/mm/heap.c:166-168` (`heap_malloc`, the non-split path)
+- **Severity**: Critical
+- **Description**: `HEAP_HEADER_SIZE` is 32 and `HEAP_FOOTER_SIZE` is 16 (the
+  footer struct is `__attribute__((aligned(16)))`, so a single `unsigned int`
+  occupies 16 bytes). The split branch is taken only when
+  `curr->size >= size + FOOTER + HEADER + 16`, i.e. `size + 64`. Otherwise:
+  ```c
+  } else {
+      curr->size -= HEAP_FOOTER_SIZE;   /* usable size shrinks by 16 */
+  }
+  ```
+  So for any free block whose size lands in `[size, size + 15]`, the caller asked
+  for `size` bytes and receives a region of `size - 16`. The caller's own writes
+  then land on the redzone footer and beyond. The best case is a delayed
+  `PANIC("heap: buffer overflow detected")` at free time attributed to an innocent
+  caller; the worst case is silent corruption of the following block header. Only
+  affects allocations > `HEAP_SLAB_MAX` (1024), which is exactly the path used by
+  `SYS_READ`/`SYS_WRITE`/`SYS_GETDENTS` bounce buffers.
+- **Suggested Fix**: Account for the footer in the fit test, not after the fact:
+  ```c
+  unsigned long need = size + HEAP_FOOTER_SIZE;
+  if (curr->size >= need) {
+      if (curr->size >= need + HEAP_HEADER_SIZE + 16) {
+          /* split as today, using `need` */
+      }
+      /* non-split: keep curr->size as-is, place the footer at
+         curr + HEADER + curr->size - FOOTER, and never shrink below `size` */
+  }
+  ```
+  Add a debug assertion that the returned usable size is `>= size`.
+
+### [BUG-004] Use-after-free: `pipe_close` frees the pipe out from under its waiters
+- **Location**: `kernel/fs/pipe.c:211-227` (`pipe_close`), `pipe.c:87-93` (`pipe_wait`)
+- **Severity**: Critical
+- **Description**: `pipe_close` wakes every blocked reader and writer, then frees
+  the pipe once the last endpoint closes:
+  ```c
+  pipe_wake(&pipe->read_wait_queue);
+  pipe_wake(&pipe->write_wait_queue);
+  int destroy = (pipe->readers == 0 && pipe->writers == 0);
+  spin_unlock(&pipe->lock);
+  if (destroy) { heap_free(pipe); ... }
+  ```
+  Every task just woken is parked inside `pipe_wait`, and the first thing it does
+  on resume is `spin_lock(lock)` on `&pipe->lock` followed by
+  `pipe_queue_remove(queue, self)` — both on memory that `heap_free` has already
+  returned to the slab/first-fit pool. Two processes, one blocking read, one close
+  of the last write end, and the woken reader spins on and then writes through a
+  freed allocation. `file->node->internal_info = NULL` is also written *after* the
+  free, so it cannot help.
+- **Suggested Fix**: Refcount the pipe, or (simpler and sufficient here) defer the
+  free until no waiter can still be inside `pipe_wait`. Give `struct pipe` an
+  explicit `waiters` count incremented before `pipe_wait` blocks and decremented
+  after it re-acquires the lock; `pipe_close` frees only when
+  `readers == 0 && writers == 0 && waiters == 0`, otherwise it marks the pipe dead
+  and lets the last waiter out do the free. Set `internal_info = NULL` *before*
+  releasing the lock in either case.
+
+### [BUG-005] Use-after-free: freed tasks stay linked in the global sleep queue
+- **Location**: `kernel/sched/sched.c:199-228` (`sleep_enqueue`), `sched.c:463-478`
+  (`sched_unblock`), `sched.c:295-323` (`cleanup_dead_task`)
+- **Severity**: Critical
+- **Description**: `sched_unblock` transitions a sleeping task to READY and
+  enqueues it on a run queue, but never unlinks it from `sched_sleep_head`. The
+  comment in `sleep_enqueue` acknowledges this and defends only against
+  *double-insertion*; it does nothing about the task being destroyed. The
+  sequence is:
+  1. Task sleeps via `SYS_SLEEP` → linked into `sched_sleep_head`.
+  2. A signal arrives → `signal_send` → `sched_unblock` → task is READY and
+     runnable, but still linked in the sleep list.
+  3. The task exits → `process_exit` → `SCHED_TASK_DEAD` → `schedule()` →
+     `cleanup_dead_task` → `free_task_stack()` and `heap_free(dead)`.
+  4. The next `schedule()` on any core calls `sleep_drain`, which walks
+     `sched_sleep_head` and dereferences `w->sleep_next` / CASes `w->state` on
+     freed memory.
+  With the slab reusing that 1024-byte-class object almost immediately, this is a
+  reliable write-what-where.
+- **Suggested Fix**: Unlink on wake, not on next sleep. Export a
+  `sleep_dequeue(struct task *t)` that takes `sched_sleep_lock` and calls
+  `sleep_unlink_locked`, and call it from `sched_unblock`/`sched_continue`
+  whenever the CAS succeeds. Belt-and-braces: call it unconditionally from
+  `cleanup_dead_task` before the `heap_free`, and add the same treatment for
+  `wait_next` (mutex/pipe/tty queues) — a dead task must not be reachable from any
+  list.
+
+### [BUG-006] Use-after-free: a zombie parent's `main_task` is a dangling pointer
+- **Location**: `kernel/sched/process.c:714-723` (`process_exit`),
+  `kernel/core/signals.c:209-218` (`signal_send`)
+- **Severity**: Critical
+- **Description**: When a process exits, its `struct task` is freed by
+  `cleanup_dead_task` on the next schedule, but `process_table[pid].main_task`
+  keeps pointing at the freed object and the slot stays in `PROCESS_STATE_ZOMBIE`
+  until a parent reaps it. Both re-validation sites only check
+  `state != PROCESS_STATE_EMPTY`, which a zombie passes:
+  ```c
+  if (process_table[ppid].state != PROCESS_STATE_EMPTY
+      && process_table[ppid].main_task != NULL) {
+      sched_unblock(process_table[ppid].main_task);   /* freed task */
+  }
+  ```
+  Same pattern in `signal_send` (`p->main_task->state == SCHED_TASK_BLOCKED`) and
+  in the `SIGCONT`/`SIGKILL` branch. A grandchild exiting after its parent has
+  died but before init reaps it hits this every time.
+- **Suggested Fix**: Clear the back-pointer at the moment the task is destroyed —
+  in `process_exit`, set `p->main_task = NULL` under `process_table_lock` before
+  the task can be freed — and tighten every check to
+  `state == PROCESS_STATE_RUNNING`. Longer term, refcount `struct task` so a
+  holder of the pointer keeps it alive (see IMP-004).
+
+### [BUG-007] `process_fork` briefly publishes a claimed PID slot as free
+- **Location**: `kernel/sched/process.c:745-764`
+- **Severity**: High
+- **Description**: The slot is reserved correctly under the lock
+  (`state = PROCESS_STATE_RUNNING`), the lock is dropped, and then:
+  ```c
+  struct process *child = &process_table[child_pid];
+  memset(child, 0, sizeof(*child));      /* state := 0 == PROCESS_STATE_EMPTY */
+  child->pid = (uint32_t)child_pid;
+  child->state = PROCESS_STATE_RUNNING;
+  ```
+  `PROCESS_STATE_EMPTY` is 0, so between the `memset` and the re-assignment the
+  slot advertises itself as free. A concurrent `fork()` on another core (or
+  `process_create_from_file`) scanning under `process_table_lock` will claim the
+  same slot, and two processes end up sharing one PCB — one `user_pgd`, one
+  `fd_table`, one kernel stack pointer. On a 4-core build this is a realistic race,
+  and the aftermath is a double-free of the page tables at exit.
+- **Suggested Fix**: Do the zeroing inside the critical section, or zero everything
+  except `state`:
+  ```c
+  unsigned long flags = spin_lock_irqsave(&process_table_lock);
+  for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
+      if (process_table[i].state == PROCESS_STATE_EMPTY) {
+          child_pid = i;
+          memset(&process_table[i], 0, sizeof(struct process));
+          process_table[i].state = PROCESS_STATE_RUNNING;
+          break;
+      }
+  }
+  spin_unlock_irqrestore(&process_table_lock, flags);
+  ```
+  The same "claim then memset" shape should be audited anywhere else it appears.
+
+### [BUG-008] `kill()` with a negative PID indexes the process table out of bounds
+- **Location**: `kernel/core/syscall.c:449-453` (`SYS_KILL`)
+- **Severity**: High
+- **Description**: `target_pid` is a signed `int` taken straight from user `x0`.
+  Zero is rejected, but the range check is:
+  ```c
+  if (target_pid >= PROCESS_TABLE_SIZE
+      || process_table[target_pid].state == PROCESS_STATE_EMPTY) {
+  ```
+  For `target_pid = -1` the first test is false (signed comparison), so
+  `process_table[-1]` is read — 4 KB before the table, in whatever `.bss` precedes
+  it. Depending on the layout this either reads garbage that happens to be
+  non-`EMPTY` and proceeds into `signal_send` (which does bounds-check, so the
+  damage stops there), or faults. On Linux `kill(-pid, …)` means "signal the
+  process group", so this is also the value a ported program is most likely to
+  pass.
+- **Suggested Fix**: `if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE)` →
+  `-PERS_ERR_NO_SUCH_PROCESS`, before any table access. Either implement process
+  groups or explicitly return `-EINVAL` for negative PIDs. Note the same check
+  guards the permission logic below it, which also reads `process_table[pid]`.
+
+### [BUG-009] Unchecked `heap_malloc` results passed to `strncpy_from_user`
+- **Location**: `kernel/core/syscall.c:202` (`SYS_OPEN`), `:325` (`SYS_EXEC`),
+  `:718` (`SYS_STAT`)
+- **Severity**: High
+- **Description**: Three paths allocate the 4096-byte path buffer and use it
+  immediately with no NULL test:
+  ```c
+  char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+  long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
+  ```
+  Under heap pressure — which an unprivileged process can create on demand, since
+  each in-flight `read`/`write` pins up to 4 MB (BUG-019) — `heap_malloc` returns
+  NULL and `strncpy_from_user` writes user-controlled bytes to physical address 0
+  onward via the kernel linear map. `SYS_CHDIR`, `SYS_MKDIR`, `SYS_RMDIR` and
+  `SYS_UNLINK` all check correctly; these three were missed.
+- **Suggested Fix**: Add the standard guard to all three. Better: factor the
+  repeated 30-line "copy a path in from user" block into one helper
+  (`static int copy_path_from_user(const char *upath, char **out)`) that does the
+  allocate / NULL-check / copy / length-check once, and convert all nine callers.
+  That also fixes BUG-010 in one place.
+
+### [BUG-010] `SYS_STAT` accepts a non-NUL-terminated kernel path buffer
+- **Location**: `kernel/core/syscall.c:719`
+- **Severity**: High
+- **Description**: `strncpy_from_user` (`arch/uaccess.S:46`) copies up to `count`
+  bytes and returns the number written; when the user string has no NUL within
+  `count`, it writes exactly `count` bytes with **no terminator** and returns
+  `count`. Every other caller therefore checks both bounds. `SYS_STAT` checks only
+  the sign:
+  ```c
+  if (strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN) < 0) {
+  ```
+  A user passing 4096 non-NUL bytes gets an unterminated 4096-byte heap buffer
+  handed to `vfs_stat` → `vfs_resolve_path` → `strlen`/`strchr`, which read past
+  the allocation until they find a zero byte. Kernel heap disclosure into path
+  resolution, and a fault if the heap ends on an unmapped page.
+- **Suggested Fix**: `long copied = strncpy_from_user(...); if (copied < 0 ||
+  copied >= VFS_MAX_PATH_LEN) { ... -PERS_ERR_INVALID_ARGUMENT; }`. Consider
+  changing `strncpy_from_user` itself to always NUL-terminate and return
+  `-ENAMETOOLONG` on truncation — the current contract is too easy to misuse, as
+  two of nine call sites demonstrate.
+
+### [BUG-011] `execve` argument copy accepts unterminated 1024-byte strings
+- **Location**: `kernel/sched/process.c:485-490` and `:503-508`
+- **Severity**: High
+- **Description**: Same `strncpy_from_user` contract problem, in the argv/envp
+  loop:
+  ```c
+  char *karg = heap_malloc(1024);
+  if (!karg || strncpy_from_user(karg, uarg, 1024) < 0) { ... }
+  kargv[argc++] = karg;
+  ```
+  A 1024-byte argument with no NUL is accepted, and later
+  `size_t len = strlen(kargv[i]) + 1;` (line 546) reads past the 1024-byte heap
+  object. Whatever length `strlen` finds is then `stack_copy_in`'d into the new
+  process's stack — so adjacent kernel heap contents are copied verbatim into
+  userspace memory the caller can read after `exec`. That is a straightforward
+  kernel-memory disclosure primitive.
+- **Suggested Fix**: Reject `copied >= 1024` (and `copied < 0`) explicitly, and
+  carry the returned length forward instead of re-deriving it with `strlen`.
+  While here: the loop leaks `kargv[0..argc)` if the *envp* loop later fails, and
+  `heap_free(karg)` is called on a possibly-NULL pointer in a way that masks the
+  OOM case as "end of argv" — an OOM should fail the `exec`, not silently truncate
+  the argument vector.
+
+### [BUG-012] `schedule()` reads process page tables without the table lock
+- **Location**: `kernel/sched/sched.c:593-601`
+- **Severity**: High
+- **Description**: The context-switch path reconstructs TTBR0 from the PCB with no
+  synchronisation against `process_exit`:
+  ```c
+  if (next->pid > 0) {
+      struct process *p = &process_table[next->pid];
+      asid_get_active(&p->asid, &p->asid_generation);
+      next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+  }
+  ```
+  `process_exit` sets `p->user_pgd = NULL` (process.c:690) outside
+  `process_table_lock`, and `process_waitpid` `memset`s the whole PCB. If a core
+  observes `user_pgd == NULL`, `V2P(NULL)` evaluates to `0 - KERNEL_VMA`, and that
+  value is written to `TTBR0_EL1` as a page-table base. The next EL0 access walks
+  from an arbitrary physical address. It is also a torn read: `asid` and
+  `user_pgd` can come from two different generations of the slot.
+- **Suggested Fix**: Take `process_table_lock` around the read (schedule() already
+  runs with IRQs masked, so a plain `spin_lock` is safe there), and skip the
+  switch entirely when `p->state != PROCESS_STATE_RUNNING || !p->user_pgd`,
+  falling back to `mmu_kernel_ttbr0()`. Add a sanity check that the reconstructed
+  TTBR0 is a plausible physical address before the `msr`.
+
+### [BUG-013] `process_exit` frees the page tables while TTBR0 still points at them
+- **Location**: `kernel/sched/process.c:689-698`
+- **Severity**: High
+- **Description**: The exiting task destroys its address space *while still
+  running on it*:
+  ```c
+  unsigned long *pgd = p->user_pgd;
+  p->user_pgd = NULL;
+  if (pgd) {
+      /* tlbi aside1is ... */
+      mmu_destroy_user_pgd(pgd);          /* every page returned to the PMM */
+  }
+  ```
+  `TTBR0_EL1` is not repointed to the empty PGD first. Between this call and the
+  `schedule()` at the end of the function, the MMU's page-table walker may still
+  speculatively walk tables that have already been freed and handed to another
+  core's `pmm_alloc_page`. On a 4-core build with `tlbi ...is` broadcasts in
+  flight this is a genuine (if intermittent) source of stale-translation
+  corruption. The `asid_free` call at line 730 also comes *after* the free, so the
+  ASID can be recycled to a new process while this core's TTBR0 still names it.
+- **Suggested Fix**: Switch away before destroying:
+  ```c
+  mmu_switch_user((unsigned long *)P2V(mmu_kernel_ttbr0()), 0);  /* or msr ttbr0, empty_pgd */
+  asm volatile("dsb ish; isb");
+  asid_free(&p->asid, &p->asid_generation);
+  mmu_destroy_user_pgd(pgd);
+  ```
+  i.e. TTBR0 → empty, ASID released and invalidated, *then* free the tables.
+
+### [BUG-014] `vfs_read`/`vfs_write`/`vfs_readdir` drop the final reference and leak
+- **Location**: `kernel/fs/vfs.c`, all three functions
+- **Severity**: Medium
+- **Description**: Each takes a temporary reference and releases it by discarding
+  the result:
+  ```c
+  atomic_inc(&f->refcount);
+  ...
+  atomic_dec_and_test(&f->refcount);   /* return value ignored */
+  return bytes;
+  ```
+  If another thread closes the descriptor while the I/O is in flight, `vfs_close`
+  sees a non-zero count and does not free; then the reader's decrement reaches
+  zero and also does not free. The `struct vfs_file`, its vnode reference, and any
+  driver state (`ops->close` never runs) leak permanently. Two processes sharing a
+  descriptor across `fork` plus a close during a blocking pipe read reproduces it.
+- **Suggested Fix**: Introduce `vfs_file_put(struct vfs_file *f)` that performs the
+  decrement and, on zero, runs `ops->close`, `vfs_vnode_put(f->node)` and
+  `slab_free(f)` — then use it at all four release sites (`vfs_close`, `vfs_dup2`,
+  `close_all_fds`, and the three I/O paths). Ignoring the result of a function
+  named `_and_test` should be a review red flag; consider
+  `__attribute__((warn_unused_result))` on it.
+
+### [BUG-015] Refcount atomics lack release ordering
+- **Location**: `kernel/core/lock.c:72-100` (`atomic_inc`, `atomic_dec_and_test`)
+- **Severity**: Medium
+- **Description**: Both use `ldaxr` (acquire) paired with plain `stxr`, not
+  `stlxr`. For a reference count the requirement is the opposite pairing: the
+  *decrement* must have release semantics so that everything the releasing core
+  did to the object is visible to the core that observes the count reach zero and
+  proceeds to free it. As written, on a weakly-ordered core the last writes to a
+  `struct vfs_file` (or vnode) can still be in flight when another core frees and
+  recycles the memory.
+- **Suggested Fix**: Use `stlxr` in both, or delete the hand-written assembly and
+  use the compiler builtins, which get the barriers right and optimise to LSE
+  atomics (`ldaddal`) on ARMv8.1:
+  ```c
+  void atomic_inc(atomic_t *a) { __atomic_fetch_add(&a->counter, 1, __ATOMIC_RELAXED); }
+  int atomic_dec_and_test(atomic_t *a)
+  { return __atomic_sub_fetch(&a->counter, 1, __ATOMIC_ACQ_REL) == 0; }
+  ```
+  Add an underflow assertion in debug builds — nothing currently notices a count
+  going negative.
+
+### [BUG-016] FAT32 mount performs no BPB validation
+- **Location**: `kernel/fs/fat32.c:1240-1254` (`fat32_init`)
+- **Severity**: Medium
+- **Description**: Every geometry field is copied straight out of the on-disk BPB
+  and used as-is. Nothing checks `sectors_per_cluster != 0`, and
+  `fat32_vfs_readdir` then computes
+  `bytes_per_cluster = sectors_per_cluster * 512` followed by
+  `file->offset / bytes_per_cluster` — a divide-by-zero, which on AArch64 yields 0
+  rather than trapping but produces nonsense LBAs immediately after. Likewise
+  `bytes_per_sector` is stored but every read path hardcodes 512, and
+  `num_fats * sectors_per_fat` is added into `data_lba_start` with no overflow
+  check. Cluster numbers pulled from the FAT chain are never range-checked against
+  the volume size before `cluster_to_lba()` turns them into block reads.
+- **Suggested Fix**: Validate at mount and refuse the volume otherwise:
+  `bytes_per_sector == 512`, `sectors_per_cluster` a power of two in 1..128,
+  `num_fats` in 1..2, `reserved_sectors != 0`, `sectors_per_fat_32 != 0`, and
+  `data_lba_start` within the device. Compute and store `max_cluster` and have
+  `get_next_cluster`/`cluster_to_lba` reject anything outside `2..max_cluster`.
+
+### [BUG-017] Slab double-free detector produces false positives
+- **Location**: `kernel/mm/slab.c:184-186`
+- **Severity**: Medium
+- **Description**: The check is `if (obj->free_canary == SLAB_FREE_POISON) PANIC()`,
+  where `free_canary` is simply the second 8 bytes of the object — memory that a
+  legitimate owner is free to write anything into. Any allocation that happens to
+  hold `0xDEADBEEFDEADBEEF` at offset 8 panics the kernel on `slab_free`. With
+  user-controlled data flowing through slab-sized allocations (paths, dirents,
+  small read buffers), that is a remotely-triggerable denial of service, not just
+  a theoretical one.
+- **Suggested Fix**: Track free state out-of-band — a bitmap in `struct slab_page`
+  indexed by slot number, which is exact, cheaper than the poison check, and also
+  gives you the alignment validation the free path currently lacks (nothing today
+  verifies `ptr` is on an object boundary). Keep the poison as a *debug-only*
+  use-after-free tripwire, checked on allocate rather than on free.
+
+### [BUG-018] `heap_free` dereferences an unvalidated header
+- **Location**: `kernel/mm/heap.c:212-220`
+- **Severity**: Medium
+- **Description**: For any pointer `slab_owns()` rejects, `heap_free` assumes a
+  32-byte header sits immediately before it and reads `block->size` to locate the
+  footer. There is no magic field in `struct heap_block_header` to confirm that.
+  A stray pointer — a PMM page, a stack address, an offset into a valid block —
+  produces a wild read at `block + 32 + garbage`, and if that happens to contain
+  the redzone value, the block is spliced into the free list and the allocator is
+  compromised. The redzone check is doing double duty as a validity check it
+  cannot perform.
+- **Suggested Fix**: Add `unsigned int magic` to the header, set it on allocation,
+  clear it on free, and validate it before touching `size`. Also range-check that
+  `block` lies inside a region the heap actually owns (keep a small list of
+  `heap_expand` regions) — cheap, and it turns silent corruption into a clean
+  panic with the offending pointer.
+
+### [BUG-019] Unbounded `getdents` size and O(n) validation with interrupts masked
+- **Location**: `kernel/core/syscall.c:281-307` (`SYS_GETDENTS`), `:37-88`
+  (`validate_user_buffer`)
+- **Severity**: Medium
+- **Description**: Two related problems. First, `SYS_GETDENTS` is the only
+  buffer-taking syscall with no `SYSCALL_MAX_RW_SIZE` cap, so `count` flows
+  unchecked into `heap_malloc` (up to the 8 MB `HEAP_MAX_ALLOC`) — and `SYS_READ`/
+  `SYS_WRITE` already allow 4 MB per in-flight call, per process, which is ample
+  to exhaust the kernel heap and reach BUG-009. Second, `validate_user_buffer`
+  walks the range one 4 KB page at a time, and for each page acquires
+  `process_table_lock` once and `mmu_lock` once (inside `mmu_user_query`) — with
+  interrupts disabled for the whole loop. A 4 MB buffer is 1024 iterations of
+  lock/unlock with IRQs masked on that core; an 8 MB `getdents` is 2048. Timer
+  ticks are lost, and every other core contends on `mmu_lock`.
+- **Suggested Fix**: Cap `count` in `SYS_GETDENTS` like the other paths. Restructure
+  `validate_user_buffer` to take `process_table_lock` once, hoist the `mmu_lock`
+  acquisition out of the per-page loop (add an `mmu_user_query_locked` variant),
+  and walk L3 tables a page-table-page at a time instead of re-descending from the
+  PGD for every page. Better still, drop the pre-validation entirely and rely on
+  the `ldtr`/`sttr` + fixup path, which is what actually enforces safety (see
+  BUG-022 and IMP-006).
+
+### [BUG-020] Non-IRQ-safe spinlocks held across preemption points
+- **Location**: `kernel/sched/process.c:464-470` and `:798-806` (`p->fd_lock`),
+  `kernel/fs/pipe.c:122-152` (`pipe->lock` held across `pipe_wait` → `schedule()`)
+- **Severity**: Medium
+- **Description**: `spin_lock` neither disables interrupts nor increments a
+  preemption counter. Several call sites hold it across code that can be preempted
+  or that deliberately calls `schedule()`. `pipe_read` acquires `pipe->lock` and
+  keeps it while calling `pipe_wait`, which does release it around the switch — but
+  the lock is *re-acquired* immediately after `schedule()` returns and only then
+  are IRQs restored, so the ordering is subtle and one refactor away from a
+  deadlock. `process_exec` and `process_fork` hold `fd_lock` across an ordinary
+  preemptible region: if the timer fires there and the next task on that core
+  spins on the same `fd_lock` with IRQs already masked by an outer `irqsave`, the
+  holder can never be rescheduled on that core.
+- **Suggested Fix**: Make the rule explicit and enforce it: any lock that can be
+  taken from IRQ context or held while another core may spin on it uses
+  `spin_lock_irqsave`. Add a `preempt_count` to `struct task`, incremented by
+  `spin_lock` and asserted to be zero at the top of `schedule()` (except for the
+  documented voluntary-block paths) — lockdep is already in the tree and is the
+  natural home for that check.
+
+### [BUG-021] `switch_context` does not save PSTATE/DAIF; syscalls run with IRQs masked
+- **Location**: `kernel/arch/switch.S:6-31`, `kernel/arch/vector.S:166-170`
+- **Severity**: Medium (architectural)
+- **Description**: Two coupled issues. Taking an SVC from EL0 sets `PSTATE.I`, and
+  nothing in `sync_handler` re-enables it — so **every syscall executes to
+  completion with interrupts masked** on that core. A process doing a 4 MB `read`
+  from the SD card blocks the timer tick, defeats preemption entirely, and makes
+  the round-robin scheduler cooperative-only for the duration. Meanwhile
+  `switch_context` saves only the callee-saved GPRs, `fp`, `lr` and `sp` — DAIF is
+  not part of `struct cpu_context`, so the interrupt-enable state effectively
+  leaks between tasks across a switch. The `irq_save`/`irq_restore` pairs around
+  `schedule()` paper over this, but the invariant is undocumented and every new
+  blocking path has to rediscover it.
+- **Suggested Fix**: Re-enable IRQs early in the syscall path (`msr daifclr, #2`
+  after `save_all` in `sync_handler`, before `bl exception_sync_handler`), which
+  requires auditing syscall handlers for re-entrancy first — this pairs naturally
+  with the `preempt_count` work in BUG-020. Independently, either add DAIF to
+  `struct cpu_context` or write a comment at the top of `switch.S` stating that
+  callers must own the interrupt state, and assert it in `schedule()`.
+
+### [BUG-022] Copy-on-write fault handling is not atomic
+- **Location**: `kernel/mm/mmu.c:648-674` (`mmu_handle_cow`)
+- **Severity**: Medium
+- **Description**: The function queries the PTE (taking and releasing `mmu_lock`),
+  allocates a page, `memcpy`s 4 KB, and only then calls `mmu_user_map_page` (taking
+  `mmu_lock` again). Nothing holds the mapping stable across that window. Two
+  cores faulting on the same COW page in the same address space each allocate a
+  copy and each install one, and `mmu_user_map_page` drops a reference on the old
+  physical page as it overwrites the PTE — so the shared page's refcount is
+  decremented twice for a single reference. It also always copies, even when the
+  refcount has already fallen to 1 and the page could simply be made writable —
+  the common case after a child exits, and a measurable `fork`-heavy regression.
+  This is the same TOCTOU shape as `validate_user_buffer` → `copy_to_user`: the
+  check and the use are separated, and only the fault-fixup path makes the latter
+  safe.
+- **Suggested Fix**: Perform the whole transition under `mmu_lock`: re-read the PTE
+  after acquiring the lock, bail out if `MMU_PTE_COW` has already been cleared
+  (another core won the race — just return success and let the instruction
+  retry), and add the refcount==1 fast path that flips `AP_RO`/`COW` in place with
+  a single `tlbi` and no copy at all.
+
+### [BUG-023] `mmu_destroy_user_pgd` walks and frees page tables without `mmu_lock`
+- **Location**: `kernel/mm/mmu.c:347-390`
+- **Severity**: Medium
+- **Description**: Every other page-table walker in the file (`mmu_user_map_page`,
+  `mmu_user_unmap_page`, `mmu_user_query`, `mmu_copy_user_pgd`) serialises on
+  `mmu_lock`; the destroy path does not, while doing the most destructive thing in
+  the file. It races with `validate_user_buffer` (which walks the same PGD from
+  `mmu_user_query`) and with a COW fault taken on another core, both of which are
+  reachable for a process being torn down. It is also called from
+  `mmu_copy_user_pgd`'s `oom:` label — after that function has already released
+  the lock, which is correct today only by accident of the label's placement.
+- **Suggested Fix**: Acquire `mmu_lock` for the walk. Because `pmm_free_page` is
+  called from inside it and takes `pmm_lock`, keep the existing
+  `mmu_lock → pmm_lock` order (which `mmu_user_map_page` already establishes) and
+  document that ordering in a comment at the top of `mmu.c` alongside the
+  `process_table_lock → fd_lock` note in `process.c`.
+
+### [BUG-024] `mmap` gaps: silent unbacked mappings, unlocked fd access, `addr` ignored
+- **Location**: `kernel/core/syscall.c:738-811` (`SYS_MMAP`)
+- **Severity**: Medium
+- **Description**: Three defects in one handler. (a) For a file-backed mapping
+  where the vnode has no `->mmap` operation, the code falls through and returns
+  `new_region` with **no pages mapped at all** — the caller gets a valid-looking
+  pointer that faults on first touch and kills the process, instead of
+  `-ENODEV`. (b) `p->fd_table[fd]` is read without `p->fd_lock`, racing a
+  concurrent `close`/`dup2` on another core into a freed `struct vfs_file`.
+  (c) `tf->x[0]` (the `addr` hint) is read but never used, so `MAP_FIXED` is
+  silently ignored — a mapping request at a specific address quietly lands
+  somewhere else, which is the kind of failure that only shows up much later.
+- **Suggested Fix**: Return `-PERS_ERR_NOT_IMPLEMENTED` when a file-backed request
+  has no `->mmap`; take `fd_lock` and a reference on the file for the duration;
+  and either honour `MAP_FIXED` or reject it explicitly. The `mmap_fail` cleanup
+  loop is otherwise good — it is one of the better error paths in the file.
+
+### [BUG-025] User virtual address space is allocated monotonically and never reused
+- **Location**: `kernel/sched/process.c:196-229` (`process_va_alloc`,
+  `process_va_free`)
+- **Severity**: Medium
+- **Description**: `va->next_va` only ever increases. `process_va_free` removes the
+  bookkeeping record but returns nothing to the allocator, so a process that maps
+  and unmaps repeatedly marches `next_va` toward the `0x8000000000` ceiling and
+  then fails all further mappings, while `USER_VA_MAX_REGIONS` (64) caps the number
+  of live regions at any instant. Combined with the absence of `munmap` — there is
+  no syscall to release a mapping at all — a long-running process cannot recycle
+  address space. This is the structural blocker for the `mmap`/shm work in Phase 4.
+- **Suggested Fix**: Replace the fixed array with a proper sorted VMA list (base,
+  length, prot, flags, backing file+offset), with first-fit or best-fit placement
+  and merging of adjacent free ranges. That single change unlocks `munmap`,
+  `mprotect`, `MAP_FIXED`, demand paging, and lazy stack growth — see IMP-002.
+
+### [BUG-026] `kmutex_unlock` does not verify ownership
+- **Location**: `kernel/core/mutex.c:90-114`
+- **Severity**: Low
+- **Description**: The function never compares `m->owner` against
+  `sched_get_current()`. Any task calling it on a mutex held by another task
+  clears `owner`, resets `depth` to 0 and wakes a waiter — silently transferring
+  the lock and leaving the real owner running unprotected inside its critical
+  section. Similarly, unlocking an already-unlocked mutex is accepted. Nothing in
+  the tree does this today, but it is exactly the class of bug that becomes
+  unfindable once SD I/O and the page cache both take the lock.
+- **Suggested Fix**: Panic (or `pr_err` + return) when
+  `m->owner != sched_get_current()` or `m->depth == 0`. Cheap, and it converts a
+  silent corruption into an immediate, attributable failure.
+
+### [BUG-027] Miscellaneous correctness and robustness nits
+- **Severity**: Low
+- `kernel/mm/slab.c:97,106` — `slab_total_pages++/--` is a non-atomic
+  read-modify-write on a global; `slab_release_page` is called *outside* the class
+  lock, so the counter drifts on SMP. Make it `atomic_t` or move the decrement
+  inside the lock.
+- `kernel/mm/slab.c:150` — `struct slab_obj *obj = sp->free_list;` is dereferenced
+  with no NULL check. The list invariants make it unreachable today; a defensive
+  `PANIC("slab: partial page with empty free list")` documents the invariant and
+  catches its violation at the source rather than three frames later.
+- `kernel/mm/pmm.c:229` — `mem_size_cells = fdt32_to_cpu(reg[2])` reads a single
+  32-bit cell as the memory size without consulting `#address-cells`/`#size-cells`.
+  For the standard 2/2 layout `reg[2]` is the *high* half of the size, so this
+  works only by coincidence of the current DTB and caps usable RAM at 4 GB. Parse
+  the cell counts from the parent node.
+- `kernel/include/arch/exception.h:23` — `struct exception_trap_frame` must be
+  exactly 800 bytes to match `save_all`/`restore_all` in `vector.S`, and every
+  field offset must match the hardcoded immediates there. There is no
+  `_Static_assert` — unlike `struct cpu_context`, which has one in `sched.c:26`.
+  Add `_Static_assert(sizeof(struct exception_trap_frame) == 800, ...)` plus
+  `offsetof` assertions for `elr_el1`, `spsr_el1`, `x`, `q`.
+- `kernel/arch/switch.S:41` — `task_wrapper_asm` hardcodes `mov x1, #3` for
+  `SCHED_TASK_DEAD`. The *offset* of `state` is protected by a static assert; its
+  *value* is not. Add `_Static_assert(SCHED_TASK_DEAD == 3, ...)`.
+- `kernel/arch/uaccess.S:69` — the `__ex_table` entry pairs `.Lloop_to` (which is
+  `ldrb w3, [x1], #1`, a *kernel* load) with `.Lfault_to`. A genuine kernel bug
+  that faults there is silently swallowed and reported as a failed user copy.
+  Remove that entry; only `.Lstore_to` needs a fixup.
+- `kernel/core/syscall.c:187-196` — `SYS_YIELD` and `SYS_SLEEP` never write
+  `tf->x[0]`, so they return whatever the caller passed in `x0`. Set it to
+  `PERS_SUCCESS`.
+- `kernel/arch/exception.c:52-62` — `exception_fixup` is a linear scan of the
+  whole `__ex_table` on every abort, including the COW fault path, which is hot.
+  Sort the table at build time and binary-search it.
+- `kernel/sched/process.c:589` — `unsigned long riciu_secret_var;` is leftover
+  debug naming for what is just `paddr_null` (compare line 561, which does the
+  identical thing with a sensible name). Rename.
+
+## 2. ARCHITECTURAL IMPROVEMENTS & FUTURE FEATURES
+
+### [IMP-001] Demand paging and lazy stack growth
+- **Target Subsystem**: Memory
+- **Category**: Feature / Performance
+- **Description**: Every mapping is populated eagerly. `process_create_from_file`
+  allocates and maps 32 pages of stack up front, `SYS_MMAP` allocates every page
+  of an anonymous region before returning, and `elf_load` faults in the whole
+  image. A 256 MB `mmap` (the current cap) allocates 65 536 physical pages
+  synchronously inside a syscall — with interrupts masked (BUG-021). Real
+  demand paging would make `fork`+`exec` dramatically cheaper and is the
+  prerequisite for a usable `mmap`.
+- **Implementation Strategy**: Build on the VMA list from IMP-002. Map anonymous
+  regions with no PTE at all; extend `handle_abort` so that a translation fault at
+  an address inside a VMA allocates and maps on demand rather than killing the
+  process. Add a guard-gap VMA below the stack and grow the stack downward on
+  fault. Share a single zeroed page read-only for untouched anonymous memory and
+  let the existing COW path handle the first write. Reuse `mmu_handle_cow`'s
+  structure — after BUG-022 it will already do the locked re-check correctly.
+
+### [IMP-002] Replace the linear VA allocator with a real VMA layer
+- **Target Subsystem**: Memory
+- **Category**: Feature / Code Quality
+- **Description**: `struct va_allocator` is a 64-entry array with a monotonic
+  bump pointer (BUG-025). It cannot express protection flags, file backing, or
+  gaps, which is why `munmap`, `mprotect`, `MAP_FIXED`, `MAP_SHARED`, and shared
+  memory are all absent. It is the single highest-leverage refactor in the memory
+  subsystem — most of Phase 4 in this document is blocked behind it.
+- **Implementation Strategy**: Define `struct vm_area { uintptr_t start, end; int
+  prot, flags; struct vfs_file *file; vfs_off_t offset; struct vm_area *next; }`,
+  keep them in an address-sorted list per process (a red-black tree later, if
+  profiling justifies it), and write `vma_find(mm, addr)`, `vma_insert`,
+  `vma_split`, `vma_merge`. Port `process_va_alloc` callers over, then implement
+  `munmap`/`mprotect` on top. `fork` copies the VMA list; `exec` tears it down.
+  This also gives `/proc/<pid>/maps` for free, which makes every later memory bug
+  an order of magnitude easier to diagnose.
+
+### [IMP-003] Preemptible kernel: `preempt_count` plus interrupts on during syscalls
+- **Target Subsystem**: Scheduler
+- **Category**: Performance / Hardening
+- **Description**: Syscalls today are non-preemptible (BUG-021), so scheduling
+  latency is bounded by the slowest syscall — currently a multi-megabyte SD read.
+  There is also no mechanism preventing a preemption while a spinlock is held
+  (BUG-020), which is the underlying reason several locks have to be `irqsave`
+  defensively.
+- **Implementation Strategy**: Add `int preempt_count` to `struct task`;
+  `spin_lock`/`spin_unlock` increment and decrement it. Unmask IRQs after
+  `save_all` in the SVC path. In the timer IRQ, set a `need_resched` flag rather
+  than calling `schedule()` directly, and consult it in `ret_to_user` and on the
+  final `preempt_count` decrement. Assert `preempt_count == 0` on entry to
+  `schedule()` from the voluntary paths. Wire the assertions into the existing
+  lockdep infrastructure so the test suite catches regressions.
+
+### [IMP-004] Reference-counted task and process objects
+- **Target Subsystem**: Scheduler
+- **Category**: Hardening
+- **Description**: Three of the six critical findings above (BUG-004, BUG-005,
+  BUG-006) are the same bug: an object is freed while another subsystem still holds
+  a pointer to it. `struct task` is reachable from run queues, the sleep queue,
+  mutex and pipe and tty wait queues, `sched_prev_task`, `sched_cleanup`, and
+  `process_table[].main_task` — and is freed based on a single core's view of its
+  state. Patching each site individually will not hold as more wait queues appear.
+- **Implementation Strategy**: Give `struct task` an `atomic_t refcount`;
+  `get_task`/`put_task` around every stored pointer, with the final `put` doing
+  the stack free and `heap_free`. Establish the rule that a task must be unlinked
+  from every list before its last reference drops, and add a debug-build
+  `task_on_any_list()` assertion in the destructor. Do the same for
+  `struct process` so `waitpid`'s `memset` of a live PCB becomes impossible.
+
+### [IMP-005] Faster and safer `copy_to_user`/`copy_from_user`
+- **Target Subsystem**: Memory / libc boundary
+- **Category**: Performance / Hardening
+- **Description**: `uaccess.S` copies **one byte at a time** with `ldtrb`/`sttrb`.
+  A 4 MB `read()` is 4 million iterations of a 4-instruction loop, and every
+  syscall pays for it twice (into the bounce buffer, then out). Separately, the
+  `validate_user_buffer`-then-copy pattern is a textbook TOCTOU that is safe today
+  only because the fixup path catches the fault — meaning the expensive
+  pre-validation is largely redundant (BUG-019).
+- **Implementation Strategy**: Rewrite the copy routines to align the destination,
+  then move 16 bytes per iteration with `ldtr x`/`sttr x` pairs, with a byte-wise
+  head and tail — each with its own `__ex_table` entry that reports the correct
+  residual count. Then delete most `validate_user_buffer` calls, keeping only a
+  cheap `addr + len <= KERNEL_VMA && !overflow` range check, and let faults do the
+  rest. Enable **PAN** (`SCTLR_EL1.SPAN` / `PSTATE.PAN`) so any kernel access to
+  user memory *outside* these routines traps immediately — that is the mechanism
+  that makes the check-free design safe, and it costs one boot-time register write.
+  Finally, mask user pointers against the address-space bound before use to blunt
+  speculative out-of-bounds reads.
+
+### [IMP-006] Scheduler: priorities, real load balancing, tickless idle
+- **Target Subsystem**: Scheduler
+- **Category**: Performance / Feature
+- **Description**: The scheduler is strict round-robin with no priorities, and
+  work-stealing scans every other core's queue on every miss
+  (`sched.c:574-581`) while holding that core's `rq_lock` — pure contention as
+  core count grows. There is no accounting of how long a task has run, so
+  `ptop`-style tooling has nothing real to display, and an idle core still takes
+  the full timer tick rate.
+- **Implementation Strategy**: Add a nice level and per-task `vruntime`; pick the
+  minimum-`vruntime` runnable task (a small per-core binary heap is enough at this
+  scale). Track per-core queue lengths in a lock-free array so stealing consults
+  the counters before taking any lock, and only steal from the busiest core. Add
+  per-task accumulated runtime, which feeds `/proc` and `ptop`. Suppress the timer
+  on a core whose run queue is empty until an IPI or the next sleep deadline —
+  the sleep queue is already sorted by `wake_time`, so the next deadline is O(1).
+
+### [IMP-007] `poll`/`select` and a unified wait-queue abstraction
+- **Target Subsystem**: VFS / Drivers
+- **Category**: Feature
+- **Description**: Pipes, the TTY, and the SD driver each hand-roll a wait queue
+  out of `task->wait_next`, with subtly different unlink and wake semantics — and
+  two of the critical findings above (BUG-004, BUG-005) live precisely in that
+  hand-rolled code. There is no way for a process to wait on more than one
+  descriptor, which blocks any non-trivial shell or server.
+- **Implementation Strategy**: Introduce `struct wait_queue` with
+  `wq_wait(wq, condition)`, `wq_wake_one`, `wq_wake_all`, correct
+  prepare-to-wait/finish-wait ordering, and interruptible-by-signal support.
+  Convert pipe, tty, and sd to it. Add a `->poll(file, wq)` vnode op returning a
+  readiness mask, then implement `poll()` on top; `select()` becomes a libc
+  wrapper. This is the dependency that Phase 3 "poll" and the network stack both
+  sit behind.
+
+### [IMP-008] Signal delivery completeness
+- **Target Subsystem**: Scheduler / Core
+- **Category**: Feature / Correctness
+- **Description**: `signal_handle_pending` delivers at most one signal per return
+  to userspace and re-enters only on the next trap; there is no `SA_RESTART`, so an
+  interrupted syscall always returns `-PERS_ERR_INTERRUPTED` and every libc caller
+  must retry by hand; there is no `sigaltstack`, so a `SIGSEGV` caused by stack
+  exhaustion cannot be handled; and signals target `main_task` only, which will
+  not survive the introduction of threads.
+- **Implementation Strategy**: Loop over deliverable signals in
+  `signal_handle_pending` until none remain or a handler frame is pushed. Record
+  the syscall number and original arguments in the trap frame so a restartable
+  syscall can rewind `elr_el1` by 4 and re-execute when `SA_RESTART` is set. Add
+  `sigaltstack` and use it for the fault signals. When threads arrive, move
+  `pending_signals` to per-task and keep `blocked_signals` per-task with the
+  handler table shared per-process, matching POSIX.
+
+### [IMP-009] Block layer and page cache hardening
+- **Target Subsystem**: Drivers / VFS
+- **Category**: Hardening / Performance
+- **Description**: `fat32.c` reads directly through `current_fs.dev->read_blocks`
+  with a single global `current_fs`, meaning exactly one FAT32 volume can ever be
+  mounted, and every directory scan re-reads sectors that the page cache already
+  holds. Nothing validates cluster numbers or sector addresses derived from disk
+  content before they become block reads (BUG-016).
+- **Implementation Strategy**: Move FAT-table and directory reads through the
+  existing buffer cache rather than issuing raw `read_blocks`, and cache the FAT
+  chain per open vnode so sequential reads stop re-walking it. Make `current_fs`
+  an allocated per-mount structure hanging off the superblock so multiple volumes
+  work. Add a validation layer at the block-device boundary that range-checks every
+  LBA against the device size and returns `-EIO` rather than trusting the caller.
+
+### [IMP-010] Per-CPU exception stacks
+- **Target Subsystem**: Memory / Arch
+- **Category**: Hardening
+- **Description**: All exceptions are taken on the current kernel stack.
+  `save_all` immediately subtracts 800 bytes; if the fault *was* a stack overflow,
+  that push lands on the unmapped guard page and takes another abort, recursing
+  until the CPU gives up. The stack canary in `struct task` catches overflow only
+  at the next `schedule()`, which is too late to produce a usable report — and the
+  guard page, which should turn overflow into a clean diagnosable fault, currently
+  turns it into an unrecoverable loop.
+- **Implementation Strategy**: Allocate a small per-core exception stack and switch
+  `SP_EL1` to it on entry for aborts (keep the syscall path on the task stack so
+  syscall handlers can still block). Detect "fault address is within one page below
+  a known task stack base" and report it as a stack overflow with the faulting
+  task's identity, rather than a generic abort. This is a small change that makes
+  every future memory bug substantially cheaper to diagnose.
+
+### [IMP-011] Close the test-coverage gaps the audit exposed
+- **Target Subsystem**: Tests
+- **Category**: Code Quality
+- **Description**: The suite has good per-module coverage (`test_pmm`, `test_slab`,
+  `test_heap`, `test_uaccess`, `test_mmu_user`, …) but every finding above sits in
+  a gap it does not reach: adversarial syscall arguments, concurrent operations on
+  shared objects, and malformed on-disk data. BUG-002, BUG-008 and BUG-010 are all
+  single-argument syscall cases; BUG-001 and BUG-016 are single crafted-image
+  cases; BUG-003 is a single allocation size.
+- **Implementation Strategy**: Add three test families. (1) A syscall boundary
+  fuzzer: for each syscall number, drive edge-case arguments — 0, 1, `SIZE_MAX`,
+  negative, `KERNEL_VMA`, unmapped, and read-only user pointers — and assert the
+  kernel returns an error rather than faulting. (2) Allocator property tests: for
+  `heap_malloc(n)` across `n` spanning the slab/first-fit boundary and every
+  block-splitting edge, assert the returned region is writable for exactly `n`
+  bytes and that the redzone survives — that alone catches BUG-003. (3) A corrupt
+  FAT32 image fixture with an out-of-range LFN sequence, `sectors_per_cluster == 0`
+  and a cyclic cluster chain, asserting the mount is rejected cleanly. Add a
+  fault-injection mode to `heap_malloc`/`pmm_alloc_page` (fail the Nth allocation)
+  to exercise the OOM paths, which is where BUG-009 and several leaks live.
+
+================================================================================
 
 ================================================================================
 PHASE 1: FOUNDATION HARDENING  (finish filling the holes)
