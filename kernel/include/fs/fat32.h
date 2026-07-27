@@ -128,4 +128,12 @@ int fat32_init(const char *device_name);
  */
 struct vfs_vnode *fat32_get_root_node(void);
 
+#ifdef CONFIG_TESTS
+/*
+ * Test hook exposing the internal long-name fragment placement so its bounds
+ * checks can be driven directly with entries no well-formed volume produces.
+ */
+int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len);
+#endif
+
 #endif /* PERSPICUA_FS_FAT32_H */
