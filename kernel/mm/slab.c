@@ -266,3 +266,13 @@ unsigned long slab_get_total(void)
 {
     return slab_total_pages * PAGE_SIZE;
 }
+
+#ifdef CONFIG_TESTS
+unsigned long slab_test_object_size(void *ptr)
+{
+    if (!slab_owns(ptr)) {
+        return 0;
+    }
+    return slab_classes[ptr_to_slab(ptr)->class_idx].object_size;
+}
+#endif

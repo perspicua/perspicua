@@ -35,4 +35,12 @@ unsigned long heap_get_used(void);
  */
 unsigned long heap_get_total(void);
 
+#ifdef CONFIG_TESTS
+/*
+ * Bytes the caller may write to an allocation. Must never be less than the
+ * size requested.
+ */
+unsigned long heap_test_usable_size(const void *ptr);
+#endif
+
 #endif /* PERSPICUA_MM_HEAP_H */

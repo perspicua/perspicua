@@ -835,6 +835,31 @@ void test_heap(void)
     }
     TEST_PASS("exact size reuse");
 
+    // a request matching a free block's capacity must still get every byte it
+    // asked for; the redzone footer used to be carved out of the caller's region
+    {
+        for (unsigned long n = LARGE; n <= LARGE + 512; n += 16) {
+            void *lo = heap_malloc(n);
+            void *mid = heap_malloc(n);
+            void *hi = heap_malloc(n);
+            TEST_ASSERT("usable-size setup allocates", lo && mid && hi);
+
+            heap_free(mid); // allocated neighbours keep the hole uncoalesced
+
+            for (unsigned long extra = 0; extra <= 32; extra += 16) {
+                void *p = heap_malloc(n + extra);
+                TEST_ASSERT("exact-fit request satisfied", p != NULL);
+                TEST_ASSERT("usable size covers request", heap_test_usable_size(p) >= n + extra);
+                memset(p, 0xC5, n + extra); // must not reach the redzone
+                heap_free(p);               // panics if it did
+            }
+
+            heap_free(lo);
+            heap_free(hi);
+        }
+    }
+    TEST_PASS("allocation is never shorter than requested");
+
     // full lifecycle
 
     // alloc -> write -> free -> re-alloc -> verify clean

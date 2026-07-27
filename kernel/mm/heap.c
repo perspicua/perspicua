@@ -48,7 +48,9 @@ static unsigned long heap_used_size = 0;
  */
 static struct heap_block_header *heap_expand(unsigned long min_size)
 {
-    unsigned long total = min_size + HEAP_HEADER_SIZE;
+    /* Must also cover the redzone footer, or the block it returns cannot
+     * satisfy the request that asked for it and heap_malloc spins. */
+    unsigned long total = min_size + HEAP_HEADER_SIZE + HEAP_FOOTER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
     void *region = pmm_alloc_pages(pages);
@@ -139,13 +141,17 @@ void *heap_malloc(unsigned long size)
 
     size = HEAP_ALIGN(size);
 
+    /* The redzone footer is carved from the block, so a fit must cover both it
+     * and the caller's region. */
+    unsigned long need = size + HEAP_FOOTER_SIZE;
+
     while (1) {
         unsigned long flags = spin_lock_irqsave(&heap_lock);
 
         struct heap_block_header *prev = NULL;
         struct heap_block_header *curr = heap_free_list;
         while (curr) {
-            if (curr->size >= size) {
+            if (curr->size >= need) {
                 if (prev) {
                     prev->next = curr->next;
                 } else {
@@ -153,11 +159,11 @@ void *heap_malloc(unsigned long size)
                 }
 
                 /* Split if remainder is large enough for a header and usable space */
-                if (curr->size >= size + HEAP_FOOTER_SIZE + HEAP_HEADER_SIZE + 16) {
+                if (curr->size >= need + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
-                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE + size
-                                                     + HEAP_FOOTER_SIZE);
-                    split->size = curr->size - size - HEAP_FOOTER_SIZE - HEAP_HEADER_SIZE;
+                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
+                                                     + need);
+                    split->size = curr->size - need - HEAP_HEADER_SIZE;
                     split->is_free = 1;
                     split->next = NULL;
 
@@ -245,3 +251,20 @@ unsigned long heap_get_total(void)
 {
     return heap_total_size + slab_get_total();
 }
+
+#ifdef CONFIG_TESTS
+unsigned long heap_test_usable_size(const void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    if (slab_owns((void *)ptr)) {
+        return slab_test_object_size((void *)ptr);
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    return block->size;
+}
+#endif
