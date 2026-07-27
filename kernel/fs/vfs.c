@@ -729,6 +729,12 @@ int vfs_readdir(int fd, void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
+    /* Entries are written whole; a partial buffer would also underflow the
+     * remaining-space arithmetic below. */
+    if (count < sizeof(struct vfs_dirent)) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
     int pid = process_find_current();
     if (pid < 0) {
         return pid;
@@ -767,7 +773,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
 
     /* 1. Handle "." and ".." */
     if (dot_idx < 2) {
-        if (dot_idx == 0) {
+        if ((size_t)res < max_entries && dot_idx == 0) {
             strncpy(dirents[res].name, ".", 255);
             dirents[res].name[255] = '\0';
             dirents[res].ino = 1;
@@ -783,7 +789,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
             dot_idx = 2;
         }
 
-        if ((size_t)res == max_entries) {
+        if ((size_t)res >= max_entries) {
             goto readdir_done;
         }
     }
