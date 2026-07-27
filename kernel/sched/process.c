@@ -703,9 +703,14 @@ void process_exit(uint32_t pid, int exit_status)
     p->va.count = 0;
     p->state = PROCESS_STATE_ZOMBIE;
 
+    /* cleanup_dead_task frees this task shortly, but the slot lives on until a
+     * parent reaps it. Drop the pointer with the same store that publishes the
+     * zombie state, so nothing can find it in between. */
+    p->main_task = NULL;
+
     uint32_t ppid = p->parent_pid;
     int notify_parent = (ppid != 0 && ppid < PROCESS_TABLE_SIZE
-                         && process_table[ppid].state != PROCESS_STATE_EMPTY);
+                         && process_table[ppid].state == PROCESS_STATE_RUNNING);
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     /* Notify the parent outside the lock (signal_send now takes it itself), and
@@ -715,7 +720,7 @@ void process_exit(uint32_t pid, int exit_status)
         signal_send(ppid, SIGNAL_CHLD);
 
         flags = spin_lock_irqsave(&process_table_lock);
-        if (process_table[ppid].state != PROCESS_STATE_EMPTY
+        if (process_table[ppid].state == PROCESS_STATE_RUNNING
             && process_table[ppid].main_task != NULL) {
             sched_unblock(process_table[ppid].main_task);
         }

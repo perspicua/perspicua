@@ -44,6 +44,33 @@ void test_signals(void)
     TEST_PASS("empty slot");
 
     /*
+     * A zombie's task is freed as soon as it stops running, but its slot lives
+     * on until a parent reaps it. Signalling one must be refused before
+     * main_task is read: SIGKILL and SIGCONT dereference it first thing. The
+     * poison pointer faults if that check is ever lost.
+     */
+    {
+        const uint32_t slot = PROCESS_TABLE_SIZE - 2;
+
+        unsigned long flags = spin_lock_irqsave(&process_table_lock);
+        process_state_t saved_state = process_table[slot].state;
+        struct task *saved_task = process_table[slot].main_task;
+        process_table[slot].state = PROCESS_STATE_ZOMBIE;
+        process_table[slot].main_task = (struct task *)0xDEAD000000000000ULL;
+        spin_unlock_irqrestore(&process_table_lock, flags);
+
+        int sent = signal_send(slot, SIGNAL_KILL);
+
+        flags = spin_lock_irqsave(&process_table_lock);
+        process_table[slot].state = saved_state;
+        process_table[slot].main_task = saved_task;
+        spin_unlock_irqrestore(&process_table_lock, flags);
+
+        TEST_ASSERT("zombie slot rejected", sent < 0);
+    }
+    TEST_PASS("zombie slot");
+
+    /*
      * A valid signal to a live process must be accepted and recorded in the
      * pending mask. The bit is (sig - 1) because signal numbering starts at 1.
      */

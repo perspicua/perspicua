@@ -187,9 +187,11 @@ int signal_send(uint32_t target_pid, int sig)
     struct process *p = &process_table[target_pid];
 
     /* Hold the process table lock so the target cannot be reaped and its slot
-     * reused between the existence check and dereferencing main_task. */
+     * reused between the existence check and dereferencing main_task. Only a
+     * RUNNING process has a live task: a zombie's was already freed, and its
+     * slot survives until a parent reaps it. */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (p->state == PROCESS_STATE_EMPTY) {
+    if (p->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, flags);
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
