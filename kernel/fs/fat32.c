@@ -19,6 +19,15 @@
 #include "mm/pmm.h"
 #include "mm/addr.h"
 
+/*
+ * A FAT32 long name is at most 255 characters, carried 13 at a time by up to
+ * 20 chained LFN entries. The sequence number of an entry indexes the write, so
+ * these bounds are load-bearing: they come off the disk and cannot be trusted.
+ */
+#define FAT32_LFN_CHARS_PER_ENTRY 13
+#define FAT32_LFN_MAX_SEQ         20
+#define FAT32_LFN_BUF_SIZE        256
+
 static struct fat32_fs current_fs;
 
 /*
@@ -186,20 +195,51 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
     return 1;
 }
 
-static void extract_lfn_part(struct fat32_lfn_entry *lfn, char *name_buf)
+/*
+ * extract_lfn_part - Places one 13-character fragment of a long name.
+ *
+ * The destination index is derived from the entry's on-disk sequence number, so
+ * it is range-checked before any write: an out-of-spec sequence would otherwise
+ * scatter the fragment far outside name_buf. Returns 0 on success, or -1 if the
+ * entry is malformed and the caller should discard the name assembled so far.
+ */
+static int extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len)
 {
-    int offset = ((lfn->sequence & 0x3F) - 1) * 13;
+    unsigned int seq = lfn->sequence & 0x3F;
+    if (seq < 1 || seq > FAT32_LFN_MAX_SEQ) {
+        return -1;
+    }
 
-    // name1 (5 chars)
-    for (int i = 0; i < 5; i++)
-        name_buf[offset + i] = (char)lfn->name1[i];
-    // name2 (6 chars)
-    for (int i = 0; i < 6; i++)
-        name_buf[offset + 5 + i] = (char)lfn->name2[i];
-    // name3 (2 chars)
-    for (int i = 0; i < 2; i++)
-        name_buf[offset + 11 + i] = (char)lfn->name3[i];
+    size_t limit = buf_len - 1; /* Reserve the terminator. */
+    size_t pos = (size_t)(seq - 1) * FAT32_LFN_CHARS_PER_ENTRY;
+    if (pos >= limit) {
+        return -1;
+    }
+
+    /*
+     * The final fragment of a maximum-length name runs a few characters past
+     * the last usable byte; copy what fits rather than rejecting a valid name.
+     * Members are read individually because the entry struct is packed.
+     */
+    for (int i = 0; i < 5 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name1[i];
+    }
+    for (int i = 0; i < 6 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name2[i];
+    }
+    for (int i = 0; i < 2 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name3[i];
+    }
+
+    return 0;
 }
+
+#ifdef CONFIG_TESTS
+int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len)
+{
+    return extract_lfn_part(lfn, name_buf, buf_len);
+}
+#endif
 
 /*
  * fat32_update_dir_entry - Updates the directory entry for a vnode.
@@ -623,8 +663,8 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
     uint32_t cluster = (uint32_t)(uintptr_t)dir->internal_info;
     struct fat32_dir_entry dirs[16];
 
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
     while (cluster < 0x0FFFFFF8) {
@@ -643,7 +683,13 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -668,7 +714,7 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
                 }
 reset_lfn:
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -697,8 +743,8 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
         }
     }
 
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
     struct fat32_dir_entry dirs[16];
@@ -726,7 +772,13 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                 }
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -768,7 +820,7 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                 }
 
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
                 dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
                 entries_read++;
             }
@@ -783,8 +835,8 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
 {
     uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
     while (cluster < 0x0FFFFFF8) {
@@ -798,13 +850,19 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
                     return -PERS_ERR_NOT_FOUND;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -823,7 +881,7 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
                     return PERS_SUCCESS;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -835,8 +893,8 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 {
     uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
     while (cluster < 0x0FFFFFF8) {
@@ -850,13 +908,19 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
                     return -PERS_ERR_NOT_FOUND;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -899,7 +963,7 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
                     return PERS_SUCCESS;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -971,8 +1035,8 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
 {
     uint32_t old_cluster = (uint32_t)(uintptr_t)old_parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
     struct fat32_dir_entry target_entry;
     int found = 0;
@@ -991,13 +1055,19 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
                     break;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -1011,7 +1081,7 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
                     break;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
             if (found)
                 break;

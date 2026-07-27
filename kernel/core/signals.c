@@ -87,8 +87,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
              * after we popped the stop signal above, do not park a task that no
              * one will resume -- return so the pending signal is delivered next.
              */
-            const sigset_t stop_override =
-                (1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_KILL - 1));
+            const sigset_t stop_override = (1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_KILL - 1));
             unsigned long flags = spin_lock_irqsave(&process_table_lock);
             if (curr_process->pending_signals & stop_override) {
                 spin_unlock_irqrestore(&process_table_lock, flags);
