@@ -195,6 +195,14 @@ static void sleep_unlink_locked(struct task *t)
     }
 }
 
+/* Removes a task from the sleep queue, taking the lock itself. */
+static void sleep_dequeue(struct task *t)
+{
+    unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+    sleep_unlink_locked(t);
+    spin_unlock_irqrestore(&sched_sleep_lock, flags);
+}
+
 /* Inserts task into ordered sleep queue. */
 static void sleep_enqueue(struct task *t)
 {
@@ -312,6 +320,9 @@ static void cleanup_dead_task(int cpu)
     if (dead->stack && (unsigned long)dead->stack < KERNEL_VMA) {
         PANIC("sched: t->stack corrupted before cleanup_dead_task");
     }
+
+    /* Last line of defence: the sleep queue must not outlive the task. */
+    sleep_dequeue(dead);
 
     free_task_stack(dead->stack);
     dead->stack = NULL;
@@ -473,6 +484,10 @@ void sched_unblock(struct task *t)
     enum sched_task_state expected = SCHED_TASK_BLOCKED;
     if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
                                     __ATOMIC_SEQ_CST)) {
+        /* A timed sleep leaves the task linked here. Drop it now: otherwise
+         * sleep_drain can re-ready it out of an unrelated later block, or walk
+         * it after the task has been freed. */
+        sleep_dequeue(t);
         rq_enqueue(get_core_id(), t);
     }
 }
@@ -506,6 +521,7 @@ void sched_continue(struct task *t)
     enum sched_task_state expected = SCHED_TASK_STOPPED;
     if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
                                     __ATOMIC_SEQ_CST)) {
+        sleep_dequeue(t);
         rq_enqueue(get_core_id(), t);
     }
 }
@@ -526,6 +542,24 @@ int sched_get_core_pid(int cpu)
     }
     return sched_core_pid[cpu];
 }
+
+#ifdef CONFIG_TESTS
+int sched_test_in_sleep_queue(const struct task *t)
+{
+    unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+    int found = 0;
+
+    for (struct task *scan = sched_sleep_head; scan; scan = scan->sleep_next) {
+        if (scan == t) {
+            found = 1;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&sched_sleep_lock, flags);
+    return found;
+}
+#endif
 
 /* Core scheduling logic. Selects next task and context switches. */
 void schedule(void)

@@ -111,6 +111,11 @@ int sched_get_core_pid(int cpu);
 /* Low-level assembly function to swap processor state. */
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
+#ifdef CONFIG_TESTS
+/* True while a task is linked in the timed sleep queue. */
+int sched_test_in_sleep_queue(const struct task *t);
+#endif
+
 #ifdef CONFIG_NR_CPUS
     #define SCHED_NUM_CORES CONFIG_NR_CPUS
 #else

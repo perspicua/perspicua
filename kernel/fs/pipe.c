@@ -9,6 +9,7 @@
 
 #include "stdio.h"
 #include "string.h"
+#include "panic.h"
 
 #include "uapi/errors.h"
 
@@ -215,15 +216,29 @@ static int pipe_close(struct vfs_file *file)
         pipe->readers--;
     }
 
+    int destroy = (pipe->readers == 0 && pipe->writers == 0);
+
+    /*
+     * A waiter always holds its own endpoint open — readers block only while
+     * writers != 0 and vice versa, and the vfs_file reference held across the
+     * call keeps its own side from closing — so the last close cannot race one.
+     * Checked before the wakes below empty the queues, because if this ever
+     * stops holding, those wakes hand a freed pipe to a running task.
+     */
+    if (destroy && (pipe->read_wait_queue || pipe->write_wait_queue)) {
+        PANIC("pipe: last close with waiters still queued");
+    }
+
     pipe_wake(&pipe->read_wait_queue);
     pipe_wake(&pipe->write_wait_queue);
 
-    int destroy = (pipe->readers == 0 && pipe->writers == 0);
+    if (destroy) {
+        file->node->internal_info = NULL;
+    }
     spin_unlock(&pipe->lock);
 
     if (destroy) {
         heap_free(pipe);
-        file->node->internal_info = NULL;
     }
 
     return PERS_SUCCESS;
