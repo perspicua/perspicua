@@ -74,11 +74,14 @@ static int pipe_signal_pending(void)
 
 /*
  * pipe_wait - Blocks the current task on a pipe's specific wait queue.
+ *
+ * Called with the pipe lock held and interrupts already masked by the caller's
+ * irqsave. Both stay that way across the switch, so nothing can split the
+ * transition to BLOCKED from the unlock that publishes it.
  */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
     struct task *self = sched_get_current();
-    unsigned long flags = irq_save();
 
     /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
     self->state = SCHED_TASK_BLOCKED;
@@ -91,7 +94,6 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
     spin_lock(lock);
     /* A signal wake (rather than pipe_wake) leaves us queued: unlink now. */
     pipe_queue_remove(queue, self);
-    irq_restore(flags);
 }
 
 /*
@@ -120,7 +122,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
 
     while (read < count) {
         if (pipe->count > 0) {
@@ -133,13 +135,13 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
             }
             if (file->flags & VFS_O_NONBLOCK) {
                 if (read == 0) {
-                    spin_unlock(&pipe->lock);
+                    spin_unlock_irqrestore(&pipe->lock, fdflags);
                     return -PERS_ERR_TRY_AGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
-                spin_unlock(&pipe->lock);
+                spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return read > 0 ? (int)read : -PERS_ERR_INTERRUPTED;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
@@ -150,7 +152,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
         pipe_wake(&pipe->write_wait_queue);
     }
 
-    spin_unlock(&pipe->lock);
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
     return (int)read;
 }
 
@@ -164,11 +166,11 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
 
     while (written < count) {
         if (pipe->readers == 0) {
-            spin_unlock(&pipe->lock);
+            spin_unlock_irqrestore(&pipe->lock, fdflags);
             return -PERS_ERR_BROKEN_PIPE;
         }
 
@@ -179,13 +181,13 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         } else {
             if (file->flags & VFS_O_NONBLOCK) {
                 if (written == 0) {
-                    spin_unlock(&pipe->lock);
+                    spin_unlock_irqrestore(&pipe->lock, fdflags);
                     return -PERS_ERR_TRY_AGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
-                spin_unlock(&pipe->lock);
+                spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
             }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
@@ -196,7 +198,7 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         pipe_wake(&pipe->read_wait_queue);
     }
 
-    spin_unlock(&pipe->lock);
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
     return (int)written;
 }
 
@@ -209,7 +211,7 @@ static int pipe_close(struct vfs_file *file)
 
     int is_write = (file->flags & VFS_O_ACCMODE) != VFS_O_RDONLY;
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
     if (is_write) {
         pipe->writers--;
     } else {
@@ -235,7 +237,7 @@ static int pipe_close(struct vfs_file *file)
     if (destroy) {
         file->node->internal_info = NULL;
     }
-    spin_unlock(&pipe->lock);
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
 
     if (destroy) {
         heap_free(pipe);
@@ -299,7 +301,7 @@ int pipe_create(int pipefd[2])
     f_write->flags = VFS_O_WRONLY;
 
     int fd_r = -1, fd_w = -1;
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
 
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
@@ -318,7 +320,7 @@ int pipe_create(int pipefd[2])
         p->fd_table[fd_w] = f_write;
         p->fd_flags[fd_w] = 0;
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (fd_r == -1 || fd_w == -1) {
         /* Both ends are attached now, so releasing them runs pipe_close and

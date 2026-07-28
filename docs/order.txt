@@ -18,44 +18,7 @@ switch,uaccess,exception}, core/{syscall,signals,lock,mutex}, fs/{vfs,fat32,pipe
 Ordered by exploitability and blast radius. Line numbers are from the audited
 tree (branch `dev`, at 3ea7927).
 
-### [BUG-018] `heap_free` dereferences an unvalidated header
-- **Location**: `kernel/mm/heap.c:212-220`
-- **Severity**: Medium
-- **Description**: For any pointer `slab_owns()` rejects, `heap_free` assumes a
-  32-byte header sits immediately before it and reads `block->size` to locate the
-  footer. There is no magic field in `struct heap_block_header` to confirm that.
-  A stray pointer — a PMM page, a stack address, an offset into a valid block —
-  produces a wild read at `block + 32 + garbage`, and if that happens to contain
-  the redzone value, the block is spliced into the free list and the allocator is
-  compromised. The redzone check is doing double duty as a validity check it
-  cannot perform.
-- **Suggested Fix**: Add `unsigned int magic` to the header, set it on allocation,
-  clear it on free, and validate it before touching `size`. Also range-check that
-  `block` lies inside a region the heap actually owns (keep a small list of
-  `heap_expand` regions) — cheap, and it turns silent corruption into a clean
-  panic with the offending pointer.
 
-### [BUG-019] Unbounded `getdents` size and O(n) validation with interrupts masked
-- **Location**: `kernel/core/syscall.c:281-307` (`SYS_GETDENTS`), `:37-88`
-  (`validate_user_buffer`)
-- **Severity**: Medium
-- **Description**: Two related problems. First, `SYS_GETDENTS` is the only
-  buffer-taking syscall with no `SYSCALL_MAX_RW_SIZE` cap, so `count` flows
-  unchecked into `heap_malloc` (up to the 8 MB `HEAP_MAX_ALLOC`) — and `SYS_READ`/
-  `SYS_WRITE` already allow 4 MB per in-flight call, per process, which is ample
-  to exhaust the kernel heap and reach BUG-009. Second, `validate_user_buffer`
-  walks the range one 4 KB page at a time, and for each page acquires
-  `process_table_lock` once and `mmu_lock` once (inside `mmu_user_query`) — with
-  interrupts disabled for the whole loop. A 4 MB buffer is 1024 iterations of
-  lock/unlock with IRQs masked on that core; an 8 MB `getdents` is 2048. Timer
-  ticks are lost, and every other core contends on `mmu_lock`.
-- **Suggested Fix**: Cap `count` in `SYS_GETDENTS` like the other paths. Restructure
-  `validate_user_buffer` to take `process_table_lock` once, hoist the `mmu_lock`
-  acquisition out of the per-page loop (add an `mmu_user_query_locked` variant),
-  and walk L3 tables a page-table-page at a time instead of re-descending from the
-  PGD for every page. Better still, drop the pre-validation entirely and rely on
-  the `ldtr`/`sttr` + fixup path, which is what actually enforces safety (see
-  BUG-022 and IMP-006).
 
 ### [BUG-020] Non-IRQ-safe spinlocks held across preemption points
 - **Location**: `kernel/sched/process.c:464-470` and `:798-806` (`p->fd_lock`),

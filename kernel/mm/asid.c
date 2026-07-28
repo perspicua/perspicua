@@ -25,6 +25,7 @@ static inline int asid_core_id(void)
 
 void asid_init(void)
 {
+    /* Boot-time and single-threaded; no interrupt can contend for this yet. */
     spin_lock(&asid_lock);
     for (int i = 0; i < BITMAP_SIZE; i++) {
         asid_pool.bitmap[i] = 0;
@@ -54,7 +55,7 @@ static int get_free_asid(void)
 
 void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
 {
-    spin_lock(&asid_lock);
+    unsigned long flags = spin_lock_irqsave(&asid_lock);
 
     /* If this core has not yet caught up to the current generation, its local
      * TLB may hold stale entries for recycled ASIDs. Flush once (local only)
@@ -68,7 +69,7 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
     }
 
     if (*gen_out == asid_pool.generation && *asid_out != 0) {
-        spin_unlock(&asid_lock);
+        spin_unlock_irqrestore(&asid_lock, flags);
         return; // Current ASID is still valid
     }
 
@@ -98,7 +99,7 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
     *asid_out = (unsigned long)new_asid;
     *gen_out = asid_pool.generation;
 
-    spin_unlock(&asid_lock);
+    spin_unlock_irqrestore(&asid_lock, flags);
 }
 
 void asid_free(unsigned long *asid, unsigned long *gen)

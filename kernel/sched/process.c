@@ -90,7 +90,7 @@ static void open_std_fds(uint32_t pid)
 
 static void close_all_fds(struct process *p)
 {
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         struct vfs_file *f = p->fd_table[i];
         if (!f) {
@@ -100,7 +100,7 @@ static void close_all_fds(struct process *p)
         p->fd_table[i] = NULL;
         vfs_file_put(f);
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 }
 
 /*
@@ -508,13 +508,13 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     int fds_to_close[VFS_MAX_FDS];
     int close_count = 0;
 
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (p->fd_table[i] && (p->fd_flags[i] & VFS_FD_CLOEXEC)) {
             fds_to_close[close_count++] = i;
         }
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     for (int i = 0; i < close_count; i++) {
         vfs_close(fds_to_close[i]);
@@ -844,7 +844,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
         atomic_inc(&child->cwd->refcount);
     }
 
-    spin_lock(&parent->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&parent->fd_lock);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (parent->fd_table[i]) {
             child->fd_table[i] = parent->fd_table[i];
@@ -852,7 +852,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
             atomic_inc(&child->fd_table[i]->refcount);
         }
     }
-    spin_unlock(&parent->fd_lock);
+    spin_unlock_irqrestore(&parent->fd_lock, fdflags);
 
     uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
     uintptr_t tf_addr = (kernel_stack_top - sizeof(struct exception_trap_frame)) & ~15UL;

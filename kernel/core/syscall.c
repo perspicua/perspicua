@@ -926,10 +926,10 @@ mmap_fail:
 
             struct process *p = &process_table[pid];
 
-            spin_lock(&p->fd_lock);
+            unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
             struct vfs_file *f = p->fd_table[fd];
             if (!f) {
-                spin_unlock(&p->fd_lock);
+                spin_unlock_irqrestore(&p->fd_lock, fdflags);
                 tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
                 break;
             }
@@ -952,7 +952,7 @@ mmap_fail:
                     ret = -PERS_ERR_INVALID_ARGUMENT;
                     break;
             }
-            spin_unlock(&p->fd_lock);
+            spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
             tf->x[0] = (uint64_t)ret;
             break;

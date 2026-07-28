@@ -358,12 +358,12 @@ static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size)
     struct process *p = &process_table[pid];
     struct vfs_vnode *cwd_node = NULL;
 
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     if (p->cwd) {
         cwd_node = p->cwd;
         atomic_inc(&cwd_node->refcount);
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (!cwd_node) {
         return 0;
@@ -404,12 +404,12 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
     struct process *p = &process_table[pid];
     struct vfs_vnode *target_node = NULL;
 
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     if (p->fd_table[fd]) {
         target_node = p->fd_table[fd]->node;
         atomic_inc(&target_node->refcount);
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (!target_node) {
         return 0;
@@ -461,17 +461,17 @@ static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t cou
 
         struct process *p = &process_table[pid];
         for (int i = fd_idx; i < VFS_MAX_FDS; i++) {
-            spin_lock(&p->fd_lock);
+            unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
             if (p->fd_table[i]) {
                 vfs_buffer[entries_written].ino = (ino_t)(1000 + i);
                 snprintf(vfs_buffer[entries_written].name, sizeof(vfs_buffer[entries_written].name),
                          "%d", i);
-                spin_unlock(&p->fd_lock);
+                spin_unlock_irqrestore(&p->fd_lock, fdflags);
                 file->offset = (vfs_off_t)(i + 1);
                 found = 1;
                 break;
             }
-            spin_unlock(&p->fd_lock);
+            spin_unlock_irqrestore(&p->fd_lock, fdflags);
         }
 
         if (!found) {
@@ -510,13 +510,13 @@ static struct vfs_vnode *procfs_pid_fd_lookup(struct vfs_vnode *dir, const char 
         return NULL;
     }
 
-    spin_lock(&process_table[pid].fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&process_table[pid].fd_lock);
     if (!process_table[pid].fd_table[fd]) {
-        spin_unlock(&process_table[pid].fd_lock);
+        spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
         spin_unlock_irqrestore(&process_table_lock, flags);
         return NULL;
     }
-    spin_unlock(&process_table[pid].fd_lock);
+    spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));

@@ -234,9 +234,9 @@ struct vfs_file *vfs_test_file_at(int fd)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
     return f;
 }
 #endif
@@ -571,18 +571,18 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
             return error;
     }
 
-    spin_lock(&process_table[pid].fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&process_table[pid].fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         struct vfs_file *f = process_table[pid].fd_table[i];
         if (f && f->node->internal_info == node->internal_info && f->node->ops == node->ops) {
             if (node->type != VFS_VNODE_TYPE_DEVICE) {
-                spin_unlock(&process_table[pid].fd_lock);
+                spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
                 vfs_vnode_put(node);
                 return -PERS_ERR_ALREADY_EXISTS;
             }
         }
     }
-    spin_unlock(&process_table[pid].fd_lock);
+    spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
 
     struct vfs_file *new_file = vfs_file_alloc();
     if (!new_file) {
@@ -594,7 +594,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     new_file->flags = flags;
 
     int slot = -1;
-    spin_lock(&process_table[pid].fd_lock);
+    fdflags = spin_lock_irqsave(&process_table[pid].fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         if (!process_table[pid].fd_table[i]) {
             process_table[pid].fd_table[i] = new_file;
@@ -603,7 +603,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
             break;
         }
     }
-    spin_unlock(&process_table[pid].fd_lock);
+    spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
 
     if (slot == -1) {
         vfs_vnode_put(node);
@@ -640,16 +640,16 @@ int vfs_close(int fd)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
 
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
     p->fd_table[fd] = NULL;
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     vfs_file_put(f);
     return PERS_SUCCESS;
@@ -670,10 +670,10 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
@@ -689,17 +689,17 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
             new_offset = f->node->file_size + offset;
             break;
         default:
-            spin_unlock(&p->fd_lock);
+            spin_unlock_irqrestore(&p->fd_lock, fdflags);
             return -PERS_ERR_NOT_IMPLEMENTED;
     }
 
     if (new_offset < 0) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
     f->offset = new_offset;
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
     return new_offset;
 }
 
@@ -718,14 +718,14 @@ int vfs_read(int fd, void *buffer, size_t count)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
@@ -757,14 +757,14 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
@@ -803,14 +803,14 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir) {
         vfs_file_put(f);
@@ -923,14 +923,14 @@ int vfs_write(int fd, const void *buffer, size_t count)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
@@ -966,14 +966,14 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     atomic_inc(&f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
@@ -1034,15 +1034,15 @@ int vfs_dup2(int oldfd, int newfd)
     struct process *p = &process_table[pid];
     struct vfs_file *to_free = NULL;
 
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *old_f = p->fd_table[oldfd];
     if (!old_f) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
     if (oldfd == newfd) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return newfd;
     }
 
@@ -1050,7 +1050,7 @@ int vfs_dup2(int oldfd, int newfd)
     p->fd_table[newfd] = old_f;
     p->fd_flags[newfd] = 0; // POSIX specifies dup2 clears FD_CLOEXEC
     atomic_inc(&old_f->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     vfs_file_put(to_free);
     return newfd;
@@ -1079,12 +1079,12 @@ int vfs_chdir(const char *kpath)
         return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     if (p->cwd) {
         vfs_vnode_put(p->cwd);
     }
     p->cwd = node;
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     return PERS_SUCCESS;
 }
@@ -1104,14 +1104,14 @@ int vfs_getcwd(char *buf, size_t size)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_vnode *curr_node = p->cwd;
     if (!curr_node) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_NOT_FOUND;
     }
     atomic_inc(&curr_node->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     char temp_path[VFS_MAX_PATH_LEN];
     char *ptr = temp_path + VFS_MAX_PATH_LEN - 1;
@@ -1420,15 +1420,15 @@ int vfs_fsync(int fd)
     }
 
     struct process *p = &process_table[pid];
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f || !f->node) {
-        spin_unlock(&p->fd_lock);
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
     struct vfs_vnode *node = f->node;
     atomic_inc(&node->refcount);
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int result = pagecache_writeback(node);
 
