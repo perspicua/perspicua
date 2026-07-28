@@ -118,6 +118,88 @@ void test_fat32(void)
     }
     TEST_PASS("LFN fragment placement");
 
+    /*
+     * Every BPB field is attacker-controlled on a removable volume, and the
+     * driver divides by some of them and turns others into block addresses.
+     * A geometry it cannot describe must be refused at mount.
+     */
+    {
+        struct fat32_bpb bpb;
+        struct fat32_fs fs;
+        const uint64_t blocks = 65536; // a 32 MB volume
+
+        // a plausible baseline that must be accepted
+        memset(&bpb, 0, sizeof(bpb));
+        bpb.bytes_per_sector = 512;
+        bpb.sectors_per_cluster = 8;
+        bpb.reserved_sectors = 32;
+        bpb.num_fats = 2;
+        bpb.sectors_per_fat_32 = 128;
+        bpb.root_cluster = 2;
+
+        memset(&fs, 0, sizeof(fs));
+        TEST_ASSERT_EQ("valid BPB accepted", fat32_test_geometry_from_bpb(&bpb, 0, blocks, &fs), 0);
+        TEST_ASSERT_EQ("data area follows both FATs", (long)fs.data_lba_start, 32 + 2 * 128);
+        TEST_ASSERT("max cluster is bounded by the device",
+                    fs.max_cluster >= 2 && fs.max_cluster < blocks);
+
+        // sectors_per_cluster is a divisor: zero must never reach it
+        struct fat32_bpb bad = bpb;
+        bad.sectors_per_cluster = 0;
+        TEST_ASSERT("zero sectors_per_cluster refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.sectors_per_cluster = 3; // not a power of two
+        TEST_ASSERT("non-power-of-two cluster refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.sectors_per_cluster = 255;
+        TEST_ASSERT("oversized cluster refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        // the driver reads 512-byte sectors everywhere
+        bad = bpb;
+        bad.bytes_per_sector = 4096;
+        TEST_ASSERT("non-512 sector size refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.reserved_sectors = 0;
+        TEST_ASSERT("zero reserved sectors refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.num_fats = 0;
+        TEST_ASSERT("zero FATs refused", fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.sectors_per_fat_32 = 0;
+        TEST_ASSERT("zero-length FAT refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        bad = bpb;
+        bad.root_cluster = 0;
+        TEST_ASSERT("root cluster below 2 refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        // num_fats * sectors_per_fat wraps a uint32_t and lands data_lba_start
+        // back on top of the FAT
+        bad = bpb;
+        bad.num_fats = 2;
+        bad.sectors_per_fat_32 = 0x80000000U;
+        TEST_ASSERT("overflowing FAT size refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+
+        // a data area that starts past the end of the device describes nothing
+        bad = bpb;
+        bad.sectors_per_fat_32 = 100000;
+        TEST_ASSERT("data area past the device refused",
+                    fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
+    }
+    TEST_PASS("BPB validation");
+
     // the root node the VFS was mounted on must be a directory
     {
         struct vfs_vnode *root = fat32_get_root_node();

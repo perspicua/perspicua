@@ -38,11 +38,34 @@ static struct fat32_fs current_fs;
  */
 static struct kmutex fat32_lock = KMUTEX_INIT;
 
+/* Every read and write path in this driver assumes 512-byte sectors. */
+#define FAT32_SECTOR_SIZE 512
+
+/* Highest cluster number FAT32 can address; above this are reserved markers. */
+#define FAT32_CLUSTER_MAX 0x0FFFFFF6U
+
+/*
+ * cluster_valid - True for a cluster the data area can actually address.
+ *
+ * Cluster numbers come from directory entries and the FAT itself, so they are
+ * untrusted input however deep in the driver they surface.
+ */
+static int cluster_valid(uint32_t cluster)
+{
+    return cluster >= 2 && cluster <= current_fs.max_cluster;
+}
+
 /*
  * cluster_to_lba - Converts a FAT cluster number to a Logical Block Address.
+ *
+ * An out-of-range cluster yields an LBA past any device so the read fails in
+ * the block layer rather than landing on unrelated sectors.
  */
 static uint32_t cluster_to_lba(uint32_t cluster)
 {
+    if (!cluster_valid(cluster)) {
+        return 0xFFFFFFFFU;
+    }
     return current_fs.data_lba_start + (cluster - 2) * current_fs.sectors_per_cluster;
 }
 
@@ -51,6 +74,11 @@ static uint32_t cluster_to_lba(uint32_t cluster)
  */
 static uint32_t get_next_cluster(uint32_t cluster)
 {
+    /* Terminate the chain rather than index the FAT with a corrupt value. */
+    if (!cluster_valid(cluster)) {
+        return 0x0FFFFFFF;
+    }
+
     uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
     uint32_t fat_offset = cluster % 128;
     uint32_t fat_buffer[128];
@@ -99,11 +127,11 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
 static uint32_t allocate_cluster(void)
 {
     uint32_t fat_buffer[128];
-    uint32_t total_data_sectors =
-        current_fs.dev->block_count - current_fs.data_lba_start + current_fs.partition_lba_start;
-    uint32_t total_clusters = total_data_sectors / current_fs.sectors_per_cluster;
 
-    for (uint32_t cluster = 2; cluster < total_clusters + 2; cluster++) {
+    /* Use the bound derived at mount rather than recomputing it: the old
+     * expression added partition_lba_start back after subtracting it, and
+     * divided by a sectors_per_cluster nothing had validated. */
+    for (uint32_t cluster = 2; cluster <= current_fs.max_cluster; cluster++) {
         uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
         uint32_t fat_offset = cluster % 128;
 
@@ -1270,6 +1298,82 @@ struct vfs_vnode *fat32_get_root_node(void)
 }
 
 /*
+ * fat32_geometry_from_bpb - Validates a BPB and derives the runtime geometry.
+ *
+ * Every field here is attacker-controlled on a removable volume, and the driver
+ * divides by some of them and turns others into block addresses. Reject a
+ * volume that cannot be described rather than mount it and misbehave later.
+ */
+static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                   uint64_t device_blocks, struct fat32_fs *out)
+{
+    uint32_t spc = bpb->sectors_per_cluster;
+    uint32_t reserved = bpb->reserved_sectors;
+    uint32_t num_fats = bpb->num_fats;
+    uint32_t sectors_per_fat = bpb->sectors_per_fat_32;
+
+    if (bpb->bytes_per_sector != FAT32_SECTOR_SIZE) {
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    /* A power of two up to 128 keeps a cluster within the 64 KB the spec allows
+     * and, more importantly here, keeps it non-zero: it is a divisor. */
+    if (spc == 0 || spc > 128 || (spc & (spc - 1)) != 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+    if (reserved == 0 || sectors_per_fat == 0 || num_fats < 1 || num_fats > 2) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+    if (bpb->root_cluster < 2) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    /* Compute in 64 bits: num_fats * sectors_per_fat overflows a uint32_t for
+     * plausible-looking values, wrapping data_lba_start back over the FAT. */
+    uint64_t fat_lba = (uint64_t)partition_lba + reserved;
+    uint64_t data_lba = fat_lba + (uint64_t)num_fats * sectors_per_fat;
+
+    if (data_lba >= device_blocks) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    uint64_t cluster_count = (device_blocks - data_lba) / spc;
+    if (cluster_count == 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    /* Clusters are numbered from 2, and the top values are reserved markers. */
+    uint64_t max_cluster = cluster_count + 1;
+    if (max_cluster > FAT32_CLUSTER_MAX) {
+        max_cluster = FAT32_CLUSTER_MAX;
+    }
+    if (bpb->root_cluster > max_cluster) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    out->bytes_per_sector = FAT32_SECTOR_SIZE;
+    out->sectors_per_cluster = spc;
+    out->reserved_sectors = reserved;
+    out->num_fats = num_fats;
+    out->sectors_per_fat = sectors_per_fat;
+    out->root_cluster = bpb->root_cluster;
+    out->partition_lba_start = partition_lba;
+    out->fat_lba_start = (uint32_t)fat_lba;
+    out->data_lba_start = (uint32_t)data_lba;
+    out->max_cluster = (uint32_t)max_cluster;
+
+    return PERS_SUCCESS;
+}
+
+#ifdef CONFIG_TESTS
+int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                 uint64_t device_blocks, struct fat32_fs *out)
+{
+    return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
+}
+#endif
+
+/*
  * fat32_init - Validates the MBR/BPB and populates the global filesystem state.
  */
 int fat32_init(const char *device_name)
@@ -1312,16 +1416,16 @@ int fat32_init(const char *device_name)
         return -PERS_ERR_IO_ERROR;
     }
 
-    current_fs.bytes_per_sector = bpb.bytes_per_sector;
-    current_fs.reserved_sectors = bpb.reserved_sectors;
-    current_fs.sectors_per_cluster = bpb.sectors_per_cluster;
-    current_fs.root_cluster = bpb.root_cluster;
-    current_fs.sectors_per_fat = bpb.sectors_per_fat_32;
-    current_fs.num_fats = bpb.num_fats;
-    current_fs.fat_lba_start = current_fs.partition_lba_start + current_fs.reserved_sectors;
-    current_fs.data_lba_start =
-        current_fs.fat_lba_start + (current_fs.num_fats * current_fs.sectors_per_fat);
+    int geom = fat32_geometry_from_bpb(&bpb, current_fs.partition_lba_start,
+                                       (uint64_t)dev->block_count, &current_fs);
+    if (geom != PERS_SUCCESS) {
+        pr_err("fat32: rejecting volume with an implausible BPB\n");
+        current_fs.dev = NULL;
+        return geom;
+    }
 
-    pr_info("fat32: partition at LBA %u\n", current_fs.partition_lba_start);
+    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n",
+            current_fs.partition_lba_start, current_fs.max_cluster - 1,
+            current_fs.sectors_per_cluster);
     return PERS_SUCCESS;
 }
