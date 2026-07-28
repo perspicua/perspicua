@@ -58,13 +58,17 @@ static int cluster_valid(uint32_t cluster)
 /*
  * cluster_to_lba - Converts a FAT cluster number to a Logical Block Address.
  *
- * An out-of-range cluster yields an LBA past any device so the read fails in
- * the block layer rather than landing on unrelated sectors.
+ * Callers add a sector offset to the result, so the out-of-range sentinel has
+ * to stay huge after that addition: 0xFFFFFFFF + 1 wraps to zero, which is the
+ * MBR, and one caller writes there. sectors_per_cluster is capped at 128 when
+ * the volume is mounted, so this value cannot wrap.
  */
+#define FAT32_LBA_INVALID 0xFFF00000U
+
 static uint32_t cluster_to_lba(uint32_t cluster)
 {
     if (!cluster_valid(cluster)) {
-        return 0xFFFFFFFFU;
+        return FAT32_LBA_INVALID;
     }
     return current_fs.data_lba_start + (cluster - 2) * current_fs.sectors_per_cluster;
 }
@@ -285,7 +289,7 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
     uint32_t cluster = (uint32_t)(uintptr_t)node->parent->internal_info;
     struct fat32_dir_entry dirs[16];
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, dirs, lba + s, 1) != 0) {
@@ -659,7 +663,7 @@ static int fat32_write_entry_to_parent(uint32_t parent_cluster, struct fat32_dir
     struct fat32_dir_entry dirs[16];
     uint32_t cluster = parent_cluster;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -695,7 +699,7 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
     memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -776,7 +780,7 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
     int has_lfn = 0;
 
     struct fat32_dir_entry dirs[16];
-    while (cluster < 0x0FFFFFF8 && entries_read < (int)max_entries) {
+    while (cluster_valid(cluster) && entries_read < (int)max_entries) {
         uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
         uint32_t start_sector = offset_in_cluster / 512;
 
@@ -867,7 +871,7 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
     memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -925,7 +929,7 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
     memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -960,7 +964,7 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 
                     uint32_t scan_cluster = target_cluster;
                     struct fat32_dir_entry scan_dirs[16];
-                    while (scan_cluster < 0x0FFFFFF8 && scan_cluster >= 2) {
+                    while (cluster_valid(scan_cluster)) {
                         uint32_t scan_lba = cluster_to_lba(scan_cluster);
                         for (int scan_s = 0; scan_s < (int)current_fs.sectors_per_cluster;
                              scan_s++) {
@@ -1072,7 +1076,7 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
     int found_s = 0;
     int found_i = 0;
 
-    while (old_cluster < 0x0FFFFFF8 && !found) {
+    while (cluster_valid(old_cluster) && !found) {
         uint32_t lba = cluster_to_lba(old_cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {

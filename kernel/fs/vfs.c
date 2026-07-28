@@ -606,8 +606,8 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
 
     if (slot == -1) {
-        vfs_vnode_put(node);
-        slab_free(new_file);
+        /* Releasing the file drops its vnode reference too. */
+        vfs_file_put(new_file);
         return -PERS_ERR_OUT_OF_RESOURCES;
     }
     return slot;

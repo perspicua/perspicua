@@ -26,9 +26,6 @@
 /* Upper bound on program headers we will load, to cap the header allocation. */
 #define ELF_MAX_PHDRS 64
 
-/* Top of the user (TTBR0) address space: 39-bit VA. */
-#define ELF_USER_VA_TOP 0x8000000000ULL
-
 /*
  * elf_check_header - Validates the ELF file identity and machine type.
  *
@@ -87,13 +84,33 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         return rc;
     }
 
-    *entry_point = ehdr.entry;
-
     if (ehdr.ph_num == 0 || ehdr.ph_num > ELF_MAX_PHDRS) {
         pr_err("elf: bad program header count (%u)\n", ehdr.ph_num);
         vfs_close(fd);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
+
+    /* The table is read with this struct's stride; a file claiming another one
+     * describes different headers than the ones that would be parsed. */
+    if (ehdr.ph_entry_size != sizeof(struct elf64_program_header)) {
+        pr_err("elf: unexpected program header size (%u)\n", ehdr.ph_entry_size);
+        vfs_close(fd);
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+    }
+
+    /*
+     * Segments are mapped at their own p_vaddr and are never registered with
+     * the per-process VA allocator, so they must stay clear of the range it
+     * hands out -- otherwise the stack this process is about to be given lands
+     * on top of the image, and mmap could later do the same.
+     */
+    if (ehdr.entry == 0 || ehdr.entry >= USER_VA_BASE) {
+        pr_err("elf: entry point 0x%lx outside the image region\n", (unsigned long)ehdr.entry);
+        vfs_close(fd);
+        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+    }
+
+    *entry_point = ehdr.entry;
 
     size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
     struct elf64_program_header *phdrs = heap_malloc(phdr_table_size);
@@ -131,9 +148,14 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         if (memsz == 0) {
             continue;
         }
-        /* Reject overflow and segments that fall outside the user address space */
-        if (vaddr + memsz < vaddr || vaddr + memsz > ELF_USER_VA_TOP) {
-            pr_err("elf: segment out of user address range\n");
+        /*
+         * Reject overflow, and keep the image below the VA allocator's range:
+         * a segment placed there would be silently replaced by the stack, since
+         * mmu_user_map_page releases whatever page it displaces.
+         */
+        if (vaddr + memsz < vaddr || vaddr + memsz > USER_VA_BASE) {
+            pr_err("elf: segment [0x%lx,0x%lx) outside the image region\n", (unsigned long)vaddr,
+                   (unsigned long)(vaddr + memsz));
             heap_free(phdrs);
             vfs_close(fd);
             return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
