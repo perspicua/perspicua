@@ -19,7 +19,7 @@ default: build
 config_smp     := "ON"
 config_lockdep := "ON"
 config_nr_cpus := "4"
-config_max_processes := "65536"
+config_max_processes := "128"
 config_max_fds := "64"
 
 # Configure and build into a given tree with a given CONFIG_TESTS setting

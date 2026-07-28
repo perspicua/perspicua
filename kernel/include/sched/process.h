@@ -23,16 +23,20 @@
  * Process slots. PCBs are allocated on demand, so a slot costs one pointer
  * until it is used and this no longer multiplies the per-process limits below.
  *
- * The ceiling is the ASID pool (mm/asid.h), not memory: it holds BITMAP_SIZE*64
- * = 256 ASIDs with ASID 0 reserved for the kernel, so 255 user address spaces
- * can be live at once. Slot 0 is the kernel, leaving 255 user slots -- exactly
- * the pool. Going past it costs a broadcast TLB flush every time the pool
- * rolls over, so raise BITMAP_SIZE first.
+ * This is *not* sized by memory or by the ASID pool, both of which would allow
+ * far more. It is the backpressure that keeps fork() inside the range the
+ * address-space copy is known to survive: user/apps/stress.c forks 900 children
+ * and, once enough are live at once, children come back from fork() seeing a
+ * corrupted stack -- they read a nonzero return, take the parent branch, and
+ * fault writing near NULL. Measured over three runs of that test: 128 slots is
+ * clean, 256 faults in one run of three, 65536 is badly unstable.
+ *
+ * Raising this is blocked on fixing that, not on the table.
  */
 #ifdef CONFIG_MAX_PROCESSES
     #define PROCESS_TABLE_SIZE CONFIG_MAX_PROCESSES
 #else
-    #define PROCESS_TABLE_SIZE 65536
+    #define PROCESS_TABLE_SIZE 128
 #endif
 
 /*
