@@ -19,6 +19,8 @@ default: build
 config_smp     := "ON"
 config_lockdep := "ON"
 config_nr_cpus := "4"
+config_max_processes := "128"
+config_max_fds := "64"
 
 # Configure and build into a given tree with a given CONFIG_TESTS setting
 @_cmake dir type tests:
@@ -29,6 +31,8 @@ config_nr_cpus := "4"
         -DCONFIG_SMP={{config_smp}} \
         -DCONFIG_LOCKDEP={{config_lockdep}} \
         -DCONFIG_NR_CPUS={{config_nr_cpus}} \
+        -DCONFIG_MAX_PROCESSES={{config_max_processes}} \
+        -DCONFIG_MAX_FDS={{config_max_fds}} \
         -DCONFIG_TESTS={{tests}}
     cmake --build {{dir}} -j {{nproc}}
 
@@ -63,6 +67,8 @@ config_nr_cpus := "4"
     echo "  CONFIG_SMP      = {{config_smp}}"
     echo "  CONFIG_LOCKDEP  = {{config_lockdep}}"
     echo "  CONFIG_NR_CPUS  = {{config_nr_cpus}}"
+    echo "  CONFIG_MAX_PROCESSES = {{config_max_processes}}"
+    echo "  CONFIG_MAX_FDS       = {{config_max_fds}}"
     echo "  CONFIG_TESTS    = OFF (ON for 'just test')"
     echo ""
     echo "Override with: just config_smp=OFF config_lockdep=OFF build"

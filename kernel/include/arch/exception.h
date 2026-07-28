@@ -10,6 +10,8 @@
 
 #include "types.h"
 
+#include "sched/sched.h"
+
 /* 128-bit type for NEON/FPU registers */
 typedef __uint128_t uint128_t;
 
@@ -75,6 +77,6 @@ struct irq_stats {
     uint64_t uart_count;
 };
 
-extern struct irq_stats core_irq_stats[4];
+extern struct irq_stats core_irq_stats[SCHED_NUM_CORES];
 
 #endif /* PERSPICUA_ARCH_EXCEPTION_H */

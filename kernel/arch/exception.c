@@ -41,7 +41,7 @@ extern unsigned long __ex_table_end[];
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
 
-struct irq_stats core_irq_stats[4];
+struct irq_stats core_irq_stats[SCHED_NUM_CORES];
 
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the

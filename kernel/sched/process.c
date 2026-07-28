@@ -403,7 +403,7 @@ int process_create_from_file(const char *path, uint32_t pid)
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
-    uintptr_t vaddr_stack = setup_user_stack(&p->va, user_pgd, 32);
+    uintptr_t vaddr_stack = setup_user_stack(&p->va, user_pgd, PROCESS_USER_STACK_PAGES);
     void *kstack = alloc_kernel_stack();
 
     if (!vaddr_stack || !kstack) {
@@ -428,7 +428,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     strncpy(p->name, filename, sizeof(p->name) - 1);
     p->name[sizeof(p->name) - 1] = '\0';
 
-    uintptr_t user_sp_top = vaddr_stack + 32 * PAGE_SIZE;
+    uintptr_t user_sp_top = vaddr_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     struct exception_trap_frame *tf = build_trap_frame((uintptr_t)kstack, entry_point, user_sp_top);
 
     p->context.sp = (unsigned long)tf;
@@ -579,7 +579,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     struct va_allocator new_va;
     va_init(&new_va);
-    uintptr_t new_stack_base = setup_user_stack(&new_va, new_pgd, 32);
+    uintptr_t new_stack_base = setup_user_stack(&new_va, new_pgd, PROCESS_USER_STACK_PAGES);
     if (!new_stack_base) {
         mmu_destroy_user_pgd(new_pgd);
         free_vector(kargv, argc);
@@ -588,7 +588,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     /* Set up user stack with argc/argv (top-down) */
-    uintptr_t user_sp = new_stack_base + 32 * PAGE_SIZE;
+    uintptr_t user_sp = new_stack_base + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     uintptr_t karg_user_vaddrs[128];
 
     for (int i = 0; i < argc; i++) {
@@ -656,7 +656,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = new_stack_base;
     p->va = new_va;
-    p->ttbr0 = V2P(new_pgd) | ((uint64_t)(p->asid & 0xFFFFUL) << 48);
+    p->ttbr0 = V2P(new_pgd) | asid_ttbr_field(p->asid);
 
     const char *last_slash = strrchr(path, '/');
     const char *filename = last_slash ? last_slash + 1 : path;
@@ -664,7 +664,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->name[sizeof(p->name) - 1] = '\0';
 
     mmu_switch_user(new_pgd, p->asid);
-    unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
+    unsigned long asid_field = asid_ttbr_field(p->asid);
     asm volatile("dsb ish" ::: "memory");
     asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
     asm volatile("dsb ish" ::: "memory");

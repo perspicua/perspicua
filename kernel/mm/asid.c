@@ -1,7 +1,11 @@
 #include "mm/asid.h"
 #include "core/lock.h"
 
-#define ASID_MAX_CORES 4
+#ifdef CONFIG_NR_CPUS
+    #define ASID_MAX_CORES CONFIG_NR_CPUS
+#else
+    #define ASID_MAX_CORES 4
+#endif
 
 static struct asid_pool_t asid_pool;
 static spinlock_t asid_lock = SPINLOCK_INIT;
@@ -107,7 +111,7 @@ void asid_free(unsigned long *asid, unsigned long *gen)
     unsigned long flags = spin_lock_irqsave(&asid_lock);
 
     if (*gen == asid_pool.generation && *asid != 0) {
-        unsigned long asid_field = (*asid & 0xFFUL) << 48;
+        unsigned long asid_field = asid_ttbr_field(*asid);
         asm volatile("dsb ish\n"
                      "tlbi aside1is, %0\n"
                      "dsb ish\n"

@@ -15,8 +15,18 @@
 #include "core/lock.h"
 
 #define VFS_MAX_PATH_LEN 4096
-#define VFS_MAX_FDS      32
-#define VFS_MAX_MOUNTS   8
+
+/*
+ * Mount points are short ("/", "/dev"), and the mount table is static, so
+ * storing a full-length path per entry costs 4 KB each for nothing.
+ */
+#define VFS_MAX_MOUNT_PATH 64
+#ifdef CONFIG_MAX_FDS
+    #define VFS_MAX_FDS CONFIG_MAX_FDS
+#else
+    #define VFS_MAX_FDS 64
+#endif
+#define VFS_MAX_MOUNTS 8
 
 /* Standard file open flags */
 #define VFS_O_RDONLY  0x0000

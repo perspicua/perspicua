@@ -30,7 +30,7 @@
  * struct vfs_mount_entry - Internal registration of a mounted filesystem.
  */
 struct vfs_mount_entry {
-    char path[VFS_MAX_PATH_LEN];
+    char path[VFS_MAX_MOUNT_PATH];
     struct vfs_vnode *root;
 };
 
@@ -210,7 +210,7 @@ void vfs_init(void)
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
     vfs_mount_count = 0;
     for (size_t i = 0; i < VFS_MAX_MOUNTS; i++) {
-        memset(vfs_mount_table[i].path, 0, VFS_MAX_PATH_LEN);
+        memset(vfs_mount_table[i].path, 0, VFS_MAX_MOUNT_PATH);
         vfs_mount_table[i].root = NULL;
     }
     spin_unlock_irqrestore(&vfs_lock, flags);
@@ -317,6 +317,9 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
     if (!path || path[0] != '/' || !root) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
+    if (strlen(path) >= VFS_MAX_MOUNT_PATH) {
+        return -PERS_ERR_NAME_TOO_LONG;
+    }
 
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
 
@@ -360,7 +363,8 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
         root->name[0] = '\0';
     }
 
-    strncpy(vfs_mount_table[vfs_mount_count].path, path, VFS_MAX_PATH_LEN);
+    strncpy(vfs_mount_table[vfs_mount_count].path, path, VFS_MAX_MOUNT_PATH - 1);
+    vfs_mount_table[vfs_mount_count].path[VFS_MAX_MOUNT_PATH - 1] = '\0';
     vfs_mount_table[vfs_mount_count].root = root;
     atomic_inc(&root->refcount);
     vfs_mount_count++;

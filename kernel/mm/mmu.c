@@ -599,8 +599,7 @@ out:
 
 void mmu_switch_user(unsigned long *pgd, unsigned long asid)
 {
-    unsigned long safe_asid = asid & 0xFFUL;
-    unsigned long ttbr0 = V2P((uintptr_t)pgd) | (safe_asid << 48);
+    unsigned long ttbr0 = V2P((uintptr_t)pgd) | asid_ttbr_field(asid);
 
     asm volatile("msr ttbr0_el1, %0" : : "r"(ttbr0) : "memory");
     asm volatile("dsb ish" : : : "memory");

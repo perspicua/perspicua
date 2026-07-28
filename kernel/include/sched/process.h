@@ -19,7 +19,18 @@
 #include "fs/vfs.h"
 #include "sched/sched.h"
 
-#define PROCESS_TABLE_SIZE 1024
+/*
+ * Process slots. The table is a static array of whole PCBs, so this multiplies
+ * every per-process limit below -- keep it in proportion to what the machine
+ * will actually run. It also wants to stay under the 256-entry ASID pool
+ * (mm/asid.h): beyond that, address spaces start recycling ASIDs, and every
+ * rollover is a broadcast TLB flush.
+ */
+#ifdef CONFIG_MAX_PROCESSES
+    #define PROCESS_TABLE_SIZE CONFIG_MAX_PROCESSES
+#else
+    #define PROCESS_TABLE_SIZE 128
+#endif
 
 /*
  * Range the per-process allocator hands out. It starts well above the address
@@ -31,7 +42,12 @@
 #define USER_VA_LIMIT       0x8000000000ULL
 #define USER_VA_MAX_REGIONS 64
 
-#define PROCESS_USER_STACK_PAGES 64
+/*
+ * User stacks are populated eagerly -- every page is allocated and mapped at
+ * process creation, touched or not -- so this is real memory per process, not
+ * reserved address space. Keep it modest until stacks grow on demand.
+ */
+#define PROCESS_USER_STACK_PAGES 32
 
 #define SPSR_EL0_USER      0x00000000ULL
 #define SPSR_EL1_KERN      0x000003C5ULL
