@@ -84,6 +84,10 @@ int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_p
                    unsigned long *out_flags);
 
 void mmu_switch_user(unsigned long *pgd, unsigned long asid);
+
+/* Points TTBR0 at the empty table. Call before freeing an address space. */
+void mmu_leave_user(void);
+
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 
 unsigned long mmu_kernel_ttbr0(void);

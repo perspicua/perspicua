@@ -1,4 +1,5 @@
 #include "test.h"
+#include "core/timer.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"
@@ -512,6 +513,42 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user PGD doesn't affect kernel");
+
+    /*
+     * process_exit relies on this to stop TTBR0 naming tables it is about to
+     * hand back to the allocator: after leaving, the base must be the empty
+     * table, not the pgd that was active.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *page = pmm_alloc_page();
+        unsigned long active = 0, left = 0, saved = 0;
+
+        if (pgd && page) {
+            unsigned long irqf = irq_save();
+
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(saved));
+            mmu_user_map_page(pgd, USER_VA_BASE, V2P(page), MMU_PAGE_USER_DATA);
+
+            mmu_switch_user(pgd, 0);
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(active));
+
+            mmu_leave_user();
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(left));
+
+            asm volatile("msr ttbr0_el1, %0" ::"r"(saved) : "memory");
+            asm volatile("dsb ish\n isb" ::: "memory");
+            irq_restore(irqf);
+        }
+
+        TEST_ASSERT("leave-user setup allocated", pgd != NULL && page != NULL);
+        TEST_ASSERT_EQ("switch installed the user pgd", active & MMU_PTE_ADDR_MASK, V2P(pgd));
+        TEST_ASSERT_EQ("leave installs the empty table", left, mmu_kernel_ttbr0());
+        TEST_ASSERT("leave does not keep the freed pgd", (left & MMU_PTE_ADDR_MASK) != V2P(pgd));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("leaving a user address space");
 
     TEST_SUITE_END("MMU Per-Process Page Tables");
 }

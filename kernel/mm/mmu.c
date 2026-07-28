@@ -589,6 +589,20 @@ void mmu_switch_user(unsigned long *pgd, unsigned long asid)
     asm volatile("isb" : : : "memory");
 }
 
+/*
+ * mmu_leave_user - Points TTBR0 at the empty table.
+ *
+ * Must be called before an address space's tables are freed: the walker may
+ * prefetch from TTBR0 even when no TLB entries are cached, so a base left
+ * naming pages that have gone back to the allocator is a live hazard.
+ */
+void mmu_leave_user(void)
+{
+    asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys) : "memory");
+    asm volatile("dsb ish" : : : "memory");
+    asm volatile("isb" : : : "memory");
+}
+
 int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
                    unsigned long *out_flags)
 {

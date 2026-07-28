@@ -717,11 +717,15 @@ void process_exit(uint32_t pid, int exit_status)
     unsigned long *pgd = p->user_pgd;
     p->user_pgd = NULL;
     if (pgd) {
-        unsigned long asid_field = (unsigned long)(p->asid & 0xFFUL) << 48;
-        asm volatile("dsb ish");
-        asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
-        asm volatile("dsb ish");
-        asm volatile("isb");
+        /*
+         * Order matters here. Leave the address space first: TTBR0 still names
+         * this pgd, and mmu_destroy_user_pgd hands every one of its pages back
+         * to the allocator, where another core can immediately reuse them.
+         * Release the ASID next -- it also broadcasts the TLB invalidate -- so
+         * it cannot be recycled to a new process while a stale base is loaded.
+         */
+        mmu_leave_user();
+        asid_free(&p->asid, &p->asid_generation);
         mmu_destroy_user_pgd(pgd);
     }
 
@@ -759,8 +763,6 @@ void process_exit(uint32_t pid, int exit_status)
     if (dying) {
         dying->state = SCHED_TASK_DEAD;
     }
-
-    asid_free(&process_table[pid].asid, &process_table[pid].asid_generation);
 
     schedule();
     __builtin_unreachable();
