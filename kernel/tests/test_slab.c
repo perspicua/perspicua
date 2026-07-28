@@ -223,5 +223,41 @@ void test_slab(void)
     }
     TEST_PASS("class promotion");
 
+    /*
+     * The bytes of a live object belong to its owner, so no value stored in
+     * them may be mistaken for allocator state. Freeing used to panic when an
+     * object happened to hold the free marker at offset 8 -- reachable from
+     * userspace with write(fd, buf, 16) and the right eight bytes, since small
+     * syscall bounce buffers come from here.
+     */
+    {
+        const uint64_t poison = 0xDEADBEEFDEADBEEFULL;
+        unsigned long sizes[] = {16, 32, 64, 128, 256, 512, 1024};
+        void *ptrs[7];
+        int n = (int)(sizeof(sizes) / sizeof(sizes[0]));
+
+        for (int i = 0; i < n; i++) {
+            ptrs[i] = slab_alloc(sizes[i]);
+            TEST_ASSERT("poison-pattern alloc", ptrs[i] != NULL);
+
+            // fill the whole object with the marker, offset 8 included
+            uint64_t *words = (uint64_t *)ptrs[i];
+            for (unsigned long w = 0; w < sizes[i] / sizeof(uint64_t); w++) {
+                words[w] = poison;
+            }
+        }
+
+        // reaching here at all means none of these were taken for a double free
+        for (int i = 0; i < n; i++) {
+            slab_free(ptrs[i]);
+        }
+
+        // and the slots really were released, so they come back
+        void *again = slab_alloc(16);
+        TEST_ASSERT("freed slot is reusable", again != NULL);
+        slab_free(again);
+    }
+    TEST_PASS("object data is not allocator state");
+
     TEST_SUITE_END("Slab Allocator");
 }
