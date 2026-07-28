@@ -21,16 +21,26 @@
 
 /*
  * struct heap_block_header - Prefix for first-fit pool allocations.
+ *
+ * `magic` identifies the header as ours before anything trusts `size`. Without
+ * it, freeing a pointer this allocator never returned reads a length from
+ * whatever precedes it and locates the footer from there, anywhere in memory.
+ * It fits in existing padding, so the header stays 32 bytes.
  */
 struct heap_block_header {
     unsigned long size;
     struct heap_block_header *next;
+    unsigned int magic;
     unsigned char is_free;
 } __attribute__((aligned(16)));
 
 #define HEAP_REDZONE_MAGIC 0xDEADBEEF
+#define HEAP_MAGIC_ALLOC   0x48454150U /* "HEAP" */
+#define HEAP_MAGIC_FREE    0x46524545U /* "FREE" */
 
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
+
+_Static_assert(sizeof(struct heap_block_header) == 32, "heap header must stay 32 bytes");
 
 struct heap_block_footer {
     unsigned int magic;
@@ -62,6 +72,7 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
     block->next = NULL;
     block->is_free = 1;
+    block->magic = HEAP_MAGIC_FREE;
 
     heap_total_size += pages * PAGE_SIZE;
 
@@ -77,6 +88,7 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
 static void heap_insert_free(struct heap_block_header *block)
 {
     block->is_free = 1;
+    block->magic = HEAP_MAGIC_FREE;
 
     struct heap_block_header *prev = NULL;
     struct heap_block_header *next = heap_free_list;
@@ -178,6 +190,7 @@ void *heap_malloc(unsigned long size)
                                                  + curr->size);
                 footer->magic = HEAP_REDZONE_MAGIC;
                 curr->is_free = 0;
+                curr->magic = HEAP_MAGIC_ALLOC;
                 curr->next = NULL;
                 heap_used_size += curr->size + HEAP_HEADER_SIZE;
 
@@ -219,14 +232,21 @@ void heap_free(void *ptr)
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
+    /* Confirm the header is ours before size is used to locate anything. */
+    if (block->magic == HEAP_MAGIC_FREE) {
+        spin_unlock_irqrestore(&heap_lock, flags);
+        PANIC("heap: double free detected");
+    }
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        spin_unlock_irqrestore(&heap_lock, flags);
+        PANIC("heap: pointer was not returned by heap_malloc");
+    }
+
     struct heap_block_footer *footer =
         (struct heap_block_footer *)((unsigned char *)block + HEAP_HEADER_SIZE + block->size);
     if (footer->magic != HEAP_REDZONE_MAGIC) {
+        spin_unlock_irqrestore(&heap_lock, flags);
         PANIC("heap: buffer overflow detected (redzone corrupted)");
-    }
-
-    if (block->is_free) {
-        PANIC("heap: double free detected");
     }
 
     heap_used_size -= block->size + HEAP_HEADER_SIZE;
@@ -253,6 +273,17 @@ unsigned long heap_get_total(void)
 }
 
 #ifdef CONFIG_TESTS
+int heap_test_is_tagged_allocated(const void *ptr)
+{
+    if (!ptr || slab_owns((void *)ptr)) {
+        return 0;
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    return block->magic == HEAP_MAGIC_ALLOC;
+}
+
 unsigned long heap_test_usable_size(const void *ptr)
 {
     if (!ptr) {

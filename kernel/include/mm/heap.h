@@ -41,6 +41,9 @@ unsigned long heap_get_total(void);
  * size requested.
  */
 unsigned long heap_test_usable_size(const void *ptr);
+
+/* True while a first-fit block is tagged as handed out. */
+int heap_test_is_tagged_allocated(const void *ptr);
 #endif
 
 #endif /* PERSPICUA_MM_HEAP_H */

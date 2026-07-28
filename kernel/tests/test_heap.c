@@ -860,6 +860,29 @@ void test_heap(void)
     }
     TEST_PASS("allocation is never shorter than requested");
 
+    /*
+     * heap_free used to read block->size straight out of whatever preceded the
+     * pointer and locate the footer from there, so a pointer this allocator
+     * never returned sent that read anywhere. Blocks now carry a tag that says
+     * whether they are ours and whether they are live.
+     */
+    {
+        void *p = heap_malloc(LARGE);
+        TEST_ASSERT("alloc for tag test", p != NULL);
+        TEST_ASSERT("handed-out block is tagged allocated", heap_test_is_tagged_allocated(p));
+
+        heap_free(p);
+        TEST_ASSERT("released block is no longer tagged allocated",
+                    !heap_test_is_tagged_allocated(p));
+
+        // a stack address was never ours, so it must not look allocated
+        static unsigned char not_heap[64];
+        memset(not_heap, 0, sizeof(not_heap));
+        TEST_ASSERT("foreign memory is not tagged",
+                    !heap_test_is_tagged_allocated(not_heap + sizeof(not_heap) / 2));
+    }
+    TEST_PASS("block headers are identifiable");
+
     // full lifecycle
 
     // alloc -> write -> free -> re-alloc -> verify clean
