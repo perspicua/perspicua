@@ -98,15 +98,7 @@ static void close_all_fds(struct process *p)
         }
 
         p->fd_table[i] = NULL;
-        if (atomic_dec_and_test(&f->refcount)) {
-            if (f->node && f->node->ops && f->node->ops->close) {
-                f->node->ops->close(f);
-            }
-            if (f->node) {
-                vfs_vnode_put(f->node);
-            }
-            slab_free(f);
-        }
+        vfs_file_put(f);
     }
     spin_unlock(&p->fd_lock);
 }

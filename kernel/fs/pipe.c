@@ -280,16 +280,13 @@ int pipe_create(int pipefd[2])
     node->internal_info = pipe;
     node->refcount.counter = 2;
 
-    struct vfs_file *f_read = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
-    struct vfs_file *f_write = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file *f_read = vfs_file_alloc();
+    struct vfs_file *f_write = vfs_file_alloc();
 
     if (!f_read || !f_write) {
-        if (f_read) {
-            slab_free(f_read);
-        }
-        if (f_write) {
-            slab_free(f_write);
-        }
+        /* No vnode attached yet, so these just free the objects. */
+        vfs_file_put(f_read);
+        vfs_file_put(f_write);
         slab_free(node);
         heap_free(pipe);
         return -PERS_ERR_OUT_OF_MEMORY;
@@ -297,13 +294,9 @@ int pipe_create(int pipefd[2])
 
     f_read->node = node;
     f_read->flags = VFS_O_RDONLY;
-    f_read->offset = 0;
-    f_read->refcount.counter = 1;
 
     f_write->node = node;
     f_write->flags = VFS_O_WRONLY;
-    f_write->offset = 0;
-    f_write->refcount.counter = 1;
 
     int fd_r = -1, fd_w = -1;
     spin_lock(&p->fd_lock);
@@ -328,10 +321,10 @@ int pipe_create(int pipefd[2])
     spin_unlock(&p->fd_lock);
 
     if (fd_r == -1 || fd_w == -1) {
-        slab_free(f_read);
-        slab_free(f_write);
-        slab_free(node);
-        heap_free(pipe);
+        /* Both ends are attached now, so releasing them runs pipe_close and
+         * drops the last vnode reference, taking the pipe and node with it. */
+        vfs_file_put(f_read);
+        vfs_file_put(f_write);
         return -PERS_ERR_OUT_OF_RESOURCES;
     }
 

@@ -196,6 +196,50 @@ void test_vfs(void)
     }
     TEST_PASS("readdir honours a one-entry buffer");
 
+    /*
+     * The I/O paths hold a reference for the duration of the call, so a close
+     * arriving mid-read leaves them holding the last one. Dropping it must run
+     * the driver close and free the object: the old code discarded the result
+     * of the decrement, so nothing was ever released.
+     */
+    {
+        unsigned long before = vfs_test_live_files();
+
+        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        TEST_ASSERT("open for refcount test", fd >= 0);
+
+        struct vfs_file *f = vfs_test_file_at(fd);
+        TEST_ASSERT("descriptor has a file", f != NULL);
+        TEST_ASSERT_EQ("open allocated one file", vfs_test_live_files(), before + 1);
+
+        // stand in for an I/O call in flight
+        atomic_inc(&f->refcount);
+
+        // the close is no longer the last reference, so it must not free
+        TEST_ASSERT_EQ("close with io in flight", vfs_close(fd), 0);
+        TEST_ASSERT_EQ("file survives while io holds it", vfs_test_live_files(), before + 1);
+
+        // the in-flight release is now the last one out
+        vfs_file_put(f);
+        TEST_ASSERT_EQ("last reference releases the file", vfs_test_live_files(), before);
+
+        vfs_unlink(SCRATCH_FILE);
+    }
+    TEST_PASS("in-flight reference releases the file");
+
+    // an ordinary open/close pair must balance
+    {
+        unsigned long before = vfs_test_live_files();
+
+        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        TEST_ASSERT("open for balance test", fd >= 0);
+        TEST_ASSERT_EQ("close balances open", vfs_close(fd), 0);
+        TEST_ASSERT_EQ("no file leaked", vfs_test_live_files(), before);
+
+        vfs_unlink(SCRATCH_FILE);
+    }
+    TEST_PASS("open/close balances");
+
     // bad descriptors must be rejected, not indexed blindly
     {
         static char buf[8];

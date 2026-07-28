@@ -218,6 +218,78 @@ void vfs_init(void)
     pr_info("vfs: Virtual File System initialized\n");
 }
 
+#ifdef CONFIG_TESTS
+static atomic_t vfs_live_files = ATOMIC_INIT(0);
+
+unsigned long vfs_test_live_files(void)
+{
+    return (unsigned long)vfs_live_files.counter;
+}
+
+struct vfs_file *vfs_test_file_at(int fd)
+{
+    int pid = process_find_current();
+    if (fd < 0 || fd >= VFS_MAX_FDS || pid < 0) {
+        return NULL;
+    }
+
+    struct process *p = &process_table[pid];
+    spin_lock(&p->fd_lock);
+    struct vfs_file *f = p->fd_table[fd];
+    spin_unlock(&p->fd_lock);
+    return f;
+}
+#endif
+
+/*
+ * vfs_file_alloc - Allocates an open-file object holding one reference.
+ */
+struct vfs_file *vfs_file_alloc(void)
+{
+    struct vfs_file *f = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
+    if (!f) {
+        return NULL;
+    }
+
+    memset(f, 0, sizeof(*f));
+    f->refcount.counter = 1;
+
+#ifdef CONFIG_TESTS
+    atomic_inc(&vfs_live_files);
+#endif
+    return f;
+}
+
+/*
+ * vfs_file_put - Drops a reference, releasing the file with the last one.
+ *
+ * Every release goes through here. The I/O paths take a reference for the
+ * duration of the call, so whichever of them and close() finishes last is the
+ * one that must run the driver's close and free the object.
+ */
+void vfs_file_put(struct vfs_file *f)
+{
+    if (!f) {
+        return;
+    }
+
+    if (!atomic_dec_and_test(&f->refcount)) {
+        return;
+    }
+
+    if (f->node) {
+        if (f->node->ops && f->node->ops->close) {
+            f->node->ops->close(f);
+        }
+        vfs_vnode_put(f->node);
+    }
+
+#ifdef CONFIG_TESTS
+    atomic_dec_and_test(&vfs_live_files);
+#endif
+    slab_free(f);
+}
+
 /*
  * vfs_vnode_put - Reference counting entry point for vnodes.
  */
@@ -512,16 +584,14 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     }
     spin_unlock(&process_table[pid].fd_lock);
 
-    struct vfs_file *new_file = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file *new_file = vfs_file_alloc();
     if (!new_file) {
         vfs_vnode_put(node);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
     new_file->node = node;
-    new_file->offset = 0;
     new_file->flags = flags;
-    new_file->refcount.counter = 1;
 
     int slot = -1;
     spin_lock(&process_table[pid].fd_lock);
@@ -581,15 +651,7 @@ int vfs_close(int fd)
     p->fd_table[fd] = NULL;
     spin_unlock(&p->fd_lock);
 
-    if (atomic_dec_and_test(&f->refcount)) {
-        if (f->node->ops && f->node->ops->close) {
-            f->node->ops->close(f);
-        }
-
-        vfs_vnode_put(f->node);
-        slab_free(f);
-    }
-
+    vfs_file_put(f);
     return PERS_SUCCESS;
 }
 
@@ -667,12 +729,12 @@ int vfs_read(int fd, void *buffer, size_t count)
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
-        atomic_dec_and_test(&f->refcount);
+        vfs_file_put(f);
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
     int bytes = f->node->ops->read(f, buffer, count);
-    atomic_dec_and_test(&f->refcount);
+    vfs_file_put(f);
     return bytes;
 }
 
@@ -706,7 +768,7 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
-        atomic_dec_and_test(&f->refcount);
+        vfs_file_put(f);
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
@@ -716,7 +778,7 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     temp_f.flags = f->flags;
 
     int bytes = temp_f.node->ops->read(&temp_f, buffer, count);
-    atomic_dec_and_test(&f->refcount);
+    vfs_file_put(f);
     return bytes;
 }
 
@@ -751,7 +813,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     spin_unlock(&p->fd_lock);
 
     if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir) {
-        atomic_dec_and_test(&f->refcount);
+        vfs_file_put(f);
         return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
@@ -800,7 +862,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
                                            (max_entries - (size_t)res) * dirent_size);
         if (fs_res < 0) {
             f->offset = orig_offset;
-            atomic_dec_and_test(&f->refcount);
+            vfs_file_put(f);
             return fs_res;
         }
         res += fs_res;
@@ -842,7 +904,7 @@ readdir_done:
     f->offset =
         (f->offset & 0xFFFFFFFF) | ((vfs_off_t)dot_idx << 32) | ((vfs_off_t)mount_idx << 34);
 
-    atomic_dec_and_test(&f->refcount);
+    vfs_file_put(f);
     return res;
 }
 
@@ -872,7 +934,7 @@ int vfs_write(int fd, const void *buffer, size_t count)
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
-        atomic_dec_and_test(&f->refcount);
+        vfs_file_put(f);
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
@@ -881,7 +943,7 @@ int vfs_write(int fd, const void *buffer, size_t count)
     }
 
     int bytes = f->node->ops->write(f, buffer, count);
-    atomic_dec_and_test(&f->refcount);
+    vfs_file_put(f);
     return bytes;
 }
 
@@ -915,7 +977,7 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
-        atomic_dec_and_test(&f->refcount);
+        vfs_file_put(f);
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
@@ -930,7 +992,7 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
     }
 
     int bytes = f->node->ops->write(&temp_f, buffer, count);
-    atomic_dec_and_test(&f->refcount);
+    vfs_file_put(f);
     return bytes;
 }
 
@@ -984,26 +1046,13 @@ int vfs_dup2(int oldfd, int newfd)
         return newfd;
     }
 
-    struct vfs_file *existing_f = p->fd_table[newfd];
-    if (existing_f) {
-        if (atomic_dec_and_test(&existing_f->refcount)) {
-            to_free = existing_f;
-        }
-    }
-
+    to_free = p->fd_table[newfd];
     p->fd_table[newfd] = old_f;
     p->fd_flags[newfd] = 0; // POSIX specifies dup2 clears FD_CLOEXEC
     atomic_inc(&old_f->refcount);
     spin_unlock(&p->fd_lock);
 
-    if (to_free) {
-        if (to_free->node->ops && to_free->node->ops->close) {
-            to_free->node->ops->close(to_free);
-        }
-        vfs_vnode_put(to_free->node);
-        slab_free(to_free);
-    }
-
+    vfs_file_put(to_free);
     return newfd;
 }
 

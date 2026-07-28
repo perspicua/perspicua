@@ -125,6 +125,27 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 void vfs_vnode_put(struct vfs_vnode *node);
 
 /*
+ * vfs_file_alloc - Allocates an open-file object holding one reference.
+ */
+struct vfs_file *vfs_file_alloc(void);
+
+/*
+ * vfs_file_put - Drops a reference, releasing the file with the last one.
+ *
+ * The only correct way to release a struct vfs_file: dropping the count
+ * without this runs neither the driver's close nor the vnode put.
+ */
+void vfs_file_put(struct vfs_file *f);
+
+#ifdef CONFIG_TESTS
+/* Open-file objects allocated but not yet released. */
+unsigned long vfs_test_live_files(void);
+
+/* The open-file object behind a descriptor, or NULL. */
+struct vfs_file *vfs_test_file_at(int fd);
+#endif
+
+/*
  * vfs_open - Standard process-relative file open.
  */
 int vfs_open(const char *path, int flags);

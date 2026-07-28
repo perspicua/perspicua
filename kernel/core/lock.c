@@ -8,6 +8,8 @@
 #include "core/lock.h"
 #include "core/lockdep.h"
 
+#include "panic.h"
+
 #include "arch/exception.h"
 
 #include "core/timer.h"
@@ -68,33 +70,29 @@ void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
 
 /*
  * atomic_inc - Atomically adds 1 to an atomic variable.
+ *
+ * Relaxed: taking a reference requires already holding one, so there is
+ * nothing for this to order against.
  */
 void atomic_inc(atomic_t *a)
 {
-    int val, tmp;
-    asm volatile("1: ldaxr   %w0, [%2]\n"
-                 "   add     %w0, %w0, #1\n"
-                 "   stxr    %w1, %w0, [%2]\n"
-                 "   cbnz    %w1, 1b\n"
-                 : "=&r"(val), "=&r"(tmp)
-                 : "r"(&a->counter)
-                 : "memory");
+    __atomic_fetch_add(&a->counter, 1, __ATOMIC_RELAXED);
 }
 
 /*
  * atomic_dec_and_test - Atomically subtracts 1 and returns 1 if result is zero.
+ *
+ * Acquire-release: the release half publishes everything this core did to the
+ * object before the count dropped, and the acquire half makes those writes
+ * visible to whichever core observes zero and destroys it. The hand-written
+ * version used stxr with no release, so a reader could free an object while
+ * another core's stores to it were still in flight.
  */
 int atomic_dec_and_test(atomic_t *a)
 {
-    int val, tmp, result;
-    asm volatile("1: ldaxr   %w0, [%3]\n"
-                 "   sub     %w0, %w0, #1\n"
-                 "   stxr    %w1, %w0, [%3]\n"
-                 "   cbnz    %w1, 1b\n"
-                 "   cmp     %w0, #0\n"
-                 "   cset    %w2, eq\n"
-                 : "=&r"(val), "=&r"(tmp), "=r"(result)
-                 : "r"(&a->counter)
-                 : "memory");
-    return result;
+    int now = __atomic_sub_fetch(&a->counter, 1, __ATOMIC_ACQ_REL);
+    if (now < 0) {
+        PANIC("atomic: refcount underflow");
+    }
+    return now == 0;
 }
