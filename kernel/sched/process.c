@@ -450,6 +450,61 @@ int process_create_from_file(const char *path, uint32_t pid)
     return PERS_SUCCESS;
 }
 
+/* Limits on a single exec vector: entries, and bytes per entry. */
+#define EXEC_MAX_VECTOR 128
+#define EXEC_MAX_ARG    1024
+
+static void free_vector(char **vec, int count)
+{
+    for (int i = 0; i < count; i++) {
+        heap_free(vec[i]);
+    }
+}
+
+/*
+ * copy_user_vector - Copies a NULL-terminated user argv/envp into kernel memory.
+ *
+ * Stops at the first NULL entry. *out_count excludes the terminator, and out[]
+ * is left NULL-terminated so it can be walked directly.
+ */
+static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
+{
+    int count = 0;
+    *out_count = 0;
+    out[0] = NULL;
+
+    if (!user_vec) {
+        return PERS_SUCCESS;
+    }
+
+    while (count < EXEC_MAX_VECTOR - 1) {
+        char *uentry;
+        if (copy_from_user(&uentry, &user_vec[count], sizeof(char *)) != 0) {
+            return -PERS_ERR_INVALID_ARGUMENT;
+        }
+        if (!uentry) {
+            break;
+        }
+
+        char *kentry = heap_malloc(EXEC_MAX_ARG);
+        if (!kentry) {
+            return -PERS_ERR_OUT_OF_MEMORY;
+        }
+
+        long len = strncpy_from_user(kentry, uentry, EXEC_MAX_ARG);
+        if (len < 0) {
+            heap_free(kentry);
+            return (int)len;
+        }
+
+        out[count++] = kentry;
+        *out_count = count;
+    }
+
+    out[count] = NULL;
+    return PERS_SUCCESS;
+}
+
 int process_exec(const char *path, char *const argv[], char *const envp[])
 {
     int pid = process_find_current();
@@ -473,53 +528,35 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         vfs_close(fds_to_close[i]);
     }
 
-    /* Copy arguments before switching address space */
-    char *kargv[128];
+    /*
+     * Copy the vectors in before switching address space. A NULL entry ends the
+     * vector, but an oversized or unreadable string is a hard failure: silently
+     * truncating would hand the new image a different argv than it asked for.
+     */
+    char *kargv[EXEC_MAX_VECTOR];
+    char *kenvp[EXEC_MAX_VECTOR];
     int argc = 0;
-    if (argv) {
-        while (argc < 127) {
-            char *uarg;
-            if (copy_from_user(&uarg, &argv[argc], sizeof(char *)) != 0 || !uarg) {
-                break;
-            }
-            char *karg = heap_malloc(1024);
-            if (!karg || strncpy_from_user(karg, uarg, 1024) < 0) {
-                heap_free(karg);
-                break;
-            }
-            kargv[argc++] = karg;
-        }
-    }
-    kargv[argc] = NULL;
-
-    char *kenvp[128];
     int envc = 0;
-    if (envp) {
-        while (envc < 127) {
-            char *uenv;
-            if (copy_from_user(&uenv, &envp[envc], sizeof(char *)) != 0 || !uenv) {
-                break;
-            }
-            char *kenv = heap_malloc(1024);
-            if (!kenv || strncpy_from_user(kenv, uenv, 1024) < 0) {
-                heap_free(kenv);
-                break;
-            }
-            kenvp[envc++] = kenv;
-        }
+
+    int copy_err = copy_user_vector(argv, kargv, &argc);
+    if (copy_err != PERS_SUCCESS) {
+        free_vector(kargv, argc);
+        return copy_err;
     }
-    kenvp[envc] = NULL;
+
+    copy_err = copy_user_vector(envp, kenvp, &envc);
+    if (copy_err != PERS_SUCCESS) {
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
+        return copy_err;
+    }
 
     unsigned long *new_pgd = mmu_create_user_pgd();
     uint64_t entry_point;
     if (!new_pgd || elf_load(path, new_pgd, &entry_point) != 0) {
         mmu_destroy_user_pgd(new_pgd);
-        for (int i = 0; i < argc; i++) {
-            heap_free(kargv[i]);
-        }
-        for (int i = 0; i < envc; i++) {
-            heap_free(kenvp[i]);
-        }
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
@@ -528,13 +565,8 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     uintptr_t new_stack_base = setup_user_stack(&new_va, new_pgd, 32);
     if (!new_stack_base) {
         mmu_destroy_user_pgd(new_pgd);
-        for (int i = 0; i < argc; i++) {
-            heap_free(kargv[i]);
-        }
-
-        for (int i = 0; i < envc; i++) {
-            heap_free(kenvp[i]);
-        }
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -563,9 +595,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         *(uintptr_t *)(P2V(paddr_null) + ((user_sp + argc * 8) & 0xFFF)) = 0;
     }
 
-    for (int i = 0; i < argc; i++) {
-        heap_free(kargv[i]);
-    }
+    free_vector(kargv, argc);
 
     /* Set up user stack with envp (top-down) */
     uintptr_t kenv_user_vaddrs[128];
@@ -586,14 +616,12 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
             *(uintptr_t *)(P2V(paddr) + ((user_sp + i * 8) & 0xFFF)) = kenv_user_vaddrs[i];
         }
     }
-    unsigned long riciu_secret_var;
-    if (mmu_user_query(new_pgd, (user_sp + envc * 8) & ~0xFFFUL, &riciu_secret_var, NULL)) {
-        *(uintptr_t *)(P2V(riciu_secret_var) + ((user_sp + envc * 8) & 0xFFF)) = 0;
+    unsigned long paddr_envp_null;
+    if (mmu_user_query(new_pgd, (user_sp + envc * 8) & ~0xFFFUL, &paddr_envp_null, NULL)) {
+        *(uintptr_t *)(P2V(paddr_envp_null) + ((user_sp + envc * 8) & 0xFFF)) = 0;
     }
 
-    for (int i = 0; i < envc; i++) {
-        heap_free(kenvp[i]);
-    }
+    free_vector(kenvp, envc);
     close_all_fds(p);
     open_std_fds((uint32_t)pid);
 

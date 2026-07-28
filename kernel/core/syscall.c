@@ -88,6 +88,32 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
 }
 
 /*
+ * copy_path_from_user - Copies a user path into a fresh kernel buffer.
+ *
+ * On success the caller owns *out and must heap_free it. Every path-taking
+ * syscall goes through here so the allocation and truncation checks cannot be
+ * forgotten at one call site.
+ */
+static int copy_path_from_user(const char *upath, char **out)
+{
+    *out = NULL;
+
+    char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+    if (!kpath) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    long copied = strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN);
+    if (copied < 0) {
+        heap_free(kpath);
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    *out = kpath;
+    return PERS_SUCCESS;
+}
+
+/*
  * syscall_handle - The primary entry point for EL0 synchronous exceptions.
  */
 void syscall_handle(struct exception_trap_frame *tf)
@@ -199,11 +225,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             const char *path = (const char *)(tf->x[0]);
             int flags = (int)(tf->x[1]);
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -322,11 +347,10 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -658,16 +682,10 @@ sigreturn_kill:
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -717,10 +735,10 @@ sigreturn_kill:
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN) < 0) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(upath, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -832,15 +850,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_mkdir(kpath);
@@ -853,15 +866,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_rmdir(kpath);
@@ -874,15 +882,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_unlink(kpath);
@@ -896,23 +899,18 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *koldpath = heap_malloc(VFS_MAX_PATH_LEN);
-            char *knewpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!koldpath || !knewpath) {
-                if (koldpath)
-                    heap_free(koldpath);
-                if (knewpath)
-                    heap_free(knewpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            char *koldpath;
+            int err = copy_path_from_user(oldpath, &koldpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
-            long copied_old = strncpy_from_user(koldpath, oldpath, VFS_MAX_PATH_LEN);
-            long copied_new = strncpy_from_user(knewpath, newpath, VFS_MAX_PATH_LEN);
-            if (copied_old < 0 || copied_old >= VFS_MAX_PATH_LEN || copied_new < 0
-                || copied_new >= VFS_MAX_PATH_LEN) {
+
+            char *knewpath;
+            err = copy_path_from_user(newpath, &knewpath);
+            if (err != PERS_SUCCESS) {
                 heap_free(koldpath);
-                heap_free(knewpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_rename(koldpath, knewpath);

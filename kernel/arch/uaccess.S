@@ -1,3 +1,5 @@
+#include "uapi/errors.h"
+
 .section ".text"
 
 // int copy_from_user(void *dest, const void *src, size_t n)
@@ -42,24 +44,42 @@ copy_to_user:
 
 // long strncpy_from_user(char *dest, const char *src, long count)
 // x0 = dest, x1 = src, x2 = count
+//
+// Copies at most count-1 bytes and always terminates dest when count >= 1, so
+// a caller can never be handed an unterminated string to strlen(). Returns the
+// length excluding the terminator, or a negative error on fault or truncation.
 .global strncpy_from_user
 strncpy_from_user:
-    mov x4, x0          // Save original dest pointer
-    cbz x2, .Ldone_str
+    cmp x2, #1
+    b.lt .Lstr_toolong  // No room even for a terminator
+    mov x4, x0          // Start of dest, for the length and the fault path
+    mov x5, x2          // Bytes of dest still available
 .Lloop_str:
 .Lload_str:
     ldtrb w3, [x1]
     add x1, x1, #1
     strb w3, [x0], #1
-    cbz w3, .Ldone_str
-    subs x2, x2, #1
+    cbz w3, .Lstr_done
+    subs x5, x5, #1
     b.ne .Lloop_str
-.Ldone_str:
-    sub x0, x0, x4       // Calculate copied bytes (including null if written)
+
+    // dest is full and the source had not ended: terminate over the last byte
+    sub x0, x0, #1
+    strb wzr, [x0]
+    b .Lstr_toolong
+
+.Lstr_done:
+    sub x0, x0, x4
+    sub x0, x0, #1      // Exclude the terminator
     ret
 
 .Lfault_str:
-    mov x0, #-14         // -EFAULT
+    strb wzr, [x4]      // Leave an empty string rather than a partial one
+    mov x0, #-PERS_ERR_INVALID_ARGUMENT
+    ret
+
+.Lstr_toolong:
+    mov x0, #-PERS_ERR_NAME_TOO_LONG
     ret
 
 .section "__ex_table", "a"
