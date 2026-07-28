@@ -114,6 +114,9 @@ extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 #ifdef CONFIG_TESTS
 /* True while a task is linked in the timed sleep queue. */
 int sched_test_in_sleep_queue(const struct task *t);
+
+/* TTBR0 the scheduler would install for a process. */
+unsigned long sched_test_task_ttbr0_for(uint32_t pid);
 #endif
 
 #ifdef CONFIG_NR_CPUS

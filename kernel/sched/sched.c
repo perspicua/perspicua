@@ -561,6 +561,38 @@ int sched_test_in_sleep_queue(const struct task *t)
 }
 #endif
 
+/*
+ * task_ttbr0_for - Builds the TTBR0 value for a process about to run.
+ *
+ * Read under the table lock: process_exit clears user_pgd while its task is
+ * still runnable, and V2P(NULL) would otherwise be installed as a page table
+ * base. A process that is no longer RUNNING has no address space worth
+ * entering, so fall back to the kernel's.
+ */
+static unsigned long task_ttbr0_for(uint32_t pid)
+{
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct process *p = &process_table[pid];
+    unsigned long ttbr0;
+
+    if (p->state == PROCESS_STATE_RUNNING && p->user_pgd) {
+        asid_get_active(&p->asid, &p->asid_generation);
+        ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+    } else {
+        ttbr0 = mmu_kernel_ttbr0();
+    }
+
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    return ttbr0;
+}
+
+#ifdef CONFIG_TESTS
+unsigned long sched_test_task_ttbr0_for(uint32_t pid)
+{
+    return task_ttbr0_for(pid);
+}
+#endif
+
 /* Core scheduling logic. Selects next task and context switches. */
 void schedule(void)
 {
@@ -625,11 +657,7 @@ void schedule(void)
     asm volatile("msr tpidr_el1, %0" ::"r"(next));
 
     if (next->pid > 0) {
-        struct process *p = &process_table[next->pid];
-        asid_get_active(&p->asid, &p->asid_generation);
-
-        // ttbr0 reconstruct using ASID
-        next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+        next->ttbr0 = task_ttbr0_for(next->pid);
     }
 
     asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));
