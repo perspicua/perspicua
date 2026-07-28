@@ -344,10 +344,28 @@ unsigned long *mmu_create_user_pgd(void)
     return alloc_user_table_page();
 }
 
+/*
+ * mmu_destroy_user_pgd - Frees an address space and every page it maps.
+ *
+ * Deliberately runs without mmu_lock. The walk releases up to a quarter of a
+ * million pages, each taking pmm_lock, and holding an irqsave lock across that
+ * would mask interrupts for milliseconds. Safety comes from the table being
+ * private by this point, not from mutual exclusion: the caller must already
+ * have cleared it from the process table and switched TTBR0 away.
+ *
+ * The one precondition worth enforcing is the one that is easy to get wrong and
+ * silent when violated -- freeing tables the MMU is still walking.
+ */
 void mmu_destroy_user_pgd(unsigned long *pgd)
 {
     if (!pgd) {
         return;
+    }
+
+    unsigned long live_ttbr0;
+    asm volatile("mrs %0, ttbr0_el1" : "=r"(live_ttbr0));
+    if ((live_ttbr0 & PTE_ADDR) == V2P((uintptr_t)pgd)) {
+        PANIC("mmu: destroying the address space still installed in TTBR0");
     }
 
     for (unsigned long i = 0; i < PT_ENTRIES; i++) {
