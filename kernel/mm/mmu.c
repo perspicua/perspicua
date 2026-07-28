@@ -590,6 +590,78 @@ void mmu_switch_user(unsigned long *pgd, unsigned long asid)
 }
 
 /*
+ * pte_user_ok - Whether a leaf entry permits the requested user access.
+ *
+ * A copy-on-write page reads as read-only but is writable: the fault handler
+ * makes it so on first store.
+ */
+static int pte_user_ok(unsigned long pte, int writable)
+{
+    if (!(pte & MMU_AP_USER)) {
+        return 0;
+    }
+    if (writable && (pte & MMU_AP_RO) && !(pte & MMU_PTE_COW)) {
+        return 0;
+    }
+    return 1;
+}
+
+/*
+ * mmu_user_range_ok - Checks a whole range is mapped and user-accessible.
+ *
+ * Descends once per table rather than once per page, and takes mmu_lock once
+ * for the range: a megabyte-scale buffer otherwise means hundreds of lock
+ * round-trips while the caller has interrupts masked.
+ */
+int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end, int writable)
+{
+    if (!pgd || end <= start) {
+        return 0;
+    }
+
+    unsigned long irq = spin_lock_irqsave(&mmu_lock);
+    unsigned long va = start & ~0xFFFUL;
+    int ok = 1;
+
+    while (va < end && ok) {
+        unsigned long l1e = pgd[L1_IDX(va)];
+        if (!(l1e & PTE_VALID)) {
+            ok = 0;
+            break;
+        }
+
+        unsigned long *l2t = (unsigned long *)P2V(l1e & PTE_ADDR);
+        unsigned long l2e = l2t[L2_IDX(va)];
+        if (!(l2e & PTE_VALID)) {
+            ok = 0;
+            break;
+        }
+
+        /* A 2 MB block is one permission for the whole span. */
+        if (!(l2e & PTE_TABLE)) {
+            if (!pte_user_ok(l2e, writable)) {
+                ok = 0;
+                break;
+            }
+            va = (va & ~0x1FFFFFUL) + 0x200000UL;
+            continue;
+        }
+
+        unsigned long *l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
+        for (unsigned long i = L3_IDX(va); i < PT_ENTRIES && va < end; i++, va += PAGE_SIZE) {
+            unsigned long l3e = l3t[i];
+            if (!(l3e & PTE_VALID) || !pte_user_ok(l3e, writable)) {
+                ok = 0;
+                break;
+            }
+        }
+    }
+
+    spin_unlock_irqrestore(&mmu_lock, irq);
+    return ok;
+}
+
+/*
  * mmu_leave_user - Points TTBR0 at the empty table.
  *
  * Must be called before an address space's tables are freed: the walker may

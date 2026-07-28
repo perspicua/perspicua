@@ -550,5 +550,81 @@ void test_mmu_user(void)
     }
     TEST_PASS("leaving a user address space");
 
+    /*
+     * Range validation for user buffers. This is what stands between a syscall
+     * and a pointer into unmapped or kernel-only memory, and it has to hold
+     * across a whole range rather than the first page of one.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        const unsigned long base = USER_VA_BASE + 0x400000;
+        void *pages[6];
+        int allocated = 1;
+
+        for (int i = 0; i < 6; i++) {
+            pages[i] = pmm_alloc_page();
+            if (!pages[i]) {
+                allocated = 0;
+            }
+        }
+        TEST_ASSERT("range-check setup allocated", pgd != NULL && allocated);
+
+        /*
+         * Layout, one page each. Every page gets its own VA: remapping over a
+         * live entry releases the physical page it displaced, so reusing one
+         * address for several permission cases would free it repeatedly.
+         *
+         *   +0 +1 +2  read/write
+         *   +3         unmapped hole
+         *   +4         read-only
+         *   +5         read-only + copy-on-write
+         *   +6         kernel-only
+         */
+        for (int i = 0; i < 3; i++) {
+            mmu_user_map_page(pgd, base + (unsigned long)i * PAGE_SIZE, V2P(pages[i]),
+                              MMU_PAGE_USER_DATA);
+        }
+        mmu_user_map_page(pgd, base + 4 * PAGE_SIZE, V2P(pages[3]), MMU_PAGE_USER_RODATA);
+        mmu_user_map_page(pgd, base + 5 * PAGE_SIZE, V2P(pages[4]),
+                          MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+        mmu_user_map_page(pgd, base + 6 * PAGE_SIZE, V2P(pages[5]), MMU_FLAGS_KERNEL_RW);
+
+        TEST_ASSERT("mapped range accepted", mmu_user_range_ok(pgd, base, base + 3 * PAGE_SIZE, 0));
+        TEST_ASSERT("mapped range accepted for write",
+                    mmu_user_range_ok(pgd, base, base + 3 * PAGE_SIZE, 1));
+
+        // a range must be rejected if any page in it is missing, not just the first
+        TEST_ASSERT("range running into a hole rejected",
+                    !mmu_user_range_ok(pgd, base, base + 4 * PAGE_SIZE, 0));
+        TEST_ASSERT("range starting in a hole rejected",
+                    !mmu_user_range_ok(pgd, base + 3 * PAGE_SIZE, base + 4 * PAGE_SIZE, 0));
+
+        // an unaligned span still covers every page it touches
+        TEST_ASSERT("unaligned span within the mapping accepted",
+                    mmu_user_range_ok(pgd, base + 8, base + 2 * PAGE_SIZE + 8, 0));
+        TEST_ASSERT("unaligned span crossing the hole rejected",
+                    !mmu_user_range_ok(pgd, base + 8, base + 3 * PAGE_SIZE + 8, 0));
+
+        // read-only pages are readable but not writable
+        TEST_ASSERT("read-only page accepted for read",
+                    mmu_user_range_ok(pgd, base + 4 * PAGE_SIZE, base + 5 * PAGE_SIZE, 0));
+        TEST_ASSERT("read-only page rejected for write",
+                    !mmu_user_range_ok(pgd, base + 4 * PAGE_SIZE, base + 5 * PAGE_SIZE, 1));
+
+        // a copy-on-write page reads as read-only but is writable
+        TEST_ASSERT("copy-on-write page accepted for write",
+                    mmu_user_range_ok(pgd, base + 5 * PAGE_SIZE, base + 6 * PAGE_SIZE, 1));
+
+        // a mapping EL0 cannot reach is not a user buffer
+        TEST_ASSERT("kernel-only mapping rejected",
+                    !mmu_user_range_ok(pgd, base + 6 * PAGE_SIZE, base + 7 * PAGE_SIZE, 0));
+
+        TEST_ASSERT("empty range rejected", !mmu_user_range_ok(pgd, base, base, 0));
+        TEST_ASSERT("null pgd rejected", !mmu_user_range_ok(NULL, base, base + PAGE_SIZE, 0));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("user range validation");
+
     TEST_SUITE_END("MMU Per-Process Page Tables");
 }

@@ -53,38 +53,21 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
         return 0;
     }
 
+    /*
+     * These are the calling process's own tables, and it cannot be exiting
+     * while it is here, so the lock is only needed to read the pointer -- not
+     * for the walk. Holding it across a megabyte-scale range stalls every other
+     * core, including any that needs it to schedule.
+     */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     unsigned long *pgd = process_table[pid].user_pgd;
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
     if (!pgd) {
-        spin_unlock_irqrestore(&process_table_lock, flags);
         return 0;
     }
 
-    uintptr_t curr = start & ~0xFFFULL;
-    while (curr < end) {
-        unsigned long current_flags;
-        if (!mmu_user_query(pgd, curr, NULL, &current_flags)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        /* Check for user-mode accessibility */
-        if (!(current_flags & MMU_AP_USER)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        /* Check for write permissions (bit 7 is Read-Only, but COW allows it) */
-        if (writable && (current_flags & (1ULL << 7)) && !(current_flags & MMU_PTE_COW)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        curr += PAGE_SIZE;
-    }
-    spin_unlock_irqrestore(&process_table_lock, flags);
-
-    return 1;
+    return mmu_user_range_ok(pgd, start, end, writable);
 }
 
 /*
@@ -307,6 +290,13 @@ void syscall_handle(struct exception_trap_frame *tf)
             int fd = (int)(tf->x[0]);
             void *buf = (void *)(tf->x[1]);
             size_t count = (size_t)(tf->x[2]);
+
+            /* The only buffer-taking syscall that had no ceiling: each call
+             * pins count bytes of kernel heap for its bounce buffer. */
+            if (count == 0 || count > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
 
             if (!validate_user_buffer(buf, count, 1)) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
