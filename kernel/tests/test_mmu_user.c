@@ -626,5 +626,77 @@ void test_mmu_user(void)
     }
     TEST_PASS("user range validation");
 
+    /*
+     * Copy-on-write resolution. Copying is only correct when someone else still
+     * holds the page; when this mapping is the last one the entry can just be
+     * made writable, which is what a parent hits on every write after its child
+     * has exited.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *sole = pmm_alloc_page();
+        const unsigned long va = USER_VA_BASE + 0x600000;
+        unsigned long before_pa = 0, after_pa = 0, after_flags = 0;
+        int rc = -1;
+
+        if (pgd && sole) {
+            mmu_user_map_page(pgd, va, V2P(sole), MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+            mmu_user_query(pgd, va, &before_pa, NULL);
+
+            rc = mmu_handle_cow(pgd, va);
+            mmu_user_query(pgd, va, &after_pa, &after_flags);
+        }
+
+        TEST_ASSERT("sole-owner setup allocated", pgd != NULL && sole != NULL);
+        TEST_ASSERT_EQ("sole owner resolves", rc, 0);
+        TEST_ASSERT_EQ("sole owner keeps its page", after_pa & ~0xFFFUL, before_pa & ~0xFFFUL);
+        TEST_ASSERT("sole owner is now writable", !(after_flags & MMU_AP_RO));
+        TEST_ASSERT("sole owner is no longer copy-on-write", !(after_flags & MMU_PTE_COW));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("copy-on-write promotes the last reference in place");
+
+    // a genuinely shared page must be copied, not promoted
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *shared = pmm_alloc_page();
+        const unsigned long va = USER_VA_BASE + 0x700000;
+        unsigned long before_pa = 0, after_pa = 0, after_flags = 0;
+        int rc = -1, content_ok = 0, shared_rc = 0;
+
+        if (pgd && shared) {
+            memset(shared, 0x7C, PAGE_SIZE);
+            pmm_hold_page(shared); /* stand in for a second address space */
+
+            mmu_user_map_page(pgd, va, V2P(shared), MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+            mmu_user_query(pgd, va, &before_pa, NULL);
+
+            rc = mmu_handle_cow(pgd, va);
+            mmu_user_query(pgd, va, &after_pa, &after_flags);
+
+            const unsigned char *copy = (const unsigned char *)P2V(after_pa & ~0xFFFUL);
+            content_ok = 1;
+            for (unsigned long i = 0; i < PAGE_SIZE; i++) {
+                if (copy[i] != 0x7C) {
+                    content_ok = 0;
+                    break;
+                }
+            }
+            shared_rc = (int)pmm_page_refcount(shared);
+        }
+
+        TEST_ASSERT("shared-page setup allocated", pgd != NULL && shared != NULL);
+        TEST_ASSERT_EQ("shared page resolves", rc, 0);
+        TEST_ASSERT("shared page is replaced", (after_pa & ~0xFFFUL) != (before_pa & ~0xFFFUL));
+        TEST_ASSERT("copy carries the original contents", content_ok);
+        TEST_ASSERT("copy is writable", !(after_flags & MMU_AP_RO));
+        TEST_ASSERT_EQ("the other holder keeps its reference", shared_rc, 1);
+
+        mmu_destroy_user_pgd(pgd);
+        pmm_free_page(shared); /* the stand-in holder */
+    }
+    TEST_PASS("copy-on-write copies a shared page");
+
     TEST_SUITE_END("MMU Per-Process Page Tables");
 }

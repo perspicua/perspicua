@@ -731,31 +731,89 @@ out:
     return found;
 }
 
+/*
+ * user_leaf_pte - Address of the 4 KB leaf entry for a user VA, or NULL.
+ *
+ * Caller holds mmu_lock. Returns NULL for an absent level or a 2 MB block,
+ * neither of which a copy-on-write page can be.
+ */
+static unsigned long *user_leaf_pte(unsigned long *pgd, unsigned long vaddr)
+{
+    if (!pgd || !(pgd[L1_IDX(vaddr)] & PTE_VALID)) {
+        return NULL;
+    }
+
+    unsigned long *l2t = (unsigned long *)P2V(pgd[L1_IDX(vaddr)] & PTE_ADDR);
+    unsigned long l2e = l2t[L2_IDX(vaddr)];
+    if (!(l2e & PTE_VALID) || !(l2e & PTE_TABLE)) {
+        return NULL;
+    }
+
+    unsigned long *l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
+    return &l3t[L3_IDX(vaddr)];
+}
+
+/*
+ * mmu_handle_cow - Resolves a write fault on a copy-on-write page.
+ *
+ * The page is only copied when someone else still references it. Once the other
+ * holder is gone the entry can simply be made writable again, which is the
+ * common case after a forked child exits: without it a parent pays a full page
+ * copy on every first write, forever.
+ *
+ * The copy runs outside mmu_lock, so the entry is re-read afterwards and the
+ * copy discarded if anything moved. A reference on the source keeps it alive
+ * for the duration.
+ */
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
 {
     vaddr &= ~0xFFFUL;
-    unsigned long paddr, flags;
 
-    if (!mmu_user_query(pgd, vaddr, &paddr, &flags)) {
+    unsigned long irq = spin_lock_irqsave(&mmu_lock);
+    unsigned long *pte = user_leaf_pte(pgd, vaddr);
+    if (!pte || !(*pte & PTE_VALID) || !(*pte & MMU_PTE_COW)) {
+        spin_unlock_irqrestore(&mmu_lock, irq);
         return -1;
     }
-    if (!(flags & MMU_PTE_COW)) {
-        return -1;
+
+    unsigned long old_pa = *pte & PTE_ADDR;
+    void *old_va = (void *)P2V(old_pa);
+
+    /* Sole owner: promote in place, no allocation and no copy. */
+    if (!pmm_is_managed(old_va) || pmm_page_refcount(old_va) <= 1) {
+        *pte = (*pte & ~MMU_PTE_COW & ~MMU_AP_RO) | MMU_AP_RW;
+        tlbi_va_is(vaddr);
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        return 0;
     }
+
+    pmm_hold_page(old_va); /* keep the source alive while the lock is dropped */
+    spin_unlock_irqrestore(&mmu_lock, irq);
 
     void *new_page = pmm_alloc_page();
     if (!new_page) {
+        pmm_free_page(old_va);
         return -1;
     }
+    memcpy(new_page, old_va, PAGE_SIZE);
 
-    memcpy(new_page, (void *)P2V(paddr), PAGE_SIZE);
+    irq = spin_lock_irqsave(&mmu_lock);
+    pte = user_leaf_pte(pgd, vaddr);
+    if (!pte || !(*pte & PTE_VALID) || !(*pte & MMU_PTE_COW) || (*pte & PTE_ADDR) != old_pa) {
+        /* Resolved or remapped while we copied; let the faulting access retry. */
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        pmm_free_page(new_page);
+        pmm_free_page(old_va);
+        return 0;
+    }
 
-    unsigned long new_flags = flags & ~MMU_PTE_COW;
-    new_flags &= ~MMU_AP_RO;
-    new_flags |= MMU_AP_RW;
+    unsigned long new_flags = (*pte & ~PTE_ADDR & ~MMU_PTE_COW & ~MMU_AP_RO) | MMU_AP_RW;
+    *pte = V2P((uintptr_t)new_page) | new_flags;
+    tlbi_va_is(vaddr);
+    spin_unlock_irqrestore(&mmu_lock, irq);
 
-    mmu_user_map_page(pgd, vaddr, V2P((uintptr_t)new_page), new_flags);
-
+    pmm_free_page(old_va); /* our reference */
+    pmm_free_page(old_va); /* the mapping's, now replaced */
     return 0;
 }
 

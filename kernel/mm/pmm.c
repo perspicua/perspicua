@@ -428,6 +428,26 @@ void pmm_hold_page(void *ptr)
     spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
+/*
+ * pmm_page_refcount - Reference count of a managed page, or 0 if unmanaged.
+ */
+unsigned int pmm_page_refcount(void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    if (pfn >= pmm_num_pages || pfn_is_reserved(pfn)) {
+        return 0;
+    }
+
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+    unsigned int count = pmm_page_array[pfn].refcount;
+    spin_unlock_irqrestore(&pmm_lock, irq);
+    return count;
+}
+
 int pmm_is_managed(void *ptr)
 {
     if (!ptr) {

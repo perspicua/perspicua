@@ -54,6 +54,11 @@ void pmm_hold_page(void *ptr);
 int pmm_is_managed(void *ptr);
 
 /*
+ * pmm_page_refcount - Reference count of a managed page, or 0 if unmanaged.
+ */
+unsigned int pmm_page_refcount(void *ptr);
+
+/*
  * pmm_get_free_pages - Returns the count of available 4 KB pages.
  */
 unsigned long pmm_get_free_pages(void);
