@@ -165,6 +165,19 @@ fiq_discard:
 .global sync_handler
 sync_handler:
     save_all
+
+    // Exceptions taken from EL0 run with interrupts unmasked, so a long syscall
+    // no longer blocks this core's timer and device interrupts for its whole
+    // duration. Every contended lock is irqsave, so interrupts are masked
+    // exactly while one is held and preemption cannot land inside one.
+    //
+    // Exceptions from EL1 stay masked: a kernel fault can be taken inside a
+    // critical section, where preemption would not be safe.
+    ldr x0, [sp, #24]          // saved SPSR_EL1
+    and x0, x0, #0xf
+    cbnz x0, 1f
+    msr daifclr, #2
+1:
     mov x0, sp
     bl exception_sync_handler
     b ret_to_user
@@ -177,6 +190,8 @@ irq_handler:
 
 .global ret_to_user
 ret_to_user:
+    msr daifset, #2            // the return path itself must not be interrupted
+
     ldr x0, [sp, #24]          // tf->spsr_el1 (saved), not the live register
     and x0, x0, #0xf
     cbnz x0, 1f

@@ -248,7 +248,16 @@ void exception_irq_handler(void)
         core_irq_stats[current_core].timer_count++;
         timer_interrupt_reset();
         mmio_write(gic_c_eoir, iar);
-        schedule();
+
+        /*
+         * Never preempt a spinlock holder: a core spinning for that lock would
+         * be waiting on a task that is no longer scheduled. Deferring costs at
+         * most one tick, and the holder's critical section is short by
+         * construction.
+         */
+        if (!preempt_active()) {
+            schedule();
+        }
         return;
     } else if (irq_id == uart_irq_cached) {
         core_irq_stats[current_core].uart_count++;
