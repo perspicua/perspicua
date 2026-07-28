@@ -9,10 +9,37 @@
 
 #include "test.h"
 
+#include "string.h"
+
+#include "uapi/mman.h"
+#include "uapi/syscalls.h"
+
+#include "arch/exception.h"
+
+#include "core/syscall.h"
+#include "fs/vfs.h"
 #include "mm/addr.h"
 #include "mm/mmu.h"
 #include "sched/process.h"
 #include "sched/sched.h"
+
+#define MMAP_FILE "/tmmap.tmp"
+
+/* Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack. */
+static struct exception_trap_frame mmap_tf;
+
+static int64_t call_mmap(size_t length, int flags, int fd)
+{
+    memset(&mmap_tf, 0, sizeof(mmap_tf));
+    mmap_tf.x[8] = SYS_MMAP;
+    mmap_tf.x[0] = 0; /* addr hint, unused */
+    mmap_tf.x[1] = length;
+    mmap_tf.x[2] = PROT_READ | PROT_WRITE;
+    mmap_tf.x[3] = (uint64_t)flags;
+    mmap_tf.x[4] = (uint64_t)(int64_t)fd;
+    syscall_handle(&mmap_tf);
+    return (int64_t)mmap_tf.x[0];
+}
 
 static void release_slot(int slot)
 {
@@ -126,6 +153,57 @@ void test_process(void)
         TEST_ASSERT_EQ("dead falls back to kernel ttbr0", dead, mmu_kernel_ttbr0());
     }
     TEST_PASS("ttbr0 never built from a null pgd");
+
+    /*
+     * mmap must never hand back a region with nothing behind it. Only the
+     * framebuffer implements the vnode mmap operation, so a mapping of an
+     * ordinary file used to succeed and return an address that faulted on
+     * first touch.
+     *
+     * Driving this needs an address space, and the test task is pid 0, which
+     * has none: lend it one for the duration and take it back before asserting.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        int fd = vfs_open(MMAP_FILE, VFS_O_RDWR | VFS_O_CREAT);
+
+        int64_t file_backed = 0, anon = 0, anon_with_fd = 0, bad_fd = 0, no_backing = 0;
+
+        if (pgd && fd >= 0) {
+            process_table[0].user_pgd = pgd;
+            process_table[0].va.count = 0;
+            process_table[0].va.next_va = USER_VA_BASE;
+
+            file_backed = call_mmap(PAGE_SIZE, 0, fd);              // no ->mmap op
+            anon_with_fd = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, fd); // contradictory
+            bad_fd = call_mmap(PAGE_SIZE, 0, VFS_MAX_FDS + 5);
+            no_backing = call_mmap(PAGE_SIZE, 0, -1); // neither file nor anonymous
+            anon = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, -1);
+
+            process_table[0].user_pgd = NULL;
+            process_table[0].va.count = 0;
+            process_table[0].va.next_va = 0;
+        }
+
+        if (fd >= 0) {
+            vfs_close(fd);
+            vfs_unlink(MMAP_FILE);
+        }
+        if (pgd) {
+            mmu_destroy_user_pgd(pgd);
+        }
+
+        TEST_ASSERT("mmap test setup", pgd != NULL && fd >= 0);
+        TEST_ASSERT("file with no mmap op is refused",
+                    file_backed == (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("anonymous with a descriptor is refused",
+                    anon_with_fd == (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("out-of-range descriptor is refused", bad_fd == (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("neither file nor anonymous is refused",
+                    no_backing == (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("anonymous mapping succeeds", anon != (int64_t)(uintptr_t)MAP_FAILED);
+    }
+    TEST_PASS("mmap always has backing");
 
     TEST_SUITE_END("Process");
 }

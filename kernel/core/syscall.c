@@ -763,32 +763,54 @@ sigreturn_kill:
                 break;
             }
 
-            /* Reject an out-of-range fd before it indexes fd_table[] */
-            if (fd != -1 && (fd < 0 || fd >= VFS_MAX_FDS)) {
+            /*
+             * Every mapping must have something behind it. An anonymous request
+             * takes no descriptor; a file-backed one needs a vnode that can
+             * actually supply pages. Falling through with neither used to hand
+             * back an address the caller could only discover was empty by
+             * faulting on it.
+             */
+            int anonymous = (flags & MAP_ANONYMOUS) != 0;
+            if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {
                 tf->x[0] = (uintptr_t)MAP_FAILED;
                 break;
+            }
+
+            /* Hold a reference so a concurrent close cannot free the file out
+             * from under its own mmap operation. */
+            struct vfs_file *file = NULL;
+            if (!anonymous) {
+                unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
+                file = p->fd_table[fd];
+                if (file) {
+                    atomic_inc(&file->refcount);
+                }
+                spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
+                if (!file || !file->node || !file->node->ops || !file->node->ops->mmap) {
+                    vfs_file_put(file);
+                    tf->x[0] = (uintptr_t)MAP_FAILED;
+                    break;
+                }
             }
 
             size_t pages_needed = (length + PAGE_SIZE - 1) / PAGE_SIZE;
             uintptr_t new_region = process_va_alloc(&p->va, pages_needed);
             if (new_region == 0) {
+                vfs_file_put(file);
                 tf->x[0] = (uintptr_t)MAP_FAILED;
                 break;
             }
 
-            if (fd != -1) {
-                struct vfs_file *file = p->fd_table[fd];
-                if (file == NULL || file->node == NULL || file->node->ops == NULL) {
+            if (!anonymous) {
+                int mres = file->node->ops->mmap(file, new_region, length, prot, flags);
+                vfs_file_put(file);
+                if (mres < 0) {
                     goto mmap_fail;
-                }
-                if (file->node->ops->mmap != NULL) {
-                    if (file->node->ops->mmap(file, new_region, length, prot, flags) < 0) {
-                        goto mmap_fail;
-                    }
                 }
             }
 
-            if (flags & MAP_ANONYMOUS) {
+            if (anonymous) {
                 unsigned long mmu_flags = MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF
                                           | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER
                                           | MMU_PXN | MMU_UXN | MMU_PTE_NG;
