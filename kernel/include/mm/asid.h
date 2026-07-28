@@ -4,7 +4,7 @@
 #include "core/lock.h"
 #include "types.h"
 
-#define BITMAP_SIZE 4
+#define BITMAP_SIZE 1024
 /* Highest allocatable ASID. Derived so it cannot drift from the bitmap. */
 #define MAX_ASID    (BITMAP_SIZE * 64 - 1)
 
