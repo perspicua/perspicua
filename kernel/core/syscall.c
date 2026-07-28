@@ -195,12 +195,14 @@ void syscall_handle(struct exception_trap_frame *tf)
 
         case SYS_YIELD: {
             schedule();
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 
         case SYS_SLEEP: {
             unsigned long ms = tf->x[0];
             sched_sleep_ms(ms);
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 

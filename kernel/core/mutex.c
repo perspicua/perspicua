@@ -9,6 +9,8 @@
 
 #include "core/mutex.h"
 
+#include "panic.h"
+
 #include "core/lock.h"
 #include "sched/sched.h"
 
@@ -90,6 +92,20 @@ void kmutex_lock(struct kmutex *m)
 void kmutex_unlock(struct kmutex *m)
 {
     unsigned long flags = spin_lock_irqsave(&m->guard);
+
+    /*
+     * Releasing a mutex held by someone else hands the lock away and leaves the
+     * real owner running unprotected inside its critical section. Nothing else
+     * would notice until the corruption surfaced somewhere unrelated.
+     */
+    if (m->depth == 0) {
+        spin_unlock_irqrestore(&m->guard, flags);
+        PANIC("kmutex: unlock of a mutex that is not held");
+    }
+    if (m->owner != sched_get_current()) {
+        spin_unlock_irqrestore(&m->guard, flags);
+        PANIC("kmutex: unlock by a task that does not own the mutex");
+    }
 
     if (m->depth > 1) {
         m->depth--;

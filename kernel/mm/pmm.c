@@ -219,25 +219,68 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
     pmm_reserved_ranges[slot].tag = tag;
 }
 
-void pmm_init(void)
+/*
+ * fdt_root_cells - Reads a cell-count property from the root node.
+ */
+static uint32_t fdt_root_cells(const char *name, uint32_t fallback)
 {
+    const uint32_t *root = fdt_find_node_by_path("/");
+    struct fdt_property prop;
+
+    if (!root || fdt_get_property(root, name, &prop) != 0 || prop.size < sizeof(uint32_t)) {
+        pr_warn("pmm: DTB has no %s, assuming %u\n", name, fallback);
+        return fallback;
+    }
+    return fdt32_to_cpu(*(const uint32_t *)prop.value);
+}
+
+/*
+ * fdt_memory_size - Total RAM from the devicetree.
+ *
+ * The width of the address and size fields in `reg` is set by the root node's
+ * #address-cells and #size-cells, so the size cannot be read from a fixed
+ * index. This board uses 2 and 1; assuming that layout silently misreads any
+ * devicetree with 64-bit sizes, where the size's high word lands where the
+ * whole size was expected.
+ */
+static unsigned long fdt_memory_size(void)
+{
+    uint32_t addr_cells = fdt_root_cells("#address-cells", 2);
+    uint32_t size_cells = fdt_root_cells("#size-cells", 1);
+
+    if (addr_cells == 0 || addr_cells > 2 || size_cells == 0 || size_cells > 2) {
+        PANIC("pmm: unsupported devicetree cell layout");
+    }
+
     const uint32_t *mem_node = fdt_find_node_by_path("/memory@0");
-    if (mem_node) {
-        struct fdt_property reg_prop;
-        if (fdt_get_property(mem_node, "reg", &reg_prop) == 0) {
-            const uint32_t *reg = (const uint32_t *)reg_prop.value;
-            uint32_t mem_size_cells = fdt32_to_cpu(reg[2]);
-
-            if (mem_size_cells == 0) {
-                PANIC("pmm: zero memory reported");
-            }
-
-            pmm_phys_mem_size = (unsigned long)mem_size_cells;
-            pr_info("pmm: memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
-        }
-    } else {
+    if (!mem_node) {
         PANIC("pmm: memory node not found");
     }
+
+    struct fdt_property reg;
+    if (fdt_get_property(mem_node, "reg", &reg) != 0) {
+        PANIC("pmm: memory node has no reg property");
+    }
+    if (reg.size < (addr_cells + size_cells) * sizeof(uint32_t)) {
+        PANIC("pmm: memory reg property is shorter than its cell layout");
+    }
+
+    const uint32_t *cells = (const uint32_t *)reg.value;
+    unsigned long size = 0;
+    for (uint32_t i = 0; i < size_cells; i++) {
+        size = (size << 32) | fdt32_to_cpu(cells[addr_cells + i]);
+    }
+
+    if (size == 0) {
+        PANIC("pmm: zero memory reported");
+    }
+    return size;
+}
+
+void pmm_init(void)
+{
+    pmm_phys_mem_size = fdt_memory_size();
+    pr_info("pmm: memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
 
     pmm_num_pages = pmm_phys_mem_size / PAGE_SIZE;
     if (pmm_num_pages == 0) {

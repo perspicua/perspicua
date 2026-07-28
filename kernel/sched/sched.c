@@ -26,6 +26,7 @@
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
 _Static_assert(__builtin_offsetof(struct task, state) == 112,
                "task->state offset mismatch — update task_wrapper_asm");
+_Static_assert(SCHED_TASK_DEAD == 4, "task_wrapper_asm stores this value literally");
 
 #define TASK_CANARY_PTR(t) ((unsigned long *)((t)->stack + PAGE_SIZE))
 

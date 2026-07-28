@@ -55,6 +55,8 @@ struct slab_class {
 static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 static struct slab_class slab_classes[SLAB_NUM_CLASSES];
+/* Updated outside the class locks (slab_release_page runs unlocked), so this
+ * has to be atomic or the count drifts on SMP. */
 static unsigned long slab_total_pages = 0;
 
 static inline struct slab_page *ptr_to_slab(void *ptr)
@@ -158,7 +160,7 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
     }
 
     sp->total_slots = count;
-    slab_total_pages++;
+    __atomic_fetch_add(&slab_total_pages, 1, __ATOMIC_RELAXED);
 
     sp->next = sc->partial_list;
     sc->partial_list = sp;
@@ -167,7 +169,7 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
 
 static void slab_release_page(struct slab_page *sp)
 {
-    slab_total_pages--;
+    __atomic_fetch_sub(&slab_total_pages, 1, __ATOMIC_RELAXED);
     pmm_free_page((void *)sp);
 }
 
@@ -354,7 +356,7 @@ unsigned long slab_get_used(void)
 
 unsigned long slab_get_total(void)
 {
-    return slab_total_pages * PAGE_SIZE;
+    return __atomic_load_n(&slab_total_pages, __ATOMIC_RELAXED) * PAGE_SIZE;
 }
 
 #ifdef CONFIG_TESTS
