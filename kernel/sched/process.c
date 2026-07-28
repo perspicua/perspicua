@@ -738,6 +738,42 @@ void process_exit(uint32_t pid, int exit_status)
     __builtin_unreachable();
 }
 
+/*
+ * process_claim_slot - Reserves a free PID slot, zeroed and marked RUNNING.
+ *
+ * The zeroing happens under the lock because PROCESS_STATE_EMPTY is 0: a memset
+ * issued after the lock is dropped re-advertises the slot as free for as long
+ * as it takes to clear a whole PCB, and a fork on another core will claim it.
+ */
+static int process_claim_slot(void)
+{
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+
+    for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        if (process_table[i].state != PROCESS_STATE_EMPTY) {
+            continue;
+        }
+
+        memset(&process_table[i], 0, sizeof(struct process));
+        process_table[i].pid = (uint32_t)i;
+        process_table[i].state = PROCESS_STATE_RUNNING;
+        process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
+
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return i;
+    }
+
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    return -PERS_ERR_OUT_OF_RESOURCES;
+}
+
+#ifdef CONFIG_TESTS
+int process_test_claim_slot(void)
+{
+    return process_claim_slot();
+}
+#endif
+
 int process_fork(struct exception_trap_frame *parent_tf)
 {
     int parent_pid = process_find_current();
@@ -747,26 +783,12 @@ int process_fork(struct exception_trap_frame *parent_tf)
 
     struct process *parent = &process_table[parent_pid];
 
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    int child_pid = -1;
-    for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
-        if (process_table[i].state == PROCESS_STATE_EMPTY) {
-            child_pid = i;
-            process_table[i].state = PROCESS_STATE_RUNNING;
-            break;
-        }
-    }
-    spin_unlock_irqrestore(&process_table_lock, flags);
-
-    if (child_pid == -1) {
-        return -PERS_ERR_OUT_OF_RESOURCES;
+    int child_pid = process_claim_slot();
+    if (child_pid < 0) {
+        return child_pid;
     }
 
     struct process *child = &process_table[child_pid];
-    memset(child, 0, sizeof(*child));
-    child->pid = (uint32_t)child_pid;
-    child->state = PROCESS_STATE_RUNNING;
-    child->fd_lock = (spinlock_t)SPINLOCK_INIT;
 
     unsigned long *child_pgd = mmu_copy_user_pgd(parent->user_pgd);
     void *kstack = alloc_kernel_stack();

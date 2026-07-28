@@ -78,6 +78,7 @@ void test_fat32(void);
 void test_pipe(void);
 void test_mutex(void);
 void test_uaccess(void);
+void test_process(void);
 void test_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
