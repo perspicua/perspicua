@@ -172,7 +172,6 @@ void test_process(void)
         if (pgd && fd >= 0) {
             process_table[0].user_pgd = pgd;
             process_table[0].va.count = 0;
-            process_table[0].va.next_va = USER_VA_BASE;
 
             file_backed = call_mmap(PAGE_SIZE, 0, fd);              // no ->mmap op
             anon_with_fd = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, fd); // contradictory
@@ -182,7 +181,6 @@ void test_process(void)
 
             process_table[0].user_pgd = NULL;
             process_table[0].va.count = 0;
-            process_table[0].va.next_va = 0;
         }
 
         if (fd >= 0) {
@@ -204,6 +202,50 @@ void test_process(void)
         TEST_ASSERT("anonymous mapping succeeds", anon != (int64_t)(uintptr_t)MAP_FAILED);
     }
     TEST_PASS("mmap always has backing");
+
+    /*
+     * Address space released by one mapping must be available to the next. A
+     * bump pointer never reclaims it, so a process that maps and unmaps walks
+     * its address space away even though nothing is using it.
+     */
+    {
+        static struct va_allocator va;
+        memset(&va, 0, sizeof(va));
+
+        uintptr_t a = process_va_alloc(&va, 1);
+        uintptr_t b = process_va_alloc(&va, 1);
+        uintptr_t c = process_va_alloc(&va, 1);
+
+        TEST_ASSERT("first allocation starts at the base", a == USER_VA_BASE);
+        TEST_ASSERT("allocations are distinct and ordered", a < b && b < c);
+        TEST_ASSERT("allocations do not overlap", b >= a + PAGE_SIZE && c >= b + PAGE_SIZE);
+
+        // the hole left by b must be handed out again
+        process_va_free(&va, b);
+        uintptr_t reused = process_va_alloc(&va, 1);
+        TEST_ASSERT_EQ("a released range is reused", (long)reused, (long)b);
+
+        // a request too big for the hole goes after everything instead
+        process_va_free(&va, reused);
+        uintptr_t big = process_va_alloc(&va, 4);
+        TEST_ASSERT("an oversized request skips a too-small gap", big >= c + PAGE_SIZE);
+
+        // and the small hole is still there for something that fits
+        uintptr_t small = process_va_alloc(&va, 1);
+        TEST_ASSERT_EQ("the small gap is still usable", (long)small, (long)b);
+
+        process_va_free(&va, a);
+        process_va_free(&va, c);
+        process_va_free(&va, big);
+        process_va_free(&va, small);
+        TEST_ASSERT_EQ("every region released", (long)va.count, 0);
+
+        // an allocation larger than the whole range cannot be satisfied
+        TEST_ASSERT_EQ("an impossible size is refused",
+                       (long)process_va_alloc(&va, USER_VA_LIMIT / PAGE_SIZE), 0);
+        TEST_ASSERT_EQ("zero pages is refused", (long)process_va_alloc(&va, 0), 0);
+    }
+    TEST_PASS("released address space is reusable");
 
     TEST_SUITE_END("Process");
 }

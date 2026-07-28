@@ -19,9 +19,18 @@
 #include "fs/vfs.h"
 #include "sched/sched.h"
 
-#define PROCESS_TABLE_SIZE       1024
-#define USER_VA_BASE             0x40000000ULL
-#define USER_VA_MAX_REGIONS      64
+#define PROCESS_TABLE_SIZE 1024
+
+/*
+ * Range the per-process allocator hands out. It starts well above the address
+ * user programs link at (0x100000), so ELF segments -- which elf_load maps
+ * directly at their p_vaddr, without going through this allocator -- can never
+ * collide with an allocated region.
+ */
+#define USER_VA_BASE        0x40000000ULL
+#define USER_VA_LIMIT       0x8000000000ULL
+#define USER_VA_MAX_REGIONS 64
+
 #define PROCESS_USER_STACK_PAGES 64
 
 #define SPSR_EL0_USER      0x00000000ULL
@@ -40,10 +49,15 @@ struct va_region {
     size_t pages;
 };
 
+/*
+ * struct va_allocator - Allocated address ranges of one process.
+ *
+ * regions[] is kept sorted by base so a single pass finds the lowest gap that
+ * fits a request.
+ */
 struct va_allocator {
     struct va_region regions[USER_VA_MAX_REGIONS];
     size_t count;
-    uintptr_t next_va;
 };
 
 /*

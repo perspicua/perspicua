@@ -40,7 +40,6 @@ extern void ret_to_user(void);
 static void va_init(struct va_allocator *va)
 {
     va->count = 0;
-    va->next_va = USER_VA_BASE;
     for (size_t i = 0; i < USER_VA_MAX_REGIONS; i++) {
         va->regions[i].base = 0;
         va->regions[i].pages = 0;
@@ -191,19 +190,45 @@ uintptr_t process_va_alloc(struct va_allocator *va, size_t pages)
         return 0;
     }
 
-    uintptr_t base = va->next_va;
     size_t size = pages * PAGE_SIZE;
-
-    if (base + size < base || base + size > 0x8000000000ULL) {
+    if (size / PAGE_SIZE != pages) {
         return 0;
     }
 
-    va->regions[va->count].base = base;
-    va->regions[va->count].pages = pages;
-    va->count++;
-    va->next_va = base + size;
+    /*
+     * Take the lowest gap the request fits in. A bump pointer would be simpler,
+     * but the space a released region occupied would then be gone for the life
+     * of the process -- even the range a failed mmap briefly reserved.
+     */
+    uintptr_t candidate = USER_VA_BASE;
+    size_t slot = va->count;
 
-    return base;
+    for (size_t i = 0; i < va->count; i++) {
+        uintptr_t region_base = va->regions[i].base;
+
+        if (candidate + size <= region_base) {
+            slot = i;
+            break;
+        }
+
+        uintptr_t region_end = region_base + va->regions[i].pages * PAGE_SIZE;
+        if (region_end > candidate) {
+            candidate = region_end;
+        }
+    }
+
+    if (candidate + size < candidate || candidate + size > USER_VA_LIMIT) {
+        return 0;
+    }
+
+    for (size_t j = va->count; j > slot; j--) {
+        va->regions[j] = va->regions[j - 1];
+    }
+    va->regions[slot].base = candidate;
+    va->regions[slot].pages = pages;
+    va->count++;
+
+    return candidate;
 }
 
 void process_va_free(struct va_allocator *va, uintptr_t base)
