@@ -446,7 +446,9 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            if (target_pid >= PROCESS_TABLE_SIZE
+            /* target_pid is signed and comes straight from the user: without a
+             * lower bound, -1 passes this check and indexes before the table. */
+            if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE
                 || process_table[target_pid].state == PROCESS_STATE_EMPTY) {
                 tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
                 break;

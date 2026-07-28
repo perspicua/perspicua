@@ -9,12 +9,32 @@
 
 #include "test.h"
 
-#include "core/signals.h"
-#include "sched/process.h"
+#include "string.h"
+
 #include "uapi/errors.h"
+#include "uapi/syscalls.h"
+
+#include "arch/exception.h"
+
+#include "core/signals.h"
+#include "core/syscall.h"
+#include "sched/process.h"
 
 /* init is created first and is the process these tests target. */
 #define INIT_PID 1
+
+/* Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack. */
+static struct exception_trap_frame kill_tf;
+
+static int64_t call_kill(int64_t target_pid, int sig)
+{
+    memset(&kill_tf, 0, sizeof(kill_tf));
+    kill_tf.x[8] = SYS_KILL;
+    kill_tf.x[0] = (uint64_t)target_pid;
+    kill_tf.x[1] = (uint64_t)sig;
+    syscall_handle(&kill_tf);
+    return (int64_t)kill_tf.x[0];
+}
 
 void test_signals(void)
 {
@@ -69,6 +89,27 @@ void test_signals(void)
         TEST_ASSERT("zombie slot rejected", sent < 0);
     }
     TEST_PASS("zombie slot");
+
+    /*
+     * kill() takes a signed pid straight from the user. Everything outside
+     * 1..PROCESS_TABLE_SIZE-1 must be refused before it indexes the table:
+     * -1 used to clear the upper-bound check and read process_table[-1].
+     */
+    {
+        TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
+        TEST_ASSERT_EQ("kill(-1000) refused", call_kill(-1000, SIGNAL_TERM),
+                       -PERS_ERR_NO_SUCH_PROCESS);
+        TEST_ASSERT_EQ("kill(INT_MIN) refused", call_kill(-2147483647 - 1, SIGNAL_TERM),
+                       -PERS_ERR_NO_SUCH_PROCESS);
+        TEST_ASSERT_EQ("kill past the table refused", call_kill(PROCESS_TABLE_SIZE, SIGNAL_TERM),
+                       -PERS_ERR_NO_SUCH_PROCESS);
+        TEST_ASSERT_EQ("kill on an empty slot refused",
+                       call_kill(PROCESS_TABLE_SIZE - 1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
+
+        // pid 0 is the kernel and stays a permission error, not a lookup failure
+        TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGNAL_TERM), -PERS_ERR_PERMISSION_DENIED);
+    }
+    TEST_PASS("kill pid bounds");
 
     /*
      * A valid signal to a live process must be accepted and recorded in the
