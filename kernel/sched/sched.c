@@ -573,10 +573,10 @@ int sched_test_in_sleep_queue(const struct task *t)
 static unsigned long task_ttbr0_for(uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    struct process *p = &process_table[pid];
+    struct process *p = process_slot(pid);
     unsigned long ttbr0;
 
-    if (p->state == PROCESS_STATE_RUNNING && p->user_pgd) {
+    if (p && p->state == PROCESS_STATE_RUNNING && p->user_pgd) {
         asid_get_active(&p->asid, &p->asid_generation);
         ttbr0 = V2P(p->user_pgd) | asid_ttbr_field(p->asid);
     } else {

@@ -16,7 +16,7 @@ option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
 option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
 option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
 set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
-set(CONFIG_MAX_PROCESSES 128 CACHE STRING "Process table slots (statically allocated)")
+set(CONFIG_MAX_PROCESSES 256 CACHE STRING "Process table slots (one pointer each; PCBs allocated on demand)")
 set(CONFIG_MAX_FDS 64 CACHE STRING "Open file descriptors per process")
 
 # Propagate config to compiler defines

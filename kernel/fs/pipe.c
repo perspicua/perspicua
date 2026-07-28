@@ -64,11 +64,10 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
  */
 static int pipe_signal_pending(void)
 {
-    int pid = process_find_current();
-    if (pid < 0) {
+    struct process *p = process_current();
+    if (!p) {
         return 0;
     }
-    struct process *p = &process_table[pid];
     return (p->pending_signals & ~p->blocked_signals) != 0;
 }
 
@@ -254,12 +253,10 @@ static struct vfs_vnode_ops pipe_ops = {
  */
 int pipe_create(int pipefd[2])
 {
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
-
-    struct process *p = &process_table[pid];
 
     struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
     if (!pipe) {

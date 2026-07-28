@@ -44,8 +44,8 @@ static int64_t call_mmap(size_t length, int flags, int fd)
 static void release_slot(int slot)
 {
     if (slot > 0) {
-        process_table[slot].user_pgd = NULL;
-        process_table[slot].state = PROCESS_STATE_EMPTY;
+        process_table[slot]->user_pgd = NULL;
+        process_test_release_slot((uint32_t)slot);
     }
 }
 
@@ -54,51 +54,51 @@ void test_process(void)
     TEST_SUITE_BEGIN("Process");
 
     /*
-     * A claimed slot must be zeroed and already non-EMPTY when it comes back.
-     * PROCESS_STATE_EMPTY is 0, so clearing the PCB after the table lock is
-     * dropped leaves the slot advertised as free for the length of a memset,
-     * and a fork on another core claims it too.
+     * A free slot is a null pointer, so a claim is only visible once the PCB
+     * behind it is fully built: there is no window in which the slot is
+     * published but still carries another process's state.
      */
     {
         int slot = process_test_claim_slot();
-        int claimed_not_empty = 0, carries_pid = 0, same_slot = 0;
-        int recl_not_empty = 0, recl_cleared = 0, recl_no_task = 0;
+        int published = 0, carries_pid = 0, is_running = 0, same_slot = 0;
+        int freed_is_null = 0, recl_cleared = 0, recl_no_task = 0;
 
         if (slot > 0) {
-            claimed_not_empty = process_table[slot].state != PROCESS_STATE_EMPTY;
-            carries_pid = process_table[slot].pid == (uint32_t)slot;
+            published = process_table[slot] != NULL;
+            carries_pid = process_table[slot]->pid == (uint32_t)slot;
+            is_running = process_table[slot]->state == PROCESS_STATE_RUNNING;
 
             // dirty it, release it, and take it again: the scan starts at 1, so
-            // the same slot comes back and must have been cleared for us
-            process_table[slot].parent_pid = 0x5A5A;
-            process_table[slot].pending_signals = 0xFFFF;
-            process_table[slot].va.count = 7;
-            process_table[slot].vaddr_code = 0xDEAD;
-            process_table[slot].state = PROCESS_STATE_EMPTY;
+            // the same slot comes back and must be a clean PCB
+            process_table[slot]->parent_pid = 0x5A5A;
+            process_table[slot]->pending_signals = 0xFFFF;
+            process_table[slot]->va.count = 7;
+            process_table[slot]->vaddr_code = 0xDEAD;
+            process_test_release_slot((uint32_t)slot);
+            freed_is_null = process_table[slot] == NULL;
 
             int again = process_test_claim_slot();
             same_slot = again == slot;
-            recl_not_empty = process_table[slot].state != PROCESS_STATE_EMPTY;
             recl_cleared =
-                process_table[slot].parent_pid == 0 && process_table[slot].pending_signals == 0
-                && process_table[slot].va.count == 0 && process_table[slot].vaddr_code == 0;
-            recl_no_task = process_table[slot].main_task == NULL
-                           && process_table[slot].user_pgd == NULL
-                           && process_table[slot].cwd == NULL;
+                process_table[slot]->parent_pid == 0 && process_table[slot]->pending_signals == 0
+                && process_table[slot]->va.count == 0 && process_table[slot]->vaddr_code == 0;
+            recl_no_task = process_table[slot]->main_task == NULL
+                           && process_table[slot]->user_pgd == NULL
+                           && process_table[slot]->cwd == NULL;
 
             release_slot(again);
-            release_slot(slot);
         }
 
         TEST_ASSERT("claim returns a slot", slot > 0);
-        TEST_ASSERT("claimed slot is not EMPTY", claimed_not_empty);
+        TEST_ASSERT("claimed slot is published", published);
         TEST_ASSERT("claimed slot carries its pid", carries_pid);
+        TEST_ASSERT("claimed slot is RUNNING", is_running);
+        TEST_ASSERT("released slot reads as free", freed_is_null);
         TEST_ASSERT("same slot reclaimed", same_slot);
-        TEST_ASSERT("reclaimed slot is not EMPTY", recl_not_empty);
         TEST_ASSERT("reclaimed slot was cleared", recl_cleared);
         TEST_ASSERT("reclaimed slot has no stale task", recl_no_task);
     }
-    TEST_PASS("slot claim clears under the lock");
+    TEST_PASS("a slot is free exactly when it is null");
 
     // two claims must never hand out the same slot
     {
@@ -125,18 +125,18 @@ void test_process(void)
         unsigned long live = 0, no_pgd = 0, zombie = 0, dead = 0;
 
         if (slot > 0 && pgd) {
-            process_table[slot].state = PROCESS_STATE_RUNNING;
-            process_table[slot].user_pgd = pgd;
+            process_table[slot]->state = PROCESS_STATE_RUNNING;
+            process_table[slot]->user_pgd = pgd;
             live = sched_test_task_ttbr0_for((uint32_t)slot);
 
-            process_table[slot].user_pgd = NULL;
+            process_table[slot]->user_pgd = NULL;
             no_pgd = sched_test_task_ttbr0_for((uint32_t)slot);
 
-            process_table[slot].user_pgd = pgd;
-            process_table[slot].state = PROCESS_STATE_ZOMBIE;
+            process_table[slot]->user_pgd = pgd;
+            process_table[slot]->state = PROCESS_STATE_ZOMBIE;
             zombie = sched_test_task_ttbr0_for((uint32_t)slot);
 
-            process_table[slot].state = PROCESS_STATE_DEAD;
+            process_table[slot]->state = PROCESS_STATE_DEAD;
             dead = sched_test_task_ttbr0_for((uint32_t)slot);
         }
 
@@ -170,8 +170,8 @@ void test_process(void)
         int64_t file_backed = 0, anon = 0, anon_with_fd = 0, bad_fd = 0, no_backing = 0;
 
         if (pgd && fd >= 0) {
-            process_table[0].user_pgd = pgd;
-            process_table[0].va.count = 0;
+            process_table[0]->user_pgd = pgd;
+            process_table[0]->va.count = 0;
 
             file_backed = call_mmap(PAGE_SIZE, 0, fd);              // no ->mmap op
             anon_with_fd = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, fd); // contradictory
@@ -179,8 +179,8 @@ void test_process(void)
             no_backing = call_mmap(PAGE_SIZE, 0, -1); // neither file nor anonymous
             anon = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, -1);
 
-            process_table[0].user_pgd = NULL;
-            process_table[0].va.count = 0;
+            process_table[0]->user_pgd = NULL;
+            process_table[0]->va.count = 0;
         }
 
         if (fd >= 0) {

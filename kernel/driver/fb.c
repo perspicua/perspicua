@@ -10,6 +10,8 @@
 #include "stdio.h"
 #include "types.h"
 
+#include "uapi/errors.h"
+
 #include "driver/mailbox.h"
 #include "fs/devfs.h"
 #include "mm/addr.h"
@@ -37,8 +39,11 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
     uintptr_t phys_fb = V2P((uintptr_t)fb_info.ptr);
     size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    int pid = process_find_current();
-    unsigned long *pgd = process_table[pid].user_pgd;
+    struct process *p = process_current();
+    if (!p || !p->user_pgd) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
+    unsigned long *pgd = p->user_pgd;
 
     for (size_t i = 0; i < pages; i++) {
         mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE,

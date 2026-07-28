@@ -238,8 +238,6 @@ static const char *task_state_str(enum sched_task_state s)
 static const char *proc_state_str(process_state_t s)
 {
     switch (s) {
-        case PROCESS_STATE_EMPTY:
-            return "EMPTY  ";
         case PROCESS_STATE_RUNNING:
             return "RUNNING";
         case PROCESS_STATE_ZOMBIE:
@@ -261,8 +259,8 @@ static void cmd_tasks(void)
 
     int shown = 0;
     for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
-        struct process *p = &process_table[i];
-        if (p->state == PROCESS_STATE_EMPTY)
+        struct process *p = process_table[i];
+        if (!p)
             continue;
 
         shown++;

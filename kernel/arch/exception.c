@@ -124,10 +124,9 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
      * We also check if it's a kernel access to user memory (far < KERNEL_VMA).
      */
     if (is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3) && (far < KERNEL_VMA)) {
-        int pid = process_find_current();
-        if (pid >= 0) {
-            unsigned long *pgd = process_table[pid].user_pgd;
-            if (mmu_handle_cow(pgd, far) == 0) {
+        struct process *p = process_current();
+        if (p && p->user_pgd) {
+            if (mmu_handle_cow(p->user_pgd, far) == 0) {
                 return;
             }
         }

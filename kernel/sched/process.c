@@ -29,7 +29,7 @@
 #include "arch/uaccess.h"
 
 spinlock_t process_table_lock = SPINLOCK_INIT;
-struct process process_table[PROCESS_TABLE_SIZE];
+struct process *process_table[PROCESS_TABLE_SIZE];
 
 /* Performs ERET to EL0 using the trap frame on the kernel stack */
 extern void ret_to_user(void);
@@ -251,37 +251,77 @@ int process_find_current(void)
     return t ? (int)t->pid : -PERS_ERR_NO_SUCH_PROCESS;
 }
 
+struct process *process_current(void)
+{
+    struct task *t = sched_get_current();
+    return t ? process_slot(t->pid) : NULL;
+}
+
 unsigned long process_get_ttbr0(uint32_t pid)
 {
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
-    if (pid >= PROCESS_TABLE_SIZE || process_table[pid].state == PROCESS_STATE_EMPTY
-        || process_table[pid].state == PROCESS_STATE_DEAD) {
+    struct process *p = process_slot(pid);
+    if (!p || p->state == PROCESS_STATE_DEAD) {
         spin_unlock_irqrestore(&process_table_lock, flags);
         return mmu_kernel_ttbr0();
     }
 
-    unsigned long ttbr0 = process_table[pid].ttbr0;
+    unsigned long ttbr0 = p->ttbr0;
     spin_unlock_irqrestore(&process_table_lock, flags);
     return ttbr0;
 }
 
-void process_init(void)
+/*
+ * process_alloc_pcb - Allocates an initialised, unpublished PCB.
+ */
+static struct process *process_alloc_pcb(uint32_t pid)
 {
-    memset(process_table, 0, sizeof(process_table));
-
-    for (size_t i = 0; i < PROCESS_TABLE_SIZE; i++) {
-        process_table[i].state = PROCESS_STATE_EMPTY;
-        process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
+    struct process *p = heap_malloc(sizeof(struct process));
+    if (!p) {
+        return NULL;
     }
 
-    process_table[0].pid = 0;
-    strcpy(process_table[0].name, "kernel");
-    process_table[0].state = PROCESS_STATE_RUNNING;
-    process_table[0].user_pgd = NULL;
-    process_table[0].asid = 0;
+    memset(p, 0, sizeof(*p));
+    p->pid = pid;
+    p->state = PROCESS_STATE_RUNNING;
+    p->fd_lock = (spinlock_t)SPINLOCK_INIT;
+    return p;
+}
 
-    pr_info("proc: initialized (%zu slots)\n", (size_t)PROCESS_TABLE_SIZE);
+/*
+ * process_release_slot - Frees a slot's PCB and marks the slot free.
+ */
+static void process_release_slot(uint32_t pid)
+{
+    if (pid >= PROCESS_TABLE_SIZE) {
+        return;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct process *p = process_table[pid];
+    process_table[pid] = NULL;
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    heap_free(p);
+}
+
+void process_init(void)
+{
+    for (size_t i = 0; i < PROCESS_TABLE_SIZE; i++) {
+        process_table[i] = NULL;
+    }
+
+    /* Slot 0 is the kernel itself: always present, never reaped. */
+    struct process *kernel = process_alloc_pcb(0);
+    if (!kernel) {
+        PANIC("proc: cannot allocate the kernel PCB");
+    }
+    strcpy(kernel->name, "kernel");
+    process_table[0] = kernel;
+
+    pr_info("proc: initialized (%zu slots, %zu bytes per process)\n", (size_t)PROCESS_TABLE_SIZE,
+            sizeof(struct process));
 }
 
 void process_create(void *code_ptr, size_t code_size, uint32_t pid)
@@ -290,15 +330,21 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
         return;
     }
 
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (process_table[pid].state != PROCESS_STATE_EMPTY) {
-        spin_unlock_irqrestore(&process_table_lock, flags);
+    /* Allocated before the lock: heap_malloc must not run with interrupts off. */
+    struct process *p = process_alloc_pcb(pid);
+    if (!p) {
         return;
     }
-    process_table[pid].state = PROCESS_STATE_RUNNING;
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    if (process_table[pid]) {
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        heap_free(p);
+        return;
+    }
+    process_table[pid] = p;
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    struct process *p = &process_table[pid];
     va_init(&p->va);
 
     unsigned long *user_pgd = mmu_create_user_pgd();
@@ -379,27 +425,33 @@ int process_create_from_file(const char *path, uint32_t pid)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
+    /* Allocated before the lock: heap_malloc must not run with interrupts off. */
+    struct process *p = process_alloc_pcb(pid);
+    if (!p) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (process_table[pid].state != PROCESS_STATE_EMPTY) {
+    if (process_table[pid]) {
         spin_unlock_irqrestore(&process_table_lock, flags);
+        heap_free(p);
         return -PERS_ERR_ALREADY_EXISTS;
     }
-    process_table[pid].state = PROCESS_STATE_RUNNING;
+    process_table[pid] = p;
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    struct process *p = &process_table[pid];
     va_init(&p->va);
 
     unsigned long *user_pgd = mmu_create_user_pgd();
     if (!user_pgd) {
-        p->state = PROCESS_STATE_EMPTY;
+        process_release_slot(pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
     uint64_t entry_point;
     if (elf_load(path, user_pgd, &entry_point) != 0) {
         mmu_destroy_user_pgd(user_pgd);
-        p->state = PROCESS_STATE_EMPTY;
+        process_release_slot(pid);
         return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
     }
 
@@ -408,7 +460,7 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     if (!vaddr_stack || !kstack) {
         mmu_destroy_user_pgd(user_pgd);
-        p->state = PROCESS_STATE_EMPTY;
+        process_release_slot(pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -456,7 +508,7 @@ int process_create_from_file(const char *path, uint32_t pid)
         }
         free_kernel_stack(kstack);
         mmu_destroy_user_pgd(user_pgd);
-        p->state = PROCESS_STATE_EMPTY;
+        process_release_slot(pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -529,7 +581,11 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return pid;
     }
 
-    struct process *p = &process_table[pid];
+    struct process *p = process_slot((uint32_t)pid);
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
+
     int fds_to_close[VFS_MAX_FDS];
     int close_count = 0;
 
@@ -696,19 +752,18 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
 void process_exit(uint32_t pid, int exit_status)
 {
-    if (pid >= PROCESS_TABLE_SIZE) {
+    struct process *p = process_slot(pid);
+    if (!p) {
         return;
     }
 
     process_state_t expected = PROCESS_STATE_RUNNING;
-    if (!__atomic_compare_exchange_n(&process_table[pid].state, &expected, PROCESS_STATE_DEAD, 0,
-                                     __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+    if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
+                                     __ATOMIC_SEQ_CST)) {
         return;
     }
 
     pr_info("proc: PID %u exiting with status %d\n", pid, exit_status);
-
-    struct process *p = &process_table[pid];
 
     /* Reparent orphaned processes to init (PID 1) */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -716,11 +771,11 @@ void process_exit(uint32_t pid, int exit_status)
         if (i == (int)pid) {
             continue;
         }
-        if (process_table[i].state == PROCESS_STATE_EMPTY) {
+        if (!process_table[i]) {
             continue;
         }
-        if (process_table[i].parent_pid == pid) {
-            process_table[i].parent_pid = 1;
+        if (process_table[i]->parent_pid == pid) {
+            process_table[i]->parent_pid = 1;
         }
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
@@ -758,8 +813,8 @@ void process_exit(uint32_t pid, int exit_status)
     p->main_task = NULL;
 
     uint32_t ppid = p->parent_pid;
-    int notify_parent = (ppid != 0 && ppid < PROCESS_TABLE_SIZE
-                         && process_table[ppid].state == PROCESS_STATE_RUNNING);
+    struct process *parent = process_slot(ppid);
+    int notify_parent = (ppid != 0 && parent && parent->state == PROCESS_STATE_RUNNING);
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     /* Notify the parent outside the lock (signal_send now takes it itself), and
@@ -769,9 +824,9 @@ void process_exit(uint32_t pid, int exit_status)
         signal_send(ppid, SIGNAL_CHLD);
 
         flags = spin_lock_irqsave(&process_table_lock);
-        if (process_table[ppid].state == PROCESS_STATE_RUNNING
-            && process_table[ppid].main_task != NULL) {
-            sched_unblock(process_table[ppid].main_task);
+        parent = process_table[ppid];
+        if (parent && parent->state == PROCESS_STATE_RUNNING && parent->main_task != NULL) {
+            sched_unblock(parent->main_task);
         }
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
@@ -786,31 +841,36 @@ void process_exit(uint32_t pid, int exit_status)
 }
 
 /*
- * process_claim_slot - Reserves a free PID slot, zeroed and marked RUNNING.
- *
- * The zeroing happens under the lock because PROCESS_STATE_EMPTY is 0: a memset
- * issued after the lock is dropped re-advertises the slot as free for as long
- * as it takes to clear a whole PCB, and a fork on another core will claim it.
+ * process_claim_slot - Reserves a free PID slot with a fresh PCB.
  */
 static int process_claim_slot(void)
 {
+    /*
+     * Build the PCB before publishing it. A half-initialised slot can no longer
+     * be observed at all, rather than being merely brief: until the pointer is
+     * stored, no other core can reach it.
+     */
+    struct process *p = process_alloc_pcb(0);
+    if (!p) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
-        if (process_table[i].state != PROCESS_STATE_EMPTY) {
+        if (process_table[i]) {
             continue;
         }
 
-        memset(&process_table[i], 0, sizeof(struct process));
-        process_table[i].pid = (uint32_t)i;
-        process_table[i].state = PROCESS_STATE_RUNNING;
-        process_table[i].fd_lock = (spinlock_t)SPINLOCK_INIT;
+        p->pid = (uint32_t)i;
+        process_table[i] = p;
 
         spin_unlock_irqrestore(&process_table_lock, flags);
         return i;
     }
 
     spin_unlock_irqrestore(&process_table_lock, flags);
+    heap_free(p);
     return -PERS_ERR_OUT_OF_RESOURCES;
 }
 
@@ -818,6 +878,11 @@ static int process_claim_slot(void)
 int process_test_claim_slot(void)
 {
     return process_claim_slot();
+}
+
+void process_test_release_slot(uint32_t pid)
+{
+    process_release_slot(pid);
 }
 #endif
 
@@ -828,21 +893,24 @@ int process_fork(struct exception_trap_frame *parent_tf)
         return parent_pid;
     }
 
-    struct process *parent = &process_table[parent_pid];
+    struct process *parent = process_slot((uint32_t)parent_pid);
+    if (!parent) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
 
     int child_pid = process_claim_slot();
     if (child_pid < 0) {
         return child_pid;
     }
 
-    struct process *child = &process_table[child_pid];
+    struct process *child = process_table[child_pid];
 
     unsigned long *child_pgd = mmu_copy_user_pgd(parent->user_pgd);
     void *kstack = alloc_kernel_stack();
 
     if (!child_pgd || !kstack) {
         mmu_destroy_user_pgd(child_pgd);
-        child->state = PROCESS_STATE_EMPTY;
+        process_release_slot((uint32_t)child_pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -898,7 +966,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
         }
         free_kernel_stack(kstack);
         mmu_destroy_user_pgd(child_pgd);
-        child->state = PROCESS_STATE_EMPTY;
+        process_release_slot((uint32_t)child_pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
@@ -922,9 +990,9 @@ int process_waitpid(int pid, int *status, int options)
 
         int has_children = 0;
         for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
-            struct process *candidate = &process_table[i];
+            struct process *candidate = process_table[i];
 
-            if (candidate->state == PROCESS_STATE_EMPTY) {
+            if (!candidate) {
                 continue;
             }
             if (candidate->parent_pid != (uint32_t)parent_pid) {
@@ -941,10 +1009,10 @@ int process_waitpid(int pid, int *status, int options)
                 if (status) {
                     *status = candidate->exit_status;
                 }
-                memset(candidate, 0, sizeof(struct process));
-                candidate->state = PROCESS_STATE_EMPTY;
+                process_table[i] = NULL;
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
+                heap_free(candidate);
                 return found_pid;
             }
         }

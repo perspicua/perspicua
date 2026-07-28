@@ -228,12 +228,11 @@ unsigned long vfs_test_live_files(void)
 
 struct vfs_file *vfs_test_file_at(int fd)
 {
-    int pid = process_find_current();
-    if (fd < 0 || fd >= VFS_MAX_FDS || pid < 0) {
+    struct process *p = process_current();
+    if (fd < 0 || fd >= VFS_MAX_FDS || !p) {
         return NULL;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
@@ -527,11 +526,12 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 int vfs_open_pid(const char *path, int flags, uint32_t pid)
 {
     int error = 0;
-    if (pid >= PROCESS_TABLE_SIZE) {
+    struct process *p = process_slot(pid);
+    if (!p) {
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct vfs_vnode *node = vfs_resolve_path(path, process_table[pid].cwd, &error);
+    struct vfs_vnode *node = vfs_resolve_path(path, p->cwd, &error);
     if (!node) {
         if (!(flags & VFS_O_CREAT)) /* not asking to create → just fail */
             return error;
@@ -555,7 +555,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
             name = slash + 1;
         }
 
-        struct vfs_vnode *parent = vfs_resolve_path(parent_path, process_table[pid].cwd, &error);
+        struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
         if (!parent)
             return error;
 
@@ -570,23 +570,23 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
             return cres;
 
         /* Now resolve the newly-created file */
-        node = vfs_resolve_path(path, process_table[pid].cwd, &error);
+        node = vfs_resolve_path(path, p->cwd, &error);
         if (!node)
             return error;
     }
 
-    unsigned long fdflags = spin_lock_irqsave(&process_table[pid].fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
-        struct vfs_file *f = process_table[pid].fd_table[i];
+        struct vfs_file *f = p->fd_table[i];
         if (f && f->node->internal_info == node->internal_info && f->node->ops == node->ops) {
             if (node->type != VFS_VNODE_TYPE_DEVICE) {
-                spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
+                spin_unlock_irqrestore(&p->fd_lock, fdflags);
                 vfs_vnode_put(node);
                 return -PERS_ERR_ALREADY_EXISTS;
             }
         }
     }
-    spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     struct vfs_file *new_file = vfs_file_alloc();
     if (!new_file) {
@@ -598,16 +598,16 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     new_file->flags = flags;
 
     int slot = -1;
-    fdflags = spin_lock_irqsave(&process_table[pid].fd_lock);
+    fdflags = spin_lock_irqsave(&p->fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
-        if (!process_table[pid].fd_table[i]) {
-            process_table[pid].fd_table[i] = new_file;
-            process_table[pid].fd_flags[i] = (flags & VFS_O_CLOEXEC) ? VFS_FD_CLOEXEC : 0;
+        if (!p->fd_table[i]) {
+            p->fd_table[i] = new_file;
+            p->fd_flags[i] = (flags & VFS_O_CLOEXEC) ? VFS_FD_CLOEXEC : 0;
             slot = (int)i;
             break;
         }
     }
-    spin_unlock_irqrestore(&process_table[pid].fd_lock, fdflags);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (slot == -1) {
         /* Releasing the file drops its vnode reference too. */
@@ -638,12 +638,11 @@ int vfs_close(int fd)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
 
@@ -668,12 +667,11 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -716,12 +714,11 @@ int vfs_read(int fd, void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -755,12 +752,11 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -801,12 +797,11 @@ int vfs_readdir(int fd, void *buffer, size_t count)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -921,12 +916,11 @@ int vfs_write(int fd, const void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -964,12 +958,11 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f) {
@@ -1005,13 +998,13 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
  */
 int vfs_stat(const char *path, struct stat *buf)
 {
-    int pid_idx = process_find_current();
-    if (pid_idx < 0) {
-        return pid_idx;
+    struct process *proc = process_current();
+    if (!proc) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
     int error = 0;
-    struct vfs_vnode *node = vfs_resolve_path(path, process_table[pid_idx].cwd, &error);
+    struct vfs_vnode *node = vfs_resolve_path(path, proc->cwd, &error);
     if (!node) {
         return error;
     }
@@ -1030,12 +1023,11 @@ int vfs_dup2(int oldfd, int newfd)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     struct vfs_file *to_free = NULL;
 
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
@@ -1065,12 +1057,11 @@ int vfs_dup2(int oldfd, int newfd)
  */
 int vfs_chdir(const char *kpath)
 {
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     int error = 0;
 
     struct vfs_vnode *node = vfs_resolve_path(kpath, p->cwd, &error);
@@ -1102,12 +1093,11 @@ int vfs_getcwd(char *buf, size_t size)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_vnode *curr_node = p->cwd;
     if (!curr_node) {
@@ -1186,12 +1176,11 @@ int vfs_mkdir(const char *path)
         name = slash + 1;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     int error = 0;
 
     struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
@@ -1239,12 +1228,11 @@ int vfs_rmdir(const char *path)
         name = slash + 1;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     int error = 0;
 
     struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
@@ -1292,12 +1280,11 @@ int vfs_unlink(const char *path)
         name = slash + 1;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     int error = 0;
 
     struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
@@ -1365,12 +1352,11 @@ int vfs_rename(const char *oldpath, const char *newpath)
         name_new = slash_new + 1;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     int error = 0;
 
     struct vfs_vnode *old_parent_node = vfs_resolve_path(parent_old, p->cwd, &error);
@@ -1418,12 +1404,11 @@ int vfs_fsync(int fd)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[pid];
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_file *f = p->fd_table[fd];
     if (!f || !f->node) {
