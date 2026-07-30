@@ -109,11 +109,9 @@ static const char *fsc_to_string(uint32_t fsc)
  * Dispatches user-space aborts to process termination and kernel aborts
  * to the panic system. Includes CoW handling for permission faults.
  */
-static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t esr)
+static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t esr,
+                         unsigned long far)
 {
-    unsigned long far;
-    asm volatile("mrs %0, far_el1" : "=r"(far));
-
     uint32_t fsc = esr & FSC_MASK;
     int is_write =
         (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
@@ -285,7 +283,22 @@ void exception_irq_handler(void)
 void exception_sync_handler(struct exception_trap_frame *tf)
 {
     uintptr_t esr;
+    unsigned long far;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
+    asm volatile("mrs %0, far_el1" : "=r"(far));
+
+    /*
+     * Syndrome captured, so this core can take exceptions again. ESR_EL1 and
+     * FAR_EL1 are not banked: unmasking before reading them lets a preempting
+     * task's own abort overwrite both, and this handler then resolves the fault
+     * for someone else's address -- leaving the real faulting page unresolved.
+     *
+     * Exceptions from EL1 stay masked: a kernel fault can be taken inside a
+     * critical section, where preemption would not be safe.
+     */
+    if ((tf->spsr_el1 & 0xF) == 0) {
+        asm volatile("msr daifclr, #2" : : : "memory");
+    }
 
     uint32_t ec = (uint32_t)((esr >> 26) & 0x3F);
 
@@ -298,13 +311,10 @@ void exception_sync_handler(struct exception_trap_frame *tf)
         case EC_INST_ABORT_SAME:
         case EC_DATA_ABORT_LOWER:
         case EC_DATA_ABORT_SAME:
-            handle_abort(tf, ec, esr);
+            handle_abort(tf, ec, esr, far);
             break;
 
         default: {
-            unsigned long far;
-            asm volatile("mrs %0, far_el1" : "=r"(far));
-
             pr_err("\n[KERNEL FAULT] Unhandled synchronous exception\n");
             printk("  EC       : 0x%02x\n", (unsigned int)ec);
             printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);

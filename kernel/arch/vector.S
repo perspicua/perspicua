@@ -166,18 +166,9 @@ fiq_discard:
 sync_handler:
     save_all
 
-    // Exceptions taken from EL0 run with interrupts unmasked, so a long syscall
-    // no longer blocks this core's timer and device interrupts for its whole
-    // duration. Every contended lock is irqsave, so interrupts are masked
-    // exactly while one is held and preemption cannot land inside one.
-    //
-    // Exceptions from EL1 stay masked: a kernel fault can be taken inside a
-    // critical section, where preemption would not be safe.
-    ldr x0, [sp, #24]          // saved SPSR_EL1
-    and x0, x0, #0xf
-    cbnz x0, 1f
-    msr daifclr, #2
-1:
+    // Interrupts stay masked here. ESR_EL1 and FAR_EL1 are not banked, so they
+    // must be read before anything else can be taken on this core; the handler
+    // captures them and unmasks itself. See exception_sync_handler.
     mov x0, sp
     bl exception_sync_handler
     b ret_to_user
