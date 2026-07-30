@@ -165,6 +165,10 @@ fiq_discard:
 .global sync_handler
 sync_handler:
     save_all
+
+    // Interrupts stay masked here. ESR_EL1 and FAR_EL1 are not banked, so they
+    // must be read before anything else can be taken on this core; the handler
+    // captures them and unmasks itself. See exception_sync_handler.
     mov x0, sp
     bl exception_sync_handler
     b ret_to_user
@@ -177,7 +181,9 @@ irq_handler:
 
 .global ret_to_user
 ret_to_user:
-    mrs x0, spsr_el1
+    msr daifset, #2            // the return path itself must not be interrupted
+
+    ldr x0, [sp, #24]          // tf->spsr_el1 (saved), not the live register
     and x0, x0, #0xf
     cbnz x0, 1f
 

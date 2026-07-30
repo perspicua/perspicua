@@ -169,15 +169,33 @@ void test_heap(void)
     }
     TEST_PASS("first-fit ordering");
 
+    /*
+     * The tests from here to the end of the coalescing group assert *where* a
+     * block lands, which only holds if no earlier hole can serve the request.
+     * Consume every hole big enough to interfere and hold them for the whole
+     * group; the heap having to grow is the signal that none is left. Draining
+     * a fixed number of bytes instead would depend on how much heap the kernel
+     * happened to use before the tests ran.
+     */
+    void *layout_fill[64];
+    int layout_nfill = 0;
+    {
+        unsigned long total_before = heap_get_total();
+        while (layout_nfill < 64 && heap_get_total() == total_before) {
+            void *f = heap_malloc(LARGE);
+            if (!f) {
+                break;
+            }
+            layout_fill[layout_nfill++] = f;
+        }
+    }
+
     // block splitting (sizes > SLAB_MAX to exercise first-fit path)
 
     // split occurs when remainder >= header_size + 16 (48)
     //    Allocate a big block, free it, then allocate much smaller.
     //    The remainder should be split into a second usable block.
     {
-        // Drain the initial pool so the freed block is the first-fit candidate.
-        // Initial pool is ~8160 bytes; allocating 8000 consumes it.
-        void *drain = heap_malloc(8000);
         void *big = heap_malloc(8192);
         heap_free(big);
         // Freed block has size >= 8192.
@@ -192,7 +210,6 @@ void test_heap(void)
         TEST_ASSERT("split: contiguous layout", (unsigned long)next == expected);
         heap_free(small);
         heap_free(next);
-        heap_free(drain);
     }
     TEST_PASS("block splitting basic");
 
@@ -335,6 +352,10 @@ void test_heap(void)
         heap_free(guard);
     }
     TEST_PASS("reverse-order coalesce");
+
+    for (int i = layout_nfill - 1; i >= 0; i--) {
+        heap_free(layout_fill[i]);
+    }
 
     // heap expansion
 
@@ -834,6 +855,54 @@ void test_heap(void)
         heap_free(q);
     }
     TEST_PASS("exact size reuse");
+
+    // a request matching a free block's capacity must still get every byte it
+    // asked for; the redzone footer used to be carved out of the caller's region
+    {
+        for (unsigned long n = LARGE; n <= LARGE + 512; n += 16) {
+            void *lo = heap_malloc(n);
+            void *mid = heap_malloc(n);
+            void *hi = heap_malloc(n);
+            TEST_ASSERT("usable-size setup allocates", lo && mid && hi);
+
+            heap_free(mid); // allocated neighbours keep the hole uncoalesced
+
+            for (unsigned long extra = 0; extra <= 32; extra += 16) {
+                void *p = heap_malloc(n + extra);
+                TEST_ASSERT("exact-fit request satisfied", p != NULL);
+                TEST_ASSERT("usable size covers request", heap_test_usable_size(p) >= n + extra);
+                memset(p, 0xC5, n + extra); // must not reach the redzone
+                heap_free(p);               // panics if it did
+            }
+
+            heap_free(lo);
+            heap_free(hi);
+        }
+    }
+    TEST_PASS("allocation is never shorter than requested");
+
+    /*
+     * heap_free used to read block->size straight out of whatever preceded the
+     * pointer and locate the footer from there, so a pointer this allocator
+     * never returned sent that read anywhere. Blocks now carry a tag that says
+     * whether they are ours and whether they are live.
+     */
+    {
+        void *p = heap_malloc(LARGE);
+        TEST_ASSERT("alloc for tag test", p != NULL);
+        TEST_ASSERT("handed-out block is tagged allocated", heap_test_is_tagged_allocated(p));
+
+        heap_free(p);
+        TEST_ASSERT("released block is no longer tagged allocated",
+                    !heap_test_is_tagged_allocated(p));
+
+        // a stack address was never ours, so it must not look allocated
+        static unsigned char not_heap[64];
+        memset(not_heap, 0, sizeof(not_heap));
+        TEST_ASSERT("foreign memory is not tagged",
+                    !heap_test_is_tagged_allocated(not_heap + sizeof(not_heap) / 2));
+    }
+    TEST_PASS("block headers are identifiable");
 
     // full lifecycle
 

@@ -21,16 +21,26 @@
 
 /*
  * struct heap_block_header - Prefix for first-fit pool allocations.
+ *
+ * `magic` identifies the header as ours before anything trusts `size`. Without
+ * it, freeing a pointer this allocator never returned reads a length from
+ * whatever precedes it and locates the footer from there, anywhere in memory.
+ * It fits in existing padding, so the header stays 32 bytes.
  */
 struct heap_block_header {
     unsigned long size;
     struct heap_block_header *next;
+    unsigned int magic;
     unsigned char is_free;
 } __attribute__((aligned(16)));
 
 #define HEAP_REDZONE_MAGIC 0xDEADBEEF
+#define HEAP_MAGIC_ALLOC   0x48454150U /* "HEAP" */
+#define HEAP_MAGIC_FREE    0x46524545U /* "FREE" */
 
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
+
+_Static_assert(sizeof(struct heap_block_header) == 32, "heap header must stay 32 bytes");
 
 struct heap_block_footer {
     unsigned int magic;
@@ -48,7 +58,9 @@ static unsigned long heap_used_size = 0;
  */
 static struct heap_block_header *heap_expand(unsigned long min_size)
 {
-    unsigned long total = min_size + HEAP_HEADER_SIZE;
+    /* Must also cover the redzone footer, or the block it returns cannot
+     * satisfy the request that asked for it and heap_malloc spins. */
+    unsigned long total = min_size + HEAP_HEADER_SIZE + HEAP_FOOTER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
     void *region = pmm_alloc_pages(pages);
@@ -60,6 +72,7 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     block->size = pages * PAGE_SIZE - HEAP_HEADER_SIZE;
     block->next = NULL;
     block->is_free = 1;
+    block->magic = HEAP_MAGIC_FREE;
 
     heap_total_size += pages * PAGE_SIZE;
 
@@ -75,6 +88,7 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
 static void heap_insert_free(struct heap_block_header *block)
 {
     block->is_free = 1;
+    block->magic = HEAP_MAGIC_FREE;
 
     struct heap_block_header *prev = NULL;
     struct heap_block_header *next = heap_free_list;
@@ -139,13 +153,17 @@ void *heap_malloc(unsigned long size)
 
     size = HEAP_ALIGN(size);
 
+    /* The redzone footer is carved from the block, so a fit must cover both it
+     * and the caller's region. */
+    unsigned long need = size + HEAP_FOOTER_SIZE;
+
     while (1) {
         unsigned long flags = spin_lock_irqsave(&heap_lock);
 
         struct heap_block_header *prev = NULL;
         struct heap_block_header *curr = heap_free_list;
         while (curr) {
-            if (curr->size >= size) {
+            if (curr->size >= need) {
                 if (prev) {
                     prev->next = curr->next;
                 } else {
@@ -153,11 +171,11 @@ void *heap_malloc(unsigned long size)
                 }
 
                 /* Split if remainder is large enough for a header and usable space */
-                if (curr->size >= size + HEAP_FOOTER_SIZE + HEAP_HEADER_SIZE + 16) {
+                if (curr->size >= need + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
-                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE + size
-                                                     + HEAP_FOOTER_SIZE);
-                    split->size = curr->size - size - HEAP_FOOTER_SIZE - HEAP_HEADER_SIZE;
+                        (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
+                                                     + need);
+                    split->size = curr->size - need - HEAP_HEADER_SIZE;
                     split->is_free = 1;
                     split->next = NULL;
 
@@ -172,6 +190,7 @@ void *heap_malloc(unsigned long size)
                                                  + curr->size);
                 footer->magic = HEAP_REDZONE_MAGIC;
                 curr->is_free = 0;
+                curr->magic = HEAP_MAGIC_ALLOC;
                 curr->next = NULL;
                 heap_used_size += curr->size + HEAP_HEADER_SIZE;
 
@@ -213,14 +232,21 @@ void heap_free(void *ptr)
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
+    /* Confirm the header is ours before size is used to locate anything. */
+    if (block->magic == HEAP_MAGIC_FREE) {
+        spin_unlock_irqrestore(&heap_lock, flags);
+        PANIC("heap: double free detected");
+    }
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        spin_unlock_irqrestore(&heap_lock, flags);
+        PANIC("heap: pointer was not returned by heap_malloc");
+    }
+
     struct heap_block_footer *footer =
         (struct heap_block_footer *)((unsigned char *)block + HEAP_HEADER_SIZE + block->size);
     if (footer->magic != HEAP_REDZONE_MAGIC) {
+        spin_unlock_irqrestore(&heap_lock, flags);
         PANIC("heap: buffer overflow detected (redzone corrupted)");
-    }
-
-    if (block->is_free) {
-        PANIC("heap: double free detected");
     }
 
     heap_used_size -= block->size + HEAP_HEADER_SIZE;
@@ -245,3 +271,31 @@ unsigned long heap_get_total(void)
 {
     return heap_total_size + slab_get_total();
 }
+
+#ifdef CONFIG_TESTS
+int heap_test_is_tagged_allocated(const void *ptr)
+{
+    if (!ptr || slab_owns((void *)ptr)) {
+        return 0;
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    return block->magic == HEAP_MAGIC_ALLOC;
+}
+
+unsigned long heap_test_usable_size(const void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    if (slab_owns((void *)ptr)) {
+        return slab_test_object_size((void *)ptr);
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    return block->size;
+}
+#endif

@@ -1,4 +1,5 @@
 #include "test.h"
+#include "core/timer.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"
@@ -512,6 +513,190 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("user PGD doesn't affect kernel");
+
+    /*
+     * process_exit relies on this to stop TTBR0 naming tables it is about to
+     * hand back to the allocator: after leaving, the base must be the empty
+     * table, not the pgd that was active.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *page = pmm_alloc_page();
+        unsigned long active = 0, left = 0, saved = 0;
+
+        if (pgd && page) {
+            unsigned long irqf = irq_save();
+
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(saved));
+            mmu_user_map_page(pgd, USER_VA_BASE, V2P(page), MMU_PAGE_USER_DATA);
+
+            mmu_switch_user(pgd, 0);
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(active));
+
+            mmu_leave_user();
+            asm volatile("mrs %0, ttbr0_el1" : "=r"(left));
+
+            asm volatile("msr ttbr0_el1, %0" ::"r"(saved) : "memory");
+            asm volatile("dsb ish\n isb" ::: "memory");
+            irq_restore(irqf);
+        }
+
+        TEST_ASSERT("leave-user setup allocated", pgd != NULL && page != NULL);
+        TEST_ASSERT_EQ("switch installed the user pgd", active & MMU_PTE_ADDR_MASK, V2P(pgd));
+        TEST_ASSERT_EQ("leave installs the empty table", left, mmu_kernel_ttbr0());
+        TEST_ASSERT("leave does not keep the freed pgd", (left & MMU_PTE_ADDR_MASK) != V2P(pgd));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("leaving a user address space");
+
+    /*
+     * Range validation for user buffers. This is what stands between a syscall
+     * and a pointer into unmapped or kernel-only memory, and it has to hold
+     * across a whole range rather than the first page of one.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        const unsigned long base = USER_VA_BASE + 0x400000;
+        void *pages[6];
+        int allocated = 1;
+
+        for (int i = 0; i < 6; i++) {
+            pages[i] = pmm_alloc_page();
+            if (!pages[i]) {
+                allocated = 0;
+            }
+        }
+        TEST_ASSERT("range-check setup allocated", pgd != NULL && allocated);
+
+        /*
+         * Layout, one page each. Every page gets its own VA: remapping over a
+         * live entry releases the physical page it displaced, so reusing one
+         * address for several permission cases would free it repeatedly.
+         *
+         *   +0 +1 +2  read/write
+         *   +3         unmapped hole
+         *   +4         read-only
+         *   +5         read-only + copy-on-write
+         *   +6         kernel-only
+         */
+        for (int i = 0; i < 3; i++) {
+            mmu_user_map_page(pgd, base + (unsigned long)i * PAGE_SIZE, V2P(pages[i]),
+                              MMU_PAGE_USER_DATA);
+        }
+        mmu_user_map_page(pgd, base + 4 * PAGE_SIZE, V2P(pages[3]), MMU_PAGE_USER_RODATA);
+        mmu_user_map_page(pgd, base + 5 * PAGE_SIZE, V2P(pages[4]),
+                          MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+        mmu_user_map_page(pgd, base + 6 * PAGE_SIZE, V2P(pages[5]), MMU_FLAGS_KERNEL_RW);
+
+        TEST_ASSERT("mapped range accepted", mmu_user_range_ok(pgd, base, base + 3 * PAGE_SIZE, 0));
+        TEST_ASSERT("mapped range accepted for write",
+                    mmu_user_range_ok(pgd, base, base + 3 * PAGE_SIZE, 1));
+
+        // a range must be rejected if any page in it is missing, not just the first
+        TEST_ASSERT("range running into a hole rejected",
+                    !mmu_user_range_ok(pgd, base, base + 4 * PAGE_SIZE, 0));
+        TEST_ASSERT("range starting in a hole rejected",
+                    !mmu_user_range_ok(pgd, base + 3 * PAGE_SIZE, base + 4 * PAGE_SIZE, 0));
+
+        // an unaligned span still covers every page it touches
+        TEST_ASSERT("unaligned span within the mapping accepted",
+                    mmu_user_range_ok(pgd, base + 8, base + 2 * PAGE_SIZE + 8, 0));
+        TEST_ASSERT("unaligned span crossing the hole rejected",
+                    !mmu_user_range_ok(pgd, base + 8, base + 3 * PAGE_SIZE + 8, 0));
+
+        // read-only pages are readable but not writable
+        TEST_ASSERT("read-only page accepted for read",
+                    mmu_user_range_ok(pgd, base + 4 * PAGE_SIZE, base + 5 * PAGE_SIZE, 0));
+        TEST_ASSERT("read-only page rejected for write",
+                    !mmu_user_range_ok(pgd, base + 4 * PAGE_SIZE, base + 5 * PAGE_SIZE, 1));
+
+        // a copy-on-write page reads as read-only but is writable
+        TEST_ASSERT("copy-on-write page accepted for write",
+                    mmu_user_range_ok(pgd, base + 5 * PAGE_SIZE, base + 6 * PAGE_SIZE, 1));
+
+        // a mapping EL0 cannot reach is not a user buffer
+        TEST_ASSERT("kernel-only mapping rejected",
+                    !mmu_user_range_ok(pgd, base + 6 * PAGE_SIZE, base + 7 * PAGE_SIZE, 0));
+
+        TEST_ASSERT("empty range rejected", !mmu_user_range_ok(pgd, base, base, 0));
+        TEST_ASSERT("null pgd rejected", !mmu_user_range_ok(NULL, base, base + PAGE_SIZE, 0));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("user range validation");
+
+    /*
+     * Copy-on-write resolution. Copying is only correct when someone else still
+     * holds the page; when this mapping is the last one the entry can just be
+     * made writable, which is what a parent hits on every write after its child
+     * has exited.
+     */
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *sole = pmm_alloc_page();
+        const unsigned long va = USER_VA_BASE + 0x600000;
+        unsigned long before_pa = 0, after_pa = 0, after_flags = 0;
+        int rc = -1;
+
+        if (pgd && sole) {
+            mmu_user_map_page(pgd, va, V2P(sole), MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+            mmu_user_query(pgd, va, &before_pa, NULL);
+
+            rc = mmu_handle_cow(pgd, va);
+            mmu_user_query(pgd, va, &after_pa, &after_flags);
+        }
+
+        TEST_ASSERT("sole-owner setup allocated", pgd != NULL && sole != NULL);
+        TEST_ASSERT_EQ("sole owner resolves", rc, 0);
+        TEST_ASSERT_EQ("sole owner keeps its page", after_pa & ~0xFFFUL, before_pa & ~0xFFFUL);
+        TEST_ASSERT("sole owner is now writable", !(after_flags & MMU_AP_RO));
+        TEST_ASSERT("sole owner is no longer copy-on-write", !(after_flags & MMU_PTE_COW));
+
+        mmu_destroy_user_pgd(pgd);
+    }
+    TEST_PASS("copy-on-write promotes the last reference in place");
+
+    // a genuinely shared page must be copied, not promoted
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        void *shared = pmm_alloc_page();
+        const unsigned long va = USER_VA_BASE + 0x700000;
+        unsigned long before_pa = 0, after_pa = 0, after_flags = 0;
+        int rc = -1, content_ok = 0, shared_rc = 0;
+
+        if (pgd && shared) {
+            memset(shared, 0x7C, PAGE_SIZE);
+            pmm_hold_page(shared); /* stand in for a second address space */
+
+            mmu_user_map_page(pgd, va, V2P(shared), MMU_PAGE_USER_RODATA | MMU_PTE_COW);
+            mmu_user_query(pgd, va, &before_pa, NULL);
+
+            rc = mmu_handle_cow(pgd, va);
+            mmu_user_query(pgd, va, &after_pa, &after_flags);
+
+            const unsigned char *copy = (const unsigned char *)P2V(after_pa & ~0xFFFUL);
+            content_ok = 1;
+            for (unsigned long i = 0; i < PAGE_SIZE; i++) {
+                if (copy[i] != 0x7C) {
+                    content_ok = 0;
+                    break;
+                }
+            }
+            shared_rc = (int)pmm_page_refcount(shared);
+        }
+
+        TEST_ASSERT("shared-page setup allocated", pgd != NULL && shared != NULL);
+        TEST_ASSERT_EQ("shared page resolves", rc, 0);
+        TEST_ASSERT("shared page is replaced", (after_pa & ~0xFFFUL) != (before_pa & ~0xFFFUL));
+        TEST_ASSERT("copy carries the original contents", content_ok);
+        TEST_ASSERT("copy is writable", !(after_flags & MMU_AP_RO));
+        TEST_ASSERT_EQ("the other holder keeps its reference", shared_rc, 1);
+
+        mmu_destroy_user_pgd(pgd);
+        pmm_free_page(shared); /* the stand-in holder */
+    }
+    TEST_PASS("copy-on-write copies a shared page");
 
     TEST_SUITE_END("MMU Per-Process Page Tables");
 }

@@ -26,6 +26,7 @@
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
 _Static_assert(__builtin_offsetof(struct task, state) == 112,
                "task->state offset mismatch — update task_wrapper_asm");
+_Static_assert(SCHED_TASK_DEAD == 4, "task_wrapper_asm stores this value literally");
 
 #define TASK_CANARY_PTR(t) ((unsigned long *)((t)->stack + PAGE_SIZE))
 
@@ -176,10 +177,46 @@ static struct task *rq_dequeue(int cpu, int allow_pid0)
     return NULL;
 }
 
+/* Removes a task from the sleep queue if present. Caller holds sched_sleep_lock. */
+static void sleep_unlink_locked(struct task *t)
+{
+    if (sched_sleep_head == t) {
+        sched_sleep_head = t->sleep_next;
+        t->sleep_next = NULL;
+        return;
+    }
+
+    struct task *scan = sched_sleep_head;
+    while (scan && scan->sleep_next != t) {
+        scan = scan->sleep_next;
+    }
+    if (scan) {
+        scan->sleep_next = t->sleep_next;
+        t->sleep_next = NULL;
+    }
+}
+
+/* Removes a task from the sleep queue, taking the lock itself. */
+static void sleep_dequeue(struct task *t)
+{
+    unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+    sleep_unlink_locked(t);
+    spin_unlock_irqrestore(&sched_sleep_lock, flags);
+}
+
 /* Inserts task into ordered sleep queue. */
 static void sleep_enqueue(struct task *t)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+
+    /*
+     * A task woken early from sleep (e.g. by a signal delivering through
+     * sched_unblock) stays linked in this queue until sleep_drain reaches its
+     * wake_time. If it sleeps again before then, inserting it a second time
+     * would splice the node into the list twice and form a cycle. Unlink any
+     * stale entry first so a task appears at most once.
+     */
+    sleep_unlink_locked(t);
 
     if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0) {
         t->sleep_next = sched_sleep_head;
@@ -284,6 +321,9 @@ static void cleanup_dead_task(int cpu)
     if (dead->stack && (unsigned long)dead->stack < KERNEL_VMA) {
         PANIC("sched: t->stack corrupted before cleanup_dead_task");
     }
+
+    /* Last line of defence: the sleep queue must not outlive the task. */
+    sleep_dequeue(dead);
 
     free_task_stack(dead->stack);
     dead->stack = NULL;
@@ -445,6 +485,44 @@ void sched_unblock(struct task *t)
     enum sched_task_state expected = SCHED_TASK_BLOCKED;
     if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
                                     __ATOMIC_SEQ_CST)) {
+        /* A timed sleep leaves the task linked here. Drop it now: otherwise
+         * sleep_drain can re-ready it out of an unrelated later block, or walk
+         * it after the task has been freed. */
+        sleep_dequeue(t);
+        rq_enqueue(get_core_id(), t);
+    }
+}
+
+void sched_stop(void)
+{
+    unsigned long flags = irq_save();
+    int cpu = get_core_id();
+    struct task *curr = sched_get_current();
+
+    if (!curr || curr == sched_idle[cpu]) {
+        irq_restore(flags);
+        return;
+    }
+
+    curr->state = SCHED_TASK_STOPPED;
+    schedule();
+    irq_restore(flags);
+}
+
+void sched_continue(struct task *t)
+{
+    if (!t) {
+        return;
+    }
+
+    if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_READY) {
+        return;
+    }
+
+    enum sched_task_state expected = SCHED_TASK_STOPPED;
+    if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
+                                    __ATOMIC_SEQ_CST)) {
+        sleep_dequeue(t);
         rq_enqueue(get_core_id(), t);
     }
 }
@@ -465,6 +543,56 @@ int sched_get_core_pid(int cpu)
     }
     return sched_core_pid[cpu];
 }
+
+#ifdef CONFIG_TESTS
+int sched_test_in_sleep_queue(const struct task *t)
+{
+    unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
+    int found = 0;
+
+    for (struct task *scan = sched_sleep_head; scan; scan = scan->sleep_next) {
+        if (scan == t) {
+            found = 1;
+            break;
+        }
+    }
+
+    spin_unlock_irqrestore(&sched_sleep_lock, flags);
+    return found;
+}
+#endif
+
+/*
+ * task_ttbr0_for - Builds the TTBR0 value for a process about to run.
+ *
+ * Read under the table lock: process_exit clears user_pgd while its task is
+ * still runnable, and V2P(NULL) would otherwise be installed as a page table
+ * base. A process that is no longer RUNNING has no address space worth
+ * entering, so fall back to the kernel's.
+ */
+static unsigned long task_ttbr0_for(uint32_t pid)
+{
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct process *p = process_slot(pid);
+    unsigned long ttbr0;
+
+    if (p && p->state == PROCESS_STATE_RUNNING && p->user_pgd) {
+        asid_get_active(&p->asid, &p->asid_generation);
+        ttbr0 = V2P(p->user_pgd) | asid_ttbr_field(p->asid);
+    } else {
+        ttbr0 = mmu_kernel_ttbr0();
+    }
+
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    return ttbr0;
+}
+
+#ifdef CONFIG_TESTS
+unsigned long sched_test_task_ttbr0_for(uint32_t pid)
+{
+    return task_ttbr0_for(pid);
+}
+#endif
 
 /* Core scheduling logic. Selects next task and context switches. */
 void schedule(void)
@@ -497,6 +625,7 @@ void schedule(void)
             }
             break;
         case SCHED_TASK_BLOCKED:
+        case SCHED_TASK_STOPPED:
         case SCHED_TASK_READY:
             break;
         case SCHED_TASK_DEAD:
@@ -529,11 +658,7 @@ void schedule(void)
     asm volatile("msr tpidr_el1, %0" ::"r"(next));
 
     if (next->pid > 0) {
-        struct process *p = &process_table[next->pid];
-        asid_get_active(&p->asid, &p->asid_generation);
-
-        // ttbr0 reconstruct using ASID
-        next->ttbr0 = V2P(p->user_pgd) | ((p->asid & 0xFFUL) << 48);
+        next->ttbr0 = task_ttbr0_for(next->pid);
     }
 
     asm volatile("msr ttbr0_el1, %0" ::"r"(next->ttbr0));

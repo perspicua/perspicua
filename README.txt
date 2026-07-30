@@ -32,4 +32,9 @@ The source code is organized as follows:
   - uapi/       Kernel-user interface headers
   - pi4-boot/   Firmware and boot configuration
 
+DOCUMENTATION:
+  - docs/                Design and process docs (start at docs/README.txt)
+  - docs/architecture.txt  How the system fits together
+  - CONTRIBUTING.txt     How to make a change end to end
+
 For licensing information, see the LICENSE file.

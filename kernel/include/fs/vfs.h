@@ -15,8 +15,18 @@
 #include "core/lock.h"
 
 #define VFS_MAX_PATH_LEN 4096
-#define VFS_MAX_FDS      32
-#define VFS_MAX_MOUNTS   8
+
+/*
+ * Mount points are short ("/", "/dev"), and the mount table is static, so
+ * storing a full-length path per entry costs 4 KB each for nothing.
+ */
+#define VFS_MAX_MOUNT_PATH 64
+#ifdef CONFIG_MAX_FDS
+    #define VFS_MAX_FDS CONFIG_MAX_FDS
+#else
+    #define VFS_MAX_FDS 64
+#endif
+#define VFS_MAX_MOUNTS 8
 
 /* Standard file open flags */
 #define VFS_O_RDONLY  0x0000
@@ -125,6 +135,27 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 void vfs_vnode_put(struct vfs_vnode *node);
 
 /*
+ * vfs_file_alloc - Allocates an open-file object holding one reference.
+ */
+struct vfs_file *vfs_file_alloc(void);
+
+/*
+ * vfs_file_put - Drops a reference, releasing the file with the last one.
+ *
+ * The only correct way to release a struct vfs_file: dropping the count
+ * without this runs neither the driver's close nor the vnode put.
+ */
+void vfs_file_put(struct vfs_file *f);
+
+#ifdef CONFIG_TESTS
+/* Open-file objects allocated but not yet released. */
+unsigned long vfs_test_live_files(void);
+
+/* The open-file object behind a descriptor, or NULL. */
+struct vfs_file *vfs_test_file_at(int fd);
+#endif
+
+/*
  * vfs_open - Standard process-relative file open.
  */
 int vfs_open(const char *path, int flags);
@@ -150,9 +181,19 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
 int vfs_read(int fd, void *buffer, size_t count);
 
 /*
+ * vfs_pread - Synchronous data retrieval from a descriptor at a specific offset.
+ */
+int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset);
+
+/*
  * vfs_write - Synchronous data submission to a descriptor.
  */
 int vfs_write(int fd, const void *buffer, size_t count);
+
+/*
+ * vfs_pwrite - Synchronous data submission to a descriptor at a specific offset.
+ */
+int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset);
 
 /*
  * vfs_readdir - Retrieves directory entries from a descriptor.

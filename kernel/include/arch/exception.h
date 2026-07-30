@@ -10,6 +10,8 @@
 
 #include "types.h"
 
+#include "sched/sched.h"
+
 /* 128-bit type for NEON/FPU registers */
 typedef __uint128_t uint128_t;
 
@@ -33,6 +35,21 @@ struct exception_trap_frame {
 
     uint128_t q[32]; /* SIMD/NEON/FPU registers v0 - v31 */
 } __attribute__((aligned(16)));
+
+/*
+ * save_all and restore_all in vector.S reach into this frame with hardcoded
+ * offsets and reserve its size on the stack. A field reordered or inserted here
+ * would silently corrupt every exception rather than fail to build.
+ */
+_Static_assert(sizeof(struct exception_trap_frame) == 800, "trap frame size — update vector.S");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, sp_el0) == 0, "sp_el0 offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, elr_el1) == 16, "elr_el1 offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, spsr_el1) == 24, "spsr_el1 offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, x) == 32, "x[] offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, x30) == 272, "x30 offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, fpsr) == 280, "fpsr offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, fpcr) == 284, "fpcr offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, q) == 288, "q[] offset");
 
 /*
  * exception_unhandled_vector - Default handler for unknown or reserved vectors.
@@ -60,6 +77,6 @@ struct irq_stats {
     uint64_t uart_count;
 };
 
-extern struct irq_stats core_irq_stats[4];
+extern struct irq_stats core_irq_stats[SCHED_NUM_CORES];
 
 #endif /* PERSPICUA_ARCH_EXCEPTION_H */

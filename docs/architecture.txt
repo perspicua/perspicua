@@ -1,0 +1,164 @@
+Perspicua Architecture
+======================
+
+A tour of how the system is put together, for someone reading the code for the
+first time. This describes what EXISTS today, not what is planned — for the plan
+see order.txt and ideas.txt.
+
+Perspicua is a 64-bit, multi-core (SMP, up to 4 cores) monolithic kernel for
+the Raspberry Pi 4B (BCM2711, Cortex-A72, AArch64). It boots at EL1 with the
+MMU on, runs a preemptible-ish round-robin scheduler across per-core runqueues,
+mounts a FAT32 root off the SD card through a VFS layer, and launches an ELF
+init process into userspace. It is developed primarily against QEMU's raspi4b
+machine and validated on real hardware before release.
+
+
+================================================================================
+SOURCE TREE
+================================================================================
+
+  kernel/               The kernel itself.
+    arch/               AArch64 entry and low-level asm: boot.S (early boot,
+                        secondary-core parking), vector.S (exception vectors),
+                        switch.S (context switch), uaccess.S (fault-fixup user
+                        copies), exception.c (synchronous + IRQ handlers).
+    core/               Cross-cutting services: syscall dispatch, signals, the
+                        tty line discipline, timer, ELF loader, the initrd,
+                        locks (spinlock), lockdep, the recursive sleeping mutex,
+                        and the in-kernel debugger (kdb).
+    mm/                 Memory management: pmm (physical page allocator), mmu
+                        (page tables, map/unmap, CoW faults), heap and slab
+                        (kernel allocators), asid (address-space ID pool).
+    sched/              The scheduler (per-core runqueues, sleep, wait) and the
+                        process model (address space, fd table, exec/exit).
+    fs/                 VFS core plus the concrete filesystems and helpers:
+                        fat32, devfs, procfs, ramfs, the pipe implementation,
+                        and the page cache.
+    driver/             Device drivers: uart, gic (interrupt controller), gpio,
+                        mailbox, framebuffer (fb) + fb_console + graphics +
+                        dashboard, sd (card) + block (block cache), and the
+                        device/probe model.
+    devicetree/         The flattened-devicetree (FDT) parser used at boot.
+    init/               main.c — the kernel entry point and init sequence.
+    tests/              In-kernel test suites (compiled in only under
+                        CONFIG_TESTS). See testing.txt.
+    include/            Public headers, mirrored by subsystem (core/, mm/,
+                        sched/, fs/, driver/, arch/, devicetree/, debug/).
+
+  libc/                 Freestanding C library, split by consumer:
+    kernel/             The allocator and hooks used by kernel code.
+    user/               The userspace allocator, syscall wrappers, and stdio
+                        glue.
+    src/                Code shared by both (string, printf, ctype, stdlib).
+    arch/               setjmp/longjmp in asm.
+    include/            libc headers.
+
+  uapi/                 The user/kernel ABI contract: syscall numbers
+                        (syscalls.h), error codes, signal numbers, stat and
+                        wait and mman layouts. Included by BOTH sides — nothing
+                        here may depend on kernel-private headers.
+
+  user/                 Userspace: crt0.S (C runtime startup) and apps/ (init,
+                        sh, ls, cat, and the various tools and test programs).
+
+  cmake/                The cross-compilation toolchain file.
+  scripts/              Build/dev helpers: symbol-table generation, GDB helpers,
+                        and run_tests.sh (the headless test harness).
+  pi4-boot/             Firmware, the devicetree blob, and the final kernel8.img
+                        that gets flashed or handed to QEMU.
+
+
+================================================================================
+BOOT SEQUENCE
+================================================================================
+
+The primary core enters through arch/boot.S, then calls main() in init/main.c
+with a pointer to the devicetree. main() runs in ordered stages — the order
+matters, because each stage depends on the ones before it:
+
+  Stage 0  Devicetree.       fdt_init() parses the DTB so later stages can
+                             discover memory, CPUs, and devices.
+
+  Stage 1  Console bring-up. Probe core drivers, initialize the framebuffer and
+                             its text console, and the tty. From here the kernel
+                             can print (pr_info / the banner).
+
+  Stage 2  Memory.           Reserve regions from the DTB, bring up the physical
+                             allocator (pmm), turn on the MMU, initialize the
+                             ASID pool and the page cache, then re-base the DTB
+                             pointer to its virtual address, remap the
+                             framebuffer, and init the kernel heap. After this
+                             stage the kernel runs fully in the virtual map.
+
+  Stage 3  Interrupts + sched. Probe IRQ-driven drivers, enable UART interrupts
+                             and the timer tick, initialize the scheduler, and
+                             start the dashboard background task.
+
+  Stage 4  SMP + filesystems. Wake the secondary cores (smp_init reads the CPU
+                             spin-table release addresses from the DTB), then
+                             bring up the VFS, the process subsystem, devfs, and
+                             probe the remaining devices. Mount FAT32 from "sd0"
+                             at "/", start the writeback daemon, mount devfs at
+                             "/dev", and init procfs.
+
+  Launch.  Enable interrupts, (optionally run the test suites under
+           CONFIG_TESTS), then exec /bin/init.elf as the first user process.
+           The boot thread parks in a wfe loop; the scheduler runs everything
+           from here.
+
+Secondary cores start parked in a spin table. smp_init points their release
+address at the shared entry and signals an event; each secondary runs
+secondary_main() — per-core MMU/GIC/timer init — then enters the scheduler.
+
+
+================================================================================
+SUBSYSTEM NOTES
+================================================================================
+
+Memory
+  Physical memory is handed out in 4KB pages by the pmm. The mmu builds 39-bit
+  virtual address spaces (kernel high-half + per-process user map) and handles
+  copy-on-write faults. Kernel dynamic allocation goes through the slab (for
+  fixed-size objects) and the heap (general purpose). Each address space carries
+  an ASID from a small pool so TLB entries don't have to be flushed wholesale on
+  every switch.
+
+Scheduling and processes
+  Per-core runqueues with round-robin selection; a task can be on a runqueue, a
+  sleep queue, or a wait queue, and these are SEPARATE linked-list links on the
+  task (conflating them was a past source of list corruption). A process owns an
+  address space, a file-descriptor table, and signal state; exec loads an ELF,
+  exit tears the process down. Signals are POSIX-style; job-control stops
+  (SIGSTOP/SIGCONT) are not fully wired yet.
+
+Filesystems
+  A VFS sits in front of every filesystem: nodes expose an ops table, and paths
+  resolve through mounts. FAT32 is the on-disk root and is serialized under a
+  sleeping mutex. devfs exposes device nodes (console, fb0, block devices);
+  procfs exposes kernel state as text; pipes and ramfs round out the set. File
+  data flows through a page cache; block I/O flows through a block cache in the
+  sd/block drivers. Both caches pin pages that are in use so they cannot be
+  evicted out from under a reader.
+
+Drivers and interrupts
+  The GIC routes interrupts; drivers register handlers through a probe model
+  driven by the devicetree. The UART is the serial console and is decoupled from
+  the tty line discipline (the tty registers callbacks with it). The framebuffer
+  stack is fb (mailbox-allocated surface) -> graphics (primitives) -> fb_console
+  (an 8x8-font text console) -> dashboard (the status banner).
+
+The user/kernel boundary
+  Userspace talks to the kernel only through the syscall numbers and struct
+  layouts in uapi/. Kernel code never trusts a user pointer: the uaccess helpers
+  (arch/uaccess.S) copy to/from user memory with fault fixup so a bad pointer
+  returns an error instead of faulting the kernel.
+
+
+================================================================================
+WHERE TO LOOK FIRST
+================================================================================
+  - "How does it boot?"          kernel/init/main.c
+  - "What's the ABI?"            uapi/syscalls.h  and  kernel/core/syscall.c
+  - "How is a process made?"     kernel/sched/process.c  and  kernel/core/elf.c
+  - "How does a read() work?"    kernel/fs/vfs.c -> fat32.c -> pagecache.c
+  - "What runs in userspace?"    user/apps/init.c  and  user/apps/sh.c

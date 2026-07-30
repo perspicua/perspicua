@@ -48,43 +48,48 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
         return 0;
     }
 
-    int pid = process_find_current();
-    if (pid < 0) {
-        return 0;
-    }
-
+    /*
+     * These are the calling process's own tables, and it cannot be exiting
+     * while it is here, so the lock is only needed to read the pointer -- not
+     * for the walk. Holding it across a megabyte-scale range stalls every other
+     * core, including any that needs it to schedule.
+     */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    unsigned long *pgd = process_table[pid].user_pgd;
-    if (!pgd) {
-        spin_unlock_irqrestore(&process_table_lock, flags);
-        return 0;
-    }
-
-    uintptr_t curr = start & ~0xFFFULL;
-    while (curr < end) {
-        unsigned long current_flags;
-        if (!mmu_user_query(pgd, curr, NULL, &current_flags)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        /* Check for user-mode accessibility */
-        if (!(current_flags & MMU_AP_USER)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        /* Check for write permissions (bit 7 is Read-Only, but COW allows it) */
-        if (writable && (current_flags & (1ULL << 7)) && !(current_flags & MMU_PTE_COW)) {
-            spin_unlock_irqrestore(&process_table_lock, flags);
-            return 0;
-        }
-
-        curr += PAGE_SIZE;
-    }
+    struct process *p = process_current();
+    unsigned long *pgd = p ? p->user_pgd : NULL;
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    return 1;
+    if (!pgd) {
+        return 0;
+    }
+
+    return mmu_user_range_ok(pgd, start, end, writable);
+}
+
+/*
+ * copy_path_from_user - Copies a user path into a fresh kernel buffer.
+ *
+ * On success the caller owns *out and must heap_free it. Every path-taking
+ * syscall goes through here so the allocation and truncation checks cannot be
+ * forgotten at one call site.
+ */
+static int copy_path_from_user(const char *upath, char **out)
+{
+    *out = NULL;
+
+    char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
+    if (!kpath) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    long copied = strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN);
+    if (copied < 0) {
+        heap_free(kpath);
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    *out = kpath;
+    return PERS_SUCCESS;
 }
 
 /*
@@ -95,6 +100,14 @@ void syscall_handle(struct exception_trap_frame *tf)
     uint64_t syscall_nr = tf->x[8];
     struct task *curr = sched_get_current();
     uint32_t pid = curr->pid;
+
+    /* A task running a syscall always has a live slot; refuse rather than
+     * fault at EL1 if that ever stops holding. */
+    struct process *proc = process_slot(pid);
+    if (!proc) {
+        tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+        return;
+    }
 
     switch (syscall_nr) {
         case SYS_WRITE: {
@@ -131,6 +144,41 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
+        case SYS_PWRITE: {
+            int fd = (int)(tf->x[0]);
+            const char *buf = (const char *)(tf->x[1]);
+            size_t len = (size_t)(tf->x[2]);
+            vfs_off_t offset = (vfs_off_t)(tf->x[3]);
+
+            /* Enforce maximum RW size to prevent excessive heap usage */
+            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!validate_user_buffer(buf, len, 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            char *kbuf = heap_malloc(len);
+            if (!kbuf) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            if (copy_from_user(kbuf, buf, len) != 0) {
+                heap_free(kbuf);
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            int bytes = vfs_pwrite(fd, kbuf, len, offset);
+            heap_free(kbuf);
+            tf->x[0] = (uint64_t)bytes;
+            break;
+        }
+
         case SYS_EXIT: {
             int status = (int)tf->x[0];
             process_exit(pid, status);
@@ -144,14 +192,21 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
+        case SYS_GETPPID: {
+            tf->x[0] = (uint64_t)proc->parent_pid;
+            break;
+        }
+
         case SYS_YIELD: {
             schedule();
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 
         case SYS_SLEEP: {
             unsigned long ms = tf->x[0];
             sched_sleep_ms(ms);
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 
@@ -159,11 +214,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             const char *path = (const char *)(tf->x[0]);
             int flags = (int)(tf->x[1]);
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -205,10 +259,50 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
+        case SYS_PREAD: {
+            int fd = (int)(tf->x[0]);
+            char *buf = (char *)(tf->x[1]);
+            size_t len = (size_t)(tf->x[2]);
+            vfs_off_t offset = (vfs_off_t)(tf->x[3]);
+
+            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!validate_user_buffer(buf, len, 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            char *kbuf = heap_malloc(len);
+            if (!kbuf) {
+                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+                break;
+            }
+
+            int bytes = vfs_pread(fd, kbuf, len, offset);
+            if (bytes > 0) {
+                if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
+                    bytes = -PERS_ERR_OUT_OF_MEMORY;
+                }
+            }
+            heap_free(kbuf);
+            tf->x[0] = (uint64_t)bytes;
+            break;
+        }
+
         case SYS_GETDENTS: {
             int fd = (int)(tf->x[0]);
             void *buf = (void *)(tf->x[1]);
             size_t count = (size_t)(tf->x[2]);
+
+            /* The only buffer-taking syscall that had no ceiling: each call
+             * pins count bytes of kernel heap for its bounce buffer. */
+            if (count == 0 || count > SYSCALL_MAX_RW_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
 
             if (!validate_user_buffer(buf, count, 1)) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -249,11 +343,10 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -266,10 +359,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             }
 
             struct task *curr_task = sched_get_current();
-            if (curr_task) {
+            struct process *execed = curr_task ? process_slot(curr_task->pid) : NULL;
+            if (execed) {
                 /* Synchronize trap frame after successful image replacement */
-                uintptr_t kernel_stack_top =
-                    process_table[curr_task->pid].vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
+                uintptr_t kernel_stack_top = execed->vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
                 struct exception_trap_frame *new_tf =
                     (struct exception_trap_frame *)(kernel_stack_top
                                                     - sizeof(struct exception_trap_frame));
@@ -341,19 +434,11 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            int curr_proc_pid = process_find_current();
-            if (curr_proc_pid < 0) {
-                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
-                break;
-            }
-
-            struct process *p = &process_table[curr_proc_pid];
-
-            signal_handler_t old = p->signal_handlers[sig - 1].sa_handler;
-            p->signal_handlers[sig - 1].sa_handler = handler;
-            p->signal_handlers[sig - 1].sa_mask = 0;
-            p->signal_handlers[sig - 1].sa_flags = 0;
-            p->signal_handlers[sig - 1].sa_restorer = NULL;
+            signal_handler_t old = proc->signal_handlers[sig - 1].sa_handler;
+            proc->signal_handlers[sig - 1].sa_handler = handler;
+            proc->signal_handlers[sig - 1].sa_mask = 0;
+            proc->signal_handlers[sig - 1].sa_flags = 0;
+            proc->signal_handlers[sig - 1].sa_restorer = NULL;
 
             tf->x[0] = (uint64_t)old;
             break;
@@ -373,15 +458,17 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            if (target_pid >= PROCESS_TABLE_SIZE
-                || process_table[target_pid].state == PROCESS_STATE_EMPTY) {
+            /* target_pid is signed and comes straight from the user: without a
+             * lower bound, -1 passes this check and indexes before the table. */
+            struct process *target = target_pid < 0 ? NULL : process_slot((uint32_t)target_pid);
+            if (!target) {
                 tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
                 break;
             }
 
             /* Enforce process hierarchy permissions */
-            if (target_pid != (int)pid && process_table[target_pid].parent_pid != pid
-                && (int)process_table[pid].parent_pid != target_pid) {
+            if (target_pid != (int)pid && target->parent_pid != pid
+                && (int)proc->parent_pid != target_pid) {
                 tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
                 break;
             }
@@ -413,12 +500,12 @@ void syscall_handle(struct exception_trap_frame *tf)
 
             memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
-            process_table[pid].blocked_signals = frame.saved_mask;
+            proc->blocked_signals = frame.saved_mask;
             tf->spsr_el1 &= 0xF0000000ULL;
             break;
 
 sigreturn_kill:
-            process_table[pid].exit_status = -1;
+            proc->exit_status = -1;
             curr->state = SCHED_TASK_DEAD;
             schedule();
             break;
@@ -430,7 +517,7 @@ sigreturn_kill:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            process_table[pid].default_sigrestorer = restorer;
+            proc->default_sigrestorer = restorer;
             tf->x[0] = PERS_SUCCESS;
             break;
         }
@@ -445,14 +532,12 @@ sigreturn_kill:
                 break;
             }
 
-            struct process *p = &process_table[pid];
-
             if (uoact) {
                 if (!validate_user_buffer(uoact, sizeof(struct sigaction), 1)) {
                     tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                     break;
                 }
-                if (copy_to_user(uoact, &p->signal_handlers[sig - 1], sizeof(struct sigaction))
+                if (copy_to_user(uoact, &proc->signal_handlers[sig - 1], sizeof(struct sigaction))
                     != 0) {
                     tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
                     break;
@@ -469,8 +554,8 @@ sigreturn_kill:
                     tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
                     break;
                 }
-                p->signal_handlers[sig - 1] = kact;
-                p->signal_handlers[sig - 1].sa_mask &=
+                proc->signal_handlers[sig - 1] = kact;
+                proc->signal_handlers[sig - 1].sa_mask &=
                     ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
             }
 
@@ -483,14 +568,12 @@ sigreturn_kill:
             const sigset_t *uset = (const sigset_t *)tf->x[1];
             sigset_t *uoset = (sigset_t *)tf->x[2];
 
-            struct process *p = &process_table[pid];
-
             if (uoset) {
                 if (!validate_user_buffer(uoset, sizeof(sigset_t), 1)) {
                     tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                     break;
                 }
-                if (copy_to_user(uoset, &p->blocked_signals, sizeof(sigset_t)) != 0) {
+                if (copy_to_user(uoset, &proc->blocked_signals, sizeof(sigset_t)) != 0) {
                     tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
                     break;
                 }
@@ -508,17 +591,17 @@ sigreturn_kill:
                 }
 
                 if (how == SIG_BLOCK) {
-                    p->blocked_signals |= kset;
+                    proc->blocked_signals |= kset;
                 } else if (how == SIG_UNBLOCK) {
-                    p->blocked_signals &= ~kset;
+                    proc->blocked_signals &= ~kset;
                 } else if (how == SIG_SETMASK) {
-                    p->blocked_signals = kset;
+                    proc->blocked_signals = kset;
                 } else {
                     tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                     break;
                 }
 
-                p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+                proc->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
             }
 
             tf->x[0] = PERS_SUCCESS;
@@ -531,7 +614,7 @@ sigreturn_kill:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            if (copy_to_user(uset, &process_table[pid].pending_signals, sizeof(sigset_t)) != 0) {
+            if (copy_to_user(uset, &proc->pending_signals, sizeof(sigset_t)) != 0) {
                 tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
                 break;
             }
@@ -551,17 +634,16 @@ sigreturn_kill:
                 break;
             }
 
-            struct process *p = &process_table[pid];
-            sigset_t saved_mask = p->blocked_signals;
-            p->blocked_signals = kmask;
-            p->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+            sigset_t saved_mask = proc->blocked_signals;
+            proc->blocked_signals = kmask;
+            proc->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
 
             /* Block until a signal is pending. Mask IRQs across the pending
              * check and the state transition so a signal delivered on this core
              * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
             for (;;) {
                 unsigned long irqf = irq_save();
-                if (p->pending_signals & ~p->blocked_signals) {
+                if (proc->pending_signals & ~proc->blocked_signals) {
                     irq_restore(irqf);
                     break;
                 }
@@ -571,7 +653,7 @@ sigreturn_kill:
             }
 
             /* POSIX: sigsuspend restores the caller's original mask on return. */
-            p->blocked_signals = saved_mask;
+            proc->blocked_signals = saved_mask;
             tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
             break;
         }
@@ -583,16 +665,10 @@ sigreturn_kill:
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -642,10 +718,10 @@ sigreturn_kill:
                 break;
             }
 
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN) < 0) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(upath, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -668,44 +744,59 @@ sigreturn_kill:
             int flags = (int)tf->x[3];
             int fd = (int)tf->x[4];
 
-            int curr_proc_pid = process_find_current();
-            if (curr_proc_pid < 0) {
-                tf->x[0] = (uintptr_t)MAP_FAILED;
-                break;
-            }
-
-            struct process *p = &process_table[curr_proc_pid];
             if (length == 0 || length > SYSCALL_MAX_MMAP_SIZE) {
                 tf->x[0] = (uintptr_t)MAP_FAILED;
                 break;
             }
 
-            /* Reject an out-of-range fd before it indexes fd_table[] */
-            if (fd != -1 && (fd < 0 || fd >= VFS_MAX_FDS)) {
+            /*
+             * Every mapping must have something behind it. An anonymous request
+             * takes no descriptor; a file-backed one needs a vnode that can
+             * actually supply pages. Falling through with neither used to hand
+             * back an address the caller could only discover was empty by
+             * faulting on it.
+             */
+            int anonymous = (flags & MAP_ANONYMOUS) != 0;
+            if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {
                 tf->x[0] = (uintptr_t)MAP_FAILED;
                 break;
+            }
+
+            /* Hold a reference so a concurrent close cannot free the file out
+             * from under its own mmap operation. */
+            struct vfs_file *file = NULL;
+            if (!anonymous) {
+                unsigned long fdflags = spin_lock_irqsave(&proc->fd_lock);
+                file = proc->fd_table[fd];
+                if (file) {
+                    atomic_inc(&file->refcount);
+                }
+                spin_unlock_irqrestore(&proc->fd_lock, fdflags);
+
+                if (!file || !file->node || !file->node->ops || !file->node->ops->mmap) {
+                    vfs_file_put(file);
+                    tf->x[0] = (uintptr_t)MAP_FAILED;
+                    break;
+                }
             }
 
             size_t pages_needed = (length + PAGE_SIZE - 1) / PAGE_SIZE;
-            uintptr_t new_region = process_va_alloc(&p->va, pages_needed);
+            uintptr_t new_region = process_va_alloc(&proc->va, pages_needed);
             if (new_region == 0) {
+                vfs_file_put(file);
                 tf->x[0] = (uintptr_t)MAP_FAILED;
                 break;
             }
 
-            if (fd != -1) {
-                struct vfs_file *file = p->fd_table[fd];
-                if (file == NULL || file->node == NULL || file->node->ops == NULL) {
+            if (!anonymous) {
+                int mres = file->node->ops->mmap(file, new_region, length, prot, flags);
+                vfs_file_put(file);
+                if (mres < 0) {
                     goto mmap_fail;
-                }
-                if (file->node->ops->mmap != NULL) {
-                    if (file->node->ops->mmap(file, new_region, length, prot, flags) < 0) {
-                        goto mmap_fail;
-                    }
                 }
             }
 
-            if (flags & MAP_ANONYMOUS) {
+            if (anonymous) {
                 unsigned long mmu_flags = MMU_PTE_VALID | MMU_PTE_PAGE | MMU_PTE_AF
                                           | MMU_PTE_SH_INNER | MMU_ATTR_NORMAL | MMU_AP_USER
                                           | MMU_PXN | MMU_UXN | MMU_PTE_NG;
@@ -719,7 +810,7 @@ sigreturn_kill:
                         goto mmap_fail;
                     }
                     memset(kaddr, 0, PAGE_SIZE);
-                    mmu_user_map_page(p->user_pgd, new_region + i * PAGE_SIZE,
+                    mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE,
                                       V2P((uintptr_t)kaddr), mmu_flags);
                 }
             }
@@ -730,9 +821,9 @@ mmap_fail:
             /* Unmap anything mapped so far (frees those pages) and release the
              * reserved VA region so a failed mmap leaks neither. */
             for (size_t j = 0; j < pages_needed; j++) {
-                mmu_user_unmap_page(p->user_pgd, new_region + j * PAGE_SIZE);
+                mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
             }
-            process_va_free(&p->va, new_region);
+            process_va_free(&proc->va, new_region);
             tf->x[0] = (uintptr_t)MAP_FAILED;
             break;
         }
@@ -757,15 +848,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_mkdir(kpath);
@@ -778,15 +864,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_rmdir(kpath);
@@ -799,15 +880,10 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!kpath) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-            long copied = strncpy_from_user(kpath, path, VFS_MAX_PATH_LEN);
-            if (copied < 0 || copied >= VFS_MAX_PATH_LEN) {
-                heap_free(kpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+            char *kpath;
+            int err = copy_path_from_user(path, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_unlink(kpath);
@@ -821,23 +897,18 @@ mmap_fail:
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
-            char *koldpath = heap_malloc(VFS_MAX_PATH_LEN);
-            char *knewpath = heap_malloc(VFS_MAX_PATH_LEN);
-            if (!koldpath || !knewpath) {
-                if (koldpath)
-                    heap_free(koldpath);
-                if (knewpath)
-                    heap_free(knewpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            char *koldpath;
+            int err = copy_path_from_user(oldpath, &koldpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
-            long copied_old = strncpy_from_user(koldpath, oldpath, VFS_MAX_PATH_LEN);
-            long copied_new = strncpy_from_user(knewpath, newpath, VFS_MAX_PATH_LEN);
-            if (copied_old < 0 || copied_old >= VFS_MAX_PATH_LEN || copied_new < 0
-                || copied_new >= VFS_MAX_PATH_LEN) {
+
+            char *knewpath;
+            err = copy_path_from_user(newpath, &knewpath);
+            if (err != PERS_SUCCESS) {
                 heap_free(koldpath);
-                heap_free(knewpath);
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                tf->x[0] = (uint64_t)err;
                 break;
             }
             tf->x[0] = vfs_rename(koldpath, knewpath);
@@ -861,12 +932,10 @@ mmap_fail:
                 break;
             }
 
-            struct process *p = &process_table[pid];
-
-            spin_lock(&p->fd_lock);
-            struct vfs_file *f = p->fd_table[fd];
+            unsigned long fdflags = spin_lock_irqsave(&proc->fd_lock);
+            struct vfs_file *f = proc->fd_table[fd];
             if (!f) {
-                spin_unlock(&p->fd_lock);
+                spin_unlock_irqrestore(&proc->fd_lock, fdflags);
                 tf->x[0] = (uint64_t)-PERS_ERR_BAD_FILE_DESCRIPTOR;
                 break;
             }
@@ -874,10 +943,10 @@ mmap_fail:
             int ret = 0;
             switch (cmd) {
                 case VFS_F_GETFD:
-                    ret = p->fd_flags[fd];
+                    ret = proc->fd_flags[fd];
                     break;
                 case VFS_F_SETFD:
-                    p->fd_flags[fd] = arg;
+                    proc->fd_flags[fd] = arg;
                     break;
                 case VFS_F_GETFL:
                     ret = f->flags;
@@ -889,7 +958,7 @@ mmap_fail:
                     ret = -PERS_ERR_INVALID_ARGUMENT;
                     break;
             }
-            spin_unlock(&p->fd_lock);
+            spin_unlock_irqrestore(&proc->fd_lock, fdflags);
 
             tf->x[0] = (uint64_t)ret;
             break;

@@ -18,11 +18,22 @@
 #define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
 #define SLAB_NUM_CLASSES 7
 
+/* A page of the smallest class holds the most objects, bounding the bitmap. */
+#define SLAB_MAX_SLOTS    (PAGE_SIZE / 16)
+#define SLAB_BITMAP_WORDS (SLAB_MAX_SLOTS / 64)
+
 struct slab_obj {
     struct slab_obj *next;
     uint64_t free_canary;
 };
 
+/*
+ * struct slab_page - Header of a page carved into objects of one size class.
+ *
+ * `used` tracks liveness out of band. An in-object marker cannot do this job:
+ * the bytes of a live object belong to its owner, who may legitimately store
+ * anything there, including whatever value the marker uses.
+ */
 struct slab_page {
     unsigned int magic;
     unsigned int class_idx;
@@ -30,6 +41,8 @@ struct slab_page {
     unsigned int in_use_count;
     struct slab_obj *free_list;
     struct slab_page *next;
+    unsigned long slot_start;
+    uint64_t used[SLAB_BITMAP_WORDS];
 };
 
 struct slab_class {
@@ -42,11 +55,55 @@ struct slab_class {
 static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 static struct slab_class slab_classes[SLAB_NUM_CLASSES];
+/* Updated outside the class locks (slab_release_page runs unlocked), so this
+ * has to be atomic or the count drifts on SMP. */
 static unsigned long slab_total_pages = 0;
 
 static inline struct slab_page *ptr_to_slab(void *ptr)
 {
     return (struct slab_page *)((unsigned long)ptr & ~(PAGE_SIZE - 1UL));
+}
+
+/*
+ * slab_slot_of - Index of an object in its page, or -1 if ptr is not the start
+ * of a slot in it.
+ */
+static int slab_slot_of(const struct slab_page *sp, const void *ptr)
+{
+    unsigned long base = (unsigned long)sp + sp->slot_start;
+    unsigned long addr = (unsigned long)ptr;
+
+    if (addr < base) {
+        return -1;
+    }
+
+    unsigned long offset = addr - base;
+    unsigned long size = slab_classes[sp->class_idx].object_size;
+
+    if (offset % size != 0) {
+        return -1;
+    }
+
+    unsigned long index = offset / size;
+    if (index >= sp->total_slots) {
+        return -1;
+    }
+    return (int)index;
+}
+
+static inline int slab_slot_is_used(const struct slab_page *sp, int slot)
+{
+    return (sp->used[slot / 64] >> (slot % 64)) & 1ULL;
+}
+
+static inline void slab_slot_mark(struct slab_page *sp, int slot, int used)
+{
+    uint64_t bit = 1ULL << (slot % 64);
+    if (used) {
+        sp->used[slot / 64] |= bit;
+    } else {
+        sp->used[slot / 64] &= ~bit;
+    }
 }
 
 static inline int size_to_class_index(unsigned long size)
@@ -75,9 +132,14 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
     sp->in_use_count = 0;
     sp->free_list = NULL;
 
+    for (unsigned int i = 0; i < SLAB_BITMAP_WORDS; i++) {
+        sp->used[i] = 0;
+    }
+
     unsigned long obj_size = sc->object_size;
     unsigned long hdr_size = sizeof(struct slab_page);
     unsigned long start_offset = (hdr_size + obj_size - 1) & ~(obj_size - 1);
+    sp->slot_start = start_offset;
 
     unsigned int count = 0;
     for (unsigned long off = start_offset; off + obj_size <= PAGE_SIZE; off += obj_size) {
@@ -93,8 +155,12 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
         return NULL;
     }
 
+    if (count > SLAB_MAX_SLOTS) {
+        PANIC("slab: page holds more objects than the bitmap tracks");
+    }
+
     sp->total_slots = count;
-    slab_total_pages++;
+    __atomic_fetch_add(&slab_total_pages, 1, __ATOMIC_RELAXED);
 
     sp->next = sc->partial_list;
     sc->partial_list = sp;
@@ -103,7 +169,7 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
 
 static void slab_release_page(struct slab_page *sp)
 {
-    slab_total_pages--;
+    __atomic_fetch_sub(&slab_total_pages, 1, __ATOMIC_RELAXED);
     pmm_free_page((void *)sp);
 }
 
@@ -148,7 +214,26 @@ void *slab_alloc(unsigned long size)
     }
 
     struct slab_obj *obj = sp->free_list;
+    if (!obj) {
+        PANIC("slab: partial page with an empty free list");
+    }
+
+    /*
+     * Nothing may write to an object while it sits on the free list, so a
+     * disturbed marker here means a use-after-free. Checked on the way out
+     * rather than on the way in, where the bytes belong to the caller.
+     */
+    if (obj->free_canary != SLAB_FREE_POISON) {
+        PANIC("slab: free object was written after being freed");
+    }
+
+    int slot = slab_slot_of(sp, obj);
+    if (slot < 0) {
+        PANIC("slab: free list holds a misaligned object");
+    }
+
     sp->free_list = obj->next;
+    slab_slot_mark(sp, slot, 1);
     obj->free_canary = 0;
     sp->in_use_count++;
 
@@ -181,9 +266,16 @@ void slab_free(void *ptr)
     unsigned long flags = spin_lock_irqsave(&sc->lock);
     struct slab_obj *obj = (struct slab_obj *)ptr;
 
-    if (obj->free_canary == SLAB_FREE_POISON) {
+    int slot = slab_slot_of(sp, ptr);
+    if (slot < 0) {
+        spin_unlock_irqrestore(&sc->lock, flags);
+        PANIC("slab: pointer is not the start of an object");
+    }
+    if (!slab_slot_is_used(sp, slot)) {
+        spin_unlock_irqrestore(&sc->lock, flags);
         PANIC("slab: double free detected");
     }
+    slab_slot_mark(sp, slot, 0);
 
     int was_full = (sp->free_list == NULL);
     obj->free_canary = SLAB_FREE_POISON;
@@ -264,5 +356,15 @@ unsigned long slab_get_used(void)
 
 unsigned long slab_get_total(void)
 {
-    return slab_total_pages * PAGE_SIZE;
+    return __atomic_load_n(&slab_total_pages, __ATOMIC_RELAXED) * PAGE_SIZE;
 }
+
+#ifdef CONFIG_TESTS
+unsigned long slab_test_object_size(void *ptr)
+{
+    if (!slab_owns(ptr)) {
+        return 0;
+    }
+    return slab_classes[ptr_to_slab(ptr)->class_idx].object_size;
+}
+#endif

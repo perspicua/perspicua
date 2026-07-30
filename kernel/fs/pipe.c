@@ -9,6 +9,7 @@
 
 #include "stdio.h"
 #include "string.h"
+#include "panic.h"
 
 #include "uapi/errors.h"
 
@@ -63,21 +64,23 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
  */
 static int pipe_signal_pending(void)
 {
-    int pid = process_find_current();
-    if (pid < 0) {
+    struct process *p = process_current();
+    if (!p) {
         return 0;
     }
-    struct process *p = &process_table[pid];
     return (p->pending_signals & ~p->blocked_signals) != 0;
 }
 
 /*
  * pipe_wait - Blocks the current task on a pipe's specific wait queue.
+ *
+ * Called with the pipe lock held and interrupts already masked by the caller's
+ * irqsave. Both stay that way across the switch, so nothing can split the
+ * transition to BLOCKED from the unlock that publishes it.
  */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
     struct task *self = sched_get_current();
-    unsigned long flags = irq_save();
 
     /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
     self->state = SCHED_TASK_BLOCKED;
@@ -90,7 +93,6 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
     spin_lock(lock);
     /* A signal wake (rather than pipe_wake) leaves us queued: unlink now. */
     pipe_queue_remove(queue, self);
-    irq_restore(flags);
 }
 
 /*
@@ -119,7 +121,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
 
     while (read < count) {
         if (pipe->count > 0) {
@@ -132,13 +134,13 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
             }
             if (file->flags & VFS_O_NONBLOCK) {
                 if (read == 0) {
-                    spin_unlock(&pipe->lock);
+                    spin_unlock_irqrestore(&pipe->lock, fdflags);
                     return -PERS_ERR_TRY_AGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
-                spin_unlock(&pipe->lock);
+                spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return read > 0 ? (int)read : -PERS_ERR_INTERRUPTED;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
@@ -149,7 +151,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
         pipe_wake(&pipe->write_wait_queue);
     }
 
-    spin_unlock(&pipe->lock);
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
     return (int)read;
 }
 
@@ -163,11 +165,11 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
 
     while (written < count) {
         if (pipe->readers == 0) {
-            spin_unlock(&pipe->lock);
+            spin_unlock_irqrestore(&pipe->lock, fdflags);
             return -PERS_ERR_BROKEN_PIPE;
         }
 
@@ -178,14 +180,24 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         } else {
             if (file->flags & VFS_O_NONBLOCK) {
                 if (written == 0) {
-                    spin_unlock(&pipe->lock);
+                    spin_unlock_irqrestore(&pipe->lock, fdflags);
                     return -PERS_ERR_TRY_AGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
-                spin_unlock(&pipe->lock);
+                spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
+            }
+            /*
+             * Hand off what is buffered before sleeping. A reader that queued
+             * while the pipe was empty is woken only by the wake below, which a
+             * write larger than the buffer never reaches: it fills the buffer
+             * and blocks here instead, leaving the reader waiting for bytes
+             * that already arrived and the writer waiting for space.
+             */
+            if (pipe->read_wait_queue) {
+                pipe_wake(&pipe->read_wait_queue);
             }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
@@ -195,7 +207,7 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
         pipe_wake(&pipe->read_wait_queue);
     }
 
-    spin_unlock(&pipe->lock);
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
     return (int)written;
 }
 
@@ -208,22 +220,36 @@ static int pipe_close(struct vfs_file *file)
 
     int is_write = (file->flags & VFS_O_ACCMODE) != VFS_O_RDONLY;
 
-    spin_lock(&pipe->lock);
+    unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
     if (is_write) {
         pipe->writers--;
     } else {
         pipe->readers--;
     }
 
+    int destroy = (pipe->readers == 0 && pipe->writers == 0);
+
+    /*
+     * A waiter always holds its own endpoint open — readers block only while
+     * writers != 0 and vice versa, and the vfs_file reference held across the
+     * call keeps its own side from closing — so the last close cannot race one.
+     * Checked before the wakes below empty the queues, because if this ever
+     * stops holding, those wakes hand a freed pipe to a running task.
+     */
+    if (destroy && (pipe->read_wait_queue || pipe->write_wait_queue)) {
+        PANIC("pipe: last close with waiters still queued");
+    }
+
     pipe_wake(&pipe->read_wait_queue);
     pipe_wake(&pipe->write_wait_queue);
 
-    int destroy = (pipe->readers == 0 && pipe->writers == 0);
-    spin_unlock(&pipe->lock);
+    if (destroy) {
+        file->node->internal_info = NULL;
+    }
+    spin_unlock_irqrestore(&pipe->lock, fdflags);
 
     if (destroy) {
         heap_free(pipe);
-        file->node->internal_info = NULL;
     }
 
     return PERS_SUCCESS;
@@ -237,12 +263,10 @@ static struct vfs_vnode_ops pipe_ops = {
  */
 int pipe_create(int pipefd[2])
 {
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
-
-    struct process *p = &process_table[pid];
 
     struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
     if (!pipe) {
@@ -265,16 +289,13 @@ int pipe_create(int pipefd[2])
     node->internal_info = pipe;
     node->refcount.counter = 2;
 
-    struct vfs_file *f_read = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
-    struct vfs_file *f_write = (struct vfs_file *)slab_alloc(sizeof(struct vfs_file));
+    struct vfs_file *f_read = vfs_file_alloc();
+    struct vfs_file *f_write = vfs_file_alloc();
 
     if (!f_read || !f_write) {
-        if (f_read) {
-            slab_free(f_read);
-        }
-        if (f_write) {
-            slab_free(f_write);
-        }
+        /* No vnode attached yet, so these just free the objects. */
+        vfs_file_put(f_read);
+        vfs_file_put(f_write);
         slab_free(node);
         heap_free(pipe);
         return -PERS_ERR_OUT_OF_MEMORY;
@@ -282,16 +303,12 @@ int pipe_create(int pipefd[2])
 
     f_read->node = node;
     f_read->flags = VFS_O_RDONLY;
-    f_read->offset = 0;
-    f_read->refcount.counter = 1;
 
     f_write->node = node;
     f_write->flags = VFS_O_WRONLY;
-    f_write->offset = 0;
-    f_write->refcount.counter = 1;
 
     int fd_r = -1, fd_w = -1;
-    spin_lock(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
 
     for (int i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
@@ -310,13 +327,13 @@ int pipe_create(int pipefd[2])
         p->fd_table[fd_w] = f_write;
         p->fd_flags[fd_w] = 0;
     }
-    spin_unlock(&p->fd_lock);
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (fd_r == -1 || fd_w == -1) {
-        slab_free(f_read);
-        slab_free(f_write);
-        slab_free(node);
-        heap_free(pipe);
+        /* Both ends are attached now, so releasing them runs pipe_close and
+         * drops the last vnode reference, taking the pipe and node with it. */
+        vfs_file_put(f_read);
+        vfs_file_put(f_write);
         return -PERS_ERR_OUT_OF_RESOURCES;
     }
 

@@ -1,0 +1,88 @@
+Perspicua Testing
+=================
+
+How the in-kernel test suites are built and run, what a passing run looks like,
+and the rule about hardware validation before a release.
+
+--------------------------------------------------------------------------------
+THE MODEL
+--------------------------------------------------------------------------------
+Tests are compiled INTO the kernel, gated behind CONFIG_TESTS, and run at boot
+before userspace starts. There is no separate test binary and no host-side unit
+framework — the kernel tests itself on the target (QEMU, or real hardware). Each
+suite prints its assertions to the serial console; the harness then reads that
+console output to decide pass or fail.
+
+The suites live in kernel/tests/ (test_pmm, test_slab, test_mmu, test_sched,
+test_vfs, test_fat32, test_pipe, test_mutex, test_signals, test_uaccess, and
+others). test.c wires them together; test.h declares the entry points.
+
+--------------------------------------------------------------------------------
+SEPARATE BUILD TREE
+--------------------------------------------------------------------------------
+Test builds go into build-test/, kept apart from the normal build/ tree. This
+is deliberate: toggling CONFIG_TESTS changes compiler defines, and sharing one
+tree would force a full reconfigure and rebuild every time you switched between
+a normal run and a test run. Two trees means each stays warm.
+
+--------------------------------------------------------------------------------
+RUNNING THE TESTS
+--------------------------------------------------------------------------------
+  just test              Build the test kernel (CONFIG_TESTS=ON) into
+                         build-test/, build the SD image, and run headless in
+                         QEMU via scripts/run_tests.sh. Exits non-zero if any
+                         assertion fails, the kernel panics, or the run times
+                         out. This is the command CI and the pre-merge gate use.
+
+  just build-tests       Build the test kernel without running it.
+
+  just test-shell        Build the test kernel and run it interactively in QEMU,
+                         dropping to the shell after the suites finish — for
+                         poking at the system in the same configuration the
+                         tests ran under.
+
+Override configuration the same way as a normal build, e.g.:
+  just config_smp=OFF config_lockdep=OFF test
+
+--------------------------------------------------------------------------------
+WHAT A RUN LOOKS LIKE
+--------------------------------------------------------------------------------
+scripts/run_tests.sh boots the kernel headless and watches the serial log for
+completion markers rather than waiting for a fixed time. The run is a PASS only
+when ALL of the following are true:
+
+  - No suite printed "[FAILED]".
+  - The kernel did not print "KERNEL PANIC".
+  - It did not time out (default 120s).
+  - Every completion marker was reached:
+      "reached target: kernel self-test complete"
+      "reached target: scheduler test complete"
+      "reached target: post-init test complete"
+
+The three-marker check matters: a suite that never ran prints nothing at all, so
+"no failures" is not the same as "everything ran." A run that hangs or panics
+before the markers is a failure, not a pass. On success the harness echoes the
+per-suite "all N tests passed" lines and prints "PASS".
+
+Some suites (the post-init ones) need a live user process to target, so they run
+after /bin/init.elf has been created — that is the "post-init" marker.
+
+--------------------------------------------------------------------------------
+THE HARDWARE-VALIDATION GATE
+--------------------------------------------------------------------------------
+QEMU is the everyday loop, but it is not the whole story: timing, the SD card,
+and interrupt behavior differ on real silicon. Per branch_workflow.txt, the dev
+branch must be tested ON HARDWARE before it is promoted to main. `just test`
+passing in QEMU is necessary, not sufficient — main is meant to be something you
+could flash to a board right now.
+
+--------------------------------------------------------------------------------
+ADDING A SUITE
+--------------------------------------------------------------------------------
+  1. Add kernel/tests/test_<thing>.c with your assertions, following the
+     existing suites' reporting style ([FAILED] on failure, an "all N tests
+     passed" summary on success).
+  2. Register it so it runs from the appropriate phase (self-test, scheduler, or
+     post-init) in test.c / test.h.
+  3. Wire the new source into kernel/CMakeLists.txt under the CONFIG_TESTS path.
+  4. Run `just test` and confirm your suite's summary appears in the output.

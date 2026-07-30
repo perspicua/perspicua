@@ -19,6 +19,15 @@
 #include "mm/pmm.h"
 #include "mm/addr.h"
 
+/*
+ * A FAT32 long name is at most 255 characters, carried 13 at a time by up to
+ * 20 chained LFN entries. The sequence number of an entry indexes the write, so
+ * these bounds are load-bearing: they come off the disk and cannot be trusted.
+ */
+#define FAT32_LFN_CHARS_PER_ENTRY 13
+#define FAT32_LFN_MAX_SEQ         20
+#define FAT32_LFN_BUF_SIZE        256
+
 static struct fat32_fs current_fs;
 
 /*
@@ -29,11 +38,38 @@ static struct fat32_fs current_fs;
  */
 static struct kmutex fat32_lock = KMUTEX_INIT;
 
+/* Every read and write path in this driver assumes 512-byte sectors. */
+#define FAT32_SECTOR_SIZE 512
+
+/* Highest cluster number FAT32 can address; above this are reserved markers. */
+#define FAT32_CLUSTER_MAX 0x0FFFFFF6U
+
+/*
+ * cluster_valid - True for a cluster the data area can actually address.
+ *
+ * Cluster numbers come from directory entries and the FAT itself, so they are
+ * untrusted input however deep in the driver they surface.
+ */
+static int cluster_valid(uint32_t cluster)
+{
+    return cluster >= 2 && cluster <= current_fs.max_cluster;
+}
+
 /*
  * cluster_to_lba - Converts a FAT cluster number to a Logical Block Address.
+ *
+ * Callers add a sector offset to the result, so the out-of-range sentinel has
+ * to stay huge after that addition: 0xFFFFFFFF + 1 wraps to zero, which is the
+ * MBR, and one caller writes there. sectors_per_cluster is capped at 128 when
+ * the volume is mounted, so this value cannot wrap.
  */
+#define FAT32_LBA_INVALID 0xFFF00000U
+
 static uint32_t cluster_to_lba(uint32_t cluster)
 {
+    if (!cluster_valid(cluster)) {
+        return FAT32_LBA_INVALID;
+    }
     return current_fs.data_lba_start + (cluster - 2) * current_fs.sectors_per_cluster;
 }
 
@@ -42,6 +78,11 @@ static uint32_t cluster_to_lba(uint32_t cluster)
  */
 static uint32_t get_next_cluster(uint32_t cluster)
 {
+    /* Terminate the chain rather than index the FAT with a corrupt value. */
+    if (!cluster_valid(cluster)) {
+        return 0x0FFFFFFF;
+    }
+
     uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
     uint32_t fat_offset = cluster % 128;
     uint32_t fat_buffer[128];
@@ -90,11 +131,11 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
 static uint32_t allocate_cluster(void)
 {
     uint32_t fat_buffer[128];
-    uint32_t total_data_sectors =
-        current_fs.dev->block_count - current_fs.data_lba_start + current_fs.partition_lba_start;
-    uint32_t total_clusters = total_data_sectors / current_fs.sectors_per_cluster;
 
-    for (uint32_t cluster = 2; cluster < total_clusters + 2; cluster++) {
+    /* Use the bound derived at mount rather than recomputing it: the old
+     * expression added partition_lba_start back after subtracting it, and
+     * divided by a sectors_per_cluster nothing had validated. */
+    for (uint32_t cluster = 2; cluster <= current_fs.max_cluster; cluster++) {
         uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
         uint32_t fat_offset = cluster % 128;
 
@@ -161,6 +202,17 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
         name[j++] = c;
     }
 
+    /*
+     * A basename past the eighth character is dropped, so skip the overflow to
+     * reach the extension. name_to_83 does the same when it builds the entry,
+     * and a lookup that stops short searches for a blank extension instead:
+     * the file it just created is then unfindable, and the next create appends
+     * a second entry for the same name.
+     */
+    while (filename[i] != '.' && filename[i] != '\0') {
+        i++;
+    }
+
     if (filename[i] == '.') {
         i++;
         j = 0;
@@ -186,20 +238,51 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
     return 1;
 }
 
-static void extract_lfn_part(struct fat32_lfn_entry *lfn, char *name_buf)
+/*
+ * extract_lfn_part - Places one 13-character fragment of a long name.
+ *
+ * The destination index is derived from the entry's on-disk sequence number, so
+ * it is range-checked before any write: an out-of-spec sequence would otherwise
+ * scatter the fragment far outside name_buf. Returns 0 on success, or -1 if the
+ * entry is malformed and the caller should discard the name assembled so far.
+ */
+static int extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len)
 {
-    int offset = ((lfn->sequence & 0x3F) - 1) * 13;
+    unsigned int seq = lfn->sequence & 0x3F;
+    if (seq < 1 || seq > FAT32_LFN_MAX_SEQ) {
+        return -1;
+    }
 
-    // name1 (5 chars)
-    for (int i = 0; i < 5; i++)
-        name_buf[offset + i] = (char)lfn->name1[i];
-    // name2 (6 chars)
-    for (int i = 0; i < 6; i++)
-        name_buf[offset + 5 + i] = (char)lfn->name2[i];
-    // name3 (2 chars)
-    for (int i = 0; i < 2; i++)
-        name_buf[offset + 11 + i] = (char)lfn->name3[i];
+    size_t limit = buf_len - 1; /* Reserve the terminator. */
+    size_t pos = (size_t)(seq - 1) * FAT32_LFN_CHARS_PER_ENTRY;
+    if (pos >= limit) {
+        return -1;
+    }
+
+    /*
+     * The final fragment of a maximum-length name runs a few characters past
+     * the last usable byte; copy what fits rather than rejecting a valid name.
+     * Members are read individually because the entry struct is packed.
+     */
+    for (int i = 0; i < 5 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name1[i];
+    }
+    for (int i = 0; i < 6 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name2[i];
+    }
+    for (int i = 0; i < 2 && pos < limit; i++) {
+        name_buf[pos++] = (char)lfn->name3[i];
+    }
+
+    return 0;
 }
+
+#ifdef CONFIG_TESTS
+int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len)
+{
+    return extract_lfn_part(lfn, name_buf, buf_len);
+}
+#endif
 
 /*
  * fat32_update_dir_entry - Updates the directory entry for a vnode.
@@ -217,7 +300,7 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
     uint32_t cluster = (uint32_t)(uintptr_t)node->parent->internal_info;
     struct fat32_dir_entry dirs[16];
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, dirs, lba + s, 1) != 0) {
@@ -591,7 +674,7 @@ static int fat32_write_entry_to_parent(uint32_t parent_cluster, struct fat32_dir
     struct fat32_dir_entry dirs[16];
     uint32_t cluster = parent_cluster;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -623,11 +706,11 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
     uint32_t cluster = (uint32_t)(uintptr_t)dir->internal_info;
     struct fat32_dir_entry dirs[16];
 
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -643,7 +726,13 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -668,7 +757,7 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
                 }
 reset_lfn:
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -697,12 +786,12 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
         }
     }
 
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
     struct fat32_dir_entry dirs[16];
-    while (cluster < 0x0FFFFFF8 && entries_read < (int)max_entries) {
+    while (cluster_valid(cluster) && entries_read < (int)max_entries) {
         uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
         uint32_t start_sector = offset_in_cluster / 512;
 
@@ -726,7 +815,13 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                 }
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -768,7 +863,7 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                 }
 
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
                 dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
                 entries_read++;
             }
@@ -783,11 +878,11 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
 {
     uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -798,13 +893,19 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
                     return -PERS_ERR_NOT_FOUND;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -823,7 +924,7 @@ static int fat32_unlink(struct vfs_vnode *parent, const char *name)
                     return PERS_SUCCESS;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -835,11 +936,11 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 {
     uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
 
-    while (cluster < 0x0FFFFFF8) {
+    while (cluster_valid(cluster)) {
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -850,13 +951,19 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
                     return -PERS_ERR_NOT_FOUND;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -868,7 +975,7 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 
                     uint32_t scan_cluster = target_cluster;
                     struct fat32_dir_entry scan_dirs[16];
-                    while (scan_cluster < 0x0FFFFFF8 && scan_cluster >= 2) {
+                    while (cluster_valid(scan_cluster)) {
                         uint32_t scan_lba = cluster_to_lba(scan_cluster);
                         for (int scan_s = 0; scan_s < (int)current_fs.sectors_per_cluster;
                              scan_s++) {
@@ -899,7 +1006,7 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
                     return PERS_SUCCESS;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
         }
         cluster = get_next_cluster(cluster);
@@ -971,8 +1078,8 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
 {
     uint32_t old_cluster = (uint32_t)(uintptr_t)old_parent->internal_info;
     struct fat32_dir_entry dirs[16];
-    char lfn_name[256];
-    memset(lfn_name, 0, 256);
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
     int has_lfn = 0;
     struct fat32_dir_entry target_entry;
     int found = 0;
@@ -980,7 +1087,7 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
     int found_s = 0;
     int found_i = 0;
 
-    while (old_cluster < 0x0FFFFFF8 && !found) {
+    while (cluster_valid(old_cluster) && !found) {
         uint32_t lba = cluster_to_lba(old_cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
@@ -991,13 +1098,19 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
                     break;
                 if (dirs[i].name[0] == 0xE5) {
                     has_lfn = 0;
-                    memset(lfn_name, 0, 256);
+                    memset(lfn_name, 0, sizeof(lfn_name));
                     continue;
                 }
 
                 if (dirs[i].attributes == 0x0F) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    extract_lfn_part(lfn, lfn_name);
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
                     has_lfn = 1;
                     continue;
                 }
@@ -1011,7 +1124,7 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
                     break;
                 }
                 has_lfn = 0;
-                memset(lfn_name, 0, 256);
+                memset(lfn_name, 0, sizeof(lfn_name));
             }
             if (found)
                 break;
@@ -1200,6 +1313,82 @@ struct vfs_vnode *fat32_get_root_node(void)
 }
 
 /*
+ * fat32_geometry_from_bpb - Validates a BPB and derives the runtime geometry.
+ *
+ * Every field here is attacker-controlled on a removable volume, and the driver
+ * divides by some of them and turns others into block addresses. Reject a
+ * volume that cannot be described rather than mount it and misbehave later.
+ */
+static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                   uint64_t device_blocks, struct fat32_fs *out)
+{
+    uint32_t spc = bpb->sectors_per_cluster;
+    uint32_t reserved = bpb->reserved_sectors;
+    uint32_t num_fats = bpb->num_fats;
+    uint32_t sectors_per_fat = bpb->sectors_per_fat_32;
+
+    if (bpb->bytes_per_sector != FAT32_SECTOR_SIZE) {
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+    }
+
+    /* A power of two up to 128 keeps a cluster within the 64 KB the spec allows
+     * and, more importantly here, keeps it non-zero: it is a divisor. */
+    if (spc == 0 || spc > 128 || (spc & (spc - 1)) != 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+    if (reserved == 0 || sectors_per_fat == 0 || num_fats < 1 || num_fats > 2) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+    if (bpb->root_cluster < 2) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    /* Compute in 64 bits: num_fats * sectors_per_fat overflows a uint32_t for
+     * plausible-looking values, wrapping data_lba_start back over the FAT. */
+    uint64_t fat_lba = (uint64_t)partition_lba + reserved;
+    uint64_t data_lba = fat_lba + (uint64_t)num_fats * sectors_per_fat;
+
+    if (data_lba >= device_blocks) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    uint64_t cluster_count = (device_blocks - data_lba) / spc;
+    if (cluster_count == 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    /* Clusters are numbered from 2, and the top values are reserved markers. */
+    uint64_t max_cluster = cluster_count + 1;
+    if (max_cluster > FAT32_CLUSTER_MAX) {
+        max_cluster = FAT32_CLUSTER_MAX;
+    }
+    if (bpb->root_cluster > max_cluster) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    out->bytes_per_sector = FAT32_SECTOR_SIZE;
+    out->sectors_per_cluster = spc;
+    out->reserved_sectors = reserved;
+    out->num_fats = num_fats;
+    out->sectors_per_fat = sectors_per_fat;
+    out->root_cluster = bpb->root_cluster;
+    out->partition_lba_start = partition_lba;
+    out->fat_lba_start = (uint32_t)fat_lba;
+    out->data_lba_start = (uint32_t)data_lba;
+    out->max_cluster = (uint32_t)max_cluster;
+
+    return PERS_SUCCESS;
+}
+
+#ifdef CONFIG_TESTS
+int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                 uint64_t device_blocks, struct fat32_fs *out)
+{
+    return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
+}
+#endif
+
+/*
  * fat32_init - Validates the MBR/BPB and populates the global filesystem state.
  */
 int fat32_init(const char *device_name)
@@ -1242,16 +1431,16 @@ int fat32_init(const char *device_name)
         return -PERS_ERR_IO_ERROR;
     }
 
-    current_fs.bytes_per_sector = bpb.bytes_per_sector;
-    current_fs.reserved_sectors = bpb.reserved_sectors;
-    current_fs.sectors_per_cluster = bpb.sectors_per_cluster;
-    current_fs.root_cluster = bpb.root_cluster;
-    current_fs.sectors_per_fat = bpb.sectors_per_fat_32;
-    current_fs.num_fats = bpb.num_fats;
-    current_fs.fat_lba_start = current_fs.partition_lba_start + current_fs.reserved_sectors;
-    current_fs.data_lba_start =
-        current_fs.fat_lba_start + (current_fs.num_fats * current_fs.sectors_per_fat);
+    int geom = fat32_geometry_from_bpb(&bpb, current_fs.partition_lba_start,
+                                       (uint64_t)dev->block_count, &current_fs);
+    if (geom != PERS_SUCCESS) {
+        pr_err("fat32: rejecting volume with an implausible BPB\n");
+        current_fs.dev = NULL;
+        return geom;
+    }
 
-    pr_info("fat32: partition at LBA %u\n", current_fs.partition_lba_start);
+    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n",
+            current_fs.partition_lba_start, current_fs.max_cluster - 1,
+            current_fs.sectors_per_cluster);
     return PERS_SUCCESS;
 }

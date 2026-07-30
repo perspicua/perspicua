@@ -43,18 +43,18 @@ static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *fi
         return NULL;
     }
 
-    spin_lock(&devfs_lock);
+    unsigned long fdflags = spin_lock_irqsave(&devfs_lock);
     struct devfs_node *curr = devfs_devices;
     while (curr) {
         if (strcmp(curr->name, filename) == 0) {
             struct vfs_vnode *node = curr->vnode;
             atomic_inc(&node->refcount);
-            spin_unlock(&devfs_lock);
+            spin_unlock_irqrestore(&devfs_lock, fdflags);
             return node;
         }
         curr = curr->next;
     }
-    spin_unlock(&devfs_lock);
+    spin_unlock_irqrestore(&devfs_lock, fdflags);
 
     return NULL;
 }
@@ -69,7 +69,7 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     int entries_read = 0;
     uint32_t current_idx = 0;
 
-    spin_lock(&devfs_lock);
+    unsigned long fdflags = spin_lock_irqsave(&devfs_lock);
     struct devfs_node *curr = devfs_devices;
 
     /* Skip entries already read */
@@ -87,7 +87,7 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
         entries_read++;
         curr = curr->next;
     }
-    spin_unlock(&devfs_lock);
+    spin_unlock_irqrestore(&devfs_lock, fdflags);
 
     return entries_read;
 }
@@ -137,10 +137,10 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
     dev_node->name[31] = '\0';
     dev_node->vnode = node;
 
-    spin_lock(&devfs_lock);
+    unsigned long fdflags = spin_lock_irqsave(&devfs_lock);
     dev_node->next = devfs_devices;
     devfs_devices = dev_node;
-    spin_unlock(&devfs_lock);
+    spin_unlock_irqrestore(&devfs_lock, fdflags);
 
     return PERS_SUCCESS;
 }

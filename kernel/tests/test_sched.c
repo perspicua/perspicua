@@ -81,6 +81,24 @@ static void task_long_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
+// publishes itself, then sleeps far longer than the suite runs so the test
+// controls exactly when it wakes
+static volatile int early_wake_ran = 0;
+static struct task *early_wake_task = NULL;
+
+static void task_publish_then_long_sleep(void)
+{
+    unsigned long flags = spin_lock_irqsave(&test_lock);
+    early_wake_task = sched_get_current();
+    spin_unlock_irqrestore(&test_lock, flags);
+
+    sched_sleep_ms(10000);
+
+    flags = spin_lock_irqsave(&test_lock);
+    early_wake_ran = 1;
+    spin_unlock_irqrestore(&test_lock, flags);
+}
+
 // task that writes a sequence to record execution order
 static volatile int order_log[16];
 static volatile int order_idx = 0;
@@ -370,6 +388,34 @@ void test_scheduler(void)
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);
     }
     TEST_PASS("sleep queue ordering");
+
+    // a task woken before its deadline must leave the sleep queue: otherwise
+    // cleanup_dead_task frees it while sleep_drain still walks the list
+    {
+        early_wake_ran = 0;
+        early_wake_task = NULL;
+        sched_create_task(task_publish_then_long_sleep);
+        sched_sleep_ms(30);
+
+        unsigned long flags = spin_lock_irqsave(&test_lock);
+        struct task *sleeper = early_wake_task;
+        spin_unlock_irqrestore(&test_lock, flags);
+
+        TEST_ASSERT("sleeper published itself", sleeper != NULL);
+        TEST_ASSERT("sleeper is queued while sleeping", sched_test_in_sleep_queue(sleeper));
+
+        // keep the wake and the check on one side of any preemption
+        flags = irq_save();
+        sched_unblock(sleeper);
+        int still_queued = sched_test_in_sleep_queue(sleeper);
+        irq_restore(flags);
+
+        TEST_ASSERT("early wake unlinks from the sleep queue", !still_queued);
+
+        sched_sleep_ms(30);
+        TEST_ASSERT("woken sleeper ran to completion", early_wake_ran == 1);
+    }
+    TEST_PASS("early wake leaves the sleep queue");
 
     // task with sleep inside
 

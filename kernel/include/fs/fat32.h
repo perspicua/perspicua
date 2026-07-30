@@ -116,6 +116,9 @@ struct fat32_fs {
 
     uint32_t fat_lba_start;
     uint32_t data_lba_start;
+
+    /* Highest cluster the data area can address; anything above is corrupt. */
+    uint32_t max_cluster;
 };
 
 /*
@@ -127,5 +130,20 @@ int fat32_init(const char *device_name);
  * fat32_get_root_node - Returns a vnode representing the root directory.
  */
 struct vfs_vnode *fat32_get_root_node(void);
+
+#ifdef CONFIG_TESTS
+/*
+ * Test hook exposing the internal long-name fragment placement so its bounds
+ * checks can be driven directly with entries no well-formed volume produces.
+ */
+int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len);
+
+/*
+ * Test hook for BPB validation, so crafted geometries can be checked without
+ * a device backing them.
+ */
+int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                 uint64_t device_blocks, struct fat32_fs *out);
+#endif
 
 #endif /* PERSPICUA_FS_FAT32_H */

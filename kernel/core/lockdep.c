@@ -18,13 +18,16 @@
 #ifdef CONFIG_LOCKDEP
 
     #define MAX_HELD_LOCKS 16
-    #define MAX_LOCK_NODES 1024
+    /* Distinct lock addresses tracked. The graph is N^2/8 bytes, so 1024 cost
+     * 128 KB in every debug build; 256 covers far more locks than exist and
+     * degrades gracefully (new locks stop being tracked) if it ever fills. */
+    #define MAX_LOCK_NODES 256
 
 static spinlock_t lockdep_lock = SPINLOCK_INIT;
-static int lockdep_disabled[4] = {0}; // Indexed by core ID
+static int lockdep_disabled[SPINLOCK_MAX_CORES] = {0}; // Indexed by core ID
 
-static uintptr_t held_locks[4][MAX_HELD_LOCKS];
-static int held_count[4] = {0};
+static uintptr_t held_locks[SPINLOCK_MAX_CORES][MAX_HELD_LOCKS];
+static int held_count[SPINLOCK_MAX_CORES] = {0};
 
 static uintptr_t lock_nodes[MAX_LOCK_NODES];
 static int num_lock_nodes = 0;
@@ -32,11 +35,11 @@ static int num_lock_nodes = 0;
 /* graph_edges[A][B] == 1 means lock A was acquired before lock B globally */
 static uint8_t graph_edges[MAX_LOCK_NODES][MAX_LOCK_NODES / 8];
 
-static int get_core_id(void)
+static int lockdep_core_id(void)
 {
     unsigned long core_id;
     asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
-    return core_id & 3;
+    return core_id & (SPINLOCK_MAX_CORES - 1);
 }
 
 static inline int get_edge(int a, int b)
@@ -96,7 +99,7 @@ void lockdep_init(void)
 
 void lockdep_acquire(spinlock_t *lock)
 {
-    int core = get_core_id();
+    int core = lockdep_core_id();
 
     if (lockdep_disabled[core]) {
         return;
@@ -176,7 +179,7 @@ void lockdep_acquire(spinlock_t *lock)
 
 void lockdep_release(spinlock_t *lock)
 {
-    int core = get_core_id();
+    int core = lockdep_core_id();
 
     if (lockdep_disabled[core]) {
         return;

@@ -11,11 +11,22 @@
 #include "types.h"
 #include "mm/pmm.h"
 
-/* Stack protection and sizing constants */
+#ifdef CONFIG_NR_CPUS
+    #define SCHED_NUM_CORES CONFIG_NR_CPUS
+#else
+    #define SCHED_NUM_CORES 4
+#endif
+
+/*
+ * Kernel stack per task, including one unmapped guard page at the bottom.
+ * Measured peak use is ~11 KB -- an interrupt landing inside a filesystem
+ * syscall -- so 60 KB usable leaves better than 5x headroom. The total must
+ * stay a power of two for the buddy allocator.
+ */
 #define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
 #define SCHED_STACK_GUARD_PAGES  1
-#define SCHED_STACK_USABLE_PAGES 63
-#define SCHED_STACK_PAGES        64 // Must be exact power of two for buddy allocator
+#define SCHED_STACK_USABLE_PAGES 15
+#define SCHED_STACK_PAGES        16
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
 /* Possible execution states for a task. */
@@ -23,6 +34,7 @@ enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,
     SCHED_TASK_BLOCKED,
+    SCHED_TASK_STOPPED,
     SCHED_TASK_DEAD
 };
 
@@ -59,12 +71,20 @@ struct task {
     volatile int on_core;        /* CPU core ID currently running this task, or -1 */
 };
 
-/* Returns the index of the current CPU core (0-3). */
+/*
+ * Returns the index of the current CPU core.
+ *
+ * Every per-core array is sized by SCHED_NUM_CORES, so the result is folded
+ * into that range. Masking with a literal 3 indexed out of bounds whenever the
+ * build was configured for fewer than four cores. smp_init only releases cores
+ * below the bound, so in practice the fold never triggers -- it keeps a core
+ * that should not be running from writing past the end of an array.
+ */
 static inline int get_core_id(void)
 {
     unsigned long mpidr;
     asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-    return (int)(mpidr & 3);
+    return (int)(mpidr & 0xFF) % SCHED_NUM_CORES;
 }
 
 /* Appends a task to the end of a specific CPU's ready queue. */
@@ -95,6 +115,12 @@ void sched_block(void);
 /* Transitions a specific task from blocked to ready state. */
 void sched_unblock(struct task *t);
 
+/* Transitions the current task to stopped state */
+void sched_stop(void);
+
+/* Transitions a specific task from stopped to ready state. */
+void sched_continue(struct task *t);
+
 /* Returns a pointer to the task currently running on the calling CPU core. */
 struct task *sched_get_current(void);
 
@@ -104,10 +130,12 @@ int sched_get_core_pid(int cpu);
 /* Low-level assembly function to swap processor state. */
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
-#ifdef CONFIG_NR_CPUS
-    #define SCHED_NUM_CORES CONFIG_NR_CPUS
-#else
-    #define SCHED_NUM_CORES 4
+#ifdef CONFIG_TESTS
+/* True while a task is linked in the timed sleep queue. */
+int sched_test_in_sleep_queue(const struct task *t);
+
+/* TTBR0 the scheduler would install for a process. */
+unsigned long sched_test_task_ttbr0_for(uint32_t pid);
 #endif
 
 /*

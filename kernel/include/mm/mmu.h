@@ -83,7 +83,14 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
 int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
                    unsigned long *out_flags);
 
+/* True if [start, end) is entirely mapped and reachable from EL0. */
+int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end, int writable);
+
 void mmu_switch_user(unsigned long *pgd, unsigned long asid);
+
+/* Points TTBR0 at the empty table. Call before freeing an address space. */
+void mmu_leave_user(void);
+
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 
 unsigned long mmu_kernel_ttbr0(void);

@@ -40,4 +40,11 @@ unsigned long slab_get_used(void);
  */
 unsigned long slab_get_total(void);
 
+#ifdef CONFIG_TESTS
+/*
+ * Size class an object was carved from, i.e. the bytes writable in it.
+ */
+unsigned long slab_test_object_size(void *ptr);
+#endif
+
 #endif /* PERSPICUA_MM_SLAB_H */

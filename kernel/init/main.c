@@ -72,7 +72,7 @@ static void smp_init(void)
     unsigned long entry_phys = V2P((unsigned long)_entry);
     int target_cores = 1;
 
-    for (int i = 1; i < 4; i++) {
+    for (int i = 1; i < SCHED_NUM_CORES; i++) {
         char path[32];
         snprintf(path, sizeof(path), "/cpus/cpu@%d", i);
         const uint32_t *node = fdt_find_node_by_path(path);

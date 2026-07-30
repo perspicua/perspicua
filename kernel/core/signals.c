@@ -19,6 +19,8 @@
 #include "mm/addr.h"
 #include "sched/sched.h"
 #include "sched/process.h"
+#include "core/lock.h"
+#include "core/timer.h"
 
 /*
  * signal_handle_pending - Dispatches signals before returning to user mode.
@@ -44,8 +46,8 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    struct process *curr_process = &process_table[curr_pid];
-    if (curr_process->state == PROCESS_STATE_EMPTY) {
+    struct process *curr_process = process_slot((uint32_t)curr_pid);
+    if (!curr_process) {
         return;
     }
 
@@ -75,8 +77,26 @@ void signal_handle_pending(struct exception_trap_frame *tf)
             return;
         }
 
-        /* Default 'stop' actions (ignored until job control is implemented) */
+        /* Default 'stop' actions */
         if (sig == SIGNAL_STOP || sig == SIGNAL_TSTP || sig == SIGNAL_TTIN || sig == SIGNAL_TTOU) {
+            /*
+             * Commit to the stop under process_table_lock so it is serialised
+             * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
+             * the pending bit and inspects our task state under the same lock.
+             * If a CONT (cancels the stop) or KILL (trumps everything) slipped in
+             * after we popped the stop signal above, do not park a task that no
+             * one will resume -- return so the pending signal is delivered next.
+             */
+            const sigset_t stop_override = (1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_KILL - 1));
+            unsigned long flags = spin_lock_irqsave(&process_table_lock);
+            if (curr_process->pending_signals & stop_override) {
+                spin_unlock_irqrestore(&process_table_lock, flags);
+                return;
+            }
+            sched_get_current()->state = SCHED_TASK_STOPPED;
+            spin_unlock(&process_table_lock); /* keep IRQs masked across schedule() */
+            schedule();
+            irq_restore(flags);
             return;
         }
 
@@ -164,17 +184,32 @@ int signal_send(uint32_t target_pid, int sig)
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[target_pid];
-
     /* Hold the process table lock so the target cannot be reaped and its slot
-     * reused between the existence check and dereferencing main_task. */
+     * freed between the existence check and dereferencing main_task. Only a
+     * RUNNING process has a live task: a zombie's was already freed, and its
+     * slot survives until a parent reaps it. */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (p->state == PROCESS_STATE_EMPTY) {
+    struct process *p = process_table[target_pid];
+    if (!p || p->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, flags);
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
+    const sigset_t stop_mask = (1u << (SIGNAL_STOP - 1)) | (1u << (SIGNAL_TSTP - 1))
+                               | (1u << (SIGNAL_TTIN - 1)) | (1u << (SIGNAL_TTOU - 1));
+
+    if (sig == SIGNAL_STOP || sig == SIGNAL_TSTP || sig == SIGNAL_TTIN || sig == SIGNAL_TTOU) {
+        __atomic_fetch_and(&p->pending_signals, ~(1u << (SIGNAL_CONT - 1)), __ATOMIC_SEQ_CST);
+    } else if (sig == SIGNAL_CONT) {
+        __atomic_fetch_and(&p->pending_signals, ~stop_mask, __ATOMIC_SEQ_CST);
+    }
+
     __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+
+    if ((sig == SIGNAL_CONT || sig == SIGNAL_KILL) && p->main_task
+        && p->main_task->state == SCHED_TASK_STOPPED) {
+        sched_continue(p->main_task);
+    }
 
     if (p->signal_handlers[sig - 1].sa_handler != SIGNAL_IGN) {
         if (p->main_task && p->main_task->state == SCHED_TASK_BLOCKED) {

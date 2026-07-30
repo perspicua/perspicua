@@ -14,6 +14,17 @@
 #define ATOMIC_INIT(i) {(i)}
 
 /*
+ * Cores tracked by the per-core preemption counter. Must cover every core that
+ * can run, so it follows the configured count: a core whose id lands outside
+ * this range would share another core's slot.
+ */
+#ifdef CONFIG_NR_CPUS
+    #define SPINLOCK_MAX_CORES CONFIG_NR_CPUS
+#else
+    #define SPINLOCK_MAX_CORES 4
+#endif
+
+/*
  * struct spinlock_t - Simple busy-wait lock for short critical sections.
  *
  * Uses AArch64 exclusive monitors to provide mutual exclusion.
@@ -48,6 +59,14 @@ unsigned long spin_lock_irqsave(spinlock_t *lock);
  * spin_unlock_irqrestore - Releases the lock and restores local IRQ state.
  */
 void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags);
+
+/*
+ * preempt_active - True while the calling core holds at least one spinlock.
+ *
+ * The timer interrupt must not preempt a lock holder: a core spinning for that
+ * lock would then be waiting on a task that is no longer scheduled.
+ */
+int preempt_active(void);
 
 /*
  * atomic_inc - Atomically increments an atomic variable.

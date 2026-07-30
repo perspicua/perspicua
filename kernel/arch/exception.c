@@ -41,7 +41,7 @@ extern unsigned long __ex_table_end[];
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
 
-struct irq_stats core_irq_stats[4];
+struct irq_stats core_irq_stats[SCHED_NUM_CORES];
 
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the
@@ -109,11 +109,9 @@ static const char *fsc_to_string(uint32_t fsc)
  * Dispatches user-space aborts to process termination and kernel aborts
  * to the panic system. Includes CoW handling for permission faults.
  */
-static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t esr)
+static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t esr,
+                         unsigned long far)
 {
-    unsigned long far;
-    asm volatile("mrs %0, far_el1" : "=r"(far));
-
     uint32_t fsc = esr & FSC_MASK;
     int is_write =
         (ec == EC_DATA_ABORT_LOWER || ec == EC_DATA_ABORT_SAME) ? (int)((esr >> 6) & 1) : 0;
@@ -124,10 +122,9 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
      * We also check if it's a kernel access to user memory (far < KERNEL_VMA).
      */
     if (is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3) && (far < KERNEL_VMA)) {
-        int pid = process_find_current();
-        if (pid >= 0) {
-            unsigned long *pgd = process_table[pid].user_pgd;
-            if (mmu_handle_cow(pgd, far) == 0) {
+        struct process *p = process_current();
+        if (p && p->user_pgd) {
+            if (mmu_handle_cow(p->user_pgd, far) == 0) {
                 return;
             }
         }
@@ -248,7 +245,16 @@ void exception_irq_handler(void)
         core_irq_stats[current_core].timer_count++;
         timer_interrupt_reset();
         mmio_write(gic_c_eoir, iar);
-        schedule();
+
+        /*
+         * Never preempt a spinlock holder: a core spinning for that lock would
+         * be waiting on a task that is no longer scheduled. Deferring costs at
+         * most one tick, and the holder's critical section is short by
+         * construction.
+         */
+        if (!preempt_active()) {
+            schedule();
+        }
         return;
     } else if (irq_id == uart_irq_cached) {
         core_irq_stats[current_core].uart_count++;
@@ -277,7 +283,22 @@ void exception_irq_handler(void)
 void exception_sync_handler(struct exception_trap_frame *tf)
 {
     uintptr_t esr;
+    unsigned long far;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
+    asm volatile("mrs %0, far_el1" : "=r"(far));
+
+    /*
+     * Syndrome captured, so this core can take exceptions again. ESR_EL1 and
+     * FAR_EL1 are not banked: unmasking before reading them lets a preempting
+     * task's own abort overwrite both, and this handler then resolves the fault
+     * for someone else's address -- leaving the real faulting page unresolved.
+     *
+     * Exceptions from EL1 stay masked: a kernel fault can be taken inside a
+     * critical section, where preemption would not be safe.
+     */
+    if ((tf->spsr_el1 & 0xF) == 0) {
+        asm volatile("msr daifclr, #2" : : : "memory");
+    }
 
     uint32_t ec = (uint32_t)((esr >> 26) & 0x3F);
 
@@ -290,13 +311,10 @@ void exception_sync_handler(struct exception_trap_frame *tf)
         case EC_INST_ABORT_SAME:
         case EC_DATA_ABORT_LOWER:
         case EC_DATA_ABORT_SAME:
-            handle_abort(tf, ec, esr);
+            handle_abort(tf, ec, esr, far);
             break;
 
         default: {
-            unsigned long far;
-            asm volatile("mrs %0, far_el1" : "=r"(far));
-
             pr_err("\n[KERNEL FAULT] Unhandled synchronous exception\n");
             printk("  EC       : 0x%02x\n", (unsigned int)ec);
             printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
