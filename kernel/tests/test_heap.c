@@ -169,15 +169,33 @@ void test_heap(void)
     }
     TEST_PASS("first-fit ordering");
 
+    /*
+     * The tests from here to the end of the coalescing group assert *where* a
+     * block lands, which only holds if no earlier hole can serve the request.
+     * Consume every hole big enough to interfere and hold them for the whole
+     * group; the heap having to grow is the signal that none is left. Draining
+     * a fixed number of bytes instead would depend on how much heap the kernel
+     * happened to use before the tests ran.
+     */
+    void *layout_fill[64];
+    int layout_nfill = 0;
+    {
+        unsigned long total_before = heap_get_total();
+        while (layout_nfill < 64 && heap_get_total() == total_before) {
+            void *f = heap_malloc(LARGE);
+            if (!f) {
+                break;
+            }
+            layout_fill[layout_nfill++] = f;
+        }
+    }
+
     // block splitting (sizes > SLAB_MAX to exercise first-fit path)
 
     // split occurs when remainder >= header_size + 16 (48)
     //    Allocate a big block, free it, then allocate much smaller.
     //    The remainder should be split into a second usable block.
     {
-        // Drain the initial pool so the freed block is the first-fit candidate.
-        // Initial pool is ~8160 bytes; allocating 8000 consumes it.
-        void *drain = heap_malloc(8000);
         void *big = heap_malloc(8192);
         heap_free(big);
         // Freed block has size >= 8192.
@@ -192,7 +210,6 @@ void test_heap(void)
         TEST_ASSERT("split: contiguous layout", (unsigned long)next == expected);
         heap_free(small);
         heap_free(next);
-        heap_free(drain);
     }
     TEST_PASS("block splitting basic");
 
@@ -335,6 +352,10 @@ void test_heap(void)
         heap_free(guard);
     }
     TEST_PASS("reverse-order coalesce");
+
+    for (int i = layout_nfill - 1; i >= 0; i--) {
+        heap_free(layout_fill[i]);
+    }
 
     // heap expansion
 

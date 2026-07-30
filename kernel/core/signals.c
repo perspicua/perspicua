@@ -46,8 +46,8 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    struct process *curr_process = &process_table[curr_pid];
-    if (curr_process->state == PROCESS_STATE_EMPTY) {
+    struct process *curr_process = process_slot((uint32_t)curr_pid);
+    if (!curr_process) {
         return;
     }
 
@@ -184,14 +184,13 @@ int signal_send(uint32_t target_pid, int sig)
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
-    struct process *p = &process_table[target_pid];
-
     /* Hold the process table lock so the target cannot be reaped and its slot
-     * reused between the existence check and dereferencing main_task. Only a
+     * freed between the existence check and dereferencing main_task. Only a
      * RUNNING process has a live task: a zombie's was already freed, and its
      * slot survives until a parent reaps it. */
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (p->state != PROCESS_STATE_RUNNING) {
+    struct process *p = process_table[target_pid];
+    if (!p || p->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, flags);
         return -PERS_ERR_NO_SUCH_PROCESS;
     }

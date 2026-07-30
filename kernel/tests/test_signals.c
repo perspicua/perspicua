@@ -70,22 +70,21 @@ void test_signals(void)
      * poison pointer faults if that check is ever lost.
      */
     {
-        const uint32_t slot = PROCESS_TABLE_SIZE - 2;
+        int slot = process_test_claim_slot();
+        int sent = 0;
 
-        unsigned long flags = spin_lock_irqsave(&process_table_lock);
-        process_state_t saved_state = process_table[slot].state;
-        struct task *saved_task = process_table[slot].main_task;
-        process_table[slot].state = PROCESS_STATE_ZOMBIE;
-        process_table[slot].main_task = (struct task *)0xDEAD000000000000ULL;
-        spin_unlock_irqrestore(&process_table_lock, flags);
+        if (slot > 0) {
+            unsigned long flags = spin_lock_irqsave(&process_table_lock);
+            process_table[slot]->state = PROCESS_STATE_ZOMBIE;
+            process_table[slot]->main_task = (struct task *)0xDEAD000000000000ULL;
+            spin_unlock_irqrestore(&process_table_lock, flags);
 
-        int sent = signal_send(slot, SIGNAL_KILL);
+            sent = signal_send((uint32_t)slot, SIGNAL_KILL);
 
-        flags = spin_lock_irqsave(&process_table_lock);
-        process_table[slot].state = saved_state;
-        process_table[slot].main_task = saved_task;
-        spin_unlock_irqrestore(&process_table_lock, flags);
+            process_test_release_slot((uint32_t)slot);
+        }
 
+        TEST_ASSERT("zombie test slot claimed", slot > 0);
         TEST_ASSERT("zombie slot rejected", sent < 0);
     }
     TEST_PASS("zombie slot");
@@ -93,7 +92,7 @@ void test_signals(void)
     /*
      * kill() takes a signed pid straight from the user. Everything outside
      * 1..PROCESS_TABLE_SIZE-1 must be refused before it indexes the table:
-     * -1 used to clear the upper-bound check and read process_table[-1].
+     * -1 used to clear the upper-bound check and read process_table[-1]->
      */
     {
         TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
@@ -118,7 +117,7 @@ void test_signals(void)
     {
         TEST_ASSERT_EQ("send SIGUSR1 to init", signal_send(INIT_PID, SIGNAL_USR1), 0);
 
-        uint32_t pending = process_table[INIT_PID].pending_signals;
+        uint32_t pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
     }
     TEST_PASS("pending bit set");
@@ -127,7 +126,7 @@ void test_signals(void)
     {
         TEST_ASSERT_EQ("send SIGUSR2 to init", signal_send(INIT_PID, SIGNAL_USR2), 0);
 
-        uint32_t pending = process_table[INIT_PID].pending_signals;
+        uint32_t pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
         TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
     }
@@ -135,9 +134,9 @@ void test_signals(void)
 
     // re-sending an already-pending signal is idempotent, not a counter
     {
-        uint32_t before = process_table[INIT_PID].pending_signals;
+        uint32_t before = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT_EQ("resend SIGUSR1", signal_send(INIT_PID, SIGNAL_USR1), 0);
-        uint32_t after = process_table[INIT_PID].pending_signals;
+        uint32_t after = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("resend leaves mask unchanged", before == after);
     }
     TEST_PASS("delivery is idempotent");
@@ -146,21 +145,21 @@ void test_signals(void)
     // signals
     {
         TEST_ASSERT_EQ("send SIGCONT", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        uint32_t pending = process_table[INIT_PID].pending_signals;
+        uint32_t pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
 
         TEST_ASSERT_EQ("send SIGSTOP", signal_send(INIT_PID, SIGNAL_STOP), 0);
-        pending = process_table[INIT_PID].pending_signals;
+        pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
         TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
 
         TEST_ASSERT_EQ("send SIGCONT again", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        pending = process_table[INIT_PID].pending_signals;
+        pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
         TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
 
         /* Cleanup */
-        process_table[INIT_PID].pending_signals &=
+        process_table[INIT_PID]->pending_signals &=
             ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
     }
     TEST_PASS("POSIX mutual signal discard");
@@ -169,10 +168,10 @@ void test_signals(void)
      * Clear what this suite queued so init is not left holding signals it
      * never asked for once it runs.
      */
-    process_table[INIT_PID].pending_signals &=
+    process_table[INIT_PID]->pending_signals &=
         ~((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)));
     TEST_ASSERT_EQ("test signals cleared",
-                   (long)(process_table[INIT_PID].pending_signals
+                   (long)(process_table[INIT_PID]->pending_signals
                           & ((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)))),
                    0);
     TEST_PASS("cleanup");

@@ -307,9 +307,9 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             }
 
             struct task *curr_task_inner = sched_get_current();
-            uint32_t pid = curr_task_inner->pid;
+            struct process *proc = process_slot(curr_task_inner->pid);
 
-            if (process_table[pid].pending_signals & ~process_table[pid].blocked_signals) {
+            if (proc && (proc->pending_signals & ~proc->blocked_signals)) {
                 spin_unlock_irqrestore(&tty->lock, flags);
                 return -PERS_ERR_INTERRUPTED;
             }

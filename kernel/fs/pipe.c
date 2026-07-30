@@ -64,11 +64,10 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
  */
 static int pipe_signal_pending(void)
 {
-    int pid = process_find_current();
-    if (pid < 0) {
+    struct process *p = process_current();
+    if (!p) {
         return 0;
     }
-    struct process *p = &process_table[pid];
     return (p->pending_signals & ~p->blocked_signals) != 0;
 }
 
@@ -190,6 +189,16 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
             }
+            /*
+             * Hand off what is buffered before sleeping. A reader that queued
+             * while the pipe was empty is woken only by the wake below, which a
+             * write larger than the buffer never reaches: it fills the buffer
+             * and blocks here instead, leaving the reader waiting for bytes
+             * that already arrived and the writer waiting for space.
+             */
+            if (pipe->read_wait_queue) {
+                pipe_wake(&pipe->read_wait_queue);
+            }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
@@ -254,12 +263,10 @@ static struct vfs_vnode_ops pipe_ops = {
  */
 int pipe_create(int pipefd[2])
 {
-    int pid = process_find_current();
-    if (pid < 0) {
-        return pid;
+    struct process *p = process_current();
+    if (!p) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
     }
-
-    struct process *p = &process_table[pid];
 
     struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
     if (!pipe) {
