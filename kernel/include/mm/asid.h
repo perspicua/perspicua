@@ -6,7 +6,7 @@
 
 #define BITMAP_SIZE 4
 /* Highest allocatable ASID. Derived so it cannot drift from the bitmap. */
-#define MAX_ASID    (BITMAP_SIZE * 64 - 1)
+#define MAX_ASID (BITMAP_SIZE * 64 - 1)
 
 /*
  * TTBR0 and the TLBI operands carry the ASID in bits [63:48]. boot.S sets

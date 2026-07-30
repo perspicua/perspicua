@@ -202,6 +202,17 @@ static int name_match(const char *filename, struct fat32_dir_entry *entry)
         name[j++] = c;
     }
 
+    /*
+     * A basename past the eighth character is dropped, so skip the overflow to
+     * reach the extension. name_to_83 does the same when it builds the entry,
+     * and a lookup that stops short searches for a blank extension instead:
+     * the file it just created is then unfindable, and the next create appends
+     * a second entry for the same name.
+     */
+    while (filename[i] != '.' && filename[i] != '\0') {
+        i++;
+    }
+
     if (filename[i] == '.') {
         i++;
         j = 0;

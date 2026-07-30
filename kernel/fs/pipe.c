@@ -189,6 +189,16 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
             }
+            /*
+             * Hand off what is buffered before sleeping. A reader that queued
+             * while the pipe was empty is woken only by the wake below, which a
+             * write larger than the buffer never reaches: it fills the buffer
+             * and blocks here instead, leaving the reader waiting for bytes
+             * that already arrived and the writer waiting for space.
+             */
+            if (pipe->read_wait_queue) {
+                pipe_wake(&pipe->read_wait_queue);
+            }
             pipe_wait(&pipe->write_wait_queue, &pipe->lock);
         }
     }
