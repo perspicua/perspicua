@@ -59,6 +59,12 @@ struct vfs_dirent {
 __attribute__((noreturn)) void sys_exit(int status);
 int sys_getpid(void);
 int sys_getppid(void);
+int sys_setpgid(int pid, int pgid);
+int sys_getpgid(int pid);
+int sys_setsid(void);
+int sys_getsid(int pid);
+int sys_tcsetpgrp(int fd, int pgid);
+int sys_tcgetpgrp(int fd);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
 int sys_exec(const char *path, char *const argv[], char *const envp[]);

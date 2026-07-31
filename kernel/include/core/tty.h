@@ -41,13 +41,32 @@ struct tty {
     spinlock_t lock;
     int echo_enabled;
     int canon_enabled;
-    uint32_t foreground_pid;
+    uint32_t foreground_pgid;
+    uint32_t session_id;
 };
 
 /*
  * tty_init - Initializes a TTY structure with default settings.
  */
 void tty_init(struct tty *tty);
+
+/*
+ * tty_session_exit - Clears terminal session association and sends SIGHUP when session leader exits.
+ */
+void tty_session_exit(uint32_t sid);
+
+/* Results of tty_access_check. */
+#define TTY_ACCESS_OK      0 /* foreground, or not the caller's controlling terminal */
+#define TTY_ACCESS_BLOCKED 1 /* background, but the signal cannot stop the caller */
+#define TTY_ACCESS_STOPPED 2 /* background: signal sent, abandon the operation */
+
+/*
+ * tty_access_check - Whether a background caller may touch its controlling
+ * terminal, signalling its group with sig if not. A caller that blocks or
+ * ignores sig cannot be stopped by it, so that case is reported separately
+ * rather than looping forever.
+ */
+int tty_access_check(struct tty *tty, int sig);
 
 /*
  * tty_handle_rx - Processes a character received from the hardware.
