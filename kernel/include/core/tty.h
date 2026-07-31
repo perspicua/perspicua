@@ -41,7 +41,7 @@ struct tty {
     spinlock_t lock;
     int echo_enabled;
     int canon_enabled;
-    uint32_t foreground_pid;
+    uint32_t foreground_pgid;
 };
 
 /*

@@ -203,7 +203,7 @@ void tty_init(struct tty *tty)
     tty->lock = (spinlock_t)SPINLOCK_INIT;
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
-    tty->foreground_pid = 0;
+    tty->foreground_pgid = 0;
 
     uart_reg_rx_callback(console_rx_adapter);
     uart_reg_tx_callback(console_tx_adapter);
@@ -237,10 +237,11 @@ void tty_handle_rx(struct tty *tty, char c)
 
     /* Ctrl+C handling */
     if (c == 3) {
-        if (tty->foreground_pid > 0) {
-            signal_send(tty->foreground_pid, SIGNAL_INT);
-        }
+        uint32_t fg_pgid = tty->foreground_pgid;
         spin_unlock_irqrestore(&tty->lock, flags);
+        if (fg_pgid > 0) {
+            signal_send_group(fg_pgid, SIGNAL_INT);
+        }
         return;
     }
 
@@ -279,11 +280,6 @@ void tty_handle_rx(struct tty *tty, char c)
  */
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
-    struct task *curr_task = sched_get_current();
-    if (curr_task) {
-        tty->foreground_pid = curr_task->pid;
-    }
-
     size_t n = 0;
     while (n < count) {
         unsigned long flags = spin_lock_irqsave(&tty->lock);

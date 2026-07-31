@@ -391,6 +391,7 @@ static void execute_pipeline(char *pipe_string)
 
         int pid = sys_fork();
         if (pid == 0) {
+            sys_setpgid(0, 0);
             if (apply_redirections(&cmd) < 0)
                 sys_exit(1);
 
@@ -401,8 +402,12 @@ static void execute_pipeline(char *pipe_string)
             run_exec(&cmd);
             sys_exit(1);
         } else {
+            sys_setpgid(pid, pid);
             if (!cmd.background) {
+                int shell_pgid = sys_getpgid(0);
+                sys_tcsetpgrp(0, pid);
                 sys_waitpid(pid, NULL, 0);
+                sys_tcsetpgrp(0, shell_pgid);
             }
         }
         return;
@@ -413,6 +418,7 @@ static void execute_pipeline(char *pipe_string)
     int pipefd[2];
     int pids[MAX_CMDS];
     int bg_flag = 0;
+    int pipeline_pgid = 0;
 
     for (int i = 0; i < num_cmds; i++) {
         Command cmd;
@@ -431,6 +437,12 @@ static void execute_pipeline(char *pipe_string)
 
         int pid = sys_fork();
         if (pid == 0) {
+            if (i == 0) {
+                sys_setpgid(0, 0);
+            } else {
+                sys_setpgid(0, pipeline_pgid);
+            }
+
             if (prev_pipe != -1) {
                 sys_dup2(prev_pipe, 0);
                 sys_close(prev_pipe);
@@ -452,6 +464,11 @@ static void execute_pipeline(char *pipe_string)
             sys_exit(1);
         } else {
             pids[i] = pid;
+            if (i == 0) {
+                pipeline_pgid = pid;
+            }
+            sys_setpgid(pid, pipeline_pgid);
+
             if (prev_pipe != -1)
                 sys_close(prev_pipe);
             if (i < num_cmds - 1) {
@@ -462,9 +479,14 @@ static void execute_pipeline(char *pipe_string)
     }
 
     if (!bg_flag) {
+        int shell_pgid = sys_getpgid(0);
+        if (pipeline_pgid > 0) {
+            sys_tcsetpgrp(0, pipeline_pgid);
+        }
         for (int i = 0; i < num_cmds; i++) {
             sys_waitpid(pids[i], NULL, 0);
         }
+        sys_tcsetpgrp(0, shell_pgid);
     }
 }
 
@@ -961,6 +983,11 @@ int main(int argc, char *argv[], char *envp[])
     (void)envp;
     sys_signal(SIGNAL_INT, SIGNAL_IGN);
     sys_signal(SIGNAL_CHLD, handle_sigchld);
+    sys_signal(SIGNAL_TTOU, SIGNAL_IGN);
+
+    int shell_pgid = sys_getpid();
+    sys_setpgid(0, shell_pgid);
+    sys_tcsetpgrp(0, shell_pgid);
 
     printf("Perspicua Shell\n");
     printf("Type help to see available commands.\n\n");

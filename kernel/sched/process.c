@@ -284,6 +284,7 @@ static struct process *process_alloc_pcb(uint32_t pid)
 
     memset(p, 0, sizeof(*p));
     p->pid = pid;
+    p->pgid = pid;
     p->state = PROCESS_STATE_RUNNING;
     p->fd_lock = (spinlock_t)SPINLOCK_INIT;
     return p;
@@ -924,6 +925,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     child->paddr_kernel_stack = V2P(kstack);
     child->va = parent->va;
     child->parent_pid = (uint32_t)parent_pid;
+    child->pgid = parent->pgid;
     strncpy(child->name, parent->name, sizeof(child->name) - 1);
     child->name[sizeof(child->name) - 1] = '\0';
 
