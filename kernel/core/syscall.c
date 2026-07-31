@@ -1194,6 +1194,14 @@ mmap_fail:
                 break;
             }
 
+            /* Handing the terminal on from a background group stops the caller,
+             * which is why a job-control shell ignores SIGTTOU: that is what lets
+             * it take the terminal back once a job finishes. */
+            if (tty_access_check(tty, SIGNAL_TTOU) == TTY_ACCESS_STOPPED) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
+                break;
+            }
+
             unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
             /* An unowned terminal goes to the first session leader that asks;
              * after that only that session may steer it. POSIX acquires on

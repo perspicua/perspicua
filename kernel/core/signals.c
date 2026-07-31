@@ -94,6 +94,16 @@ void signal_handle_pending(struct exception_trap_frame *tf)
                 return;
             }
             sched_get_current()->state = SCHED_TASK_STOPPED;
+            curr_process->stop_reported = 0;
+
+            /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
+             * is invisible and the parent sleeps until we exit instead. */
+            struct process *parent = process_slot(curr_process->parent_pid);
+            if (curr_process->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
+                && parent->main_task) {
+                sched_unblock(parent->main_task);
+            }
+
             spin_unlock(&process_table_lock); /* keep IRQs masked across schedule() */
             schedule();
             irq_restore(flags);
@@ -199,6 +209,7 @@ static int signal_send_target_locked(struct process *p, int sig)
 
     if ((sig == SIGNAL_CONT || sig == SIGNAL_KILL) && p->main_task
         && p->main_task->state == SCHED_TASK_STOPPED) {
+        p->stop_reported = 0;
         sched_continue(p->main_task);
     }
 

@@ -2,6 +2,7 @@
 #include <signals.h>
 #include <stdio.h>
 #include <syscall.h>
+#include <wait.h>
 
 static void test_observable_stop_cont(void)
 {
@@ -192,6 +193,53 @@ static void test_session_daemon(void)
     printf("Session Daemon & Setsid Immunity test passed!\n\n");
 }
 
+/*
+ * A background group must not steal terminal input. Both outcomes are checked:
+ * a reader that can be stopped is, and one that has blocked the signal gets an
+ * error rather than looping on a read it can never be woken from.
+ */
+static void test_background_read(void)
+{
+    printf("--- Test: Background read raises SIGTTIN ---\n");
+
+    /* Child that ignores SIGTTIN must fail the read instead of stopping. */
+    int ign_pid = sys_fork();
+    assert(ign_pid >= 0);
+
+    if (ign_pid == 0) {
+        sys_setpgid(0, 0);
+        sys_signal(SIGNAL_TTIN, SIGNAL_IGN);
+        char c;
+        int r = sys_read(0, &c, 1);
+        sys_exit(r < 0 ? 42 : 43);
+    }
+
+    int status = -1;
+    assert(sys_waitpid(ign_pid, &status, 0) == ign_pid);
+    assert(status == 42);
+
+    /* Child that leaves SIGTTIN at default must stop, not exit. */
+    int stop_pid = sys_fork();
+    assert(stop_pid >= 0);
+
+    if (stop_pid == 0) {
+        sys_setpgid(0, 0);
+        char c;
+        sys_read(0, &c, 1);
+        sys_exit(44);
+    }
+
+    sys_sleep(200);
+    assert(sys_waitpid(stop_pid, &status, WNOHANG) == 0);
+
+    assert(sys_kill(stop_pid, SIGNAL_KILL) == 0);
+    status = -1;
+    assert(sys_waitpid(stop_pid, &status, 0) == stop_pid);
+    assert(status == 137);
+
+    printf("Background read SIGTTIN test passed!\n\n");
+}
+
 int main(void)
 {
     printf("=== Running SIGSTOP / SIGCONT & Signal Regression Tests ===\n\n");
@@ -200,6 +248,7 @@ int main(void)
     test_kill_stopped_task();
     test_cont_racing_stop();
     test_session_daemon();
+    test_background_read();
 
     printf("=== All SIGSTOP / SIGCONT & Signal Regression Tests Passed! ===\n");
     return 0;

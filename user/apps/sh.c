@@ -216,13 +216,52 @@ static void parse_command(char *str, Command *cmd)
 static int is_parent_builtin(const char *name)
 {
     return (strcmp(name, "cd") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "export") == 0
-            || strcmp(name, "unset") == 0);
+            || strcmp(name, "unset") == 0 || strcmp(name, "fg") == 0);
+}
+
+/* One stopped job is remembered so Ctrl-Z is recoverable; a real job table is
+ * Phase 3 item 4. */
+static int stopped_pgid = 0;
+
+/*
+ * wait_foreground - Waits on a foreground job, holding the terminal.
+ *
+ * Returns after the job exits or stops. A stop leaves the job parked and
+ * recorded rather than reaped, so the prompt comes back with it still alive.
+ */
+static void wait_foreground(int pgid, const int *pids, int count)
+{
+    int shell_pgid = sys_getpgid(0);
+
+    sys_tcsetpgrp(0, pgid);
+    for (int i = 0; i < count; i++) {
+        int status = 0;
+        if (sys_waitpid(pids[i], &status, WUNTRACED) < 0) {
+            continue;
+        }
+        if (WIFSTOPPED(status)) {
+            stopped_pgid = pgid;
+            printf("\n[stopped]  use 'fg' to resume\n");
+            break;
+        }
+    }
+    sys_tcsetpgrp(0, shell_pgid);
 }
 
 static void run_parent_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "exit") == 0) {
         sys_exit(0);
+    } else if (strcmp(cmd->argv[0], "fg") == 0) {
+        if (stopped_pgid == 0) {
+            printf("sh: fg: no stopped job\n");
+        } else {
+            int pgid = stopped_pgid;
+            stopped_pgid = 0;
+            sys_kill(-pgid, SIGNAL_CONT);
+            int pids[1] = {pgid};
+            wait_foreground(pgid, pids, 1);
+        }
     } else if (strcmp(cmd->argv[0], "cd") == 0) {
         const char *target = (cmd->argc > 1) ? cmd->argv[1] : "/";
         if (sys_chdir(target) < 0) {
@@ -404,10 +443,8 @@ static void execute_pipeline(char *pipe_string)
         } else {
             sys_setpgid(pid, pid);
             if (!cmd.background) {
-                int shell_pgid = sys_getpgid(0);
-                sys_tcsetpgrp(0, pid);
-                sys_waitpid(pid, NULL, 0);
-                sys_tcsetpgrp(0, shell_pgid);
+                int pids[1] = {pid};
+                wait_foreground(pid, pids, 1);
             }
         }
         return;
@@ -478,15 +515,8 @@ static void execute_pipeline(char *pipe_string)
         }
     }
 
-    if (!bg_flag) {
-        int shell_pgid = sys_getpgid(0);
-        if (pipeline_pgid > 0) {
-            sys_tcsetpgrp(0, pipeline_pgid);
-        }
-        for (int i = 0; i < num_cmds; i++) {
-            sys_waitpid(pids[i], NULL, 0);
-        }
-        sys_tcsetpgrp(0, shell_pgid);
+    if (!bg_flag && pipeline_pgid > 0) {
+        wait_foreground(pipeline_pgid, pids, num_cmds);
     }
 }
 

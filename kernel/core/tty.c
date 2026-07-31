@@ -235,6 +235,31 @@ void tty_session_exit(uint32_t sid)
     }
 }
 
+int tty_access_check(struct tty *tty, int sig)
+{
+    struct process *p = process_current();
+    if (!p) {
+        return TTY_ACCESS_OK;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&tty->lock);
+    uint32_t sid = tty->session_id;
+    uint32_t fg_pgid = tty->foreground_pgid;
+    spin_unlock_irqrestore(&tty->lock, flags);
+
+    if (sid == 0 || p->sid != sid || p->pgid == fg_pgid) {
+        return TTY_ACCESS_OK;
+    }
+
+    if (p->signal_handlers[sig - 1].sa_handler == SIGNAL_IGN
+        || (p->blocked_signals & (1u << (sig - 1)))) {
+        return TTY_ACCESS_BLOCKED;
+    }
+
+    signal_send_group(p->pgid, sig);
+    return TTY_ACCESS_STOPPED;
+}
+
 /*
  * tty_handle_tx - Called from the UART TX interrupt to drain the TX ring buffer.
  *
@@ -259,12 +284,13 @@ void tty_handle_rx(struct tty *tty, char c)
         c = '\n';
     }
 
-    /* Ctrl+C handling */
-    if (c == 3) {
+    /* Ctrl-C and Ctrl-Z reach the foreground group as a whole. */
+    if (c == 3 || c == 26) {
+        int sig = (c == 3) ? SIGNAL_INT : SIGNAL_TSTP;
         uint32_t fg_pgid = tty->foreground_pgid;
         spin_unlock_irqrestore(&tty->lock, flags);
         if (fg_pgid > 0) {
-            signal_send_group(fg_pgid, SIGNAL_INT);
+            signal_send_group(fg_pgid, sig);
         }
         return;
     }
@@ -304,6 +330,15 @@ void tty_handle_rx(struct tty *tty, char c)
  */
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
+    switch (tty_access_check(tty, SIGNAL_TTIN)) {
+        case TTY_ACCESS_BLOCKED:
+            return -PERS_ERR_IO_ERROR;
+        case TTY_ACCESS_STOPPED:
+            return -PERS_ERR_INTERRUPTED;
+        default:
+            break;
+    }
+
     size_t n = 0;
     while (n < count) {
         unsigned long flags = spin_lock_irqsave(&tty->lock);

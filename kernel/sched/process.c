@@ -1027,6 +1027,20 @@ int process_waitpid(int pid, int *status, int options)
                 heap_free(candidate);
                 return found_pid;
             }
+
+            /* Reported once per stop, so a caller that waits again blocks
+             * instead of spinning on a child that is still stopped. */
+            if ((options & WUNTRACED) && !candidate->stop_reported && candidate->main_task
+                && candidate->main_task->state == SCHED_TASK_STOPPED) {
+                int found_pid = (int)candidate->pid;
+                candidate->stop_reported = 1;
+                if (status) {
+                    *status = PERS_STATUS_STOPPED | SIGNAL_TSTP;
+                }
+                spin_unlock(&process_table_lock);
+                irq_restore(irqf);
+                return found_pid;
+            }
         }
 
         if (!has_children) {
