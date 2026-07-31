@@ -679,3 +679,28 @@ int sys_tcgetpgrp(int fd)
                  : "x0", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_setsid(void)
+{
+    long res;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "i"(SYS_SETSID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_getsid(int pid)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "i"(SYS_GETSID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}

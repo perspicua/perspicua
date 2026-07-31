@@ -51,5 +51,7 @@
 #define SYS_GETPGID     39
 #define SYS_TCSETPGRP   40
 #define SYS_TCGETPGRP   41
+#define SYS_SETSID      42
+#define SYS_GETSID      43
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

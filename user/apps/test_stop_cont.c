@@ -134,6 +134,64 @@ static void test_cont_racing_stop(void)
     }
 }
 
+static void test_session_daemon(void)
+{
+    printf("--- Test: Session Daemon & Setsid Immunity ---\n");
+
+    /* Child 1: calls setsid to detach into its own session (daemon) */
+    int daemon_pid = sys_fork();
+    assert(daemon_pid >= 0);
+
+    if (daemon_pid == 0) {
+        int sid = sys_setsid();
+        assert(sid > 0);
+        assert(sid == sys_getpid());
+
+        /* Verify setsid fails if already a session/group leader */
+        int err = sys_setsid();
+        assert(err < 0);
+
+        while (1) {
+            sys_sleep(50);
+        }
+    }
+
+    /* Child 2: stays in parent's session/group */
+    int fg_pid = sys_fork();
+    assert(fg_pid >= 0);
+
+    if (fg_pid == 0) {
+        while (1) {
+            sys_sleep(50);
+        }
+    }
+
+    sys_sleep(100);
+
+    /* Verify parent cannot setpgid daemon_pid into parent's group across sessions */
+    int err = sys_setpgid(daemon_pid, sys_getpid());
+    assert(err < 0);
+
+    /* Send SIGINT to fg_pid */
+    int res = sys_kill(fg_pid, SIGNAL_INT);
+    assert(res == 0);
+
+    int status = -1;
+    res = sys_waitpid(fg_pid, &status, 0);
+    assert(res == fg_pid);
+    assert(status == 130);
+
+    /* Daemon child must still be alive! Clean it up with KILL */
+    res = sys_kill(daemon_pid, SIGNAL_KILL);
+    assert(res == 0);
+    status = -1;
+    res = sys_waitpid(daemon_pid, &status, 0);
+    assert(res == daemon_pid);
+    assert(status == 137);
+
+    printf("Session Daemon & Setsid Immunity test passed!\n\n");
+}
+
 int main(void)
 {
     printf("=== Running SIGSTOP / SIGCONT & Signal Regression Tests ===\n\n");
@@ -141,6 +199,7 @@ int main(void)
     test_observable_stop_cont();
     test_kill_stopped_task();
     test_cont_racing_stop();
+    test_session_daemon();
 
     printf("=== All SIGSTOP / SIGCONT & Signal Regression Tests Passed! ===\n");
     return 0;

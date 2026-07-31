@@ -69,6 +69,28 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
 }
 
 /*
+ * pgid_session_locked - The session a process group belongs to, or 0 if the
+ * group has no members. A group is only a number its members share, so an empty
+ * one means "no such group" rather than "session 0".
+ *
+ * Precondition: process_table_lock MUST be held by the caller.
+ */
+static uint32_t pgid_session_locked(uint32_t pgid)
+{
+    if (pgid == 0) {
+        return 0;
+    }
+
+    for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        struct process *p = process_table[i];
+        if (p && p->state == PROCESS_STATE_RUNNING && p->pgid == pgid) {
+            return p->sid;
+        }
+    }
+    return 0;
+}
+
+/*
  * copy_path_from_user - Copies a user path into a fresh kernel buffer.
  *
  * On success the caller owns *out and must heap_free it. Every path-taking
@@ -1037,7 +1059,9 @@ mmap_fail:
                 new_pgid = target_pid;
             }
 
-            if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE || new_pgid < 0) {
+            /* A pgid is always some process's pid, so it carries the same bound. */
+            if (target_pid < 1 || target_pid >= PROCESS_TABLE_SIZE || new_pgid < 1
+                || new_pgid >= PROCESS_TABLE_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
@@ -1052,6 +1076,37 @@ mmap_fail:
 
             /* Restrict setpgid to self or direct child */
             if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* A parent may only place a child before it execs; the new image
+             * owns its own membership afterwards. Moving yourself stays legal. */
+            if (target_pid != curr_pid && target_proc->has_execed) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* A session leader's pid names its session, so it cannot also name a
+             * group elsewhere. */
+            if (target_proc->sid == target_proc->pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* Groups do not span sessions; an empty group is only legal when the
+             * target is creating its own. */
+            uint32_t group_sid = pgid_session_locked((uint32_t)new_pgid);
+            if (group_sid == 0) {
+                if (new_pgid != target_pid) {
+                    spin_unlock_irqrestore(&process_table_lock, irqf);
+                    tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                    break;
+                }
+            } else if (group_sid != target_proc->sid) {
                 spin_unlock_irqrestore(&process_table_lock, irqf);
                 tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
                 break;
@@ -1096,7 +1151,8 @@ mmap_fail:
             int new_pgid = (int)tf->x[1];
 
             int curr_pid = process_find_current();
-            if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS || new_pgid < 0) {
+            if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS || new_pgid < 1
+                || new_pgid >= PROCESS_TABLE_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
             }
@@ -1124,7 +1180,32 @@ mmap_fail:
                 break;
             }
 
+            /* Resolve sessions under the table lock, then take tty->lock -- never
+             * both at once. tty->lock is held in the UART interrupt, so nesting
+             * the two would fix an ordering between them permanently. */
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            uint32_t caller_sid = curr_proc->sid;
+            int caller_is_leader = curr_proc->sid == curr_proc->pid;
+            uint32_t group_sid = pgid_session_locked((uint32_t)new_pgid);
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+
+            if (group_sid == 0 || group_sid != caller_sid) {
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
             unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
+            /* An unowned terminal goes to the first session leader that asks;
+             * after that only that session may steer it. POSIX acquires on
+             * open() instead, which would put ownership in the open path. */
+            if (tty->session_id == 0 && caller_is_leader) {
+                tty->session_id = caller_sid;
+            }
+            if (tty->session_id != caller_sid) {
+                spin_unlock_irqrestore(&tty->lock, ttyflags);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
             tty->foreground_pgid = (uint32_t)new_pgid;
             spin_unlock_irqrestore(&tty->lock, ttyflags);
 
@@ -1166,6 +1247,68 @@ mmap_fail:
             spin_unlock_irqrestore(&tty->lock, ttyflags);
 
             tf->x[0] = (uint64_t)fg_pgid;
+            break;
+        }
+
+        case SYS_SETSID: {
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *curr_p = process_table[curr_pid];
+            if (!curr_p || curr_p->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            /* Fails if caller is already a process group leader (pgid == pid) */
+            if (curr_p->pgid == curr_p->pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* The old session keeps its terminal: ownership is a property of the
+             * session, and only the caller is leaving. A session leader cannot
+             * reach here, so an owning session can never lose its leader this way. */
+            curr_p->sid = curr_p->pid;
+            curr_p->pgid = curr_p->pid;
+            uint32_t new_sid = curr_p->sid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+
+            tf->x[0] = (uint64_t)new_sid;
+            break;
+        }
+
+        case SYS_GETSID: {
+            int target_pid = (int)tf->x[0];
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            if (target_pid == 0) {
+                target_pid = curr_pid;
+            }
+            if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *target_proc = process_table[target_pid];
+            if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            uint32_t res_sid = target_proc->sid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+            tf->x[0] = (uint64_t)res_sid;
             break;
         }
 

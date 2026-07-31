@@ -204,11 +204,35 @@ void tty_init(struct tty *tty)
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
     tty->foreground_pgid = 0;
+    tty->session_id = 0;
 
     uart_reg_rx_callback(console_rx_adapter);
     uart_reg_tx_callback(console_tx_adapter);
 
     pr_info("tty: console tty initialized\n");
+}
+
+/*
+ * tty_session_exit - Dispatches SIGHUP and detaches terminal when session leader exits.
+ *
+ * Explicitly out of scope: POSIX orphaned-process-group handling
+ * (SIGHUP+SIGCONT to newly-orphaned groups with stopped members).
+ */
+void tty_session_exit(uint32_t sid)
+{
+    unsigned long flags = spin_lock_irqsave(&console_tty.lock);
+    if (console_tty.session_id == sid && sid > 0) {
+        uint32_t fg_pgid = console_tty.foreground_pgid;
+        console_tty.session_id = 0;
+        console_tty.foreground_pgid = 0;
+        spin_unlock_irqrestore(&console_tty.lock, flags);
+
+        if (fg_pgid > 0) {
+            signal_send_group(fg_pgid, SIGNAL_HUP);
+        }
+    } else {
+        spin_unlock_irqrestore(&console_tty.lock, flags);
+    }
 }
 
 /*

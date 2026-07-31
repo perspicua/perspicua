@@ -42,12 +42,18 @@ struct tty {
     int echo_enabled;
     int canon_enabled;
     uint32_t foreground_pgid;
+    uint32_t session_id;
 };
 
 /*
  * tty_init - Initializes a TTY structure with default settings.
  */
 void tty_init(struct tty *tty);
+
+/*
+ * tty_session_exit - Clears terminal session association and sends SIGHUP when session leader exits.
+ */
+void tty_session_exit(uint32_t sid);
 
 /*
  * tty_handle_rx - Processes a character received from the hardware.

@@ -985,8 +985,8 @@ int main(int argc, char *argv[], char *envp[])
     sys_signal(SIGNAL_CHLD, handle_sigchld);
     sys_signal(SIGNAL_TTOU, SIGNAL_IGN);
 
+    sys_setsid();
     int shell_pgid = sys_getpid();
-    sys_setpgid(0, shell_pgid);
     sys_tcsetpgrp(0, shell_pgid);
 
     printf("Perspicua Shell\n");
