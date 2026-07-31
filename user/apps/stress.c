@@ -379,7 +379,7 @@ static void test_zero(int max_kids)
 {
     const size_t len = 8 * PAGE_SIZE;
     int kids = max_kids < 8 ? max_kids : 8;
-    int pids[8];
+    int pids[8] = {0};
     int n = 0;
 
     for (int round = 0; round < 2; round++) {
