@@ -37,7 +37,7 @@ what makes the system usable enough to develop against.
         CLOCK_REALTIME will be boot-relative until the RTC lands (Phase 3 item 3)
         — implement the interface now, wire the wall clock in later.
 
-   2. Process groups, sessions, and a controlling terminal
+   2. Process groups, sessions, and a controlling terminal [DONE]
       Effort: M | Unlocks: job control; Ctrl-C reaching the right process
       Scope: pgid and session id on struct process, inherited across fork and
         preserved across exec; setpgid/getpgid/setsid; a foreground process group
