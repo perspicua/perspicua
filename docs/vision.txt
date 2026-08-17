@@ -1,0 +1,279 @@
+Perspicua Vision: The Kernel You Can See Through
+================================================
+
+This file is the NORTH STAR (the "why" and the "where"). order.txt sequences
+the work, ideas.txt catalogs it; this file says what it is all FOR. When two
+designs are otherwise tied, the one that serves this vision wins. When a new
+feature is proposed, it is weighed against this file before it enters ideas.txt.
+
+Adopted: August 2026. This is a direction, not a rewrite plan — read "WHAT THIS
+IS NOT" before drawing conclusions.
+
+--------------------------------------------------------------------------------
+THE THESIS
+--------------------------------------------------------------------------------
+
+"Perspicua" is Latin for clear, transparent, easy to see through. The project's
+identity is that sentence, taken literally:
+
+    Perspicua is an operating system whose defining property is that it can
+    always explain itself — and, having explained a failure, recover from it
+    without rebooting the machine.
+
+Observability and recovery are the ORGANIZING PRINCIPLE of the kernel, not a
+debugging feature bolted on afterwards. Most systems treat tracing, invariant
+checking, and fault recovery as optional extras that cost performance and are
+compiled out of production builds. Perspicua inverts that: the always-on flight
+recorder, the invariant engine, and restartable subsystems ARE the
+architecture, and every other subsystem is built to feed and to survive them.
+
+Two concrete claims define the identity:
+
+  CLAIM 1 — THE BLACK BOX. The kernel is a flight recorder in the aviation
+    sense: every lock transition, IRQ, syscall, scheduling decision, and
+    subsystem state change streams into an always-on, clock-stamped ring
+    buffer that survives crashes and warm reboots. No failure is ever
+    unexplained. "It hung" is not an acceptable bug report against this
+    kernel, because the kernel itself makes it impossible.
+
+  CLAIM 2 — RESTARTABLE CELLS. Subsystems are cells: units with their own
+    memory arenas, an explicit ledger of every resource they hold, and
+    message-mediated entry points. A fault attributed to a cell tears down
+    and reincarnates THAT CELL — the SD driver, a mounted filesystem — not
+    the machine. Panic is the last resort, not the first response.
+
+--------------------------------------------------------------------------------
+WHY THIS DIRECTION 
+--------------------------------------------------------------------------------
+
+The research question: MINIX 3 proved subsystem reincarnation for
+microkernels, where address spaces isolate the pieces. Perspicua asks how much
+of that resilience a MONOLITH can get — without paying for address-space
+isolation, using ownership ledgers, arena allocation, and runtime invariants
+instead. Even a partial answer is interesting: "cells recover N% of injected
+faults" is a finding with numbers, from a fault-injection campaign we control.
+The claim stays honest at every stage of construction.
+
+The production niche: unattended Raspberry Pis — kiosks, sensor nodes, small
+fleets — where "walk over and reflash it" is the failure mode that kills
+projects. A kernel that diagnoses itself after a crash and restarts a wedged
+driver instead of hanging is genuinely useful there, independent of the
+research value.
+
+Why us: the three ingredients that are hard to retrofit into a mature kernel —
+a lock dependency tracker (core/lockdep.c), a live kernel debugger
+(core/kdb.c), and a procfs reporting culture — already exist and are already
+load-bearing. This direction promotes them from tools to architecture. No
+other direction we considered (see "ROADS NOT TAKEN") reuses as much of what
+is already built, or pays back every milestone as immediately.
+
+--------------------------------------------------------------------------------
+WHAT THIS IS NOT
+--------------------------------------------------------------------------------
+
+NOT a departure from the Unix personality. The shell, the VFS, procfs, signals,
+  job control, the POSIX-ish syscall layer — all of it stays and keeps
+  growing. The vision changes what the kernel IS underneath the personality,
+  not how it presents to userspace. A user at the shell sees a normal system;
+  a user at kdb sees a system that can explain every decision it ever made.
+
+NOT a microkernel rewrite. Cells are NOT processes and do not get address
+  spaces. Drivers stay in the kernel, at EL1, called at function-call cost.
+  Isolation is by discipline (arenas, ledgers, mediated entry points) checked
+  by machinery (invariants, lockdep, the recorder) — that trade-off IS the
+  research question, so we hold to it deliberately.
+
+NOT observability as an optional build flag. The recorder runs always,
+  including release builds, under a hard overhead budget (see MEASURES OF
+  SUCCESS). If an event is too expensive to record, the fix is a cheaper
+  record format, not recording less.
+
+NOT a reason to skip the foundation. Phases 1-5 of order.txt stand: a flight
+  recorder wired into a kernel with lost-wakeup bugs records lies. The vision
+  reshapes WHAT WE BUILD NEXT and HOW we build it (see DESIGN RULES), it does
+  not excuse skipping the hardening the audit demanded.
+
+--------------------------------------------------------------------------------
+THE FOUR PILLARS  (V1-V4 — these tags are used throughout order.txt)
+--------------------------------------------------------------------------------
+
+V1. THE FLIGHT RECORDER
+    One clock-stamped binary event stream for the whole kernel. Lockdep
+    transitions, scheduler decisions, IRQ entry/exit, syscall entry/exit,
+    signal delivery, cell lifecycle — all producers feed ONE ring with one
+    timebase (the generic timer's counter), so cross-subsystem causality is
+    readable directly from the record. Readout through kdb and /proc;
+    binary records with a text formatter, never printf strings at the
+    producer (too slow, and it loses structure).
+    The recorder's backing store is physical RAM reserved outside the PMM,
+    with a magic + CRC header. On the Pi 4 a watchdog reset does not clear
+    RAM, so after a crash the NEXT boot still holds the pre-crash history:
+    that is the black-box property, and it is what turns a hang into a
+    readable story. Reset-surviving bits in the PM block carry a reboot
+    reason code even through a hard watchdog reset.
+    Seeds already planned: the dmesg ring (order.txt Phase 2 item 8), the
+    watchdog (Phase 2 item 9), strace-lite (Phase 3 item 6) — each is
+    specced to grow INTO the recorder rather than beside it.
+
+V2. CELLS  (restartable subsystems)
+    A cell is a subsystem unit — a driver instance, a mounted filesystem —
+    with: (a) its own slab arenas, so its allocations are attributable and
+    revocable in bulk; (b) a resource LEDGER enumerating every IRQ, page,
+    lock, device, and timer it holds; (c) message-mediated entry points, so
+    the kernel can quiesce it — stop new entries, drain current ones —
+    without a search for hidden callers.
+    The restart protocol: a fault attributed to a cell (wild access into its
+    arena, invariant trip, watchdog-detected hang inside it) quiesces the
+    cell, revokes the ledger, reinitializes from scratch, and replays a
+    small intent journal. Crash-only design, applied inside the kernel: a
+    cell's recovery path IS its boot path, so recovery is tested every boot.
+    First cell: the block/SD driver — it has real hardware faults (yank the
+    card mid-I/O), a natural quiesce point (the request queue), and a
+    bounded ledger. The USB and network stacks (order.txt Phase 7) are built
+    AS cells from birth, never retrofitted.
+
+V3. THE INVARIANT ENGINE AND TIME TRAVEL
+    lockdep generalized: subsystems DECLARE invariants ("no page is both in
+    the free list and the page cache", "an IRQ is masked only if its owner
+    cell is quiesced", "a task is on at most one wait queue") and the engine
+    checks them continuously and cheaply — on state transitions, not by
+    scanning. An invariant trip is attributed to a cell and triggers the V2
+    restart path instead of a panic. Declared invariants also become the
+    fault-attribution oracle: they are how the kernel decides WHICH cell is
+    at fault.
+    kdb grows from a live debugger into a time-travel console: replay the
+    flight recorder backwards from any fault, filtered by cell, lock, task,
+    or CPU. The panic path becomes a triage path: snapshot, attribute,
+    restart, log — halting only when attribution fails or the fault is in
+    the resilient core itself.
+
+V4. THE EL2 WARDEN
+    A thin (~2-3 KLoC, non-VHE) hypervisor layer under the kernel with two
+    jobs. First: Stage-2-protect the flight recorder's backing RAM, so no
+    wild EL1 write can destroy the evidence — this is what upgrades "we log
+    a lot" into "the log is trustworthy BECAUSE the kernel physically cannot
+    corrupt it", the difference between a logging feature and an
+    architecture. Second: the ultimate cell restart — snapshot and
+    micro-reboot the ENTIRE EL1 kernel while preserving user memory and the
+    recorder, for faults that attribution places in the core itself.
+    The warden is deliberately the smallest pillar and the last built. It is
+    also the first step of order.txt Phase 7's "virtualization via EL2":
+    guest OSes later become tenants beside the EL1 kernel under the same
+    monitor.
+
+--------------------------------------------------------------------------------
+HARDWARE WE LEAN ON  (and hardware we do not have)
+--------------------------------------------------------------------------------
+
+The BCM2711's Cortex-A72 is ARMv8.0-A. Be honest about what that means:
+NO PAC, NO BTI, NO MTE, NO LSE atomics (lock-free structures are LDXR/STXR
+loops), NO VHE (the warden is the classic split non-VHE EL2 design). The
+vision is built on what the chip DOES have:
+
+  - Watchdog + reset-surviving PM bits: reboot-reason codes and a crash
+    cursor that survive even a hard hang, so the next boot always knows why.
+  - RAM persistence across warm reset: the recorder's reserved region is
+    intact after a watchdog reboot — pre-crash history, post-crash.
+  - Per-core generic timers: the recorder's single 54MHz timebase, and the
+    supervisor core's independent tick.
+  - A spare core as SUPERVISOR: one core runs the health monitor and
+    invariant sweeps with its own timer, pings peers via SGIs, and is the
+    component entitled to declare another core hung. The monitor must not
+    depend on the schedulability of the thing it monitors.
+  - PMUv3: always-on sampled profiling cheap enough for release builds,
+    feeding the same recorder.
+  - GIC-400 affinity/priorities: route a quiesced cell's IRQs away; keep the
+    supervisor core's tick unblockable by a wedged peer.
+  - Stage-2 translation at EL2: the warden's enforcement mechanism.
+  - VideoCore mailbox: temperature, voltage, and throttling events are
+    telemetry too — same recorder, same timebase.
+  - The framebuffer console: a live health dashboard rendered by the
+    supervisor core; the magnifying-glass logo earns its keep.
+
+--------------------------------------------------------------------------------
+DESIGN RULES THE VISION IMPOSES TODAY
+--------------------------------------------------------------------------------
+
+These apply from now on, including during Phases 1-5, so the codebase grows
+toward the vision instead of accumulating more retrofit debt:
+
+  1. New subsystems declare their invariants in a comment block at the top of
+     the file from day one, even before the engine exists to check them.
+     When V3 lands, those comments become declarations.
+  2. New drivers are written cell-shaped: init and teardown as clean inverses,
+     resources acquired through (eventually: recorded in) one place, entry
+     points enumerable. The USB stack is the first mandatory application.
+  3. Error paths unwind; PANIC is reserved for boot and for corruption of the
+     resilient core itself. (Phase 2 item 4 is this rule, applied backwards.)
+  4. Anything that reports state gets a procfs face. Anything that logs, logs
+     through the one ring once it exists — no private ring buffers.
+  5. On-disk and on-wire data is untrusted input; validation failures are
+     attributable events, not silent clamps. (The audit's FAT32 findings are
+     this rule, applied backwards.)
+  6. Every recovery path gets a fault-injection test that exercises it. A
+     recovery path that has never run is a second bug waiting behind the
+     first.
+
+--------------------------------------------------------------------------------
+MEASURES OF SUCCESS
+--------------------------------------------------------------------------------
+
+The vision is falsifiable. We hold ourselves to numbers:
+
+  - RECORDER OVERHEAD: under 2% CPU with every producer enabled, measured by
+    the benchmark suite, enforced in release builds. If it costs more, fix
+    the record format.
+  - NO UNEXPLAINED FAILURE: any hang, panic, or corruption reproducible in
+    the test suite must be diagnosable from the recorder alone — no printf
+    archaeology, no re-running with extra logging. Each one that is not is a
+    recorder gap, and gets an event added.
+  - RECOVERY RATE: the fault-injection campaign (bit flips in cell arenas,
+    failed allocations, wedged hardware, corrupt on-disk data) reports the
+    fraction of faults each cell survives. The number is published in
+    docs/, per release, whatever it is.
+  - HONEST ATTRIBUTION: misattributed faults (blamed on the wrong cell) are
+    counted and treated as first-class bugs.
+
+--------------------------------------------------------------------------------
+HOW THE ROADMAP SERVES THIS
+--------------------------------------------------------------------------------
+
+  Phases 1-5 (order.txt): unchanged in substance — the foundation IS the
+    prerequisite. Items that seed a pillar are tagged (V1 seed) etc. inline:
+    the dmesg ring, the watchdog, strace-lite, per-CPU exception stacks, the
+    refcounted-object rule all grow into vision machinery.
+  Phase 6 (order.txt): the vision made concrete — recorder, cells, invariant
+    engine, time travel, warden, in dependency order, each with a "Done"
+    that names a demonstrable capability.
+  Phase 7 (order.txt): the old strategic extensions, re-read through the
+    vision: USB/networking arrive as cells, EL2 virtualization grows out of
+    the warden, and the health dashboard rides the graphics work.
+
+--------------------------------------------------------------------------------
+ROADS NOT TAKEN  (recorded so we do not re-litigate them)
+--------------------------------------------------------------------------------
+
+Three other directions were seriously considered and set aside, not rejected:
+
+  - Capability-hardened hybrid (per-process handle tables, EL2 as a
+    capability nexus): deepest research value, but rewires the syscall ABI
+    we are actively building, and pays off only at the end.
+  - Time-triggered partition kernel (static schedules, core isolation, cache
+    coloring; hard real time on COTS hardware): best differentiation per
+    effort, but freezes the kernel's concurrency structure before Phase 5
+    finishes evolving it.
+  - Single-address-space Wasm kernel (SASOS, WASI personality, guard-region
+    linear memories): most radical and most publishable, but a second
+    kernel personality living inside the first.
+
+What we keep from them: the thin EL2 monitor is the SAME component in all
+four directions wearing different hats (capability mirror / partition freezer
+/ warden). Building the warden (V4) keeps every one of those doors open
+without committing to any. If the vision ever shifts, V4 is the pivot point,
+and nothing in V1-V3 is wasted — a capability kernel or an RTOS wants a
+flight recorder too.
+
+================================================================================
+The test for any proposal, from either file, stays the same: does it make the
+kernel easier to see through, or harder? Perspicua chooses the former.
+================================================================================

@@ -13,6 +13,12 @@ THE MAP  (what to read, and when)
       and a tour of the major subsystems (mm, sched, fs, drivers, libc).
       READ THIS FIRST if you are new to the codebase.
 
+  vision.txt
+      The NORTH STAR (the "why" and the "where"). Perspicua's long-term
+      identity — the self-healing, flight-recorder kernel — its four pillars
+      (V1-V4), the design rules they impose today, and how the roadmap serves
+      them. Read it before proposing a new direction or a large feature.
+
   order.txt
       The build ORDER (the "when"). A dependency-sequenced, phased roadmap of
       what to build next and what "done" means for each step. This is the
