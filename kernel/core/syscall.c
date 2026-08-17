@@ -14,6 +14,7 @@
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
 #include "uapi/errors.h"
+#include "uapi/time.h"
 
 #include "arch/uaccess.h"
 
@@ -1317,6 +1318,57 @@ mmap_fail:
             uint32_t res_sid = target_proc->sid;
             spin_unlock_irqrestore(&process_table_lock, irqf);
             tf->x[0] = (uint64_t)res_sid;
+            break;
+        }
+
+        case SYS_GETTIMEOFDAY: {
+            struct timeval *tv = (struct timeval *)tf->x[0];
+
+            if (!tv || !validate_user_buffer(tv, sizeof(struct timeval), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long ms = get_system_time();
+            struct timeval ktv;
+            ktv.tv_sec = (time_t)(ms / 1000);
+            ktv.tv_usec = (long)((ms % 1000) * 1000);
+
+            if (copy_to_user(tv, &ktv, sizeof(struct timeval)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_CLOCK_GETTIME: {
+            clockid_t clk_id = (clockid_t)tf->x[0];
+            struct timespec *tp = (struct timespec *)tf->x[1];
+
+            if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!tp || !validate_user_buffer(tp, sizeof(struct timespec), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now */
+            unsigned long ms = get_system_time();
+            struct timespec ktp;
+            ktp.tv_sec = (time_t)(ms / 1000);
+            ktp.tv_nsec = (long)((ms % 1000) * 1000000);
+
+            if (copy_to_user(tp, &ktp, sizeof(struct timespec)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            tf->x[0] = PERS_SUCCESS;
             break;
         }
 

@@ -73,12 +73,47 @@ void test_getppid(void)
     printf("[ TEST ] getppid passed!\n");
 }
 
+void test_time_syscalls(void)
+{
+    printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
+
+    /* 1. Invalid arguments */
+    assert(sys_gettimeofday(NULL, NULL) < 0);
+    assert(sys_clock_gettime(9999, NULL) < 0);
+
+    /* 2. Valid gettimeofday */
+    struct timeval tv;
+    memset(&tv, 0, sizeof(tv));
+    int res = sys_gettimeofday(&tv, NULL);
+    assert(res == 0);
+    assert(tv.tv_sec >= 0);
+    assert(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
+
+    /* 3. Valid clock_gettime */
+    struct timespec ts;
+    memset(&ts, 0, sizeof(ts));
+    res = sys_clock_gettime(CLOCK_MONOTONIC, &ts);
+    assert(res == 0);
+    assert(ts.tv_sec >= 0);
+    assert(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000);
+
+    struct timespec ts_real;
+    memset(&ts_real, 0, sizeof(ts_real));
+    res = sys_clock_gettime(CLOCK_REALTIME, &ts_real);
+    assert(res == 0);
+    assert(ts_real.tv_sec >= 0);
+    assert(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
+
+    printf("[ TEST ] gettimeofday & clock_gettime passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
 
     test_pread_pwrite();
     test_getppid();
+    test_time_syscalls();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

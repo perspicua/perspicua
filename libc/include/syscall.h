@@ -21,6 +21,7 @@
 #include "types.h"
 #include "signals.h"
 
+#include "uapi/time.h"
 #include "uapi/stat.h"
 
 /* Filesystem access mode and control flags. */
@@ -107,5 +108,9 @@ int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact);
 int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset);
 int sys_sigpending(sigset_t *set);
 int sys_sigsuspend(const sigset_t *mask);
+
+/* Time */
+int sys_gettimeofday(struct timeval *tv, void *tz);
+int sys_clock_gettime(clockid_t clk_id, struct timespec *tp);
 
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

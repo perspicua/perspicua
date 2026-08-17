@@ -31,6 +31,9 @@ typedef signed long intptr_t;
 typedef unsigned long long ino_t;
 typedef int64_t off_t;
 
+/* time */
+typedef int64_t time_t;
+
 #define INT8_MIN  (-128)
 #define INT8_MAX  (127)
 #define UINT8_MAX (255U)
