@@ -73,6 +73,11 @@ void test_getppid(void)
     printf("[ TEST ] getppid passed!\n");
 }
 
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
 void test_time_syscalls(void)
 {
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
@@ -107,13 +112,67 @@ void test_time_syscalls(void)
     printf("[ TEST ] gettimeofday & clock_gettime passed!\n");
 }
 
+<<<<<<< Updated upstream
+=======
+void test_nanosleep(void)
+{
+    printf("[ TEST ] Running nanosleep tests...\n");
+
+    /* 1. Invalid inputs */
+    assert(sys_nanosleep(NULL, NULL) < 0);
+
+    struct timespec invalid_nsec = {0, 2000000000};
+    assert(sys_nanosleep(&invalid_nsec, NULL) < 0);
+
+    struct timespec invalid_sec = {-1, 0};
+    assert(sys_nanosleep(&invalid_sec, NULL) < 0);
+
+    /* 2. Valid short sleep (50 ms) */
+    struct timespec t_before = {0, 0};
+    struct timespec t_after = {0, 0};
+    assert(sys_clock_gettime(CLOCK_MONOTONIC, &t_before) == 0);
+
+    struct timespec req = {0, 50000000}; /* 50 ms */
+    assert(sys_nanosleep(&req, NULL) == 0);
+
+    assert(sys_clock_gettime(CLOCK_MONOTONIC, &t_after) == 0);
+
+    unsigned long delta_ms = (unsigned long)(t_after.tv_sec - t_before.tv_sec) * 1000
+                             + (unsigned long)(t_after.tv_nsec - t_before.tv_nsec) / 1000000;
+    assert(delta_ms >= 40);
+
+    /* 3. rem zeroed when non-NULL pre-filled with garbage */
+    struct timespec rem;
+    rem.tv_sec = 1234;
+    rem.tv_nsec = 5678;
+    struct timespec req_short = {0, 10000000}; /* 10 ms */
+    assert(sys_nanosleep(&req_short, &rem) == 0);
+    assert(rem.tv_sec == 0 && rem.tv_nsec == 0);
+
+    /* 4. Zero sleep returns immediately */
+    struct timespec req_zero = {0, 0};
+    assert(sys_nanosleep(&req_zero, NULL) == 0);
+
+    printf("[ TEST ] nanosleep passed!\n");
+}
+
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
 
     test_pread_pwrite();
     test_getppid();
+<<<<<<< Updated upstream
     test_time_syscalls();
+=======
+<<<<<<< Updated upstream
+=======
+    test_time_syscalls();
+    test_nanosleep();
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

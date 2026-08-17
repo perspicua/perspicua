@@ -109,8 +109,19 @@ int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset);
 int sys_sigpending(sigset_t *set);
 int sys_sigsuspend(const sigset_t *mask);
 
+<<<<<<< Updated upstream
 /* Time */
 int sys_gettimeofday(struct timeval *tv, void *tz);
 int sys_clock_gettime(clockid_t clk_id, struct timespec *tp);
 
+=======
+<<<<<<< Updated upstream
+=======
+/* Time */
+int sys_gettimeofday(struct timeval *tv, void *tz);
+int sys_clock_gettime(clockid_t clk_id, struct timespec *tp);
+int sys_nanosleep(const struct timespec *req, struct timespec *rem);
+
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

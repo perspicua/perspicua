@@ -1321,6 +1321,11 @@ mmap_fail:
             break;
         }
 
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
+=======
+>>>>>>> Stashed changes
         case SYS_GETTIMEOFDAY: {
             struct timeval *tv = (struct timeval *)tf->x[0];
 
@@ -1372,6 +1377,63 @@ mmap_fail:
             break;
         }
 
+<<<<<<< Updated upstream
+=======
+        case SYS_NANOSLEEP: {
+            const struct timespec *req = (const struct timespec *)tf->x[0];
+            struct timespec *rem = (struct timespec *)tf->x[1];
+
+            if (!req || !validate_user_buffer(req, sizeof(struct timespec), 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (rem && !validate_user_buffer(rem, sizeof(struct timespec), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct timespec kreq;
+            if (copy_from_user(&kreq, req, sizeof(struct timespec)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (kreq.tv_sec < 0 || kreq.tv_nsec < 0 || kreq.tv_nsec > 999999999) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* Overflow guard: cap tv_sec to prevent (tv_sec * 1000) from overflowing unsigned long.
+             */
+            if (kreq.tv_sec > (time_t)(0x7FFFFFFFFFFFFFFFLL / 1000)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long ms = (unsigned long)kreq.tv_sec * 1000
+                               + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
+
+            if (ms > 0) {
+                sched_sleep_ms(ms);
+            }
+
+            /* TODO: sched_sleep_ms is not signal-interruptible yet; sleep always completes, so rem
+             * is always zero. Revisit when EINTR/signal-aware sleep lands. */
+            if (rem) {
+                struct timespec krem = {0, 0};
+                if (copy_to_user(rem, &krem, sizeof(struct timespec)) != 0) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                    break;
+                }
+            }
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;
