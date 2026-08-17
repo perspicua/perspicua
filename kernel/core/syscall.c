@@ -1321,11 +1321,6 @@ mmap_fail:
             break;
         }
 
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
         case SYS_GETTIMEOFDAY: {
             struct timeval *tv = (struct timeval *)tf->x[0];
 
@@ -1377,8 +1372,6 @@ mmap_fail:
             break;
         }
 
-<<<<<<< Updated upstream
-=======
         case SYS_NANOSLEEP: {
             const struct timespec *req = (const struct timespec *)tf->x[0];
             struct timespec *rem = (struct timespec *)tf->x[1];
@@ -1432,8 +1425,6 @@ mmap_fail:
             break;
         }
 
->>>>>>> Stashed changes
->>>>>>> Stashed changes
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;

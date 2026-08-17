@@ -73,11 +73,6 @@ void test_getppid(void)
     printf("[ TEST ] getppid passed!\n");
 }
 
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
 void test_time_syscalls(void)
 {
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
@@ -112,8 +107,6 @@ void test_time_syscalls(void)
     printf("[ TEST ] gettimeofday & clock_gettime passed!\n");
 }
 
-<<<<<<< Updated upstream
-=======
 void test_nanosleep(void)
 {
     printf("[ TEST ] Running nanosleep tests...\n");
@@ -156,23 +149,14 @@ void test_nanosleep(void)
     printf("[ TEST ] nanosleep passed!\n");
 }
 
->>>>>>> Stashed changes
->>>>>>> Stashed changes
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
 
     test_pread_pwrite();
     test_getppid();
-<<<<<<< Updated upstream
-    test_time_syscalls();
-=======
-<<<<<<< Updated upstream
-=======
     test_time_syscalls();
     test_nanosleep();
->>>>>>> Stashed changes
->>>>>>> Stashed changes
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

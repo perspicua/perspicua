@@ -704,11 +704,6 @@ int sys_getsid(int pid)
                  : "x0", "x8", "memory");
     return __syscall_ret(res);
 }
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-=======
->>>>>>> Stashed changes
 
 int sys_gettimeofday(struct timeval *tv, void *tz)
 {
@@ -737,8 +732,6 @@ int sys_clock_gettime(clockid_t clk_id, struct timespec *tp)
                  : "x0", "x1", "x8", "memory");
     return __syscall_ret(res);
 }
-<<<<<<< Updated upstream
-=======
 
 int sys_nanosleep(const struct timespec *req, struct timespec *rem)
 {
@@ -753,5 +746,3 @@ int sys_nanosleep(const struct timespec *req, struct timespec *rem)
                  : "x0", "x1", "x8", "memory");
     return __syscall_ret(res);
 }
->>>>>>> Stashed changes
->>>>>>> Stashed changes
