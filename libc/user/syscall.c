@@ -704,3 +704,31 @@ int sys_getsid(int pid)
                  : "x0", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_gettimeofday(struct timeval *tv, void *tz)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)tv), "r"((long)tz), "i"(SYS_GETTIMEOFDAY)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_clock_gettime(clockid_t clk_id, struct timespec *tp)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)clk_id), "r"((long)tp), "i"(SYS_CLOCK_GETTIME)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
