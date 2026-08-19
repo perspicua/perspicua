@@ -390,7 +390,18 @@ int vprintf(const char *fmt, va_list args)
         .buf = stack_buf,
         .size = sizeof(stack_buf),
         .pos = 0,
+/*
+ * The kernel writes straight to the UART and must inject CR itself. Userspace
+ * output instead flows through the tty, which already translates \n to \r\n
+ * (ONLCR); translating again here double-printed CR to the terminal and, worse,
+ * wrote \r\n into redirected files and pipes — inflating byte counts and
+ * leaving stray \r for tools like grep. So userspace emits plain \n.
+ */
+#ifdef __KERNEL__
         .crlf = 1,
+#else
+        .crlf = 0,
+#endif
     };
 
     fmt_core(&fb, fmt, args);

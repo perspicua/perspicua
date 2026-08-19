@@ -27,7 +27,7 @@ int main(void)
         return 1;
     }
 
-    printf("%5s %5s %-9s %s\n", "PID", "PPID", "STATE", "CMD");
+    printf("%5s %5s %-9s %9s  %s\n", "PID", "PPID", "STATE", "MEM", "CMD");
 
     struct vfs_dirent *e;
     while ((e = readdir(d)) != NULL) {
@@ -50,12 +50,16 @@ int main(void)
         }
         blob[n] = '\0';
 
-        char pid[16], ppid[16], state[16], name[64];
+        char pid[16], ppid[16], state[16], name[64], mem[24];
         field(blob, "Pid:", pid, sizeof(pid));
         field(blob, "PPid:", ppid, sizeof(ppid));
         field(blob, "State:", state, sizeof(state));
         field(blob, "Name:", name, sizeof(name));
-        printf("%5s %5s %-9s %s\n", pid, ppid, state, name);
+        field(blob, "VmSize:", mem, sizeof(mem));
+        if (mem[0] == '\0') {
+            strcpy(mem, "-");
+        }
+        printf("%5s %5s %-9s %9s  %s\n", pid, ppid, state, mem, name);
     }
 
     closedir(d);
