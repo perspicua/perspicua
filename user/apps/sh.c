@@ -26,6 +26,10 @@ static char last_completion_buffer[CMD_MAX_LEN] = {0};
 static int last_completion_displayed = 0;
 static int last_completion_lines = 0;
 
+/* Exit status of the last foreground command, exposed to scripts as $? and used
+ * to short-circuit && / || lists. Signals report as 128 + signo, matching sh. */
+static int g_last_status = 0;
+
 typedef struct {
     char *argv[MAX_ARGS];
     int argc;
@@ -129,21 +133,145 @@ static void handle_sigchld(int sig)
         ;
 }
 
+/*
+ * strip_comment - Truncates the line at an unquoted '#' that begins a word.
+ *
+ * A '#' only starts a comment at the start of the line or after whitespace, so
+ * "echo a#b" keeps the '#' while "echo a #b" drops the tail. Quotes protect it.
+ */
+static void strip_comment(char *line)
+{
+    int in_single = 0, in_double = 0;
+    for (int i = 0; line[i]; i++) {
+        char c = line[i];
+        if (c == '\'' && !in_double) {
+            in_single = !in_single;
+        } else if (c == '"' && !in_single) {
+            in_double = !in_double;
+        } else if (c == '#' && !in_single && !in_double
+                   && (i == 0 || line[i - 1] == ' ' || line[i - 1] == '\t')) {
+            line[i] = '\0';
+            return;
+        }
+    }
+}
+
+/*
+ * expand_variables - Substitutes $?, $$, $NAME and ${NAME} into dst.
+ *
+ * Expansion is suppressed inside 'single quotes' and honored inside "double
+ * quotes" (POSIX). Quote characters are copied through so the later tokenizer
+ * can still group words; parse_command strips them. Unknown names expand empty.
+ * Note: expanded text is not re-scanned for operators, but IS subject to normal
+ * word-splitting when unquoted, which is the usual shell behavior.
+ */
+static void expand_variables(const char *src, char *dst, size_t dst_size)
+{
+    size_t j = 0;
+    int in_single = 0, in_double = 0;
+
+#define SH_PUTC(ch)                                                                                \
+    do {                                                                                           \
+        if (j + 1 < dst_size)                                                                      \
+            dst[j++] = (ch);                                                                        \
+    } while (0)
+#define SH_PUTS(str)                                                                               \
+    do {                                                                                           \
+        for (const char *_s = (str); *_s; _s++)                                                    \
+            SH_PUTC(*_s);                                                                           \
+    } while (0)
+
+    for (size_t i = 0; src[i]; i++) {
+        char c = src[i];
+
+        if (c == '\'' && !in_double) {
+            in_single = !in_single;
+            SH_PUTC(c);
+            continue;
+        }
+        if (c == '"' && !in_single) {
+            in_double = !in_double;
+            SH_PUTC(c);
+            continue;
+        }
+
+        if (c == '$' && !in_single) {
+            char next = src[i + 1];
+            char num[16];
+
+            if (next == '?') {
+                snprintf(num, sizeof(num), "%d", g_last_status);
+                SH_PUTS(num);
+                i++;
+                continue;
+            }
+            if (next == '$') {
+                snprintf(num, sizeof(num), "%d", sys_getpid());
+                SH_PUTS(num);
+                i++;
+                continue;
+            }
+
+            /* $NAME or ${NAME} */
+            int braced = (next == '{');
+            size_t start = braced ? i + 2 : i + 1;
+            size_t end = start;
+            while (src[end]
+                   && ((src[end] >= 'A' && src[end] <= 'Z') || (src[end] >= 'a' && src[end] <= 'z')
+                       || (src[end] >= '0' && src[end] <= '9') || src[end] == '_')) {
+                end++;
+            }
+
+            if (end == start || (braced && src[end] != '}')) {
+                /* Not a valid name (e.g. lone '$' or unterminated '${'): literal. */
+                SH_PUTC(c);
+                continue;
+            }
+
+            char name[64];
+            size_t nlen = end - start;
+            if (nlen >= sizeof(name)) {
+                nlen = sizeof(name) - 1;
+            }
+            memcpy(name, src + start, nlen);
+            name[nlen] = '\0';
+
+            char *val = getenv(name);
+            if (val) {
+                SH_PUTS(val);
+            }
+            i = braced ? end : end - 1; /* loop ++ advances past '}' or last name char */
+            continue;
+        }
+
+        SH_PUTC(c);
+    }
+
+    dst[j] = '\0';
+#undef SH_PUTC
+#undef SH_PUTS
+}
+
 /* * Replaces special shell operators with spaced-out versions
- * so our tokenizer can easily split them without breaking quotes.
+ * so our tokenizer can easily split them without breaking quotes. Control
+ * operators (; && ||) are handled earlier, so only redirection and pipes
+ * remain here.
  */
 static void expand_operators(const char *line, char *expanded)
 {
     int i = 0, j = 0;
-    int in_quotes = 0;
+    int in_single = 0, in_double = 0;
 
     while (line[i] != '\0') {
-        if (line[i] == '"') {
-            in_quotes = !in_quotes;
+        char c = line[i];
+        if (c == '"' && !in_single) {
+            in_double = !in_double;
+        } else if (c == '\'' && !in_double) {
+            in_single = !in_single;
         }
 
-        if (!in_quotes && (line[i] == '<' || line[i] == '>' || line[i] == '|' || line[i] == ';')) {
-            if (line[i] == '>' && line[i + 1] == '>') {
+        if (!in_single && !in_double && (c == '<' || c == '>' || c == '|')) {
+            if (c == '>' && line[i + 1] == '>') {
                 expanded[j++] = ' ';
                 expanded[j++] = '>';
                 expanded[j++] = '>';
@@ -151,11 +279,11 @@ static void expand_operators(const char *line, char *expanded)
                 i++;
             } else {
                 expanded[j++] = ' ';
-                expanded[j++] = line[i];
+                expanded[j++] = c;
                 expanded[j++] = ' ';
             }
         } else {
-            expanded[j++] = line[i];
+            expanded[j++] = c;
         }
         i++;
     }
@@ -174,24 +302,36 @@ static void parse_command(char *str, Command *cmd)
     int token_count = 0;
     char *p = str;
 
-    while (*p) {
+    while (*p && token_count < 64) {
         while (*p == ' ' || *p == '\t')
             *p++ = '\0';
         if (!*p)
             break;
 
-        if (*p == '"') {
-            p++; // Skip opening quote
-            tokens[token_count++] = p;
-            while (*p && *p != '"')
-                p++;
-            if (*p)
-                *p++ = '\0'; // Replace closing quote
-        } else {
-            tokens[token_count++] = p;
-            while (*p && *p != ' ' && *p != '\t')
-                p++;
+        /* Compact one word in place, stripping quotes wherever they appear and
+         * keeping quoted whitespace intact (so a"b c"d becomes ab cd, and
+         * D='$FOO' becomes D=$FOO). Quotes are only ever removed, so the write
+         * cursor never overtakes the read cursor. */
+        char *word = p;
+        char *w = p;
+        while (*p && *p != ' ' && *p != '\t') {
+            if (*p == '"' || *p == '\'') {
+                char quote = *p++;
+                while (*p && *p != quote)
+                    *w++ = *p++;
+                if (*p == quote)
+                    p++;
+            } else {
+                *w++ = *p++;
+            }
         }
+        /* Consume the delimiter BEFORE terminating the word: when no quotes were
+         * removed w == p, so writing '\0' here would otherwise clobber the space
+         * and truncate the rest of the line. */
+        if (*p)
+            p++;
+        *w = '\0';
+        tokens[token_count++] = word;
     }
 
     for (int i = 0; i < token_count; i++) {
@@ -216,7 +356,8 @@ static void parse_command(char *str, Command *cmd)
 static int is_parent_builtin(const char *name)
 {
     return (strcmp(name, "cd") == 0 || strcmp(name, "exit") == 0 || strcmp(name, "export") == 0
-            || strcmp(name, "unset") == 0 || strcmp(name, "fg") == 0);
+            || strcmp(name, "unset") == 0 || strcmp(name, "fg") == 0 || strcmp(name, "true") == 0
+            || strcmp(name, "false") == 0 || strcmp(name, ":") == 0);
 }
 
 /* One stopped job is remembered so Ctrl-Z is recoverable; a real job table is
@@ -229,9 +370,10 @@ static int stopped_pgid = 0;
  * Returns after the job exits or stops. A stop leaves the job parked and
  * recorded rather than reaped, so the prompt comes back with it still alive.
  */
-static void wait_foreground(int pgid, const int *pids, int count)
+static int wait_foreground(int pgid, const int *pids, int count)
 {
     int shell_pgid = sys_getpgid(0);
+    int last_status = 0;
 
     sys_tcsetpgrp(0, pgid);
     for (int i = 0; i < count; i++) {
@@ -242,30 +384,45 @@ static void wait_foreground(int pgid, const int *pids, int count)
         if (WIFSTOPPED(status)) {
             stopped_pgid = pgid;
             printf("\n[stopped]  use 'fg' to resume\n");
+            last_status = 128 + WSTOPSIG(status);
             break;
+        }
+        /* A pipeline's status is that of its last (rightmost) command. */
+        if (i == count - 1) {
+            last_status = status & 0xFF;
         }
     }
     sys_tcsetpgrp(0, shell_pgid);
+    return last_status;
 }
 
 static void run_parent_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "exit") == 0) {
-        sys_exit(0);
+        /* `exit` with no argument exits with the last command's status. */
+        sys_exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : g_last_status);
+    } else if (strcmp(cmd->argv[0], "true") == 0 || strcmp(cmd->argv[0], ":") == 0) {
+        g_last_status = 0;
+    } else if (strcmp(cmd->argv[0], "false") == 0) {
+        g_last_status = 1;
     } else if (strcmp(cmd->argv[0], "fg") == 0) {
         if (stopped_pgid == 0) {
             printf("sh: fg: no stopped job\n");
+            g_last_status = 1;
         } else {
             int pgid = stopped_pgid;
             stopped_pgid = 0;
             sys_kill(-pgid, SIGNAL_CONT);
             int pids[1] = {pgid};
-            wait_foreground(pgid, pids, 1);
+            g_last_status = wait_foreground(pgid, pids, 1);
         }
     } else if (strcmp(cmd->argv[0], "cd") == 0) {
         const char *target = (cmd->argc > 1) ? cmd->argv[1] : "/";
         if (sys_chdir(target) < 0) {
             printf("sh: cd: no such directory: %s\n", target);
+            g_last_status = 1;
+        } else {
+            g_last_status = 0;
         }
     } else if (strcmp(cmd->argv[0], "export") == 0) {
         if (cmd->argc > 1) {
@@ -279,10 +436,12 @@ static void run_parent_builtin(Command *cmd)
                 setenv(arg, "", 1);
             }
         }
+        g_last_status = 0;
     } else if (strcmp(cmd->argv[0], "unset") == 0) {
         if (cmd->argc > 1) {
             unsetenv(cmd->argv[1]);
         }
+        g_last_status = 0;
     }
 }
 
@@ -314,8 +473,10 @@ static void run_output_builtin(Command *cmd)
         }
     } else if (strcmp(cmd->argv[0], "help") == 0) {
         printf("Perspicua Shell\n");
-        printf("Built-ins: help, echo, clear, pwd, cd, exit, export, unset, env\n");
-        printf("Features: |, >, >>, <, \" \", &, ;\n");
+        printf("Built-ins: help, echo, clear, pwd, cd, exit, export, unset, env, "
+               "true, false, :, fg\n");
+        printf("Operators: | > >> < & ; && ||\n");
+        printf("Scripting: $?  $$  $VAR  ${VAR}  'single'  \"double\"  # comments\n");
     } else if (strcmp(cmd->argv[0], "env") == 0) {
         if (environ) {
             for (int i = 0; environ[i]; i++) {
@@ -338,7 +499,7 @@ static void run_exec(Command *cmd)
     if (strchr(name, '/')) {
         sys_exec(name, cmd->argv, environ);
         printf("sh: %s : no such file or directory\n", name);
-        sys_exit(1);
+        sys_exit(127);
     }
 
     char *path_env = getenv("PATH");
@@ -375,7 +536,7 @@ static void run_exec(Command *cmd)
     }
 
     printf("sh: command not found: %s\n", name);
-    sys_exit(1);
+    sys_exit(127);
 }
 
 static int apply_redirections(Command *cmd)
@@ -444,7 +605,9 @@ static void execute_pipeline(char *pipe_string)
             sys_setpgid(pid, pid);
             if (!cmd.background) {
                 int pids[1] = {pid};
-                wait_foreground(pid, pids, 1);
+                g_last_status = wait_foreground(pid, pids, 1);
+            } else {
+                g_last_status = 0; /* a launched background job "succeeds" */
             }
         }
         return;
@@ -516,44 +679,130 @@ static void execute_pipeline(char *pipe_string)
     }
 
     if (!bg_flag && pipeline_pgid > 0) {
-        wait_foreground(pipeline_pgid, pids, num_cmds);
+        g_last_status = wait_foreground(pipeline_pgid, pids, num_cmds);
+    } else if (bg_flag) {
+        g_last_status = 0;
+    }
+}
+
+/* Run one leaf command (already free of ; && ||) through $-expansion, operator
+ * spacing, and the pipeline executor. Whitespace-only segments are no-ops.
+ *
+ * Variable expansion happens HERE, per command, rather than once for the whole
+ * line, so that $? and $VAR reflect commands run earlier in the same line
+ * (e.g. `false; echo $?` and `export X=1; echo $X`). */
+static void run_pipeline_segment(char *cmd)
+{
+    char *s = cmd;
+    while (*s == ' ' || *s == '\t')
+        s++;
+    if (*s == '\0')
+        return;
+
+    char *vexp = malloc(CMD_MAX_LEN * 2);
+    char *expanded = malloc(CMD_MAX_LEN * 2);
+    if (!vexp || !expanded) {
+        printf("sh: memory allocation failed\n");
+        free(vexp);
+        free(expanded);
+        return;
+    }
+    expand_variables(cmd, vexp, CMD_MAX_LEN * 2);
+    expand_operators(vexp, expanded);
+    execute_pipeline(expanded);
+    free(vexp);
+    free(expanded);
+}
+
+/*
+ * run_conditional_list - Executes a ';'-free segment whose commands may be joined
+ * by && and ||, with short-circuit evaluation driven by $?.
+ *
+ * Left-associative: each link runs based only on the immediately preceding
+ * connector and the running status. Skipping leaves the status untouched, which
+ * makes mixed chains like `false && a || b` behave as sh does (b runs).
+ */
+static void run_conditional_list(char *segment)
+{
+    enum { CONN_ALWAYS, CONN_AND, CONN_OR };
+    char *cmds[MAX_CMDS];
+    int conn[MAX_CMDS];
+    int n = 0;
+
+    cmds[n] = segment;
+    conn[n] = CONN_ALWAYS;
+    n++;
+
+    int in_single = 0, in_double = 0;
+    for (char *p = segment; *p; p++) {
+        if (*p == '\'' && !in_double) {
+            in_single = !in_single;
+        } else if (*p == '"' && !in_single) {
+            in_double = !in_double;
+        } else if (!in_single && !in_double && (*p == '&' || *p == '|') && p[1] == *p) {
+            if (n >= MAX_CMDS)
+                break;
+            conn[n] = (*p == '&') ? CONN_AND : CONN_OR;
+            *p = '\0';
+            cmds[n] = p + 2;
+            n++;
+            p++; /* skip the second operator character */
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        int run;
+        if (conn[i] == CONN_AND)
+            run = (g_last_status == 0);
+        else if (conn[i] == CONN_OR)
+            run = (g_last_status != 0);
+        else
+            run = 1;
+
+        if (run)
+            run_pipeline_segment(cmds[i]);
     }
 }
 
 static void execute_line(char *line)
 {
-    char *expanded = malloc(CMD_MAX_LEN * 2);
-    if (!expanded) {
+    char *work = malloc(CMD_MAX_LEN);
+    if (!work) {
         printf("sh: memory allocation failed\n");
         return;
     }
-    expand_operators(line, expanded);
 
-    /* Split by semi-colons for sequential execution */
+    /* Comments are stripped once, up front. Operator splitting (below) and
+     * $-expansion (per command, deeper down) run on the raw text so that
+     * expansion cannot inject or hide control operators. */
+    strncpy(work, line, CMD_MAX_LEN - 1);
+    work[CMD_MAX_LEN - 1] = '\0';
+    strip_comment(work);
+
+    /* Split by ';' (quote-aware) into sequential lists. */
     char *seq_commands[16];
     int num_seq = 0;
+    seq_commands[num_seq++] = work;
 
-    char *p = expanded;
-    seq_commands[num_seq++] = p;
-
-    int in_quotes = 0;
-    while (*p) {
-        if (*p == '"')
-            in_quotes = !in_quotes;
-        if (*p == ';' && !in_quotes) {
+    int in_single = 0, in_double = 0;
+    for (char *p = work; *p; p++) {
+        if (*p == '\'' && !in_double) {
+            in_single = !in_single;
+        } else if (*p == '"' && !in_single) {
+            in_double = !in_double;
+        } else if (*p == ';' && !in_single && !in_double) {
             *p = '\0';
             if (num_seq < 16) {
                 seq_commands[num_seq++] = p + 1;
             }
         }
-        p++;
     }
 
     for (int i = 0; i < num_seq; i++) {
-        execute_pipeline(seq_commands[i]);
+        run_conditional_list(seq_commands[i]);
     }
 
-    free(expanded);
+    free(work);
 }
 
 // returns start of last word
