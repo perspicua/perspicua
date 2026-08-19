@@ -699,8 +699,13 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     free_vector(kenvp, envc);
-    close_all_fds(p);
-    open_std_fds((uint32_t)pid);
+    /*
+     * Do NOT reset the fd table here: POSIX requires open descriptors to survive
+     * exec (only those marked FD_CLOEXEC are closed, handled above). Resetting
+     * them destroyed every redirection and pipe a shell set up before exec, so
+     * `cmd > file` and `a | b` only worked for shell builtins. Inherited std fds
+     * come from the parent via fork, or from open_std_fds at initial creation.
+     */
 
     for (int i = 0; i < SIGNAL_COUNT; i++) {
         if (p->signal_handlers[i].sa_handler != SIGNAL_IGN) {
