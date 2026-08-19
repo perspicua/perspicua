@@ -248,6 +248,11 @@ int vfs_mount(const char *path, struct vfs_vnode *root);
 int vfs_unmount(const char *path);
 
 /*
+ * vfs_get_mount - Copies the path of mount #index into out.
+ */
+int vfs_get_mount(size_t index, char *out, size_t out_size);
+
+/*
  * vfs_chdir - Updates the current process working directory.
  */
 int vfs_chdir(const char *path);

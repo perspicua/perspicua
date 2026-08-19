@@ -298,6 +298,50 @@ void test_truncate(void)
     printf("[ TEST ] truncate / ftruncate & O_TRUNC passed!\n");
 }
 
+void test_procfs(void)
+{
+    printf("[ TEST ] Running procfs completeness tests...\n");
+
+    /* 1. Read /proc/mounts */
+    int fd = sys_open("/proc/mounts", VFS_O_RDONLY);
+    assert(fd >= 0);
+    char buf[512] = {0};
+    int r = sys_read(fd, buf, sizeof(buf) - 1);
+    assert(r > 0);
+    assert(strstr(buf, "procfs") != NULL);
+    sys_close(fd);
+
+    /* 2. Read /proc/cpuinfo */
+    fd = sys_open("/proc/cpuinfo", VFS_O_RDONLY);
+    assert(fd >= 0);
+    memset(buf, 0, sizeof(buf));
+    r = sys_read(fd, buf, sizeof(buf) - 1);
+    assert(r > 0);
+    assert(strstr(buf, "ARM Cortex-A72") != NULL);
+    sys_close(fd);
+
+    /* 3. Read /proc/stat */
+    fd = sys_open("/proc/stat", VFS_O_RDONLY);
+    assert(fd >= 0);
+    memset(buf, 0, sizeof(buf));
+    r = sys_read(fd, buf, sizeof(buf) - 1);
+    assert(r > 0);
+    assert(strstr(buf, "ctxt") != NULL);
+    assert(strstr(buf, "processes") != NULL);
+    sys_close(fd);
+
+    /* 4. Read /proc/self/status */
+    fd = sys_open("/proc/self/status", VFS_O_RDONLY);
+    assert(fd >= 0);
+    memset(buf, 0, sizeof(buf));
+    r = sys_read(fd, buf, sizeof(buf) - 1);
+    assert(r > 0);
+    assert(strstr(buf, "Pid:") != NULL);
+    sys_close(fd);
+
+    printf("[ TEST ] procfs completeness passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -308,6 +352,7 @@ int main(void)
     test_nanosleep();
     test_fstat();
     test_truncate();
+    test_procfs();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

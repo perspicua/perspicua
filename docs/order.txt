@@ -33,7 +33,7 @@ architecturally hard — it is the accumulated "we'll do it later" list, and it 
 what makes the system usable enough to develop against.
 ================================================================================
 
-   1. Remaining POSIX syscalls
+   1. Remaining POSIX syscalls [DONE]
       Effort: S each | Unlocks: closes the most common porting gaps
       Scope: gettimeofday + clock_gettime (realtime +
         monotonic), nanosleep, fstat (STAT is path-only today), truncate/ftruncate.

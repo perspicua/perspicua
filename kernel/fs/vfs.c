@@ -406,6 +406,27 @@ int vfs_unmount(const char *path)
 }
 
 /*
+ * vfs_get_mount - Copies the path of mount #index into out under vfs_lock.
+ */
+int vfs_get_mount(size_t index, char *out, size_t out_size)
+{
+    if (!out || out_size == 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&vfs_lock);
+    if (index >= (size_t)vfs_mount_count) {
+        spin_unlock_irqrestore(&vfs_lock, flags);
+        return -PERS_ERR_NOT_FOUND;
+    }
+
+    strncpy(out, vfs_mount_table[index].path, out_size - 1);
+    out[out_size - 1] = '\0';
+    spin_unlock_irqrestore(&vfs_lock, flags);
+    return PERS_SUCCESS;
+}
+
+/*
  * vfs_resolve_path - Thread-safe path resolution from a given CWD.
  *
  * This function only holds vfs_lock when accessing the mount table.
