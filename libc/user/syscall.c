@@ -760,3 +760,31 @@ int sys_fstat(int fd, struct stat *buf)
                  : "x0", "x1", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_truncate(const char *path, off_t length)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)path), "r"((long)length), "i"(SYS_TRUNCATE)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_ftruncate(int fd, off_t length)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)length), "i"(SYS_FTRUNCATE)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}

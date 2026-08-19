@@ -315,10 +315,7 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
                     continue;
                 }
 
-                uint32_t entry_cluster =
-                    ((uint32_t)dirs[i].cluster_high << 16) | dirs[i].cluster_low;
-                int match = (entry_cluster == target_cluster)
-                            || (entry_cluster == 0 && name_match(node->name, &dirs[i]));
+                int match = name_match(node->name, &dirs[i]);
                 if (match) {
                     dirs[i].size = (uint32_t)node->file_size;
                     dirs[i].cluster_high = (uint16_t)(target_cluster >> 16);
@@ -1283,9 +1280,61 @@ static int fat32_op_rename(struct vfs_vnode *old_parent, const char *old_name,
     return r;
 }
 
+static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
+{
+    if (length > node->file_size) {
+        return -PERS_ERR_OPERATION_NOT_SUPPORTED; /* grow: TODO, first cut */
+    }
+    if (length == node->file_size) {
+        return PERS_SUCCESS; /* no-op */
+    }
+
+    uint32_t start_cluster = (uint32_t)(uintptr_t)node->internal_info;
+
+    if (length == 0) {
+        if (cluster_valid(start_cluster)) {
+            fat32_free_cluster_chain(start_cluster);
+        }
+        node->internal_info = (void *)(uintptr_t)0;
+    } else {
+        uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
+        uint32_t cluster_index = (uint32_t)((length - 1) / bytes_per_cluster);
+        uint32_t last_keep = start_cluster;
+
+        for (uint32_t i = 0; i < cluster_index; i++) {
+            if (!cluster_valid(last_keep)) {
+                break;
+            }
+            last_keep = get_next_cluster(last_keep);
+        }
+
+        if (cluster_valid(last_keep)) {
+            uint32_t next = get_next_cluster(last_keep);
+            set_fat_entry(last_keep, 0x0FFFFFFF);
+            if (cluster_valid(next)) {
+                fat32_free_cluster_chain(next);
+            }
+        }
+    }
+
+    node->file_size = length;
+    fat32_update_dir_entry(node);
+    pagecache_invalidate(node);
+    return PERS_SUCCESS;
+}
+
+static int fat32_op_truncate(struct vfs_vnode *node, vfs_off_t length)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_truncate(node, length);
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
 static struct vfs_vnode_ops fat32_vnode_ops = {
     .read = fat32_op_read,
     .write = fat32_op_write,
+    .truncate = fat32_op_truncate,
     .lookup = fat32_op_lookup,
     .readdir = fat32_op_readdir,
     .write_page = fat32_op_write_page,

@@ -1444,6 +1444,31 @@ mmap_fail:
             break;
         }
 
+        case SYS_TRUNCATE: {
+            const char *upath = (const char *)tf->x[0];
+            vfs_off_t length = (vfs_off_t)tf->x[1];
+
+            char *kpath = NULL;
+            int err = copy_path_from_user(upath, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
+                break;
+            }
+
+            int res = vfs_truncate(kpath, length);
+            heap_free(kpath);
+            tf->x[0] = (uint64_t)res;
+            break;
+        }
+
+        case SYS_FTRUNCATE: {
+            int fd = (int)tf->x[0];
+            vfs_off_t length = (vfs_off_t)tf->x[1];
+
+            tf->x[0] = (uint64_t)vfs_ftruncate(fd, length);
+            break;
+        }
+
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;

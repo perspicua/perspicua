@@ -82,6 +82,7 @@ struct vfs_dirent {
 struct vfs_vnode_ops {
     int (*read)(struct vfs_file *file, void *buffer, size_t size);
     int (*write)(struct vfs_file *file, const void *buffer, size_t size);
+    int (*truncate)(struct vfs_vnode *node, vfs_off_t length);
     struct vfs_vnode *(*lookup)(struct vfs_vnode *dir, const char *filename);
     int (*readdir)(struct vfs_file *file, void *buffer, size_t count);
     int (*close)(struct vfs_file *file);
@@ -209,6 +210,8 @@ int vfs_stat(const char *path, struct stat *buf);
  * vfs_fstat - Retrieves metadata for a file by file descriptor.
  */
 int vfs_fstat(int fd, struct stat *buf);
+int vfs_truncate(const char *path, vfs_off_t length);
+int vfs_ftruncate(int fd, vfs_off_t length);
 
 /*
  * vfs_mkdir - Creates a new directory from a given path.

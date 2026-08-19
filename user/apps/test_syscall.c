@@ -196,6 +196,108 @@ void test_fstat(void)
     printf("[ TEST ] fstat passed!\n");
 }
 
+void test_truncate(void)
+{
+    printf("[ TEST ] Running truncate / ftruncate & O_TRUNC tests...\n");
+
+    const char *test_path = "test_trunc.txt";
+    int fd = sys_open(test_path, VFS_O_CREAT | VFS_O_RDWR);
+    assert(fd >= 0);
+
+    /* 1. Setup: write 100 bytes */
+    char buf100[100];
+    memset(buf100, 'A', sizeof(buf100));
+    int res = sys_write(fd, buf100, sizeof(buf100));
+    assert(res == 100);
+
+    /* 2. Shrink: sys_ftruncate(fd, 10) == 0 */
+    res = sys_ftruncate(fd, 10);
+    assert(res == 0);
+
+    struct stat st;
+    memset(&st, 0, sizeof(st));
+    assert(sys_fstat(fd, &st) == 0);
+    assert(st.st_size == 10);
+
+    sys_lseek(fd, 0, VFS_SEEK_SET);
+    char rbuf[64] = {0};
+    int rbytes = sys_read(fd, rbuf, sizeof(rbuf));
+    assert(rbytes == 10);
+
+    /* 3. Truncate to zero: sys_ftruncate(fd, 0) == 0 */
+    res = sys_ftruncate(fd, 0);
+    assert(res == 0);
+    assert(sys_fstat(fd, &st) == 0);
+    assert(st.st_size == 0);
+
+    /* 4. Path-based truncate: write again, sys_truncate(path, 5) == 0 */
+    sys_lseek(fd, 0, VFS_SEEK_SET);
+    assert(sys_write(fd, "0123456789", 10) == 10);
+    assert(sys_truncate(test_path, 5) == 0);
+
+    memset(&st, 0, sizeof(st));
+    assert(sys_stat(test_path, &st) == 0);
+    assert(st.st_size == 5);
+
+    /* 5. O_TRUNC payoff test: write 50 bytes, close, open with O_TRUNC, fstat -> size 0 */
+    sys_lseek(fd, 0, VFS_SEEK_SET);
+    char buf50[50];
+    memset(buf50, 'B', sizeof(buf50));
+    assert(sys_write(fd, buf50, sizeof(buf50)) == 50);
+    sys_close(fd);
+
+    int trunc_fd = sys_open(test_path, VFS_O_RDWR | VFS_O_TRUNC);
+    assert(trunc_fd >= 0);
+    memset(&st, 0, sizeof(st));
+    assert(sys_fstat(trunc_fd, &st) == 0);
+    assert(st.st_size == 0);
+    sys_close(trunc_fd);
+
+    /* 6. Error handling */
+    assert(sys_ftruncate(-1, 0) < 0);
+    assert(sys_truncate("/nonexistent_file_xyz", 0) < 0);
+
+    int err_fd = sys_open(test_path, VFS_O_RDWR);
+    assert(err_fd >= 0);
+    /* Grow attempt returns error in first-cut implementation */
+    assert(sys_ftruncate(err_fd, 999999) < 0);
+    sys_close(err_fd);
+    sys_unlink(test_path);
+
+    /* 7. Multiple empty files regression test:
+       Create a.txt (empty), create b.txt with data, ftruncate b.txt to 0.
+       Verify a.txt size is untouched and b.txt reads back correctly. */
+    const char *path_a = "trun_a.txt";
+    const char *path_b = "trun_b.txt";
+    int fd_a = sys_open(path_a, VFS_O_CREAT | VFS_O_RDWR);
+    assert(fd_a >= 0);
+    sys_close(fd_a);
+
+    int fd_b = sys_open(path_b, VFS_O_CREAT | VFS_O_RDWR);
+    assert(fd_b >= 0);
+    assert(sys_write(fd_b, "12345678901234567890", 20) == 20);
+
+    assert(sys_ftruncate(fd_b, 0) == 0);
+
+    struct stat st_a, st_b;
+    memset(&st_a, 0, sizeof(st_a));
+    memset(&st_b, 0, sizeof(st_b));
+    assert(sys_stat(path_a, &st_a) == 0);
+    assert(sys_stat(path_b, &st_b) == 0);
+    assert(st_a.st_size == 0);
+    assert(st_b.st_size == 0);
+
+    sys_lseek(fd_b, 0, VFS_SEEK_SET);
+    char buf_b[16] = {0};
+    assert(sys_read(fd_b, buf_b, sizeof(buf_b)) == 0);
+
+    sys_close(fd_b);
+    sys_unlink(path_a);
+    sys_unlink(path_b);
+
+    printf("[ TEST ] truncate / ftruncate & O_TRUNC passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -205,6 +307,7 @@ int main(void)
     test_time_syscalls();
     test_nanosleep();
     test_fstat();
+    test_truncate();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;
