@@ -1015,6 +1015,32 @@ int vfs_stat(const char *path, struct stat *buf)
 }
 
 /*
+ * vfs_fstat - FD-based metadata retrieval entry point.
+ */
+int vfs_fstat(int fd, struct stat *buf)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS)
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+
+    struct process *proc = process_current();
+    if (!proc)
+        return -PERS_ERR_NO_SUCH_PROCESS;
+
+    unsigned long flags = spin_lock_irqsave(&proc->fd_lock);
+    struct vfs_file *f = proc->fd_table[fd];
+    if (!f) {
+        spin_unlock_irqrestore(&proc->fd_lock, flags);
+        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    struct vfs_vnode *node = f->node;
+    atomic_inc(&node->refcount);
+    spin_unlock_irqrestore(&proc->fd_lock, flags);
+    int res = vfs_vnode_stat(node, buf);
+    vfs_vnode_put(node);
+    return res;
+}
+
+/*
  * vfs_dup2 - Replaces a descriptor slot with a copy of another.
  */
 int vfs_dup2(int oldfd, int newfd)

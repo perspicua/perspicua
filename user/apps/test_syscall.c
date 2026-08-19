@@ -149,6 +149,53 @@ void test_nanosleep(void)
     printf("[ TEST ] nanosleep passed!\n");
 }
 
+void test_fstat(void)
+{
+    printf("[ TEST ] Running fstat tests...\n");
+
+    struct stat st;
+    memset(&st, 0, sizeof(st));
+
+    /* 1. Bad fd: unopened or negative */
+    assert(sys_fstat(-1, &st) < 0);
+    assert(sys_fstat(999, &st) < 0);
+
+    /* 2. Regular file: open a file you wrote N bytes to, sys_fstat(fd, &st) == 0, assert
+     * S_ISREG(st.st_mode) and st.st_size == N */
+    const char *test_path = "test_fstat.txt";
+    int fd = sys_open(test_path, VFS_O_CREAT | VFS_O_RDWR);
+    assert(fd >= 0);
+
+    const char *data = "Hello, fstat!";
+    size_t len = strlen(data);
+    int res = sys_write(fd, data, len);
+    assert(res == (int)len);
+
+    res = sys_fstat(fd, &st);
+    assert(res == 0);
+    assert(S_ISREG(st.st_mode));
+    assert(st.st_size == (uint64_t)len);
+
+    /* 3. Consistency with path stat: sys_stat(path, &sp) and sys_fstat(fd, &sf) on the same file
+     * agree on st_size and st_mode */
+    struct stat sp;
+    memset(&sp, 0, sizeof(sp));
+    res = sys_stat(test_path, &sp);
+    assert(res == 0);
+    assert(sp.st_size == st.st_size);
+    assert(sp.st_mode == st.st_mode);
+
+    /* 4. Close and re-check bad fd: after sys_close(fd), sys_fstat(fd, &st) < 0 */
+    sys_close(fd);
+    memset(&st, 0, sizeof(st));
+    assert(sys_fstat(fd, &st) < 0);
+
+    /* Cleanup test file */
+    sys_unlink(test_path);
+
+    printf("[ TEST ] fstat passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -157,6 +204,7 @@ int main(void)
     test_getppid();
     test_time_syscalls();
     test_nanosleep();
+    test_fstat();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

@@ -206,6 +206,11 @@ int vfs_readdir(int fd, void *buffer, size_t count);
 int vfs_stat(const char *path, struct stat *buf);
 
 /*
+ * vfs_fstat - Retrieves metadata for a file by file descriptor.
+ */
+int vfs_fstat(int fd, struct stat *buf);
+
+/*
  * vfs_mkdir - Creates a new directory from a given path.
  */
 int vfs_mkdir(const char *path);

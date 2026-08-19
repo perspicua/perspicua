@@ -85,6 +85,7 @@ int sys_dup2(int oldfd, int newfd);
 int sys_chdir(const char *path);
 int sys_getcwd(char *buf, size_t size);
 int sys_stat(const char *path, struct stat *buf);
+int sys_fstat(int fd, struct stat *buf);
 off_t sys_lseek(int fd, off_t offset, int whence);
 int sys_mkdir(const char *path, int mode);
 int sys_rmdir(const char *path);

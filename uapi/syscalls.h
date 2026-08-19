@@ -56,5 +56,6 @@
 #define SYS_GETTIMEOFDAY  44
 #define SYS_CLOCK_GETTIME 45
 #define SYS_NANOSLEEP     46
+#define SYS_FSTAT         47
 
 #endif /* PERSPICUA_UAPI_SYSCALLS_H */

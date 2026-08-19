@@ -1425,6 +1425,25 @@ mmap_fail:
             break;
         }
 
+        case SYS_FSTAT: {
+            int fd = (int)tf->x[0];
+            struct stat *ubuf = (struct stat *)tf->x[1];
+
+            if (!validate_user_buffer(ubuf, sizeof(struct stat), 1)) { // writable
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct stat kbuf;
+            int res = vfs_fstat(fd, &kbuf);
+            if (res == PERS_SUCCESS) {
+                if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0)
+                    res = -PERS_ERR_OUT_OF_MEMORY;
+            }
+            tf->x[0] = (uint64_t)res;
+            break;
+        }
+
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
             break;
