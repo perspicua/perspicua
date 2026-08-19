@@ -65,7 +65,7 @@ what makes the system usable enough to develop against.
         so what is missing is the grouping to deliver them to, and the tty side
         that decides which group is in the foreground.
 
-   3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
+   3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self [DONE]
       Effort: S | Unlocks: monitoring tools and scripts that parse /proc
       Scope: iterate the mount table / cpu info / global counters as text.
       Done: cat of each returns well-formed output.
@@ -73,14 +73,14 @@ what makes the system usable enough to develop against.
         `pos += snprintf(buf+pos, SIZE-pos, ...)` idiom overflows (that was a real
         heap-smash bug in /proc/<pid>/maps).
 
-   4. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
+   4. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes [DONE]
       Effort: S-M | Unlocks: any non-trivial shell usage or scripting
       Scope: track the last exit status; expand $NAME from environ; propagate the
         rightmost non-zero exit through a pipeline.
       Done: `false; echo $?` prints 1; `echo $PATH` expands.
       Note: sh.c already has expand_operators() for redirection — extend that pass.
 
-   5. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
+   5. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env [DONE]
       Effort: M | Unlocks: turns the project from experiment into usable system
       Scope: small programs over existing syscalls.
       Done: you can create/inspect/delete files from the shell without redirection.
