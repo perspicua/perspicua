@@ -581,6 +581,15 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
     return PERS_SUCCESS;
 }
 
+static void sd_probe_abort(sdhci_regs_t *r)
+{
+    r->int_mask = 0;
+    r->int_en = 0;
+    r->interrupt = 0xFFFFFFFF;
+    regs = NULL;
+    sd_irq_num = 0;
+}
+
 static int sd_probe(struct device *dev)
 {
     /* We only support a single SD card. If one was already initialized, skip other matching
@@ -616,11 +625,13 @@ static int sd_probe(struct device *dev)
 
     if (sd_set_clock(100000000) < 0) {
         pr_err("sd: clock init failed\n");
+        sd_probe_abort(r);
         return -PERS_ERR_IO_ERROR;
     }
 
     if (sd_init_host() != PERS_SUCCESS || sd_init_card() != PERS_SUCCESS) {
         pr_err("sd: card init failed\n");
+        sd_probe_abort(r);
         return -PERS_ERR_IO_ERROR;
     }
 
