@@ -94,6 +94,16 @@ void signal_handle_pending(struct exception_trap_frame *tf)
                 return;
             }
             sched_get_current()->state = SCHED_TASK_STOPPED;
+            curr_process->stop_reported = 0;
+
+            /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
+             * is invisible and the parent sleeps until we exit instead. */
+            struct process *parent = process_slot(curr_process->parent_pid);
+            if (curr_process->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
+                && parent->main_task) {
+                sched_unblock(parent->main_task);
+            }
+
             spin_unlock(&process_table_lock); /* keep IRQs masked across schedule() */
             schedule();
             irq_restore(flags);
@@ -172,26 +182,17 @@ deliver_kill:
 }
 
 /*
- * signal_send - Posts a signal to a process and wakes it if blocked.
+ * signal_send_target_locked - Posts a signal to a process.
+ *
+ * Precondition: process_table_lock MUST be held by caller.
+ * Checks that the process is non-NULL and in state PROCESS_STATE_RUNNING
+ * before dereferencing main_task or modifying pending_signals.
+ *
+ * Returns PERS_SUCCESS (0) on success, or -PERS_ERR_NO_SUCH_PROCESS if p is invalid/not running.
  */
-int signal_send(uint32_t target_pid, int sig)
+static int signal_send_target_locked(struct process *p, int sig)
 {
-    if (sig < 1 || sig >= SIGNAL_COUNT) {
-        return -PERS_ERR_INVALID_ARGUMENT;
-    }
-
-    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    /* Hold the process table lock so the target cannot be reaped and its slot
-     * freed between the existence check and dereferencing main_task. Only a
-     * RUNNING process has a live task: a zombie's was already freed, and its
-     * slot survives until a parent reaps it. */
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    struct process *p = process_table[target_pid];
     if (!p || p->state != PROCESS_STATE_RUNNING) {
-        spin_unlock_irqrestore(&process_table_lock, flags);
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
 
@@ -208,6 +209,7 @@ int signal_send(uint32_t target_pid, int sig)
 
     if ((sig == SIGNAL_CONT || sig == SIGNAL_KILL) && p->main_task
         && p->main_task->state == SCHED_TASK_STOPPED) {
+        p->stop_reported = 0;
         sched_continue(p->main_task);
     }
 
@@ -217,6 +219,60 @@ int signal_send(uint32_t target_pid, int sig)
         }
     }
 
-    spin_unlock_irqrestore(&process_table_lock, flags);
     return PERS_SUCCESS;
+}
+
+/*
+ * signal_send - Posts a signal to a process by PID.
+ */
+int signal_send(uint32_t target_pid, int sig)
+{
+    if (sig < 1 || sig >= SIGNAL_COUNT) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    int res = signal_send_target_locked(process_table[target_pid], sig);
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    return res;
+}
+
+/*
+ * signal_send_group - Sends a signal to all processes in a process group.
+ *
+ * Walks process_table under process_table_lock (O(PROCESS_TABLE_SIZE)).
+ * Returns PERS_SUCCESS if delivered to at least one process,
+ * or -PERS_ERR_NO_SUCH_PROCESS if no matching running process was found.
+ */
+int signal_send_group(uint32_t pgid, int sig)
+{
+    if (sig < 1 || sig >= SIGNAL_COUNT) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (pgid == 0) {
+        return -PERS_ERR_NO_SUCH_PROCESS;
+    }
+
+    int targets_reached = 0;
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+
+    /* O(PROCESS_TABLE_SIZE) walk under lock over all process slots */
+    for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        struct process *p = process_table[i];
+        if (p && p->state == PROCESS_STATE_RUNNING && p->pgid == pgid) {
+            if (signal_send_target_locked(p, sig) == PERS_SUCCESS) {
+                targets_reached++;
+            }
+        }
+    }
+
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    return (targets_reached > 0) ? PERS_SUCCESS : -PERS_ERR_NO_SUCH_PROCESS;
 }

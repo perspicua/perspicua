@@ -2,7 +2,9 @@ Perspicua Development Ideas
 ===========================
 
 This is the feature/idea BACKLOG (the "what"). For the recommended build ORDER
-(the "when"), see order.txt. Items are tagged [DONE] / [PARTIAL] / [TODO].
+(the "when"), see order.txt. For the north-star direction the whole backlog
+serves — the self-healing, flight-recorder kernel — see vision.txt; section 10
+below catalogs its ideas. Items are tagged [DONE] / [PARTIAL] / [TODO].
 Difficulty and Impact are rough planning estimates, not promises.
 
 --------------------------------------------------------------------------------
@@ -260,17 +262,107 @@ shakiness; harden here first.
       before users do).                                           Medium | Medium.
   - dmesg ring buffer + kernel log levels; /proc/kmsg.           Low | Medium.
   - ftrace-lite: function/latency tracing; per-subsystem counters (schedstat exists).
+  - Note: the dmesg ring and ftrace-lite are V1 seeds — the flight-recorder
+      direction in section 10 subsumes and sequences both. Build them in the
+      record-based shape order.txt Phase 2 item 8 describes.
 
 
 --------------------------------------------------------------------------------
-10. LONG-TERM STRATEGIC
+10. SELF-HEALING & THE FLIGHT RECORDER  (the north star — see vision.txt)
+--------------------------------------------------------------------------------
+These ideas ARE the project's long-term identity: a kernel that can always
+explain itself and recover without a reboot. order.txt Phase 6 sequences them
+as V1-V4; the entries here carry the catalog-level detail.
+
+  - Unified Trace Ring ("the flight recorder")  [V1]
+      Difficulty: High | Impact: Very High
+      Details: One clock-stamped binary event stream for the whole kernel —
+        lockdep transitions, scheduler decisions, IRQs, syscall entry/exit,
+        signal delivery, cell lifecycle — with per-CPU write buffers, the
+        generic timer as the single timebase, kdb + /proc readout, and a hard
+        overhead budget (<2% CPU with every producer on).
+      Benefit: Cross-subsystem causality readable from one record; "it hung"
+        becomes a readable story. Every private ring buffer gets deleted.
+  - Crash-Persistent Recorder Backing + Reboot Forensics  [V1]
+      Difficulty: Medium | Impact: Very High
+      Details: Ring backing in reserved RAM outside the PMM (magic + CRC
+        header); reboot-reason codes in the PM block's reset-surviving bits;
+        the next boot detects a surviving ring and exposes /proc/lastcrash.
+      Benefit: The black-box property — pre-crash history available AFTER the
+        crash, even through a watchdog reset. No failure is unexplained.
+  - Supervisor Core  [V1]
+      Difficulty: Medium | Impact: High
+      Details: Dedicate one core to the health monitor: its own timer, SGI
+        pings that declare peers hung, PMU sampling, VideoCore telemetry
+        (temperature/voltage/throttling) via mailbox, and sole ownership of
+        the hardware watchdog (stroked only while checks pass).
+      Benefit: Hang detection that does not depend on the schedulability of
+        the thing being monitored.
+  - Cells: Restartable Subsystems  [V2]
+      Difficulty: Very High | Impact: Very High
+      Details: Subsystem units (driver instance, mounted FS) with private
+        slab arenas, a resource ledger (IRQs, pages, locks, devices, timers),
+        message-mediated entry points with a quiesce protocol, and a restart
+        path: revoke ledger, reinit, replay the intent journal. First cell:
+        block/SD. USB and networking arrive as cells from birth.
+      Benefit: A driver fault restarts the driver, not the machine — MINIX-
+        style reincarnation inside a monolith, which is the research claim.
+  - Invariant Engine (lockdep, generalized)  [V3]
+      Difficulty: High | Impact: High
+      Details: Subsystems declare invariants ("no page in both the free list
+        and the page cache"); the engine checks them on state transitions. A
+        trip emits to the ring, attributes to a cell, and triggers restart
+        instead of panic.
+      Benefit: Corruption caught at the corrupting store, not the later crash
+        site; fault attribution becomes an oracle instead of a guess.
+  - Intent Journaling (crash-only kernel subsystems)  [V2/V3]
+      Difficulty: Medium-High | Impact: Medium-High
+      Details: A small reusable per-cell journal of in-flight operations so a
+        restarted cell replays what it was doing; recovery path == init path.
+      Benefit: Restart without losing in-flight I/O; the recovery path is
+        exercised on every boot by construction.
+  - kdb Time Travel  [V3]
+      Difficulty: Medium | Impact: High
+      Details: Replay the ring backwards from any fault with filters (cell,
+        lock, task, CPU) and a `blame` command walking back from a fault to
+        the last suspicious transition on the same object.
+      Benefit: Debugging by replay instead of archaeology — the magnifying
+        glass, literally.
+  - EL2 Warden  [V4]
+      Difficulty: Very High | Impact: High
+      Details: A ~2-3 KLoC non-VHE EL2 monitor: Stage-2-protects the recorder
+        region (EL1 appends via HVC only) and can snapshot + micro-reboot the
+        EL1 kernel preserving user memory and the ring. Cortex-A72 is
+        ARMv8.0 — no VHE — so the split-EL2 design is mandatory.
+      Benefit: The recorder becomes trustworthy BECAUSE EL1 cannot corrupt
+        it; the ultimate cell restart; the seed of section 11's
+        virtualization item.
+  - Fault-Injection Campaign + Published Recovery Rates  [V1-V3]
+      Difficulty: Medium | Impact: High
+      Details: A repeatable campaign — bit flips in cell arenas, failed Nth
+        allocations, wedged-hardware simulation, corrupt FS images —
+        reporting per-cell recovery and misattribution rates into docs/ per
+        release.
+      Benefit: Keeps the vision falsifiable; the recovery rate rising is the
+        project's progress bar.
+  - Framebuffer Health Dashboard
+      Difficulty: Low-Med | Impact: Medium
+      Details: The supervisor core renders live system state — cells,
+        invariant status, temperatures, recovery counters — on the graphics
+        console.
+      Benefit: The vision, visible on a monitor; the natural demo surface.
+
+
+--------------------------------------------------------------------------------
+11. LONG-TERM STRATEGIC
 --------------------------------------------------------------------------------
   - Network Stack (LWIP integration or a minimal UDP/IP)
       Difficulty: High | Impact: Very High — remote access, servers; needs a NIC
-      driver (USB/PCIe) and I/O multiplexing.
+      driver (USB/PCIe) and I/O multiplexing. Arrives cell-shaped (section 10).
   - Graphics Server (Wayland-lite compositor) — needs shared-memory IPC + input.
   - Dynamic Linking (ld.so + shared objects) — mostly a user-space loader challenge.
   - POSIX ABI compatibility: align syscall numbers/structs with Linux/AArch64.
   - Namespaces / containers, cgroup-style resource limits.
-  - Virtualization via EL2 (run guest OSes) — the final frontier.
+  - Virtualization via EL2 (run guest OSes) — grows out of the V4 warden
+      (section 10) rather than starting from zero.
   - Power management: CPU idle states, DVFS, suspend.

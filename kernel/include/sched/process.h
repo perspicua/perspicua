@@ -93,6 +93,10 @@ struct va_allocator {
  */
 struct process {
     uint32_t pid;
+    uint32_t pgid;
+    uint32_t sid;
+    int has_execed;
+    int stop_reported;
     char name[64];
     process_state_t state;
     uint32_t parent_pid;

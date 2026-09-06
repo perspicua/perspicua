@@ -21,6 +21,7 @@
 #include "types.h"
 #include "signals.h"
 
+#include "uapi/time.h"
 #include "uapi/stat.h"
 
 /* Filesystem access mode and control flags. */
@@ -59,6 +60,12 @@ struct vfs_dirent {
 __attribute__((noreturn)) void sys_exit(int status);
 int sys_getpid(void);
 int sys_getppid(void);
+int sys_setpgid(int pid, int pgid);
+int sys_getpgid(int pid);
+int sys_setsid(void);
+int sys_getsid(int pid);
+int sys_tcsetpgrp(int fd, int pgid);
+int sys_tcgetpgrp(int fd);
 void sys_yield(void);
 void sys_sleep(unsigned long ms);
 int sys_exec(const char *path, char *const argv[], char *const envp[]);
@@ -78,6 +85,9 @@ int sys_dup2(int oldfd, int newfd);
 int sys_chdir(const char *path);
 int sys_getcwd(char *buf, size_t size);
 int sys_stat(const char *path, struct stat *buf);
+int sys_fstat(int fd, struct stat *buf);
+int sys_truncate(const char *path, off_t length);
+int sys_ftruncate(int fd, off_t length);
 off_t sys_lseek(int fd, off_t offset, int whence);
 int sys_mkdir(const char *path, int mode);
 int sys_rmdir(const char *path);
@@ -101,5 +111,10 @@ int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact);
 int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset);
 int sys_sigpending(sigset_t *set);
 int sys_sigsuspend(const sigset_t *mask);
+
+/* Time */
+int sys_gettimeofday(struct timeval *tv, void *tz);
+int sys_clock_gettime(clockid_t clk_id, struct timespec *tp);
+int sys_nanosleep(const struct timespec *req, struct timespec *rem);
 
 #endif /* PERSPICUA_LIBC_SYSCALL_H */

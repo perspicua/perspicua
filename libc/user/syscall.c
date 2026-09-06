@@ -625,3 +625,166 @@ int sys_fcntl(int fd, int cmd, int arg)
                  : "x0", "x1", "x2", "x8", "memory");
     return __syscall_ret(res);
 }
+
+int sys_setpgid(int pid, int pgid)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "r"((long)pgid), "i"(SYS_SETPGID)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_getpgid(int pid)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "i"(SYS_GETPGID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_tcsetpgrp(int fd, int pgid)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)pgid), "i"(SYS_TCSETPGRP)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_tcgetpgrp(int fd)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "i"(SYS_TCGETPGRP)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_setsid(void)
+{
+    long res;
+    asm volatile("mov x8, %1\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "i"(SYS_SETSID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_getsid(int pid)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)pid), "i"(SYS_GETSID)
+                 : "x0", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_gettimeofday(struct timeval *tv, void *tz)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)tv), "r"((long)tz), "i"(SYS_GETTIMEOFDAY)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_clock_gettime(clockid_t clk_id, struct timespec *tp)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)clk_id), "r"((long)tp), "i"(SYS_CLOCK_GETTIME)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_nanosleep(const struct timespec *req, struct timespec *rem)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)req), "r"((long)rem), "i"(SYS_NANOSLEEP)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_fstat(int fd, struct stat *buf)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)buf), "i"(SYS_FSTAT)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_truncate(const char *path, off_t length)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)path), "r"((long)length), "i"(SYS_TRUNCATE)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}
+
+int sys_ftruncate(int fd, off_t length)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x1, %2\n"
+                 "mov x8, %3\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"((long)fd), "r"((long)length), "i"(SYS_FTRUNCATE)
+                 : "x0", "x1", "x8", "memory");
+    return __syscall_ret(res);
+}

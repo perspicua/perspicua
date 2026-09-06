@@ -25,6 +25,7 @@
 #include "string.h"
 #include "core/timer.h"
 #include "types.h"
+#include "core/tty.h"
 #include "fs/vfs.h"
 #include "arch/uaccess.h"
 
@@ -284,6 +285,9 @@ static struct process *process_alloc_pcb(uint32_t pid)
 
     memset(p, 0, sizeof(*p));
     p->pid = pid;
+    p->pgid = pid;
+    p->sid = pid;
+    p->has_execed = 0;
     p->state = PROCESS_STATE_RUNNING;
     p->fd_lock = (spinlock_t)SPINLOCK_INIT;
     return p;
@@ -695,8 +699,13 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     free_vector(kenvp, envc);
-    close_all_fds(p);
-    open_std_fds((uint32_t)pid);
+    /*
+     * Do NOT reset the fd table here: POSIX requires open descriptors to survive
+     * exec (only those marked FD_CLOEXEC are closed, handled above). Resetting
+     * them destroyed every redirection and pipe a shell set up before exec, so
+     * `cmd > file` and `a | b` only worked for shell builtins. Inherited std fds
+     * come from the parent via fork, or from open_std_fds at initial creation.
+     */
 
     for (int i = 0; i < SIGNAL_COUNT; i++) {
         if (p->signal_handlers[i].sa_handler != SIGNAL_IGN) {
@@ -746,6 +755,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         curr->skip_signals = 1;
     }
 
+    p->has_execed = 1;
     pr_info("proc: PID %d exec '%s'\n", pid, path);
     return PERS_SUCCESS;
 }
@@ -761,6 +771,10 @@ void process_exit(uint32_t pid, int exit_status)
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
         return;
+    }
+
+    if (p->sid == p->pid) {
+        tty_session_exit(p->sid);
     }
 
     pr_info("proc: PID %u exiting with status %d\n", pid, exit_status);
@@ -924,6 +938,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
     child->paddr_kernel_stack = V2P(kstack);
     child->va = parent->va;
     child->parent_pid = (uint32_t)parent_pid;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
+    child->has_execed = 0;
     strncpy(child->name, parent->name, sizeof(child->name) - 1);
     child->name[sizeof(child->name) - 1] = '\0';
 
@@ -1013,6 +1030,20 @@ int process_waitpid(int pid, int *status, int options)
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
                 heap_free(candidate);
+                return found_pid;
+            }
+
+            /* Reported once per stop, so a caller that waits again blocks
+             * instead of spinning on a child that is still stopped. */
+            if ((options & WUNTRACED) && !candidate->stop_reported && candidate->main_task
+                && candidate->main_task->state == SCHED_TASK_STOPPED) {
+                int found_pid = (int)candidate->pid;
+                candidate->stop_reported = 1;
+                if (status) {
+                    *status = PERS_STATUS_STOPPED | SIGNAL_TSTP;
+                }
+                spin_unlock(&process_table_lock);
+                irq_restore(irqf);
                 return found_pid;
             }
         }

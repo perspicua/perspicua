@@ -14,12 +14,15 @@
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
 #include "uapi/errors.h"
+#include "uapi/time.h"
 
 #include "arch/uaccess.h"
 
 #include "core/signals.h"
+#include "core/tty.h"
 #include "core/timer.h"
 #include "fs/vfs.h"
+#include "fs/devfs.h"
 #include "fs/pipe.h"
 #include "mm/pmm.h"
 #include "mm/mmu.h"
@@ -64,6 +67,28 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
     }
 
     return mmu_user_range_ok(pgd, start, end, writable);
+}
+
+/*
+ * pgid_session_locked - The session a process group belongs to, or 0 if the
+ * group has no members. A group is only a number its members share, so an empty
+ * one means "no such group" rather than "session 0".
+ *
+ * Precondition: process_table_lock MUST be held by the caller.
+ */
+static uint32_t pgid_session_locked(uint32_t pgid)
+{
+    if (pgid == 0) {
+        return 0;
+    }
+
+    for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        struct process *p = process_table[i];
+        if (p && p->state == PROCESS_STATE_RUNNING && p->pgid == pgid) {
+            return p->sid;
+        }
+    }
+    return 0;
 }
 
 /*
@@ -453,27 +478,81 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            if (target_pid == 0) {
-                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
-                break;
-            }
-
-            /* target_pid is signed and comes straight from the user: without a
-             * lower bound, -1 passes this check and indexes before the table. */
-            struct process *target = target_pid < 0 ? NULL : process_slot((uint32_t)target_pid);
-            if (!target) {
+            /*
+             * POSIX kill() pid rules:
+             * target_pid > 0:  send to process target_pid.
+             * target_pid == 0: send to caller's process group (proc->pgid).
+             * target_pid == -1: reserved for broadcast; not supported yet, return
+             * -PERS_ERR_NO_SUCH_PROCESS. target_pid < -1: send to process group (-target_pid).
+             */
+            if (target_pid == -1) {
                 tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
                 break;
             }
 
-            /* Enforce process hierarchy permissions */
-            if (target_pid != (int)pid && target->parent_pid != pid
-                && (int)proc->parent_pid != target_pid) {
-                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
-                break;
-            }
+            if (target_pid > 0) {
+                if (target_pid >= PROCESS_TABLE_SIZE) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                    break;
+                }
 
-            tf->x[0] = (uint64_t)signal_send(target_pid, sig);
+                struct process *target = process_slot((uint32_t)target_pid);
+                if (!target || target->state != PROCESS_STATE_RUNNING) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                    break;
+                }
+
+                /* Enforce process hierarchy permissions */
+                if (target_pid != (int)pid && target->parent_pid != pid
+                    && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                    break;
+                }
+
+                tf->x[0] = (uint64_t)signal_send((uint32_t)target_pid, sig);
+            } else if (target_pid == 0) {
+                if (proc->pgid == 0) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                    break;
+                }
+                tf->x[0] = (uint64_t)signal_send_group(proc->pgid, sig);
+            } else { /* target_pid < -1 */
+                int64_t raw_pid = target_pid;
+                uint64_t abs_pgid = (uint64_t)(-raw_pid);
+                if (abs_pgid == 0 || abs_pgid >= PROCESS_TABLE_SIZE) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                    break;
+                }
+
+                uint32_t target_pgid = (uint32_t)abs_pgid;
+
+                /* Group permission check: member of group, group matches caller pid, or parent of a
+                 * member */
+                int allowed = 0;
+                if (proc->pgid == target_pgid || proc->pid == target_pgid) {
+                    allowed = 1;
+                } else {
+                    unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+                    for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++) {
+                        struct process *p = process_table[i];
+                        if (p && p->state == PROCESS_STATE_RUNNING && p->pgid == target_pgid) {
+                            if (p->parent_pid == proc->pid
+                                || (int)proc->parent_pid == (int)p->pid) {
+                                allowed = 1;
+                                break;
+                            }
+                        }
+                    }
+                    spin_unlock_irqrestore(&process_table_lock, irqf);
+                }
+
+                if (!allowed) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                    break;
+                }
+
+                tf->x[0] = (uint64_t)signal_send_group(target_pgid, sig);
+            }
             break;
         }
 
@@ -961,6 +1040,432 @@ mmap_fail:
             spin_unlock_irqrestore(&proc->fd_lock, fdflags);
 
             tf->x[0] = (uint64_t)ret;
+            break;
+        }
+
+        case SYS_SETPGID: {
+            int target_pid = (int)tf->x[0];
+            int new_pgid = (int)tf->x[1];
+
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            if (target_pid == 0) {
+                target_pid = curr_pid;
+            }
+            if (new_pgid == 0) {
+                new_pgid = target_pid;
+            }
+
+            /* A pgid is always some process's pid, so it carries the same bound. */
+            if (target_pid < 1 || target_pid >= PROCESS_TABLE_SIZE || new_pgid < 1
+                || new_pgid >= PROCESS_TABLE_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *target_proc = process_table[target_pid];
+            if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            /* Restrict setpgid to self or direct child */
+            if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* A parent may only place a child before it execs; the new image
+             * owns its own membership afterwards. Moving yourself stays legal. */
+            if (target_pid != curr_pid && target_proc->has_execed) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* A session leader's pid names its session, so it cannot also name a
+             * group elsewhere. */
+            if (target_proc->sid == target_proc->pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* Groups do not span sessions; an empty group is only legal when the
+             * target is creating its own. */
+            uint32_t group_sid = pgid_session_locked((uint32_t)new_pgid);
+            if (group_sid == 0) {
+                if (new_pgid != target_pid) {
+                    spin_unlock_irqrestore(&process_table_lock, irqf);
+                    tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                    break;
+                }
+            } else if (group_sid != target_proc->sid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            target_proc->pgid = (uint32_t)new_pgid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_GETPGID: {
+            int target_pid = (int)tf->x[0];
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            if (target_pid == 0) {
+                target_pid = curr_pid;
+            }
+            if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *target_proc = process_table[target_pid];
+            if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            uint32_t res_pgid = target_proc->pgid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+            tf->x[0] = (uint64_t)res_pgid;
+            break;
+        }
+
+        case SYS_TCSETPGRP: {
+            int fd = (int)tf->x[0];
+            int new_pgid = (int)tf->x[1];
+
+            int curr_pid = process_find_current();
+            if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS || new_pgid < 1
+                || new_pgid >= PROCESS_TABLE_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct process *curr_proc = process_slot((uint32_t)curr_pid);
+            if (!curr_proc) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
+            struct vfs_file *file = curr_proc->fd_table[fd];
+            if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
+                spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            /* Note: internal_info is dereferenced here after dropping fd_lock.
+             * Safe because console_tty is a static global struct tty that is never freed. */
+            struct tty *tty = (struct tty *)file->node->internal_info;
+            spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
+
+            if (!tty) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* Resolve sessions under the table lock, then take tty->lock -- never
+             * both at once. tty->lock is held in the UART interrupt, so nesting
+             * the two would fix an ordering between them permanently. */
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            uint32_t caller_sid = curr_proc->sid;
+            int caller_is_leader = curr_proc->sid == curr_proc->pid;
+            uint32_t group_sid = pgid_session_locked((uint32_t)new_pgid);
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+
+            if (group_sid == 0 || group_sid != caller_sid) {
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* Handing the terminal on from a background group stops the caller,
+             * which is why a job-control shell ignores SIGTTOU: that is what lets
+             * it take the terminal back once a job finishes. */
+            if (tty_access_check(tty, SIGNAL_TTOU) == TTY_ACCESS_STOPPED) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
+                break;
+            }
+
+            unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
+            /* An unowned terminal goes to the first session leader that asks;
+             * after that only that session may steer it. POSIX acquires on
+             * open() instead, which would put ownership in the open path. */
+            if (tty->session_id == 0 && caller_is_leader) {
+                tty->session_id = caller_sid;
+            }
+            if (tty->session_id != caller_sid) {
+                spin_unlock_irqrestore(&tty->lock, ttyflags);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+            tty->foreground_pgid = (uint32_t)new_pgid;
+            spin_unlock_irqrestore(&tty->lock, ttyflags);
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_TCGETPGRP: {
+            int fd = (int)tf->x[0];
+            int curr_pid = process_find_current();
+            if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct process *curr_proc = process_slot((uint32_t)curr_pid);
+            if (!curr_proc) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
+            struct vfs_file *file = curr_proc->fd_table[fd];
+            if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
+                spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+            struct tty *tty = (struct tty *)file->node->internal_info;
+            spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
+
+            if (!tty) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
+            uint32_t fg_pgid = tty->foreground_pgid;
+            spin_unlock_irqrestore(&tty->lock, ttyflags);
+
+            tf->x[0] = (uint64_t)fg_pgid;
+            break;
+        }
+
+        case SYS_SETSID: {
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *curr_p = process_table[curr_pid];
+            if (!curr_p || curr_p->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+
+            /* Fails if caller is already a process group leader (pgid == pid) */
+            if (curr_p->pgid == curr_p->pid) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
+                break;
+            }
+
+            /* The old session keeps its terminal: ownership is a property of the
+             * session, and only the caller is leaving. A session leader cannot
+             * reach here, so an owning session can never lose its leader this way. */
+            curr_p->sid = curr_p->pid;
+            curr_p->pgid = curr_p->pid;
+            uint32_t new_sid = curr_p->sid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+
+            tf->x[0] = (uint64_t)new_sid;
+            break;
+        }
+
+        case SYS_GETSID: {
+            int target_pid = (int)tf->x[0];
+            int curr_pid = process_find_current();
+            if (curr_pid < 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            if (target_pid == 0) {
+                target_pid = curr_pid;
+            }
+            if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            struct process *target_proc = process_table[target_pid];
+            if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
+                spin_unlock_irqrestore(&process_table_lock, irqf);
+                tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+                break;
+            }
+            uint32_t res_sid = target_proc->sid;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+            tf->x[0] = (uint64_t)res_sid;
+            break;
+        }
+
+        case SYS_GETTIMEOFDAY: {
+            struct timeval *tv = (struct timeval *)tf->x[0];
+
+            if (!tv || !validate_user_buffer(tv, sizeof(struct timeval), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long ms = get_system_time();
+            struct timeval ktv;
+            ktv.tv_sec = (time_t)(ms / 1000);
+            ktv.tv_usec = (long)((ms % 1000) * 1000);
+
+            if (copy_to_user(tv, &ktv, sizeof(struct timeval)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_CLOCK_GETTIME: {
+            clockid_t clk_id = (clockid_t)tf->x[0];
+            struct timespec *tp = (struct timespec *)tf->x[1];
+
+            if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (!tp || !validate_user_buffer(tp, sizeof(struct timespec), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now */
+            unsigned long ms = get_system_time();
+            struct timespec ktp;
+            ktp.tv_sec = (time_t)(ms / 1000);
+            ktp.tv_nsec = (long)((ms % 1000) * 1000000);
+
+            if (copy_to_user(tp, &ktp, sizeof(struct timespec)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_NANOSLEEP: {
+            const struct timespec *req = (const struct timespec *)tf->x[0];
+            struct timespec *rem = (struct timespec *)tf->x[1];
+
+            if (!req || !validate_user_buffer(req, sizeof(struct timespec), 0)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (rem && !validate_user_buffer(rem, sizeof(struct timespec), 1)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct timespec kreq;
+            if (copy_from_user(&kreq, req, sizeof(struct timespec)) != 0) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            if (kreq.tv_sec < 0 || kreq.tv_nsec < 0 || kreq.tv_nsec > 999999999) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            /* Overflow guard: cap tv_sec to prevent (tv_sec * 1000) from overflowing unsigned long.
+             */
+            if (kreq.tv_sec > (time_t)(0x7FFFFFFFFFFFFFFFLL / 1000)) {
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            unsigned long ms = (unsigned long)kreq.tv_sec * 1000
+                               + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
+
+            if (ms > 0) {
+                sched_sleep_ms(ms);
+            }
+
+            /* TODO: sched_sleep_ms is not signal-interruptible yet; sleep always completes, so rem
+             * is always zero. Revisit when EINTR/signal-aware sleep lands. */
+            if (rem) {
+                struct timespec krem = {0, 0};
+                if (copy_to_user(rem, &krem, sizeof(struct timespec)) != 0) {
+                    tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                    break;
+                }
+            }
+
+            tf->x[0] = PERS_SUCCESS;
+            break;
+        }
+
+        case SYS_FSTAT: {
+            int fd = (int)tf->x[0];
+            struct stat *ubuf = (struct stat *)tf->x[1];
+
+            if (!validate_user_buffer(ubuf, sizeof(struct stat), 1)) { // writable
+                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
+                break;
+            }
+
+            struct stat kbuf;
+            int res = vfs_fstat(fd, &kbuf);
+            if (res == PERS_SUCCESS) {
+                if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0)
+                    res = -PERS_ERR_OUT_OF_MEMORY;
+            }
+            tf->x[0] = (uint64_t)res;
+            break;
+        }
+
+        case SYS_TRUNCATE: {
+            const char *upath = (const char *)tf->x[0];
+            vfs_off_t length = (vfs_off_t)tf->x[1];
+
+            char *kpath = NULL;
+            int err = copy_path_from_user(upath, &kpath);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
+                break;
+            }
+
+            int res = vfs_truncate(kpath, length);
+            heap_free(kpath);
+            tf->x[0] = (uint64_t)res;
+            break;
+        }
+
+        case SYS_FTRUNCATE: {
+            int fd = (int)tf->x[0];
+            vfs_off_t length = (vfs_off_t)tf->x[1];
+
+            tf->x[0] = (uint64_t)vfs_ftruncate(fd, length);
             break;
         }
 

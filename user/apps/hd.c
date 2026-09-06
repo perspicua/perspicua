@@ -1,7 +1,26 @@
 #include "syscall.h"
-#include "stdio.h"
 #include "string.h"
-#include "types.h"
+#include "stdio.h"
+
+/* Classic `hexdump -C` layout: 8-digit offset, 16 hex bytes split into two
+ * groups of eight, and the printable-ASCII rendering between | bars. Runs of
+ * identical 16-byte lines collapse to a single '*', as hexdump does. */
+static void print_line(unsigned long offset, const unsigned char *buf, int n)
+{
+    printf("%08lx  ", offset);
+    for (int i = 0; i < 16; i++) {
+        if (i < n)
+            printf("%02x ", buf[i]);
+        else
+            printf("   ");
+        if (i == 7)
+            printf(" "); /* gap between the two 8-byte halves */
+    }
+    printf(" |");
+    for (int i = 0; i < n; i++)
+        printf("%c", (buf[i] >= 32 && buf[i] <= 126) ? buf[i] : '.');
+    printf("|\n");
+}
 
 int main(int argc, char **argv)
 {
@@ -16,35 +35,30 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    unsigned char buf[8];
-    int n;
+    unsigned char buf[16], prev[16];
+    int n, have_prev = 0, squelched = 0;
     unsigned long offset = 0;
 
-    printf("\n HEXDUMP (AArch64 64-bit Word Aligned)\n");
-    printf(" ──────────────────────────────────────────\n");
-
-    while ((n = sys_read(fd, buf, 8)) > 0) {
-        printf(" %08lx | ", offset);
-
-        for (int i = 0; i < 8; i++) {
-            if (i < n)
-                printf("%02x ", buf[i]);
-            else
-                printf("   ");
+    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+        /* Only full 16-byte lines participate in collapsing, so a partial final
+         * line is always shown. */
+        if (n == 16 && have_prev && memcmp(buf, prev, 16) == 0) {
+            if (!squelched) {
+                printf("*\n");
+                squelched = 1;
+            }
+            offset += (unsigned long)n;
+            continue;
         }
 
-        printf(" | ");
-        for (int i = 0; i < n; i++) {
-            if (buf[i] >= 32 && buf[i] <= 126)
-                printf("%c", buf[i]);
-            else
-                printf(".");
-        }
-        printf("\n");
-        offset += n;
+        squelched = 0;
+        print_line(offset, buf, n);
+        memcpy(prev, buf, (size_t)n);
+        have_prev = (n == 16);
+        offset += (unsigned long)n;
     }
 
+    printf("%08lx\n", offset);
     sys_close(fd);
-    printf("\n");
     return 0;
 }

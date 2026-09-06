@@ -108,7 +108,7 @@ static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t siz
 static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
                                               .readdir = devfs_root_readdir};
 
-static struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
+struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
 
 /*
  * devfs_register_device - Creates a vnode and links it to the device list.

@@ -33,4 +33,9 @@ void signal_handle_pending(struct exception_trap_frame *tf);
  */
 int signal_send(uint32_t target_pid, int sig);
 
+/*
+ * signal_send_group - Sends a signal to all processes in a process group.
+ */
+int signal_send_group(uint32_t pgid, int sig);
+
 #endif /* PERSPICUA_CORE_SIGNALS_H */

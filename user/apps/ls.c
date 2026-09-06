@@ -58,6 +58,46 @@ static void print_entry(const char *name, struct stat *st, int long_format)
     }
 }
 
+#define LS_TERM_W     80
+#define LS_MAX_ENTRIES 512
+
+/* tcgetpgrp succeeds only on a terminal, distinguishing it from a pipe or file. */
+static int stdout_is_tty(void)
+{
+    return sys_tcgetpgrp(1) >= 0;
+}
+
+/* Pack names into columns (down-then-across), like ls at a terminal. */
+static void print_columnar(char **names, int count)
+{
+    int maxlen = 0;
+    for (int i = 0; i < count; i++) {
+        int l = (int)strlen(names[i]);
+        if (l > maxlen)
+            maxlen = l;
+    }
+    int colw = maxlen + 2;
+    int cols = LS_TERM_W / colw;
+    if (cols < 1)
+        cols = 1;
+    int rows = (count + cols - 1) / cols;
+
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
+            int idx = c * rows + r;
+            if (idx >= count)
+                continue;
+            printf("%s", names[idx]);
+            if (c < cols - 1 && (c + 1) * rows + r < count) {
+                int pad = colw - (int)strlen(names[idx]);
+                for (int p = 0; p < pad; p++)
+                    printf(" ");
+            }
+        }
+        printf("\n");
+    }
+}
+
 static int list_path_with_options(const char *path, int long_format, int show_all)
 {
     struct stat st;
@@ -81,6 +121,13 @@ static int list_path_with_options(const char *path, int long_format, int show_al
 
     if (long_format)
         print_header();
+
+    /* Plain listing collects names so it can lay them out in columns (at a
+     * terminal) or one per line (when piped, keeping `ls | wc -l` correct). */
+    char **names = NULL;
+    int count = 0;
+    if (!long_format)
+        names = malloc(sizeof(char *) * LS_MAX_ENTRIES);
 
     struct vfs_dirent *ent;
     char full_path[512];
@@ -108,12 +155,25 @@ static int list_path_with_options(const char *path, int long_format, int show_al
             } else {
                 print_entry(ent->name, &entry_st, long_format);
             }
-        } else {
-            print_entry(ent->name, NULL, long_format);
+        } else if (names && count < LS_MAX_ENTRIES) {
+            names[count++] = strdup(ent->name);
         }
     }
 
     closedir(dirp);
+
+    if (!long_format && names) {
+        if (stdout_is_tty()) {
+            print_columnar(names, count);
+        } else {
+            for (int i = 0; i < count; i++)
+                printf("%s\n", names[i]);
+        }
+        for (int i = 0; i < count; i++)
+            free(names[i]);
+        free(names);
+    }
+
     return 0;
 }
 
