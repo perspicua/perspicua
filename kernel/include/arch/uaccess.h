@@ -1,5 +1,5 @@
 /*
- * kernel/include/arch/uaccess.h
+ * uaccess.h - Fault-safe copies between kernel and user address spaces.
  */
 
 #ifndef PERSPICUA_ARCH_UACCESS_H

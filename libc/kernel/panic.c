@@ -58,7 +58,6 @@ static void print_ec(unsigned int ec)
     }
 }
 
-// Prints the full register state from a trap frame.
 static void panic_dump_tf_registers(struct exception_trap_frame *tf)
 {
     printf("\n--- Registers (from exception trap frame) ---\n");
@@ -157,7 +156,6 @@ static void panic_dump_task(void)
     printf("  TTBR0    : 0x%016lx\n", t->ttbr0);
 }
 
-// Primary kernel error handler.
 void panic_full(const char *msg, const char *file, int line, unsigned long fp,
                 struct exception_trap_frame *tf)
 {

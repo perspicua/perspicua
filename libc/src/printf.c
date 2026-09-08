@@ -18,7 +18,7 @@ extern void __libc_write(const char *buf, size_t len);
 
 #define PRINTF_BUF_SIZE 256
 
-// --- Internal Data Structures ---
+// Internal Data Structures
 
 // Output sink abstraction used by fmt_core.
 struct fmt_buf {
@@ -28,7 +28,7 @@ struct fmt_buf {
     int crlf;    // 1 = translate \n to \r\n, 0 = pass through
 };
 
-// --- Private Helper Functions ---
+// Private Helper Functions
 
 // Appends one character to a fmt_buf.
 static inline void fb_putc(struct fmt_buf *fb, char c)
@@ -349,7 +349,7 @@ emit_number: {
     return (int)fb->pos;
 }
 
-// --- Public API Implementations ---
+// Public API Implementations
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {

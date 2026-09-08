@@ -15,7 +15,7 @@
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 #endif
 
-// --- Public API Implementations ---
+// Public API Implementations
 
 size_t strlen(const char *str)
 {

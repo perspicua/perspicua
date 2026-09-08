@@ -7,7 +7,7 @@
 
 #include "types.h"
 
-// --- Signal Numbers ---
+// Signal Numbers
 
 #define SIGNAL_HUP    1
 #define SIGNAL_INT    2
@@ -46,7 +46,7 @@
 
 #ifndef __ASSEMBLY__
 
-// --- Types and Constants ---
+// Types and Constants
 
 typedef uint32_t sigset_t;
 typedef void (*signal_handler_t)(int);
@@ -70,7 +70,7 @@ typedef void (*signal_handler_t)(int);
     #define SIG_UNBLOCK 1
     #define SIG_SETMASK 2
 
-// --- Data Structures ---
+// Data Structures
 
 /*
  * struct sigaction - Defines the action to be taken upon signal delivery.

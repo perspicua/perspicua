@@ -76,12 +76,23 @@ Structure Order:
 - Struct Fields: Delete trailing per-field comments on structs unless documenting
   a non-obvious unit or invariant.
 - File Headers: Delete multi-line "This module handles..." preamble boilerplate;
-  cut file headers to at most a single concise line stating purpose.
+  cut file headers to a single concise line stating purpose. Headers keep the
+  block form even when one line long, which reads more cleanly than `//`:
+
+      /*
+       * vfs.c - Implementation of the Virtual Filesystem (VFS) layer.
+       */
+
+  A module-wide contract (lock ordering, a hardware quirk) may follow that line
+  in the same block; it is not preamble.
 - Invariants Over History: Turn historical comments ("the old expression added...",
   "the hand-written version used stxr...") into a one-line statement of the
   invariant they protect.
-- Line Comments: Standardize on `//` for all single-line comments. Use `/* ... */`
-  only for multi-line block comments.
+- Line Comments: Standardize on `//` for single-line comments in code. Use
+  `/* ... */` for multi-line blocks and for file headers.
+- No Decorative Dividers: Do not pad a section label with dashes
+  (`// --- Public API ---`) or rule it off with a line of dashes. Write the
+  label alone: `// Public API`.
 
 --------------------------------------------------------------------------------
 6. INCLUDE ORDER CHEAT SHEET

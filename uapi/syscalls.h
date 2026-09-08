@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_UAPI_SYSCALLS_H
 #define PERSPICUA_UAPI_SYSCALLS_H
 
-// --- System Call Identifiers ---
+// System Call Identifiers
 
 #define SYS_WRITE         1
 #define SYS_EXIT          2

@@ -18,7 +18,7 @@
 #include "string.h"
 #include "syscall.h"
 
-// --- Minimal test framework --------------------------------------------
+// Minimal test framework
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -45,7 +45,7 @@ static void run_group(const char *name, void (*fn)(void))
     }
 }
 
-// --- assert() smoke test -----------------------------------------------
+// assert() smoke test
 
 static void test_assert(void)
 {
@@ -58,7 +58,7 @@ static void test_assert(void)
     // assert(0) would call __assert_fail and exit — not tested here.
 }
 
-// --- string.h ----------------------------------------------------------
+// string.h
 
 static void test_strlen(void)
 {
@@ -264,7 +264,7 @@ static void test_memmove(void)
     CHECK(buf2[0] == 'c' && buf2[5] == 'h');
 }
 
-// --- malloc / free / realloc -------------------------------------------
+// malloc / free / realloc
 
 static void test_malloc_basic(void)
 {
@@ -373,7 +373,7 @@ static void test_realloc(void)
     CHECK(res == NULL); // Returns NULL after freeing.
 }
 
-// --- printf / snprintf -------------------------------------------------
+// printf / snprintf
 
 static void test_snprintf_basic(void)
 {
@@ -425,7 +425,7 @@ static void test_snprintf_percent(void)
     CHECK(strcmp(buf, "100%") == 0);
 }
 
-// --- ctype.h ------------------------------------------------------------
+// ctype.h
 
 static void test_isalnum(void)
 {
@@ -561,7 +561,7 @@ static void test_ctype_bounds(void)
     CHECK(tolower(200) == 200);
 }
 
-// --- setjmp / longjmp ---------------------------------------------------
+// setjmp / longjmp
 
 static jmp_buf g_basic_jb;
 static jmp_buf g_zero_jb;
@@ -661,7 +661,7 @@ static void test_setjmp_independent(void)
     CHECK(hops == 2);
 }
 
-// --- strerror -----------------------------------------------------------
+// strerror
 
 static void test_strerror_keying(void)
 {
@@ -695,7 +695,7 @@ static void test_strerror_end_to_end(void)
     CHECK(strcmp(strerror(errno), "Bad file descriptor") == 0);
 }
 
-// --- errno -------------------------------------------------------------
+// errno
 
 static void test_errno_open(void)
 {
@@ -724,7 +724,7 @@ static void test_errno_preserved(void)
     CHECK(errno == EINVAL); // Unchanged by the successful call.
 }
 
-// --- strerror ------------------------------------------------------------
+// strerror
 
 static void test_strerror_known(void)
 {
@@ -805,7 +805,7 @@ static void test_strerror_nonnull(void)
     CHECK(strerror(0) != NULL);
 }
 
-// --- Entry point -------------------------------------------------------
+// Entry point
 
 int main(void)
 {

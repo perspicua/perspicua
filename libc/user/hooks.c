@@ -5,7 +5,7 @@
 #include "types.h"
 #include "syscall.h"
 
-// --- Public API Implementations ---
+// Public API Implementations
 
 // Routes string data to the standard output file descriptor.
 void __libc_write(const char *buf, size_t len)

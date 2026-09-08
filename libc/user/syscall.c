@@ -9,7 +9,7 @@
 #include "uapi/errors.h"
 #include "uapi/mman.h"
 
-// --- Internal errno translation ---
+// Internal errno translation
 
 /*
  * Map a PERS_ERR_* code to the corresponding POSIX errno value.
@@ -119,7 +119,7 @@ static inline void *__syscall_mmap_ret(long res)
     return (void *)res;
 }
 
-// --- Public API Implementations ---
+// Public API Implementations
 
 void sys_exit(int status)
 {

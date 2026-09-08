@@ -22,7 +22,7 @@
 #define ANSI_HIDE_CURSOR ESC "?25l"
 #define ANSI_SHOW_CURSOR ESC "?25h"
 
-// ── tiny output helpers ───────────────────────────────────────────
+// tiny output helpers
 static void out(const char *s)
 {
     sys_write(1, s, strlen(s));
@@ -90,7 +90,7 @@ static void make_bar(char *out_buf, int width, unsigned long used, unsigned long
     out_buf[p] = '\0';
 }
 
-// ── /proc parsing ─────────────────────────────────────────────────
+// /proc parsing
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
     int fd = sys_open(path, VFS_O_RDONLY);
@@ -150,7 +150,7 @@ static int status_field(const char *buf, const char *key, char *out_buf, size_t 
     return 0;
 }
 
-// ── CPU: per-core context-switch counters from /proc/schedstat ─────
+// CPU: per-core context-switch counters from /proc/schedstat
 static int read_core_ctx(unsigned long *ctx, int max)
 {
     char buf[READ_BUF];
@@ -212,7 +212,7 @@ static void draw_cpu(const unsigned long *rate, int ncores)
     box_bottom();
 }
 
-// ── memory ────────────────────────────────────────────────────────
+// memory
 static void draw_mem(void)
 {
     char buf[READ_BUF], val[32], line[160], bar[BAR_W + 4];
@@ -246,7 +246,7 @@ static void draw_mem(void)
     box_bottom();
 }
 
-// ── process table ─────────────────────────────────────────────────
+// process table
 struct proc_info {
     int pid, ppid;
     char name[48];
@@ -344,7 +344,7 @@ static void draw_procs(struct proc_info *procs, int count)
     box_bottom();
 }
 
-// ── input: non-blocking check for a quit key ──────────────────────
+// input: non-blocking check for a quit key
 static int stdin_flags_saved;
 
 static void set_nonblock(void)
