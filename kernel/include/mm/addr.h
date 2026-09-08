@@ -1,8 +1,5 @@
 /*
  * addr.h - Macros for address space conversions and memory constants.
- *
- * This file provides helper macros for converting between virtual and
- * physical addresses, as well as defining the kernel's virtual memory offset.
  */
 
 #ifndef PERSPICUA_KERNEL_ADDR_H
@@ -24,4 +21,4 @@
  */
 #define P2V(p) (KERNEL_VMA + (uint64_t)(uintptr_t)(p))
 
-#endif /* PERSPICUA_KERNEL_ADDR_H */
+#endif // PERSPICUA_KERNEL_ADDR_H

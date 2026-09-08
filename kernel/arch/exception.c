@@ -1,9 +1,5 @@
 /*
  * exception.c - AArch64 exception and interrupt handlers.
- *
- * This file handles synchronous exceptions (aborts, syscalls), IRQs, and
- * unhandled vectors. It integrates with the panic system to provide
- * detailed fault reports for kernel-space failures.
  */
 
 #include "arch/exception.h"
@@ -27,14 +23,14 @@
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 
-/* Exception Class values (EC field of ESR_EL1, bits [31:26]) */
+// Exception Class values (EC field of ESR_EL1, bits [31:26])
 #define EC_SVC              0x15
 #define EC_INST_ABORT_LOWER 0x20
 #define EC_INST_ABORT_SAME  0x21
 #define EC_DATA_ABORT_LOWER 0x24
 #define EC_DATA_ABORT_SAME  0x25
 
-/* Fault Status Code masks (IFSC/DFSC, bits [5:0] of ESR_EL1) */
+// Fault Status Code masks (IFSC/DFSC, bits [5:0] of ESR_EL1)
 #define FSC_MASK           0x3F
 #define FSC_TRANSLATION_L0 0x04
 #define FSC_TRANSLATION_L3 0x07
@@ -209,7 +205,7 @@ static unsigned int sd_irq_cached = 0;
  */
 void exception_irq_handler(void)
 {
-    /* Check for panic state before reading IAR to avoid locking up during shutdown */
+    // Check for panic state before reading IAR to avoid locking up during shutdown
     if (kernel_panicked) {
         disable_interrupts();
         for (;;) {
@@ -227,7 +223,7 @@ void exception_irq_handler(void)
     unsigned int iar = mmio_read(gic_c_iar);
     unsigned int irq_id = iar & 0x3FF;
 
-    /* Spurious interrupt — EOIR write is forbidden */
+    // Spurious interrupt — EOIR write is forbidden
     if (irq_id >= 1020) {
         return;
     }
@@ -235,7 +231,7 @@ void exception_irq_handler(void)
     int current_core = get_core_id();
 
     if (irq_id == 0) {
-        /* SGI 0: panic IPI broadcast */
+        // SGI 0: panic IPI broadcast
         mmio_write(gic_c_eoir, iar);
         disable_interrupts();
         for (;;) {

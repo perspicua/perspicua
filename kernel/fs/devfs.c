@@ -1,8 +1,5 @@
 /*
- * devfs.c - Implementation of the device filesystem (devfs).
- *
- * This module manages the registration and lookup of device nodes within
- * the virtual filesystem, acting as a bridge between VFS calls and drivers.
+ * devfs.c - Implementation of the Device Filesystem.
  */
 
 #include "fs/devfs.h"
@@ -59,9 +56,6 @@ static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *fi
     return NULL;
 }
 
-/*
- * devfs_root_readdir - Populates a dirent buffer with registered devices.
- */
 static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
     struct vfs_dirent *dirent_buf = (struct vfs_dirent *)buffer;
@@ -72,7 +66,7 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     unsigned long fdflags = spin_lock_irqsave(&devfs_lock);
     struct devfs_node *curr = devfs_devices;
 
-    /* Skip entries already read */
+    // Skip entries already read
     while (curr && current_idx < (uint32_t)file->offset) {
         curr = curr->next;
         current_idx++;
@@ -104,15 +98,12 @@ static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t siz
     return tty_write(tty, (const char *)buffer, size);
 }
 
-/* Operation tables */
+// Operation tables
 static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
                                               .readdir = devfs_root_readdir};
 
 struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
 
-/*
- * devfs_register_device - Creates a vnode and links it to the device list.
- */
 int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *internal_info)
 {
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
@@ -145,17 +136,11 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
     return PERS_SUCCESS;
 }
 
-/*
- * devfs_get_root - Exposes the root vnode for mounting into the global VFS.
- */
 struct vfs_vnode *devfs_get_root(void)
 {
     return devfs_root_vnode;
 }
 
-/*
- * devfs_init - Initializes the root vnode and registers the primary console.
- */
 void devfs_init(void)
 {
     devfs_root_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));

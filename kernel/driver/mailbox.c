@@ -1,8 +1,5 @@
 /*
- * mailbox.c - Implementation of the VideoCore Mailbox driver.
- *
- * This module handles register-based communication with the GPU's mailbox
- * interface, including cache maintenance to ensure data visibility.
+ * mailbox.c - Driver for the VideoCore mailbox interface.
  */
 
 #include "driver/mailbox.h"
@@ -21,9 +18,6 @@ static volatile unsigned int *mbox_read = NULL;
 static volatile unsigned int *mbox_status = NULL;
 static volatile unsigned int *mbox_write = NULL;
 
-/*
- * bcm2835_mbox_probe - Locates and maps the BCM2835 mailbox registers.
- */
 static int bcm2835_mbox_probe(struct device *dev)
 {
     uintptr_t vbase = devm_get_io_base(dev, 0);
@@ -44,21 +38,18 @@ CORE_DRIVER(bcm2835_mbox) = {
     .probe = bcm2835_mbox_probe,
 };
 
-/*
- * mbox_call - Submits a property buffer to the GPU and waits for a response.
- */
 void mbox_call(unsigned int *buffer)
 {
     unsigned long size = (unsigned long)buffer[0];
     unsigned long addr = (unsigned long)buffer;
 
-    /* Flush request data to RAM so the GPU sees the current buffer contents */
+    // Flush request data to RAM so the GPU sees the current buffer contents
     for (unsigned long i = 0; i < size; i += 64) {
         asm volatile("dc cvac, %0" : : "r"(addr + i));
     }
     asm volatile("dsb sy");
 
-    /* Channel 8 is the standard property channel */
+    // Channel 8 is the standard property channel
     unsigned int request = (unsigned int)((V2P(buffer) | 0xC0000000) & ~0xF) | 8;
 
     while (*mbox_status & MBOX_STATUS_FULL) {

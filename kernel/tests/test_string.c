@@ -212,20 +212,22 @@ void test_string(void)
         char buf[128];
         memset(buf, 0xAA, sizeof(buf));
         int ok = 1;
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 128; i++) {
             if ((unsigned char)buf[i] != 0xAA) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset 0xAA fill", ok);
 
         memset(buf, 0, sizeof(buf));
         ok = 1;
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 128; i++) {
             if (buf[i] != 0) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset zero fill", ok);
 
         char one = 'X';
@@ -235,11 +237,12 @@ void test_string(void)
         char odd[13];
         memset(odd, 0x55, 13);
         ok = 1;
-        for (int i = 0; i < 13; i++)
+        for (int i = 0; i < 13; i++) {
             if ((unsigned char)odd[i] != 0x55) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset odd size", ok);
 
         char rv[4];
@@ -261,8 +264,9 @@ void test_string(void)
         TEST_ASSERT("memcpy single byte", b == 'A');
 
         char big_src[256], big_dst[256];
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             big_src[i] = (char)(i & 0xFF);
+        }
         memcpy(big_dst, big_src, 256);
         TEST_ASSERT("memcpy 256 bytes", memcmp(big_dst, big_src, 256) == 0);
 

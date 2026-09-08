@@ -1,8 +1,5 @@
 /*
  * pmm.c - Binary Buddy Physical Memory Manager.
- *
- * Implements a buddy system for physical memory allocation, reference
- * counting, and zeroing pages on allocation.
  */
 
 #include "mm/pmm.h"
@@ -24,9 +21,9 @@
  * Each page in RAM is represented by one of these in a global array.
  */
 struct pmm_page {
-    struct pmm_page *next; /* Link for the free list */
+    struct pmm_page *next;
     uint16_t refcount;
-    uint8_t order; /* Buddy order (0-10) */
+    uint8_t order;
     uint8_t is_free;
     uint8_t _pad[4];
 };
@@ -125,9 +122,6 @@ static inline int pfn_is_reserved(unsigned long pfn)
     return range_overlaps_reserved_pfns(pfn, pfn + 1);
 }
 
-/*
- * pmm_free_buddy_internal - Merges a block with its buddy and inserts it.
- */
 static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
 {
     while (order < PMM_MAX_ORDER) {
@@ -141,7 +135,7 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
             break;
         }
 
-        /* Unlink buddy from its current order list */
+        // Unlink buddy from its current order list
         struct pmm_page **curr = &pmm_free_lists[order];
         unsigned long scan = 0;
         while (*curr && *curr != buddy) {
@@ -188,7 +182,7 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
     unsigned long start = phys_start;
     unsigned long end = phys_start + size;
 
-    /* Coalesce with existing ranges */
+    // Coalesce with existing ranges
     int merged;
     do {
         merged = 0;
@@ -219,9 +213,6 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
     pmm_reserved_ranges[slot].tag = tag;
 }
 
-/*
- * fdt_root_cells - Reads a cell-count property from the root node.
- */
 static uint32_t fdt_root_cells(const char *name, uint32_t fallback)
 {
     const uint32_t *root = fdt_find_node_by_path("/");
@@ -287,7 +278,7 @@ void pmm_init(void)
         PANIC("pmm: RAM too small");
     }
 
-    /* Allocate metadata array immediately after the kernel binary */
+    // Allocate metadata array immediately after the kernel binary
     unsigned long kernel_end = (unsigned long)__kernel_end;
     unsigned long array_start = (kernel_end + 15UL) & ~15UL;
     unsigned long array_bytes = pmm_num_pages * sizeof(struct pmm_page);
@@ -299,7 +290,7 @@ void pmm_init(void)
 
     pr_info("pmm: metadata: %lu KB at %p\n", array_bytes / 1024, pmm_page_array);
 
-    /* Self-reserve: mark kernel and metadata as occupied */
+    // Self-reserve: mark kernel and metadata as occupied
     unsigned long usable_start_phys = V2P(usable_start_va);
     if (usable_start_phys >= pmm_phys_mem_size) {
         PANIC("pmm: metadata exceeds RAM");
@@ -312,7 +303,7 @@ void pmm_init(void)
 
     memset(pmm_page_array, 0, array_bytes);
 
-    /* Distribute non-reserved physical pages into the buddy lists */
+    // Distribute non-reserved physical pages into the buddy lists
     unsigned long pfn = 0;
     while (pfn < pmm_num_pages) {
         if (pfn_is_reserved(pfn)) {
@@ -372,7 +363,7 @@ void *pmm_alloc_pages(unsigned long count)
 
     unsigned long pfn = page_to_pfn(p);
 
-    /* Split larger blocks into buddies down to the target order */
+    // Split larger blocks into buddies down to the target order
     while (current_order > target_order) {
         current_order--;
         unsigned long buddy_pfn = pfn + (1UL << current_order);
@@ -471,9 +462,6 @@ void pmm_hold_page(void *ptr)
     spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
-/*
- * pmm_page_refcount - Reference count of a managed page, or 0 if unmanaged.
- */
 unsigned int pmm_page_refcount(void *ptr)
 {
     if (!ptr) {

@@ -43,8 +43,9 @@ static char *sh_strdup(const char *s)
 {
     size_t len = strlen(s) + 1;
     char *new = malloc(len);
-    if (new)
+    if (new) {
         strcpy(new, s);
+    }
     return new;
 }
 
@@ -60,8 +61,9 @@ static char *sh_strndup(const char *s, size_t len)
 
 static void add_to_history(const char *line)
 {
-    if (history_count > 0 && strcmp(history[history_count - 1], line) == 0)
+    if (history_count > 0 && strcmp(history[history_count - 1], line) == 0) {
         return;
+    }
 
     if (history_count < MAX_HISTORY) {
         history[history_count++] = sh_strdup(line);
@@ -87,10 +89,7 @@ static void clear_completion_matches(void)
 
 static void redraw_line(const char *cmd)
 {
-    printf(
-        "\r\033[2K"); // Try ANSI clear line, if not supported it might just print junk but we'll see
-    // If \033[2K fails, we can fallback to:
-    // printf("\r \r");
+    printf("\r\033[2K");
     print_prompt();
     printf("%s", cmd);
 }
@@ -98,19 +97,18 @@ static void redraw_line(const char *cmd)
 static int read_key(void)
 {
     char c;
-    if (sys_read(0, &c, 1) <= 0)
+    if (sys_read(0, &c, 1) <= 0) {
         return -1;
-
-    // printf("DEBUG: c=%d\n", (int)c);
+    }
 
     if (c == 27) {
         char seq[2];
-        if (sys_read(0, &seq[0], 1) <= 0)
+        if (sys_read(0, &seq[0], 1) <= 0) {
             return 27;
-        if (sys_read(0, &seq[1], 1) <= 0)
+        }
+        if (sys_read(0, &seq[1], 1) <= 0) {
             return 27;
-
-        // printf("DEBUG: seq=[%d, %d]\n", (int)seq[0], (int)seq[1]);
+        }
 
         if (seq[0] == '[') {
             switch (seq[1]) {
@@ -128,7 +126,7 @@ static int read_key(void)
 static void handle_sigchld(int sig)
 {
     (void)sig;
-    /* Reap any finished background children */
+    // Reap any finished background children
     while (sys_waitpid(-1, NULL, WNOHANG) > 0)
         ;
 }
@@ -170,15 +168,15 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
     size_t j = 0;
     int in_single = 0, in_double = 0;
 
-#define SH_PUTC(ch)                                                                                \
-    do {                                                                                           \
-        if (j + 1 < dst_size)                                                                      \
-            dst[j++] = (ch);                                                                        \
+#define SH_PUTC(ch)           \
+    do {                      \
+        if (j + 1 < dst_size) \
+            dst[j++] = (ch);  \
     } while (0)
-#define SH_PUTS(str)                                                                               \
-    do {                                                                                           \
-        for (const char *_s = (str); *_s; _s++)                                                    \
-            SH_PUTC(*_s);                                                                           \
+#define SH_PUTS(str)                            \
+    do {                                        \
+        for (const char *_s = (str); *_s; _s++) \
+            SH_PUTC(*_s);                       \
     } while (0)
 
     for (size_t i = 0; src[i]; i++) {
@@ -212,7 +210,7 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
                 continue;
             }
 
-            /* $NAME or ${NAME} */
+            // $NAME or ${NAME}
             int braced = (next == '{');
             size_t start = braced ? i + 2 : i + 1;
             size_t end = start;
@@ -223,7 +221,7 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
             }
 
             if (end == start || (braced && src[end] != '}')) {
-                /* Not a valid name (e.g. lone '$' or unterminated '${'): literal. */
+                // Not a valid name (e.g. lone '$' or unterminated '${'): literal.
                 SH_PUTC(c);
                 continue;
             }
@@ -240,7 +238,7 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
             if (val) {
                 SH_PUTS(val);
             }
-            i = braced ? end : end - 1; /* loop ++ advances past '}' or last name char */
+            i = braced ? end : end - 1; // loop ++ advances past '}' or last name char
             continue;
         }
 
@@ -252,10 +250,12 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
 #undef SH_PUTS
 }
 
-/* * Replaces special shell operators with spaced-out versions
- * so our tokenizer can easily split them without breaking quotes. Control
+/*
+ * expand_operators - Pads redirection and pipe operators with spaces.
+ *
+ * Lets the tokenizer split on whitespace without breaking quotes. Control
  * operators (; && ||) are handled earlier, so only redirection and pipes
- * remain here.
+ * reach here.
  */
 static void expand_operators(const char *line, char *expanded)
 {
@@ -303,10 +303,12 @@ static void parse_command(char *str, Command *cmd)
     char *p = str;
 
     while (*p && token_count < 64) {
-        while (*p == ' ' || *p == '\t')
+        while (*p == ' ' || *p == '\t') {
             *p++ = '\0';
-        if (!*p)
+        }
+        if (!*p) {
             break;
+        }
 
         /* Compact one word in place, stripping quotes wherever they appear and
          * keeping quoted whitespace intact (so a"b c"d becomes ab cd, and
@@ -317,10 +319,12 @@ static void parse_command(char *str, Command *cmd)
         while (*p && *p != ' ' && *p != '\t') {
             if (*p == '"' || *p == '\'') {
                 char quote = *p++;
-                while (*p && *p != quote)
+                while (*p && *p != quote) {
                     *w++ = *p++;
-                if (*p == quote)
+                }
+                if (*p == quote) {
                     p++;
+                }
             } else {
                 *w++ = *p++;
             }
@@ -328,8 +332,9 @@ static void parse_command(char *str, Command *cmd)
         /* Consume the delimiter BEFORE terminating the word: when no quotes were
          * removed w == p, so writing '\0' here would otherwise clobber the space
          * and truncate the rest of the line. */
-        if (*p)
+        if (*p) {
             p++;
+        }
         *w = '\0';
         tokens[token_count++] = word;
     }
@@ -387,7 +392,7 @@ static int wait_foreground(int pgid, const int *pids, int count)
             last_status = 128 + WSTOPSIG(status);
             break;
         }
-        /* A pipeline's status is that of its last (rightmost) command. */
+        // A pipeline's status is that of its last (rightmost) command.
         if (i == count - 1) {
             last_status = status & 0xFF;
         }
@@ -399,7 +404,7 @@ static int wait_foreground(int pgid, const int *pids, int count)
 static void run_parent_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "exit") == 0) {
-        /* `exit` with no argument exits with the last command's status. */
+        // `exit` with no argument exits with the last command's status.
         sys_exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : g_last_status);
     } else if (strcmp(cmd->argv[0], "true") == 0 || strcmp(cmd->argv[0], ":") == 0) {
         g_last_status = 0;
@@ -462,8 +467,9 @@ static void run_output_builtin(Command *cmd)
     } else if (strcmp(cmd->argv[0], "echo") == 0) {
         for (int i = 1; i < cmd->argc; i++) {
             printf("%s", cmd->argv[i]);
-            if (i < cmd->argc - 1)
+            if (i < cmd->argc - 1) {
                 printf(" ");
+            }
         }
         printf("\n");
     } else if (strcmp(cmd->argv[0], "pwd") == 0) {
@@ -495,7 +501,7 @@ static void run_exec(Command *cmd)
      * SIG_IGN. Restore the default so a foreground command responds to Ctrl-C. */
     sys_signal(SIGNAL_INT, SIGNAL_DFL);
 
-    // If command contains a slash, try to exec it directly
+    // A name containing a slash is a path: exec it directly, never via PATH.
     if (strchr(name, '/')) {
         sys_exec(name, cmd->argv, environ);
         printf("sh: %s : no such file or directory\n", name);
@@ -581,8 +587,9 @@ static void execute_pipeline(char *pipe_string)
     if (num_cmds == 1) {
         Command cmd;
         parse_command(commands_str[0], &cmd);
-        if (cmd.argc == 0)
+        if (cmd.argc == 0) {
             return;
+        }
 
         if (is_parent_builtin(cmd.argv[0])) {
             run_parent_builtin(&cmd);
@@ -592,8 +599,9 @@ static void execute_pipeline(char *pipe_string)
         int pid = sys_fork();
         if (pid == 0) {
             sys_setpgid(0, 0);
-            if (apply_redirections(&cmd) < 0)
+            if (apply_redirections(&cmd) < 0) {
                 sys_exit(1);
+            }
 
             if (is_output_builtin(cmd.argv[0])) {
                 run_output_builtin(&cmd);
@@ -607,13 +615,13 @@ static void execute_pipeline(char *pipe_string)
                 int pids[1] = {pid};
                 g_last_status = wait_foreground(pid, pids, 1);
             } else {
-                g_last_status = 0; /* a launched background job "succeeds" */
+                g_last_status = 0; // a launched background job "succeeds"
             }
         }
         return;
     }
 
-    /* Handle multiple piped commands */
+    // Handle multiple piped commands
     int prev_pipe = -1;
     int pipefd[2];
     int pids[MAX_CMDS];
@@ -623,10 +631,12 @@ static void execute_pipeline(char *pipe_string)
     for (int i = 0; i < num_cmds; i++) {
         Command cmd;
         parse_command(commands_str[i], &cmd);
-        if (cmd.argc == 0)
+        if (cmd.argc == 0) {
             continue;
-        if (cmd.background)
+        }
+        if (cmd.background) {
             bg_flag = 1;
+        }
 
         if (i < num_cmds - 1) {
             if (sys_pipe(pipefd) < 0) {
@@ -653,8 +663,9 @@ static void execute_pipeline(char *pipe_string)
                 sys_close(pipefd[1]);
             }
 
-            if (apply_redirections(&cmd) < 0)
+            if (apply_redirections(&cmd) < 0) {
                 sys_exit(1);
+            }
 
             if (is_output_builtin(cmd.argv[0])) {
                 run_output_builtin(&cmd);
@@ -669,8 +680,9 @@ static void execute_pipeline(char *pipe_string)
             }
             sys_setpgid(pid, pipeline_pgid);
 
-            if (prev_pipe != -1)
+            if (prev_pipe != -1) {
                 sys_close(prev_pipe);
+            }
             if (i < num_cmds - 1) {
                 sys_close(pipefd[1]);
                 prev_pipe = pipefd[0];
@@ -694,10 +706,12 @@ static void execute_pipeline(char *pipe_string)
 static void run_pipeline_segment(char *cmd)
 {
     char *s = cmd;
-    while (*s == ' ' || *s == '\t')
+    while (*s == ' ' || *s == '\t') {
         s++;
-    if (*s == '\0')
+    }
+    if (*s == '\0') {
         return;
+    }
 
     char *vexp = malloc(CMD_MAX_LEN * 2);
     char *expanded = malloc(CMD_MAX_LEN * 2);
@@ -724,7 +738,11 @@ static void run_pipeline_segment(char *cmd)
  */
 static void run_conditional_list(char *segment)
 {
-    enum { CONN_ALWAYS, CONN_AND, CONN_OR };
+    enum {
+        CONN_ALWAYS,
+        CONN_AND,
+        CONN_OR
+    };
     char *cmds[MAX_CMDS];
     int conn[MAX_CMDS];
     int n = 0;
@@ -740,27 +758,30 @@ static void run_conditional_list(char *segment)
         } else if (*p == '"' && !in_single) {
             in_double = !in_double;
         } else if (!in_single && !in_double && (*p == '&' || *p == '|') && p[1] == *p) {
-            if (n >= MAX_CMDS)
+            if (n >= MAX_CMDS) {
                 break;
+            }
             conn[n] = (*p == '&') ? CONN_AND : CONN_OR;
             *p = '\0';
             cmds[n] = p + 2;
             n++;
-            p++; /* skip the second operator character */
+            p++; // skip the second operator character
         }
     }
 
     for (int i = 0; i < n; i++) {
         int run;
-        if (conn[i] == CONN_AND)
+        if (conn[i] == CONN_AND) {
             run = (g_last_status == 0);
-        else if (conn[i] == CONN_OR)
+        } else if (conn[i] == CONN_OR) {
             run = (g_last_status != 0);
-        else
+        } else {
             run = 1;
+        }
 
-        if (run)
+        if (run) {
             run_pipeline_segment(cmds[i]);
+        }
     }
 }
 
@@ -779,7 +800,7 @@ static void execute_line(char *line)
     work[CMD_MAX_LEN - 1] = '\0';
     strip_comment(work);
 
-    /* Split by ';' (quote-aware) into sequential lists. */
+    // Split by ';' (quote-aware) into sequential lists.
     char *seq_commands[16];
     int num_seq = 0;
     seq_commands[num_seq++] = work;
@@ -808,14 +829,16 @@ static void execute_line(char *line)
 // returns start of last word
 static int find_token_start(const char *buf, int cursor_pos)
 {
-    if (cursor_pos == 0)
+    if (cursor_pos == 0) {
         return 0;
+    }
 
     int pos = cursor_pos - 1;
 
     while (pos >= 0) {
-        if (buf[pos] == ' ' || buf[pos] == '\t')
+        if (buf[pos] == ' ' || buf[pos] == '\t') {
             return pos + 1;
+        }
         pos--;
     }
 
@@ -836,17 +859,18 @@ static void sort_matches(char **matches, int count)
     }
 }
 
-// Find longest common prefix among all matches
 static int find_common_prefix_len(char **matches, int count)
 {
-    if (count == 0 || !matches[0])
+    if (count == 0 || !matches[0]) {
         return 0;
+    }
 
     int common_len = strlen(matches[0]);
     for (int i = 1; i < count; i++) {
         int j = 0;
-        while (j < common_len && matches[i][j] && matches[0][j] == matches[i][j])
+        while (j < common_len && matches[i][j] && matches[0][j] == matches[i][j]) {
             j++;
+        }
         common_len = j;
     }
     return common_len;
@@ -855,28 +879,32 @@ static int find_common_prefix_len(char **matches, int count)
 // true if cmd; false if file/arg
 static int is_cmd_position(const char *buf, int token_start)
 {
-    if (token_start == 0)
+    if (token_start == 0) {
         return 1;
+    }
 
     int pos = token_start - 1;
     while (pos > 0 && buf[pos] == ' ') {
         pos--;
     }
 
-    if (pos <= 0)
+    if (pos <= 0) {
         return 1;
+    }
 
-    if (buf[pos] == '|' || buf[pos] == ';' || buf[pos] == '&')
+    if (buf[pos] == '|' || buf[pos] == ';' || buf[pos] == '&') {
         return 1;
-    else
+    } else {
         return 0;
+    }
 }
 
 static char **find_cmd_matches(const char *prefix, int *count_out)
 {
     char *path_env = getenv("PATH");
-    if (!path_env)
+    if (!path_env) {
         path_env = "/bin:/";
+    }
 
     size_t prefix_len = strlen(prefix);
 
@@ -892,21 +920,24 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
 
     while (path_part) {
         DIR *dir = opendir(path_part);
-        if (!dir)
+        if (!dir) {
             continue;
+        }
 
         struct vfs_dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
             char *entry_name = entry->name;
 
             // skips "." and ".."
-            if (entry_name[0] == '.')
+            if (entry_name[0] == '.') {
                 continue;
+            }
 
             // if potential match not cmd skip
             int name_len = strlen(entry_name);
-            if (name_len < 4 || strcmp(entry_name + name_len - 4, ".elf") != 0)
+            if (name_len < 4 || strcmp(entry_name + name_len - 4, ".elf") != 0) {
                 continue;
+            }
 
             int cmd_len = name_len - 4;
             char *cmd_name = malloc(cmd_len + 1);
@@ -917,8 +948,9 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
             if (prefix_len == 0 || !strncmp(cmd_name, prefix, prefix_len)) {
                 int dup = 0;
                 for (int i = 0; i < matches_count; i++) {
-                    if (strcmp(cmd_name, matches[i]) == 0)
+                    if (strcmp(cmd_name, matches[i]) == 0) {
                         dup = 1;
+                    }
                 }
 
                 if (matches_count == capacity) {
@@ -933,10 +965,11 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
                     matches = tmp;
                 }
 
-                if (!dup && matches_count < capacity)
+                if (!dup && matches_count < capacity) {
                     matches[matches_count++] = cmd_name;
-                else
+                } else {
                     free(cmd_name);
+                }
             }
         }
         closedir(dir);
@@ -949,7 +982,6 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
         return NULL;
     }
 
-    // Sort matches alphabetically
     sort_matches(matches, matches_count);
 
     void *temp = realloc(matches, (matches_count + 1) * sizeof(char *));
@@ -1010,27 +1042,32 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         char *entry_name = entry->name;
 
         // skip special entries
-        if (!strcmp(entry_name, ".") || !strcmp(entry_name, ".."))
+        if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) {
             continue;
+        }
 
         // handle hidden files
-        if (entry_name[0] == '.' && !prefix_is_hidden)
+        if (entry_name[0] == '.' && !prefix_is_hidden) {
             continue;
+        }
 
-        if (prefix_len > 0 && strncmp(entry_name, prefix, prefix_len))
+        if (prefix_len > 0 && strncmp(entry_name, prefix, prefix_len)) {
             continue;
+        }
 
         size_t full_path_len = strlen(search_dir) + 1 + strlen(entry_name) + 1;
         char *full_path = malloc(full_path_len);
-        if (!full_path)
+        if (!full_path) {
             continue;
+        }
 
         // Add path separator if search_dir doesn't end with one
         size_t dir_len_tmp = strlen(search_dir);
-        if (dir_len_tmp > 0 && search_dir[dir_len_tmp - 1] == '/')
+        if (dir_len_tmp > 0 && search_dir[dir_len_tmp - 1] == '/') {
             snprintf(full_path, full_path_len, "%s%s", search_dir, entry_name);
-        else
+        } else {
             snprintf(full_path, full_path_len, "%s/%s", search_dir, entry_name);
+        }
 
         struct stat st;
         int is_dir = 0;
@@ -1051,29 +1088,34 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
             match_len =
                 dir_len + (dir_ends_slash ? 0 : 1) + strlen(entry_name) + (is_dir ? 1 : 0) + 1;
             match_str = malloc(match_len);
-            if (!match_str)
+            if (!match_str) {
                 continue;
+            }
             if (dir_ends_slash) {
-                if (is_dir)
+                if (is_dir) {
                     snprintf(match_str, match_len, "%s%s/", dir, entry_name);
-                else
+                } else {
                     snprintf(match_str, match_len, "%s%s", dir, entry_name);
+                }
             } else {
-                if (is_dir)
+                if (is_dir) {
                     snprintf(match_str, match_len, "%s/%s/", dir, entry_name);
-                else
+                } else {
                     snprintf(match_str, match_len, "%s/%s", dir, entry_name);
+                }
             }
         } else {
             if (is_dir) {
                 match_str = malloc(strlen(entry_name) + 2);
-                if (!match_str)
+                if (!match_str) {
                     continue;
+                }
                 snprintf(match_str, strlen(entry_name) + 2, "%s/", entry_name);
             } else {
                 match_str = sh_strdup(entry_name);
-                if (!match_str)
+                if (!match_str) {
                     continue;
+                }
             }
         }
 
@@ -1081,8 +1123,9 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
             int new_capacity = 2 * capacity;
             char **tmp = realloc(matches, new_capacity * sizeof(char *));
             if (!tmp) {
-                for (int i = 0; i < matches_count; i++)
+                for (int i = 0; i < matches_count; i++) {
                     free(matches[i]);
+                }
                 free(matches);
                 free(match_str);
                 *count_out = 0;
@@ -1104,7 +1147,6 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         return NULL;
     }
 
-    // Sort matches alphabetically
     sort_matches(matches, matches_count);
 
     void *temp = realloc(matches, (matches_count + 1) * sizeof(char *));
@@ -1145,8 +1187,9 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
     }
 
     if (match_count == 0) {
-        if (matches)
+        if (matches) {
             free(matches);
+        }
         free(prefix);
         return cursor_pos;
     }
@@ -1158,7 +1201,6 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
         char *completion = matches[0];
         int completion_len = strlen(completion);
 
-        // Check if completion ends with '/' (directory)
         int is_directory = (completion_len > 0 && completion[completion_len - 1] == '/');
 
         // Don't add space after directories (allows continuing to type)
@@ -1167,15 +1209,17 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
         int tail_len = *cmd_len - cursor_pos;
 
         // Ensure we have space for the insertion + null terminator
-        if (*cmd_len + insert_len >= CMD_MAX_LEN - 1)
+        if (*cmd_len + insert_len >= CMD_MAX_LEN - 1) {
             goto cleanup;
+        }
 
         memmove(cmd_buffer + cursor_pos + insert_len, cmd_buffer + cursor_pos, tail_len);
 
         memcpy(cmd_buffer + token_start, completion, completion_len);
 
-        if (add_space)
+        if (add_space) {
             cmd_buffer[token_start + completion_len] = ' ';
+        }
 
         *cmd_len += insert_len;
         cmd_buffer[*cmd_len] = '\0';
@@ -1190,7 +1234,6 @@ static int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
         int common_len = find_common_prefix_len(matches, match_count);
 
         if (common_len > prefix_len) {
-            // There's a common prefix we can complete to
             int insert_len = common_len - prefix_len;
             int tail_len = *cmd_len - cursor_pos;
 
@@ -1282,8 +1325,9 @@ int main(int argc, char *argv[], char *envp[])
 
     while (1) {
         int key = read_key();
-        if (key < 0)
+        if (key < 0) {
             continue;
+        }
 
         if (key == '\n' || key == '\r') {
             cmd_buffer[cmd_length] = '\0';
@@ -1298,7 +1342,7 @@ int main(int argc, char *argv[], char *envp[])
             clear_completion_matches();
 
             cmd_length = 0;
-            cmd_buffer[0] = '\0'; // Actually clear the buffer
+            cmd_buffer[0] = '\0';
             history_index = -1;
             // Reset all completion state for new command
             last_completion_displayed = 0;
@@ -1310,11 +1354,11 @@ int main(int argc, char *argv[], char *envp[])
                 if (last_completion_displayed) {
                     clear_completion_matches();
                     cmd_length--;
-                    cmd_buffer[cmd_length] = '\0'; // Actually remove the character
+                    cmd_buffer[cmd_length] = '\0';
                     redraw_line(cmd_buffer);
                 } else {
                     cmd_length--;
-                    cmd_buffer[cmd_length] = '\0'; // Actually remove the character
+                    cmd_buffer[cmd_length] = '\0';
                     printf("\b \b");
                 }
                 last_completion_displayed = 0;

@@ -1,5 +1,5 @@
-#ifndef _TEST_H_
-#define _TEST_H_
+#ifndef PERSPICUA_TESTS_TEST_H
+#define PERSPICUA_TESTS_TEST_H
 
 #include "stdio.h"
 
@@ -84,11 +84,11 @@ void test_scheduler(void);
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
 
-/* post-init tests (must be called after a user process exists) */
+// post-init tests (must be called after a user process exists)
 void run_post_init_tests(void);
 void test_signals(void);
 
 void test_kasan_heap(void);
 void test_kasan_slab(void);
 
-#endif // _TEST_H_
+#endif // PERSPICUA_TESTS_TEST_H

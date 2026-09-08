@@ -1,9 +1,5 @@
 /*
- * process.c - Core process management and lifecycle implementation.
- *
- * This module handles user-space execution, process tracking, and address
- * space management. It maintains the process table and enforces lock
- * ordering to prevent deadlocks.
+ * process.c - Process management and lifecycle operations.
  *
  * Lock Ordering: 1. process_table_lock (global) -> 2. process.fd_lock (per-process)
  */
@@ -32,12 +28,9 @@
 spinlock_t process_table_lock = SPINLOCK_INIT;
 struct process *process_table[PROCESS_TABLE_SIZE];
 
-/* Performs ERET to EL0 using the trap frame on the kernel stack */
+// Performs ERET to EL0 using the trap frame on the kernel stack
 extern void ret_to_user(void);
 
-/*
- * va_init - Resets a virtual-address allocator to its initial state.
- */
 static void va_init(struct va_allocator *va)
 {
     va->count = 0;
@@ -57,18 +50,15 @@ static void *alloc_kernel_stack(void)
         return NULL;
     }
 
-    /* Guard page: unmap to trap stack underflow */
+    // Guard page: unmap to trap stack underflow
     mmu_unmap_page((unsigned long)base);
 
-    /* Set canary at the bottom of the usable region */
+    // Set canary at the bottom of the usable region
     *(unsigned long *)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
 
     return base + PAGE_SIZE;
 }
 
-/*
- * free_kernel_stack - Releases a kernel stack and remaps its guard page.
- */
 static void free_kernel_stack(void *stack_base)
 {
     if (!stack_base) {
@@ -76,7 +66,7 @@ static void free_kernel_stack(void *stack_base)
     }
     void *alloc_base = (void *)((uintptr_t)stack_base - PAGE_SIZE);
 
-    /* Remap guard page so PMM can zero the memory safely */
+    // Remap guard page so PMM can zero the memory safely
     mmu_map_page((unsigned long)alloc_base, V2P(alloc_base), MMU_FLAGS_KERNEL_RW);
     pmm_free_pages(alloc_base, SCHED_STACK_PAGES);
 }
@@ -293,9 +283,6 @@ static struct process *process_alloc_pcb(uint32_t pid)
     return p;
 }
 
-/*
- * process_release_slot - Frees a slot's PCB and marks the slot free.
- */
 static void process_release_slot(uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE) {
@@ -316,7 +303,7 @@ void process_init(void)
         process_table[i] = NULL;
     }
 
-    /* Slot 0 is the kernel itself: always present, never reaped. */
+    // Slot 0 is the kernel itself: always present, never reaped.
     struct process *kernel = process_alloc_pcb(0);
     if (!kernel) {
         PANIC("proc: cannot allocate the kernel PCB");
@@ -334,7 +321,7 @@ void process_create(void *code_ptr, size_t code_size, uint32_t pid)
         return;
     }
 
-    /* Allocated before the lock: heap_malloc must not run with interrupts off. */
+    // Allocated before the lock: heap_malloc must not run with interrupts off.
     struct process *p = process_alloc_pcb(pid);
     if (!p) {
         return;
@@ -429,7 +416,7 @@ int process_create_from_file(const char *path, uint32_t pid)
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    /* Allocated before the lock: heap_malloc must not run with interrupts off. */
+    // Allocated before the lock: heap_malloc must not run with interrupts off.
     struct process *p = process_alloc_pcb(pid);
     if (!p) {
         return -PERS_ERR_OUT_OF_MEMORY;
@@ -523,7 +510,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     return PERS_SUCCESS;
 }
 
-/* Limits on a single exec vector: entries, and bytes per entry. */
+// Limits on a single exec vector: entries, and bytes per entry.
 #define EXEC_MAX_VECTOR 128
 #define EXEC_MAX_ARG    1024
 
@@ -647,7 +634,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    /* Set up user stack with argc/argv (top-down) */
+    // Set up user stack with argc/argv (top-down)
     uintptr_t user_sp = new_stack_base + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     uintptr_t karg_user_vaddrs[128];
 
@@ -674,7 +661,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     free_vector(kargv, argc);
 
-    /* Set up user stack with envp (top-down) */
+    // Set up user stack with envp (top-down)
     uintptr_t kenv_user_vaddrs[128];
 
     for (int i = 0; i < envc; i++) {
@@ -779,7 +766,7 @@ void process_exit(uint32_t pid, int exit_status)
 
     pr_info("proc: PID %u exiting with status %d\n", pid, exit_status);
 
-    /* Reparent orphaned processes to init (PID 1) */
+    // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
         if (i == (int)pid) {
@@ -854,9 +841,6 @@ void process_exit(uint32_t pid, int exit_status)
     __builtin_unreachable();
 }
 
-/*
- * process_claim_slot - Reserves a free PID slot with a fresh PCB.
- */
 static int process_claim_slot(void)
 {
     /*
@@ -969,7 +953,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     struct exception_trap_frame *child_tf = (struct exception_trap_frame *)tf_addr;
 
     memcpy(child_tf, parent_tf, sizeof(*child_tf));
-    child_tf->x[0] = 0; /* Child returns 0 from fork */
+    child_tf->x[0] = 0; // Child returns 0 from fork
 
     child->context.sp = (unsigned long)child_tf;
     child->context.lr = (unsigned long)ret_to_user;

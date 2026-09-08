@@ -1,8 +1,5 @@
 /*
- * block.c - Generic block device management layer.
- *
- * This module provides a unified interface for block-oriented hardware
- * and handles their registration into the device filesystem (devfs).
+ * block.c - Generic block device interface and caching layer.
  */
 
 #include "driver/block.h"
@@ -27,7 +24,7 @@ struct block_cache_entry {
     size_t block_nr;
     void *data;
     int dirty;
-    struct block_cache_entry *next; // Hash chain
+    struct block_cache_entry *next;
     struct block_cache_entry *lru_next;
     struct block_cache_entry *lru_prev;
 };
@@ -45,15 +42,17 @@ static size_t block_hash(struct block_device *dev, size_t block_nr)
 
 static void lru_remove(struct block_cache_entry *entry)
 {
-    if (entry->lru_prev)
+    if (entry->lru_prev) {
         entry->lru_prev->lru_next = entry->lru_next;
-    else
+    } else {
         lru_head = entry->lru_next;
+    }
 
-    if (entry->lru_next)
+    if (entry->lru_next) {
         entry->lru_next->lru_prev = entry->lru_prev;
-    else
+    } else {
         lru_tail = entry->lru_prev;
+    }
 
     entry->lru_next = entry->lru_prev = NULL;
 }
@@ -62,11 +61,13 @@ static void lru_add_head(struct block_cache_entry *entry)
 {
     entry->lru_next = lru_head;
     entry->lru_prev = NULL;
-    if (lru_head)
+    if (lru_head) {
         lru_head->lru_prev = entry;
+    }
     lru_head = entry;
-    if (!lru_tail)
+    if (!lru_tail) {
         lru_tail = entry;
+    }
 }
 
 static struct block_cache_entry *cache_lookup(struct block_device *dev, size_t block_nr)
@@ -84,7 +85,7 @@ static struct block_cache_entry *cache_lookup(struct block_device *dev, size_t b
     return NULL;
 }
 
-/* Forward declarations for the original driver functions we wrap */
+// Forward declarations for the original driver functions we wrap
 struct block_ops_wrapper {
     int (*orig_read_blocks)(struct block_device *dev, void *buffer, size_t start_block,
                             size_t num_blocks);
@@ -107,7 +108,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             continue;
         }
 
-        /* Miss: Must read from disk - release lock first to avoid holding it during I/O */
+        // Miss: Must read from disk - release lock first to avoid holding it during I/O
         spin_unlock_irqrestore(&cache_lock, flags);
 
         void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
@@ -121,10 +122,10 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             return res;
         }
 
-        /* Re-acquire lock to update cache */
+        // Re-acquire lock to update cache
         flags = spin_lock_irqsave(&cache_lock);
 
-        /* Check if another thread cached it while we were reading */
+        // Check if another thread cached it while we were reading
         entry = cache_lookup(dev, block_nr);
         if (entry) {
             memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
@@ -132,14 +133,14 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             continue;
         }
 
-        /* Evict if needed */
+        // Evict if needed
         size_t pages_needed = (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
         if (cache_count >= BLOCK_CACHE_SIZE) {
             struct block_cache_entry *evict = lru_tail;
 
-            /* Flush dirty block to disk before eviction */
+            // Flush dirty block to disk before eviction
             if (evict->dirty) {
-                /* Must release lock during I/O */
+                // Must release lock during I/O
                 void *evict_data = evict->data;
                 size_t evict_block_nr = evict->block_nr;
                 struct block_device *evict_dev = evict->dev;
@@ -150,7 +151,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
                 evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
 
                 flags = spin_lock_irqsave(&cache_lock);
-                /* Re-lookup evict entry as it might have changed */
+                // Re-lookup evict entry as it might have changed
                 evict = lru_tail;
                 if (!evict) {
                     pmm_free_pages(temp_buf, pages_needed);
@@ -162,12 +163,14 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             lru_remove(evict);
             size_t eh = block_hash(evict->dev, evict->block_nr);
             struct block_cache_entry **pp = &hash_table[eh];
-            while (*pp && *pp != evict)
+            while (*pp && *pp != evict) {
                 pp = &((*pp)->next);
-            if (*pp == evict)
+            }
+            if (*pp == evict) {
                 *pp = evict->next;
+            }
 
-            /* If the evicted entry's buffer size doesn't match, reallocate */
+            // If the evicted entry's buffer size doesn't match, reallocate
             size_t old_pages = (evict->dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
             if (old_pages != pages_needed) {
                 pmm_free_pages(evict->data, old_pages);
@@ -192,7 +195,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         entry->block_nr = block_nr;
         entry->dirty = 0;
         if (entry->data != temp_buf) {
-            /* Data was copied to existing buffer */
+            // Data was copied to existing buffer
         }
 
         size_t h = block_hash(dev, block_nr);
@@ -212,10 +215,11 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
 {
     struct block_ops_wrapper *ops = (struct block_ops_wrapper *)dev->private_data;
 
-    /* Write-through strategy for simplicity */
+    // Write-through strategy for simplicity
     int res = ops->orig_write_blocks(dev, buffer, start_block, num_blocks);
-    if (res != PERS_SUCCESS)
+    if (res != PERS_SUCCESS) {
         return res;
+    }
 
     unsigned long flags = spin_lock_irqsave(&cache_lock);
     for (size_t i = 0; i < num_blocks; i++) {
@@ -248,7 +252,7 @@ int block_cache_sync(void)
         struct block_cache_entry *entry = lru_head;
         while (entry) {
             if (entry->dirty) {
-                /* Snapshot fields before releasing lock. */
+                // Snapshot fields before releasing lock.
                 struct block_device *dev = entry->dev;
                 size_t block_nr = entry->block_nr;
                 void *data = entry->data;
@@ -260,12 +264,13 @@ int block_cache_sync(void)
 
                 flags = spin_lock_irqsave(&cache_lock);
 
-                /* Re-lookup: the entry may have been evicted while unlocked. */
+                // Re-lookup: the entry may have been evicted while unlocked.
                 size_t h = block_hash(dev, block_nr);
                 struct block_cache_entry *cur = hash_table[h];
                 while (cur) {
-                    if (cur->dev == dev && cur->block_nr == block_nr)
+                    if (cur->dev == dev && cur->block_nr == block_nr) {
                         break;
+                    }
                     cur = cur->next;
                 }
                 if (cur && res == PERS_SUCCESS) {
@@ -274,7 +279,7 @@ int block_cache_sync(void)
                     made_progress = 1;
                 }
 
-                /* Restart scan from the head since list may have changed. */
+                // Restart scan from the head since list may have changed.
                 break;
             }
             entry = entry->lru_next;
@@ -289,14 +294,11 @@ int block_cache_sync(void)
 static struct block_device *devices[BLOCK_MAX_DEVICES];
 static size_t nr_devices = 0;
 
-/*
- * block_device_vfs_read - Bridge between VFS byte-reads and driver block-reads.
- */
 static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t size)
 {
     struct block_device *dev = (struct block_device *)file->node->internal_info;
 
-    /* Enforce block-aligned offsets and sizes */
+    // Enforce block-aligned offsets and sizes
     if (file->offset % dev->block_size != 0 || size % dev->block_size != 0) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
@@ -313,9 +315,6 @@ static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t siz
     return res;
 }
 
-/*
- * block_device_vfs_write - Bridge between VFS byte-writes and driver block-writes.
- */
 static int block_device_vfs_write(struct vfs_file *file, const void *buffer, size_t size)
 {
     struct block_device *dev = (struct block_device *)file->node->internal_info;
@@ -336,13 +335,10 @@ static int block_device_vfs_write(struct vfs_file *file, const void *buffer, siz
     return res;
 }
 
-/* Operation mapping for devfs registration */
+// Operation mapping for devfs registration
 static struct vfs_vnode_ops block_device_vfs_ops = {
     .read = block_device_vfs_read, .write = block_device_vfs_write, .lookup = NULL, .close = NULL};
 
-/*
- * block_device_register - Adds a device to the global table and registers it in devfs.
- */
 void block_device_register(struct block_device *dev)
 {
     if (!dev) {
@@ -354,7 +350,7 @@ void block_device_register(struct block_device *dev)
         return;
     }
 
-    /* Wrap operations with cache */
+    // Wrap operations with cache
     struct block_ops_wrapper *wrapper = slab_alloc(sizeof(struct block_ops_wrapper));
     if (!wrapper) {
         pr_err("block: OOM allocating cache wrapper for /dev/%s\n", dev->name);
@@ -376,9 +372,6 @@ void block_device_register(struct block_device *dev)
     pr_info("block: registered /dev/%s with LRU cache (%d entries)\n", dev->name, BLOCK_CACHE_SIZE);
 }
 
-/*
- * block_device_lookup - Returns a device pointer matching the provided name.
- */
 struct block_device *block_device_lookup(const char *name)
 {
     if (!name) {

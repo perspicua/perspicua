@@ -1,8 +1,5 @@
 /*
  * types.h - Standard fixed-width integer and fundamental types.
- *
- * This file defines the platform-specific integer types, pointer-width
- * types, and common limits used throughout the kernel and userspace.
  */
 
 #ifndef PERSPICUA_LIBC_TYPES_H
@@ -10,7 +7,7 @@
 
 #define NULL ((void *)0)
 
-/* Fixed-width integer types */
+// Fixed-width integer types
 typedef signed char int8_t;
 typedef unsigned char uint8_t;
 typedef signed short int16_t;
@@ -20,18 +17,18 @@ typedef unsigned int uint32_t;
 typedef signed long int64_t;
 typedef unsigned long uint64_t;
 
-/* Pointer-width types (AArch64 is 64-bit) */
+// Pointer-width types (AArch64 is 64-bit)
 typedef unsigned long size_t;
 typedef signed long ssize_t;
 typedef signed long ptrdiff_t;
 typedef unsigned long uintptr_t;
 typedef signed long intptr_t;
 
-/* Posix-compatible fundamental types */
+// Posix-compatible fundamental types
 typedef unsigned long long ino_t;
 typedef int64_t off_t;
 
-/* time */
+// time
 typedef int64_t time_t;
 
 #define INT8_MIN  (-128)
@@ -52,4 +49,4 @@ typedef int64_t time_t;
 
 #define SIZE_MAX UINT64_MAX
 
-#endif /* PERSPICUA_LIBC_TYPES_H */
+#endif // PERSPICUA_LIBC_TYPES_H

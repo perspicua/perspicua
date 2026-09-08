@@ -1,8 +1,5 @@
 /*
  * fdt.h - Public API for the Flattened Device Tree (FDT) parser.
- *
- * This header defines the structures and functions used to interact with
- * the device tree blob (DTB) provided by the bootloader.
  */
 
 #ifndef PERSPICUA_DEVICETREE_FDT_H
@@ -75,39 +72,18 @@ static inline uint64_t fdt64_to_cpu(uint64_t val)
     return ((uint64_t)fdt32_to_cpu((uint32_t)val) << 32) | fdt32_to_cpu((uint32_t)(val >> 32));
 }
 
-/*
- * fdt_init - Initializes the parser with the DTB's base address.
- */
 void fdt_init(uintptr_t global_dtb_ptr);
 
-/*
- * fdt_rebase - Updates internal pointers to a new virtual base address.
- */
 void fdt_rebase(uintptr_t new_base);
 
-/*
- * fdt_get_property - Retrieves a property by name from a given node.
- */
 int fdt_get_property(const uint32_t *node, const char *prop_name, struct fdt_property *out_prop);
 
-/*
- * fdt_find_node_by_path - Locates a node using its absolute path.
- */
 const uint32_t *fdt_find_node_by_path(const char *path);
 
-/*
- * fdt_find_node_by_compatible - Locates the first node matching a compatible string.
- */
 const uint32_t *fdt_find_node_by_compatible(const char *compatible);
 
-/*
- * fdt_get_parent_node - Locates the parent node of a given node.
- */
 const uint32_t *fdt_get_parent_node(const uint32_t *target_node);
 
-/*
- * fdt_parse_memory_reservations - Informs the PMM of reserved regions.
- */
 void fdt_parse_memory_reservations(void);
 
-#endif /* PERSPICUA_DEVICETREE_FDT_H */
+#endif // PERSPICUA_DEVICETREE_FDT_H

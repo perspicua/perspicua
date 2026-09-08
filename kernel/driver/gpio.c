@@ -1,8 +1,5 @@
 /*
- * gpio.c - Implementation of the BCM2711 GPIO driver.
- *
- * This module handles register-level configuration, including pin function
- * selection and pull-up/down settings using the GPPUPDN registers.
+ * gpio.c - Driver for the BCM2835/BCM2711 General Purpose I/O controller.
  */
 
 #include "driver/gpio.h"
@@ -17,9 +14,6 @@
 static volatile unsigned int *gpio_gpfsel0 = NULL;
 static volatile unsigned int *gpio_gppupdn0 = NULL;
 
-/*
- * bcm2711_gpio_probe - Discovers and maps the GPIO registers from the DTB.
- */
 static int bcm2711_gpio_probe(struct device *dev)
 {
     uintptr_t vbase = devm_get_io_base(dev, 0);
@@ -27,7 +21,7 @@ static int bcm2711_gpio_probe(struct device *dev)
         PANIC("GPIO: missing or invalid 'reg' property");
     }
 
-    /* BCM2711 specific register offsets */
+    // BCM2711 specific register offsets
     gpio_gpfsel0 = (unsigned int *)(vbase + 0x00);
     gpio_gppupdn0 = (unsigned int *)(vbase + 0xE4);
 
@@ -40,9 +34,6 @@ CORE_DRIVER(bcm2711_gpio) = {
     .probe = bcm2711_gpio_probe,
 };
 
-/*
- * gpio_set_pin_function - Sets the 3-bit function code for a GPIO pin.
- */
 void gpio_set_pin_function(unsigned int pin, unsigned int function)
 {
     if (pin > GPIO_MAX_PIN) {
@@ -58,9 +49,6 @@ void gpio_set_pin_function(unsigned int pin, unsigned int function)
     gpio_gpfsel0[reg_index] = current_val;
 }
 
-/*
- * gpio_set_pull - Configures the 2-bit pull state for a GPIO pin.
- */
 void gpio_set_pull(unsigned int pin, unsigned int pull)
 {
     if (pin > GPIO_MAX_PIN) {

@@ -7,13 +7,15 @@
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
     int fd = sys_open(path, VFS_O_RDONLY);
-    if (fd < 0)
+    if (fd < 0) {
         return -1;
+    }
     int n = sys_read(fd, buf, bufsz - 1);
-    if (n > 0)
+    if (n > 0) {
         buf[n] = '\0';
-    else
+    } else {
         buf[0] = '\0';
+    }
     sys_close(fd);
     return n;
 }
@@ -36,7 +38,7 @@ int main(int argc, char **argv)
     printf("\n PROCESS INSPECTOR: PID %s\n", pid_str);
     printf(" ──────────────────────────\n");
 
-    /* Status */
+    // Status
     snprintf(path, sizeof(path), "/proc/%s/status", pid_str);
     if (read_proc_file(path, buf, 2048) > 0) {
         printf("%s", buf);
@@ -46,19 +48,19 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* CMDLine */
+    // CMDLine
     snprintf(path, sizeof(path), "/proc/%s/cmdline", pid_str);
     if (read_proc_file(path, buf, 2048) > 0) {
         printf("Cmdline: %s\n", buf[0] ? buf : "[none]");
     }
 
-    /* CWD */
+    // CWD
     snprintf(path, sizeof(path), "/proc/%s/cwd", pid_str);
     if (read_proc_file(path, buf, 2048) > 0) {
         printf("Cwd:     %s", buf); // already has newline from procfs
     }
 
-    /* Maps */
+    // Maps
     printf("\n VIRTUAL MEMORY MAP\n");
     printf(" ──────────────────\n");
     snprintf(path, sizeof(path), "/proc/%s/maps", pid_str);
@@ -68,7 +70,7 @@ int main(int argc, char **argv)
         printf(" [none or inaccessible]\n");
     }
 
-    /* Open FDs */
+    // Open FDs
     printf("\n OPEN FILE DESCRIPTORS\n");
     printf(" ──────────────────────\n");
     snprintf(path, sizeof(path), "/proc/%s/fd", pid_str);
@@ -77,8 +79,9 @@ int main(int argc, char **argv)
         struct vfs_dirent dent;
         int found = 0;
         while (sys_getdents(fd, &dent, sizeof(dent)) > 0) {
-            if (dent.name[0] == '.')
+            if (dent.name[0] == '.') {
                 continue;
+            }
 
             char fd_path[256];
             snprintf(fd_path, sizeof(fd_path), "/proc/%s/fd/%s", pid_str, dent.name);
@@ -88,8 +91,9 @@ int main(int argc, char **argv)
                 found = 1;
             }
         }
-        if (!found)
+        if (!found) {
             printf(" [none]\n");
+        }
         sys_close(fd);
     } else {
         printf(" [none or inaccessible]\n");

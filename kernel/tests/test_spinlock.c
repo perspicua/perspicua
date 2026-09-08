@@ -240,17 +240,19 @@ void test_spinlock(void)
 
         spin_lock(&lock);
         memset(buf, 0, sizeof(buf));
-        for (int i = 0; i < 32; i++)
+        for (int i = 0; i < 32; i++) {
             buf[i] = (char)(i + 1);
+        }
         spin_unlock(&lock);
 
         spin_lock(&lock);
         int ok = 1;
-        for (int i = 0; i < 32; i++)
+        for (int i = 0; i < 32; i++) {
             if (buf[i] != (char)(i + 1)) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("buffer intact under lock", ok);
         spin_unlock(&lock);
     }

@@ -1,8 +1,5 @@
 /*
- * fb_console.c - Implementation of the framebuffer-based console driver.
- *
- * This module handles character rendering, cursor tracking, and
- * vertical scrolling for the system console.
+ * fb_console.c - Terminal console implementation over the framebuffer.
  */
 
 #include "driver/fb_console.h"
@@ -22,9 +19,6 @@ static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
 
-/*
- * fb_console_scroll - Moves existing lines up and clears the bottom line.
- */
 static void fb_console_scroll(void)
 {
     unsigned int bytes_to_move = (fb_info.height - CONSOLE_Y_OFFSET - CHAR_HEIGHT) * fb_info.pitch;
@@ -41,9 +35,6 @@ static void fb_console_scroll(void)
     cursor_y = bottom_y;
 }
 
-/*
- * fb_console_putc_unlocked - Internal rendering logic without synchronization.
- */
 static int ansi_state = 0;
 static void fb_console_putc_unlocked(char c)
 {
@@ -81,26 +72,25 @@ static void fb_console_putc_unlocked(char c)
             cursor_y = CONSOLE_Y_OFFSET;
             ansi_state = 0;
         } else if (c == '2' || c == '3') {
-            /* Support for 2J, 3J, and 2K */
+            // Support for 2J, 3J, and 2K
             ansi_state = 3;
         } else if (c == 'K') {
-            /* Support for 0K, 1K, 2K. For now, we only implement 2K (clear entire line) */
+            // Support for 0K, 1K, 2K. For now, we only implement 2K (clear entire line)
             graphics_draw_rect(0, cursor_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
             ansi_state = 0;
         } else if (c == 'J') {
-            /* Just J? Clear from cursor to end. For now, we only care about 2J/3J */
+            // Just J? Clear from cursor to end. For now, we only care about 2J/3J
             ansi_state = 0;
         } else {
-            /* Any other sequence? Just reset state for now */
+            // Any other sequence? Just reset state for now
             ansi_state = 0;
         }
     } else if (ansi_state == 3) {
         if (c == 'J') {
-            /* Clear screen area (but not dashboard) */
+            // Clear screen area (but not dashboard)
             graphics_draw_rect(0, CONSOLE_Y_OFFSET, fb_info.width,
                                fb_info.height - CONSOLE_Y_OFFSET, 0x00000000, 1);
         } else if (c == 'K') {
-            /* Clear entire line */
             graphics_draw_rect(0, cursor_y, fb_info.width, CHAR_HEIGHT, 0x00000000, 1);
         }
         ansi_state = 0;
@@ -111,9 +101,6 @@ static void fb_console_putc_unlocked(char c)
     }
 }
 
-/*
- * fb_console_init - Resets the cursor and wipes the screen.
- */
 void fb_console_init(void)
 {
     spin_lock(&fb_console_lock);
@@ -125,9 +112,6 @@ void fb_console_init(void)
     pr_info("fb: console initialized\n");
 }
 
-/*
- * fb_console_putc - Thread-safe character output.
- */
 void fb_console_putc(char c)
 {
     unsigned long flags = spin_lock_irqsave(&fb_console_lock);
@@ -135,9 +119,6 @@ void fb_console_putc(char c)
     spin_unlock_irqrestore(&fb_console_lock, flags);
 }
 
-/*
- * fb_console_puts - Thread-safe string output.
- */
 void fb_console_puts(const char *s)
 {
     unsigned long flags = spin_lock_irqsave(&fb_console_lock);

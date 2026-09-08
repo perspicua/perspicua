@@ -1,8 +1,5 @@
 /*
  * mmu.h - AArch64 Memory Management Unit interface.
- *
- * This header provides constants for page table descriptors, permission
- * combinators, and the kernel MMU management API.
  */
 
 #ifndef PERSPICUA_MM_MMU_H
@@ -11,9 +8,9 @@
 #include "types.h"
 
 #define MMU_PTE_VALID (1ULL << 0)
-#define MMU_PTE_TABLE (1ULL << 1) /* L0-L2 only */
-#define MMU_PTE_PAGE  (1ULL << 1) /* L3 only */
-#define MMU_PTE_BLOCK (0ULL << 1) /* L1/L2 only */
+#define MMU_PTE_TABLE (1ULL << 1) // L0-L2 only
+#define MMU_PTE_PAGE  (1ULL << 1) // L3 only
+#define MMU_PTE_BLOCK (0ULL << 1) // L1/L2 only
 
 #define MMU_PTE_AF       (1ULL << 10)
 #define MMU_PTE_SH_INNER (3ULL << 8)
@@ -30,11 +27,11 @@
 
 #define MMU_PTE_NG (1ULL << 11)
 
-/* Software-defined bits */
+// Software-defined bits
 #define MMU_PTE_COW    (1ULL << 55)
 #define MMU_PTE_SHARED (1ULL << 56)
 
-/* MAIR_EL1 index bits */
+// MAIR_EL1 index bits
 #define MMU_ATTR_NORMAL    (0ULL << 2)
 #define MMU_ATTR_DEVICE    (1ULL << 2)
 #define MMU_ATTR_NORMAL_NC (2ULL << 2)
@@ -83,16 +80,16 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
 int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
                    unsigned long *out_flags);
 
-/* True if [start, end) is entirely mapped and reachable from EL0. */
+// True if [start, end) is entirely mapped and reachable from EL0.
 int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end, int writable);
 
 void mmu_switch_user(unsigned long *pgd, unsigned long asid);
 
-/* Points TTBR0 at the empty table. Call before freeing an address space. */
+// Points TTBR0 at the empty table. Call before freeing an address space.
 void mmu_leave_user(void);
 
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 
 unsigned long mmu_kernel_ttbr0(void);
 
-#endif /* PERSPICUA_MM_MMU_H */
+#endif // PERSPICUA_MM_MMU_H

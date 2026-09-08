@@ -69,8 +69,9 @@ static struct block_header *request_space(size_t size)
 
 void *malloc(size_t size)
 {
-    if (size == 0)
+    if (size == 0) {
         return NULL;
+    }
     size = HEAP_ALIGN(size);
 
     struct block_header *curr = block_list;
@@ -92,15 +93,17 @@ void *malloc(size_t size)
         curr = curr->next;
     }
 
-    if (!request_space(size))
+    if (!request_space(size)) {
         return NULL;
+    }
     return malloc(size);
 }
 
 void free(void *ptr)
 {
-    if (!ptr)
+    if (!ptr) {
         return;
+    }
 
     struct block_header *block = (struct block_header *)((char *)ptr - HEADER_SIZE);
     block->is_free = 1;
@@ -109,29 +112,32 @@ void free(void *ptr)
 
 void *calloc(size_t nmemb, size_t size)
 {
-    /* Reject nmemb * size overflow before it produces an undersized buffer. */
+    // Reject nmemb * size overflow before it produces an undersized buffer.
     if (size != 0 && nmemb > (size_t)-1 / size) {
         return NULL;
     }
     size_t total = nmemb * size;
     void *ptr = malloc(total);
-    if (ptr)
+    if (ptr) {
         memset(ptr, 0, total);
+    }
     return ptr;
 }
 
 void *realloc(void *ptr, size_t size)
 {
-    if (!ptr)
+    if (!ptr) {
         return malloc(size);
+    }
     if (size == 0) {
         free(ptr);
         return NULL;
     }
 
     struct block_header *block = (struct block_header *)((char *)ptr - HEADER_SIZE);
-    if (block->size >= size)
+    if (block->size >= size) {
         return ptr;
+    }
 
     void *new_ptr = malloc(size);
     if (new_ptr) {

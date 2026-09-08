@@ -1,8 +1,5 @@
 /*
- * initrd.c - Implementation of the Initial RAM Disk (InitRD) parser.
- *
- * This module parses the boot-time CPIO archive and populates the root
- * filesystem (RAMFS) with essential system files.
+ * initrd.c - Initial ramdisk unpacker for CPIO archives.
  */
 
 #include "core/initrd.h"
@@ -11,9 +8,6 @@
 #include "string.h"
 #include "stdio.h"
 
-/*
- * hex8_to_u32 - Converts an 8-char hex string to a 32-bit integer.
- */
 static uint32_t hex8_to_u32(const char *s)
 {
     uint32_t res = 0;
@@ -31,9 +25,6 @@ static uint32_t hex8_to_u32(const char *s)
     return res;
 }
 
-/*
- * initrd_init - Iterates through the CPIO archive and registers files.
- */
 void initrd_init(void *initrd_start, size_t initrd_size)
 {
     char *ptr = (char *)initrd_start;
@@ -41,7 +32,7 @@ void initrd_init(void *initrd_start, size_t initrd_size)
     int count = 0;
 
     while (1) {
-        /* A full header must fit in the remaining archive. */
+        // A full header must fit in the remaining archive.
         if (ptr < (char *)initrd_start || (size_t)(end - ptr) < sizeof(struct cpio_newc_header)) {
             break;
         }
@@ -57,7 +48,7 @@ void initrd_init(void *initrd_start, size_t initrd_size)
         uint32_t mode = hex8_to_u32(hdr->mode);
         char *filename = ptr + sizeof(struct cpio_newc_header);
 
-        /* Filename must fit and be NUL-terminated inside the archive. */
+        // Filename must fit and be NUL-terminated inside the archive.
         if (name_size == 0 || (size_t)(end - filename) < name_size
             || filename[name_size - 1] != '\0') {
             break;
@@ -67,26 +58,26 @@ void initrd_init(void *initrd_start, size_t initrd_size)
             break;
         }
 
-        /* Skip header and filename, account for 4-byte padding */
+        // Skip header and filename, account for 4-byte padding
         char *data = ptr + sizeof(struct cpio_newc_header) + name_size;
         data = (char *)(((uintptr_t)data + 3) & ~3UL);
 
-        /* File data must fit within the archive. */
+        // File data must fit within the archive.
         if (data > end || (size_t)(end - data) < file_size) {
             break;
         }
 
-        /* Only S_IFREG (0x8000) files are currently registered */
+        // Only S_IFREG (0x8000) files are currently registered
         if ((mode & 0xF000) == 0x8000) {
             ramfs_register_file(filename, data, file_size);
             count++;
         }
 
-        /* Account for 4-byte padding after file data */
+        // Account for 4-byte padding after file data
         char *next = data + file_size;
         next = (char *)(((uintptr_t)next + 3) & ~3UL);
 
-        /* Must strictly advance and stay in bounds. */
+        // Must strictly advance and stay in bounds.
         if (next <= ptr || next > end) {
             break;
         }

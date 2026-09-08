@@ -2,7 +2,7 @@
 #include "string.h"
 #include "stdio.h"
 
-/* Create every missing parent of path, ignoring components that already exist. */
+// Create every missing parent of path, ignoring components that already exist.
 static void make_parents(char *path)
 {
     for (char *p = path + 1; *p; p++) {
@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     for (int i = start; i < argc; i++) {
         if (parents) {
             make_parents(argv[i]);
-            /* -p tolerates an already-existing final directory. */
+            // -p tolerates an already-existing final directory.
             sys_mkdir(argv[i], 0755);
         } else if (sys_mkdir(argv[i], 0755) < 0) {
             printf("mkdir: cannot create directory '%s'\n", argv[i]);

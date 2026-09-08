@@ -1,8 +1,5 @@
 /*
  * signals.h - Public API for signal numbers and handling structures.
- *
- * This header defines the standard signal numbers and action structures
- * shared between the kernel and userspace.
  */
 
 #ifndef PERSPICUA_UAPI_SIGNALS_H
@@ -10,7 +7,7 @@
 
 #include "types.h"
 
-/* --- Signal Numbers --- */
+// --- Signal Numbers ---
 
 #define SIGNAL_HUP    1
 #define SIGNAL_INT    2
@@ -49,16 +46,16 @@
 
 #ifndef __ASSEMBLY__
 
-/* --- Types and Constants --- */
+// --- Types and Constants ---
 
 typedef uint32_t sigset_t;
 typedef void (*signal_handler_t)(int);
 
-    #define SIGNAL_DFL ((signal_handler_t)0)    /* Default action */
-    #define SIGNAL_IGN ((signal_handler_t)1)    /* Ignore signal */
-    #define SIGNAL_ERR ((signal_handler_t) - 1) /* Error return */
+    #define SIGNAL_DFL ((signal_handler_t)0)    // Default action
+    #define SIGNAL_IGN ((signal_handler_t)1)    // Ignore signal
+    #define SIGNAL_ERR ((signal_handler_t) - 1) // Error return
 
-    /* sigaction flags */
+    // sigaction flags
     #define SA_NOCLDSTOP 0x00000001
     #define SA_NOCLDWAIT 0x00000002
     #define SA_SIGINFO   0x00000004
@@ -68,12 +65,12 @@ typedef void (*signal_handler_t)(int);
     #define SA_RESETHAND 0x80000000
     #define SA_RESTORER  0x04000000
 
-    /* sigprocmask "how" values */
+    // sigprocmask "how" values
     #define SIG_BLOCK   0
     #define SIG_UNBLOCK 1
     #define SIG_SETMASK 2
 
-/* --- Data Structures --- */
+// --- Data Structures ---
 
 /*
  * struct sigaction - Defines the action to be taken upon signal delivery.
@@ -85,6 +82,6 @@ struct sigaction {
     void (*sa_restorer)(void);
 };
 
-#endif /* __ASSEMBLY__ */
+#endif // __ASSEMBLY__
 
-#endif /* PERSPICUA_UAPI_SIGNALS_H */
+#endif // PERSPICUA_UAPI_SIGNALS_H

@@ -16,12 +16,12 @@
 #include "driver/gic.h"
 #include "sched/sched.h"
 
-/* Global state for core synchronization during panic. */
+// Global state for core synchronization during panic.
 volatile int kernel_panicked = 0;
 
 #define PANIC_MAX_FRAMES 16
 
-/* Decodes Exception Class (EC) for diagnostic output. */
+// Decodes Exception Class (EC) for diagnostic output.
 static void print_ec(unsigned int ec)
 {
     switch (ec) {
@@ -58,7 +58,7 @@ static void print_ec(unsigned int ec)
     }
 }
 
-/* Prints the full register state from a trap frame. */
+// Prints the full register state from a trap frame.
 static void panic_dump_tf_registers(struct exception_trap_frame *tf)
 {
     printf("\n--- Registers (from exception trap frame) ---\n");
@@ -82,7 +82,7 @@ static void panic_dump_tf_registers(struct exception_trap_frame *tf)
     printf("  FAR_EL1  : 0x%016lx\n", far_reg);
 }
 
-/* Captures and prints key AArch64 registers from EL1 context. */
+// Captures and prints key AArch64 registers from EL1 context.
 static void panic_dump_live_registers(void)
 {
     unsigned long sp, lr, spsr, esr, far_reg;
@@ -102,7 +102,7 @@ static void panic_dump_live_registers(void)
     printf("  FAR_EL1  : 0x%016lx\n", far_reg);
 }
 
-/* Walks the AArch64 frame pointer chain. */
+// Walks the AArch64 frame pointer chain.
 static void panic_backtrace(unsigned long fp)
 {
     printf("\n--- Stack Trace ---\n");
@@ -139,7 +139,7 @@ static void panic_backtrace(unsigned long fp)
     }
 }
 
-/* Prints the scheduler's view of the currently running task. */
+// Prints the scheduler's view of the currently running task.
 static void panic_dump_task(void)
 {
     printf("\n--- Current Task ---\n");
@@ -157,13 +157,13 @@ static void panic_dump_task(void)
     printf("  TTBR0    : 0x%016lx\n", t->ttbr0);
 }
 
-/* Primary kernel error handler. */
+// Primary kernel error handler.
 void panic_full(const char *msg, const char *file, int line, unsigned long fp,
                 struct exception_trap_frame *tf)
 {
     disable_interrupts();
 
-    /* Re-entrant guard: spin if diagnostic helpers fault. */
+    // Re-entrant guard: spin if diagnostic helpers fault.
     if (kernel_panicked) {
         for (;;) {
             asm volatile("wfe");

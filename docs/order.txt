@@ -26,6 +26,308 @@ fixed. Its eleven architectural improvements, IMP-001 through IMP-011, are folde
 into the phases below and tagged inline, so each one sits with the work it
 belongs to instead of in a parallel list that would drift out of date.
 
+A second, whole-tree review (September 2026, on main at 84f646c) looked at
+shape rather than correctness: comment density, duplication, naming, the ABI,
+the build, and a handful of bugs found along the way. Its findings are Phase 0.
+They come BEFORE Phase 1 because every later item would otherwise be written
+against the old shape and then reshaped again.
+
+================================================================================
+PHASE 0: CLEAN THE SHAPE 
+Goal: Make the tree cheap to read and cheap to change, so the phases below are
+built once in the right form. Nothing here adds a capability. Everything here
+either removes lines, removes a bug, or moves a decision to the one place it
+belongs. Items are ordered so each leaves the code in the shape the next one
+expects; do them in sequence and commit each one on its own.
+
+Ground rule for the whole phase: no behavior changes except where an item says
+"bug". A refactor commit that also fixes something is two commits.
+================================================================================
+
+   1. Comment and style reset
+      Effort: M (mechanical) | Unlocks: every later diff is in the final style
+      Scope: rewrite coding_style_guidelines.txt §5 so a comment is required
+        only for a contract the signature does not express (ownership, locking,
+        failure modes, hardware quirks) and never for what the code already
+        says. Then apply it: delete the "This module handles…" file headers (or
+        cut them to one line); delete per-function comments that restate the
+        name (spin_lock "acquires a spinlock", vfs_read "dispatches a read");
+        keep a function's contract in the header OR the source, not both
+        (vfs.h/vfs.c); delete trailing per-field comments on structs (sched.h);
+        delete comments that narrate the next line ("Wake up parked cores",
+        "Actually clear the buffer"); turn history comments ("the old expression
+        added…", "the hand-written version used stxr…") into a one-line
+        statement of the invariant they protect. Add InsertBraces to
+        .clang-format so the "braces on every control statement" rule is
+        enforced (266 violations today, most in sh.c, fat32.c, sd.c), and pick
+        one of // and /* */ for line comments. Rename the reserved-identifier
+        guards (_TEST_H_, _FONT8X8_H_) to the PERSPICUA_ form.
+      Done: `just check-format` passes with braces enforced; a random file
+        opened at a random line has no comment that repeats the code beside it.
+      Note: do this first, and do it as its own PR with no code changes, so the
+        diff is reviewable by eye. Every later item is then written in the new
+        style instead of adding to the backlog of comments to strip.
+
+   2. Test harness honesty + CI
+      Effort: S | Unlocks: a gate that every item below can be checked against
+      Scope: TEST_ASSERT currently returns out of the test function on the
+        first failure, so the rest of that suite is silently skipped, and
+        tests_passed counts TEST_PASS calls rather than assertions. Make a
+        failed assertion record and continue, and count assertions. Rename the
+        "KASAN" tests to what they are (redzone checks) or delete the
+        commented-out calls in test.c. Add a CI workflow that runs
+        `just check-format` and `just test`; CONTRIBUTING.txt already claims
+        format checking is enforced, so make it true.
+      Done: a suite with two failing assertions reports two, not one; a PR
+        that breaks a test or the format is red before review.
+
+   3. Bug fixes found by the review
+      Effort: S each | Unlocks: nothing structural, but these should not be
+        carried through the refactors below
+      Scope: (a) fat32_mkdir frees the lookup result with slab_free instead of
+        vfs_vnode_put, leaking the parent reference lookup took.
+        (b) fat32_get_root_node returns a slab_alloc'd vnode without zeroing
+        it: refcount, name and parent start as garbage.
+        (c) sigreturn_kill in syscall.c marks the task DEAD without calling
+        process_exit, so the process never becomes a zombie and its fds and
+        slot leak.
+        (d) An unknown syscall number leaves x0 untouched and returns the first
+        argument as the result; return -PERS_ERR_NOT_IMPLEMENTED.
+        (e) vprintf/vfprintf format into a 256-byte stack buffer and drop the
+        rest; fmt_core already streams when buf is NULL, so use that path.
+        (f) vfs_open_pid refuses to open the same regular file twice. The reason
+        it existed (page-cache aliasing on start cluster 0) was fixed when
+        fat32_create started allocating a cluster up front; remove the check.
+        (g) pmm_free_pages ignores its count argument; honor it or remove it.
+        (h) The `curr->state = DEAD; schedule()` after every process_exit call
+        is dead code (process_exit never returns); delete all five copies.
+        (i) The memcpy(tf, new_tf) in SYS_EXEC copies a frame onto itself
+        (both resolve to the same kernel-stack address); delete it.
+      Done: each fix lands with a test that failed before it, where a test can
+        reach it (a, b, c, d, e, f can; g, h, i are deletions).
+
+   4. Delete dead code
+      Effort: S | Unlocks: less to read and less to reshape in items 5-9
+      Scope: fs/ramfs.c, core/initrd.c and core/user_programs.S (both symbols
+        are literally 0, nothing calls initrd_init); process_create (the raw
+        code-page variant, no production caller) and process_drop_to_user;
+        BUS_DRIVER and driver_probe_bus; MMU_PTE_SHARED; uart_puts_locked and
+        uart_puts; the writeback_daemon (every write path is write-through, so
+        it has nothing to flush — bring it back with write-back in Phase 2
+        item 5); the inline `extern` declarations in main.c, fdt.c and
+        hooks.c, which belong in the headers that already exist for them.
+      Done: `just build` and `just test` pass; no file in the tree is
+        unreferenced by the link.
+      Note: git remembers. "We might want it later" is not a reason to keep a
+        file that does not compile into the image.
+
+   5. Small consolidations
+      Effort: S-M | Unlocks: one implementation per concept before the big
+        refactors touch the same code
+      Scope: one cpu_id() in arch/, replacing the four copies (get_core_id,
+        preempt_core, lockdep_core_id, asid_core_id) that use two different
+        masks. One kernel-stack allocator, replacing alloc_task_stack (sched.c)
+        and alloc_kernel_stack (process.c), with one definition of what
+        "base" means so sched_create_user_task stops depending on the
+        difference. Merge process_create_from_file's remaining setup with
+        process_fork's shared parts (fd table, signal table, name, trap frame)
+        into helpers. One generic procfs read: a generate(buf, size) callback
+        per file and a table-driven procfs_init, replacing the copied
+        offset/available/to_copy tail in every reader and the seven-line
+        blocks in init. Give atomic_t an atomic_set so no caller writes
+        .counter directly (pipe.c, fat32.c, procfs.c, devfs.c do today).
+      Done: each of those concepts has exactly one definition.
+
+   6. VFS helpers
+      Effort: M | Unlocks: a vfs.c a third shorter, and one place to fix fd
+        semantics when threads arrive
+      Scope: vfs_file_get(fd) that looks up the descriptor under fd_lock and
+        takes a reference, used by read, pread, write, pwrite, readdir, fstat,
+        ftruncate, fsync and lseek; vfs_split_parent(path, &parent, &name)
+        replacing the six copies of the strrchr split in open, mkdir, rmdir,
+        unlink and rename; collapse vfs_resolve_path_locked into
+        vfs_resolve_path (they are the same hundred lines with the lock
+        hoisted). Give the read/write vnode ops an explicit offset parameter
+        so pread/pwrite stop building a temporary struct vfs_file on the stack.
+      Done: no two functions in vfs.c share more than a few lines.
+
+   7. FAT32 directory iterator
+      Effort: M | Unlocks: one place to add long-name writes and timestamps
+      Scope: one fat32_dir_walk(dir, callback, ctx) (or an explicit iterator
+        struct) that yields each short entry with its assembled long name,
+        replacing the cluster -> sector -> 16-entry loop copied in lookup,
+        unlink, rmdir, rename, update_dir_entry and write_entry_to_parent.
+        Name the end-of-chain and bad-cluster values (15 raw 0x0FFFFFF8/F
+        literals today). Replace the three byte-copy loops with memcpy.
+      Done: fat32.c has one directory scan; every operation is a callback on
+        it. Behavior is unchanged (the LFN-write gap is item 15).
+
+   8. Syscall table
+      Effort: M | Unlocks: strace-lite (Phase 3 item 6) as a two-line hook;
+        the boundary fuzzer (Phase 1 item 7) can enumerate syscalls
+      Scope: one function per syscall, dispatched through a static table
+        indexed by number, with two shared bounce-buffer helpers (copy a user
+        range in / copy a kernel result out) replacing the validate ->
+        heap_malloc -> copy -> call -> free block hand-rolled in every case of
+        the 1,500-line switch. Trim the surface while the table is being
+        built: SYS_SIGNAL is sigaction with two fields zeroed (libc wrapper);
+        SYS_SLEEP is nanosleep in milliseconds (libc wrapper); SYS_SIGRESTORE
+        is a per-process register set by crt0 on every start, and SA_RESTORER
+        already exists, so libc passes the restorer in sigaction and the PCB
+        field goes away.
+      Done: syscall.c is a table plus one short function per entry; the three
+        redundant syscalls are gone and their libc wrappers still work.
+
+   9. Naming pass
+      Effort: S-M (mechanical) | Unlocks: the prefix rule in the style guide
+        means something
+      Scope: the style guide says public functions carry their subsystem
+        prefix; the tree does not follow it. Rename schedule() to
+        sched_schedule(), enqueue_ready() to sched_enqueue(),
+        get_system_time()/sleep_ms() to timer_*, and settle the three
+        "current" accessors (sched_get_current, process_current,
+        process_find_current — the last returns a pid, which the name does
+        not say). In-kernel output goes through printk/pr_* only; kdb and
+        panic use printf today. Adopt one subsystem-tag convention for log
+        lines ("sched: …") — some files use it, some do not. Do this after
+        items 6-8 so nothing is renamed and then deleted.
+      Done: every public function in kernel/include carries its subsystem
+        prefix; no printf call remains under kernel/.
+
+  10. POSIX names in the ABI, and a libc that userspace can port to
+      Effort: M-L | Unlocks: any POSIX program compiles; Phase 7 item 6
+        shrinks to "align numbers"
+      Scope: uapi uses errno values (ENOENT…) directly, deleting PERS_ERR_*
+        and the translation table in libc/user/syscall.c; SIGINT not
+        SIGNAL_INT; O_RDONLY not VFS_O_RDONLY, defined once in a uapi/fcntl.h
+        instead of twice (vfs.h and libc/include/syscall.h). libc gains the
+        unprefixed open/read/write/… wrappers, implemented over six generic
+        __syscallN inlines instead of forty copies of the same asm; the apps
+        are moved onto them. libc stops including kernel/include
+        (libc/CMakeLists.txt makes it PUBLIC today) — userspace sees uapi/
+        only — and panic.h and io.h move out of libc/include into
+        kernel/include where they belong. types.h is replaced by the
+        compiler's freestanding <stdint.h>/<stddef.h>/<stdbool.h>.
+      Done: a small POSIX program (say, a stock `wc.c`) builds against the
+        libc unmodified; no libc source includes a kernel header.
+      Note: this is the largest item and the one that gets more expensive
+        every week it waits, because every new app is written against the
+        custom names (Phase 1 item 5 already added ten of them).
+
+  11. Interrupt and CPU plumbing
+      Effort: M | Unlocks: adding a device without editing exception.c;
+        CONFIG_NR_CPUS that is actually honored
+      Scope: move irq_save/irq_restore/enable_interrupts out of core/timer.c
+        into arch/; a request_irq(irq, handler, ctx) table so
+        exception_irq_handler dispatches instead of comparing cached numbers
+        for timer, UART and SD; the UART enables its own line from its
+        IRQ-phase probe so gic_probe stops calling uart_get_irq; the QA7
+        timer-routing address in timer_interrupt_init comes from the
+        devicetree like every other register base; boot.S (`and #3`),
+        kernel.ld (0x40000 of boot stack) and dashboard.c (`i < 4`) take the
+        core count from CONFIG_NR_CPUS.
+      Done: a build with CONFIG_NR_CPUS=2 boots two cores and nothing
+        indexes past an array; the SD driver registers its IRQ without a line
+        in exception.c.
+
+  12. Allocator hygiene
+      Effort: S-M | Unlocks: safe heap_free routing; cheaper page allocation
+      Scope: a flags byte in struct pmm_page carrying "slab page", so
+        slab_owns stops reading the first word of an arbitrary page and
+        treating a matching magic as a slab header; a non-zeroing
+        pmm_alloc_pages variant for callers that overwrite the page anyway
+        (page cache fill, CoW copy, ELF load); a doubly-linked buddy free
+        list so unlinking a buddy is O(1) instead of a scan with a
+        131,072-node panic threshold.
+      Done: heap_free of a non-heap pointer panics with a clear message every
+        time, not only when the page's first word happens to differ from the
+        slab magic.
+
+  13. Build and toolchain
+      Effort: S each | Unlocks: representative timing; a single source of
+        config truth; faster builds
+      Scope: default to -O2 -g (keep -O0 as an opt-in: a kernel at -O0 hides
+        real bugs and makes hardware timing unrepresentative); generate one
+        config.h from CMake so the justfile stops duplicating every CONFIG_*
+        knob; build the kernel sources once as an OBJECT library shared by
+        the two symbol-table link passes instead of compiling everything
+        twice; decide the NEON question — the toolchain passes
+        +nosimd/-mgeneral-regs-only for kernel AND user, yet save_all stores
+        and restores 512 bytes of q-registers on every trap. Either drop the
+        q-save (and document that userspace has no SIMD) or make it lazy on
+        first FP use; the 800-byte frame per syscall is pure cost today.
+      Done: `just build` is -O2 by default and roughly half as long; there is
+        one list of config options.
+
+  14. Console, panic and dashboard latency
+      Effort: M | Unlocks: bounded IRQ-off time; a panic that cannot deadlock
+        or hang a headless board
+      Scope: tty_write holds tty->lock with IRQs masked while
+        fb_console_putc draws each glyph into uncacheable framebuffer memory,
+        so a 4 KB write masks interrupts for thousands of glyph draws —
+        render outside the lock, or buffer and let the pump draw. printk takes
+        three lock layers per character (printf_lock, then uart_tx_lock
+        inside uart_send per byte) — take the tx lock once per line. kdb and
+        panic print through printf, which takes printf_lock, so a panic
+        inside printk deadlocks — give the panic path a lock-free raw UART
+        writer. panic_full then blocks in uart_getc waiting for a keystroke,
+        which on an unattended board (the vision's niche) is a hang — put
+        kdb-on-panic behind a config/boot option with watchdog reboot as the
+        default. The dashboard redraws the entire bar ten times a second
+        whether anything changed — redraw on change, or at 1 Hz.
+      Done: a 64 KB write to the console never masks IRQs for more than one
+        line's worth of rendering; a deliberate panic inside printk still
+        prints its report.
+
+  15. FAT32 and block cache efficiency, and long names on write
+      Effort: M | Unlocks: files created on Perspicua keep their names;
+        directory scans that do not re-read the FAT per hop
+      Scope: the block cache allocates a 4 KB page per 512-byte block (256
+        entries hold 128 KB of data in 1 MB) — use 512-byte slab buffers, or
+        cache 4 KB extents. fat32_read_page reads one sector at a time into a
+        stack buffer; read a cluster's worth. get_next_cluster re-reads a FAT
+        sector per hop and allocate_cluster scans from cluster 2 on every call
+        — keep the FSInfo next-free hint. name_to_83 truncates silently, so
+        `touch longfilename.txt` creates LONGFILE.TXT and rename leaves
+        orphan LFN entries: write LFN entries on create/mkdir/rename (the
+        item-7 iterator is where this lands), and write create/modify
+        timestamps.
+      Done: a file created with a 40-character name lists back with that
+        name, and `ls -l` shows a real timestamp.
+      Note: the buffer-cache unification (Phase 2 item 5) subsumes the first
+        half; do only what is cheap here if that item is near.
+
+  16. Shape fixes that threads and lseek will trip on
+      Effort: S-M | Unlocks: Phase 5 item 1 without archaeology
+      Scope: remove the cpu_context from struct process (it only seeds the
+        task's own context); stop packing the mount index and dot state into
+        the high bits of vfs_file.offset in vfs_readdir — give directory
+        position its own field; split sh.c (1,370 lines) into edit, parse and
+        exec, and retire its last_completion_* globals into a struct.
+      Done: struct process describes a process, struct task describes
+        execution, and lseek on a directory fd does something defensible.
+
+  17. Docs consolidation
+      Effort: S | Unlocks: one place to look, and text that does not drift
+      Scope: delete README.txt (README.md is the canonical one, and already
+        disagrees with it: it says 37 syscalls, there are 49 — fix that
+        too); fold ideas.txt into a backlog section at the end of this file
+        so the same item is not described twice; trim the "Note:" paragraphs
+        in Phases 1-5 to the sentence that changes what you would build, the
+        rest is history. Update architecture.txt's source-tree section for
+        the files items 4 and 10 moved or removed.
+      Done: docs/README.txt's map lists files that exist, and no fact appears
+        in two of them.
+
+================================================================================
+When Phase 0 is done, the tree is smaller, every concept has one definition,
+the ABI is one you can port to, and the rest of this file builds on that.
+Then do Phase 2 item 1 (the generic wait queue) BEFORE the remaining Phase 1
+items: refcounting, poll, the sleeping-lock family and the invariant engine
+all sit on it, and the four bespoke queues that exist today are the bug class
+this review kept tripping over.
+================================================================================
+
 ================================================================================
 PHASE 1: FOUNDATION HARDENING  (finish filling the holes)
 Goal: Complete the half-built features so the base is dependable. Nothing here is

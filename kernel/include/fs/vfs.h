@@ -1,8 +1,5 @@
 /*
  * vfs.h - Public API for the Virtual Filesystem (VFS) layer.
- *
- * This header defines the core filesystem abstractions, including vnodes,
- * file objects, and the functional interface for filesystem drivers.
  */
 
 #ifndef PERSPICUA_FS_VFS_H
@@ -28,7 +25,7 @@
 #endif
 #define VFS_MAX_MOUNTS 8
 
-/* Standard file open flags */
+// Standard file open flags
 #define VFS_O_RDONLY  0x0000
 #define VFS_O_WRONLY  0x0001
 #define VFS_O_RDWR    0x0002
@@ -40,16 +37,16 @@
 #define VFS_O_CLOEXEC  0x0800
 #define VFS_O_NONBLOCK 0x1000
 
-/* fcntl commands */
+// fcntl commands
 #define VFS_F_GETFD 1
 #define VFS_F_SETFD 2
 #define VFS_F_GETFL 3
 #define VFS_F_SETFL 4
 
-/* fcntl file descriptor flags */
+// fcntl file descriptor flags
 #define VFS_FD_CLOEXEC 1
 
-/* Seek mode constants */
+// Seek mode constants
 #define VFS_SEEK_SET 0
 #define VFS_SEEK_CUR 1
 #define VFS_SEEK_END 2
@@ -120,24 +117,9 @@ struct vfs_file {
     atomic_t refcount;
 };
 
-/*
- * vfs_init - Initializes the mount table and VFS synchronization.
- */
 void vfs_init(void);
-
-/*
- * vfs_resolve_path - Traverses the directory tree to find a specific vnode.
- */
 struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int *error);
-
-/*
- * vfs_vnode_put - Safely releases a vnode reference.
- */
 void vfs_vnode_put(struct vfs_vnode *node);
-
-/*
- * vfs_file_alloc - Allocates an open-file object holding one reference.
- */
 struct vfs_file *vfs_file_alloc(void);
 
 /*
@@ -149,117 +131,36 @@ struct vfs_file *vfs_file_alloc(void);
 void vfs_file_put(struct vfs_file *f);
 
 #ifdef CONFIG_TESTS
-/* Open-file objects allocated but not yet released. */
+// Open-file objects allocated but not yet released.
 unsigned long vfs_test_live_files(void);
 
-/* The open-file object behind a descriptor, or NULL. */
+// The open-file object behind a descriptor, or NULL.
 struct vfs_file *vfs_test_file_at(int fd);
 #endif
 
-/*
- * vfs_open - Standard process-relative file open.
- */
 int vfs_open(const char *path, int flags);
-
-/*
- * vfs_open_pid - Kernel-internal open for a specific process context.
- */
 int vfs_open_pid(const char *path, int flags, uint32_t pid);
-
-/*
- * vfs_close - Closes a file descriptor and performs cleanup.
- */
 int vfs_close(int fd);
-
-/*
- * vfs_lseek - Repositions the read/write cursor.
- */
 vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);
-
-/*
- * vfs_read - Synchronous data retrieval from a descriptor.
- */
 int vfs_read(int fd, void *buffer, size_t count);
-
-/*
- * vfs_pread - Synchronous data retrieval from a descriptor at a specific offset.
- */
 int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset);
-
-/*
- * vfs_write - Synchronous data submission to a descriptor.
- */
 int vfs_write(int fd, const void *buffer, size_t count);
-
-/*
- * vfs_pwrite - Synchronous data submission to a descriptor at a specific offset.
- */
 int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset);
-
-/*
- * vfs_readdir - Retrieves directory entries from a descriptor.
- */
 int vfs_readdir(int fd, void *buffer, size_t count);
-
-/*
- * vfs_stat - Retrieves metadata for a file by path.
- */
 int vfs_stat(const char *path, struct stat *buf);
-
-/*
- * vfs_fstat - Retrieves metadata for a file by file descriptor.
- */
 int vfs_fstat(int fd, struct stat *buf);
 int vfs_truncate(const char *path, vfs_off_t length);
 int vfs_ftruncate(int fd, vfs_off_t length);
-
-/*
- * vfs_mkdir - Creates a new directory from a given path.
- */
 int vfs_mkdir(const char *path);
-
-/*
- *  vfs_rmdir - Removes an existing directory from a given path.
- */
 int vfs_rmdir(const char *path);
-
 int vfs_unlink(const char *path);
-
 int vfs_rename(const char *oldpath, const char *newpath);
-
-/*
- * vfs_fsync - Flushes all dirty cached pages for a single file descriptor to disk.
- */
 int vfs_fsync(int fd);
-
-/*
- * vfs_dup2 - Duplicates a descriptor to a specific target slot.
- */
 int vfs_dup2(int oldfd, int newfd);
-
-/*
- * vfs_mount - Attaches a filesystem root to the global namespace.
- */
 int vfs_mount(const char *path, struct vfs_vnode *root);
-
-/*
- * vfs_unmount - Detaches a mount point by its path.
- */
 int vfs_unmount(const char *path);
-
-/*
- * vfs_get_mount - Copies the path of mount #index into out.
- */
 int vfs_get_mount(size_t index, char *out, size_t out_size);
-
-/*
- * vfs_chdir - Updates the current process working directory.
- */
 int vfs_chdir(const char *path);
-
-/*
- * vfs_getcwd - Returns the absolute path of the current working directory.
- */
 int vfs_getcwd(char *buf, size_t size);
 
-#endif /* PERSPICUA_FS_VFS_H */
+#endif // PERSPICUA_FS_VFS_H

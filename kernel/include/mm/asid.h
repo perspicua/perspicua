@@ -5,7 +5,7 @@
 #include "types.h"
 
 #define BITMAP_SIZE 4
-/* Highest allocatable ASID. Derived so it cannot drift from the bitmap. */
+// Highest allocatable ASID. Derived so it cannot drift from the bitmap.
 #define MAX_ASID (BITMAP_SIZE * 64 - 1)
 
 /*

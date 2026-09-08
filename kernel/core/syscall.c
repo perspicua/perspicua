@@ -1,8 +1,5 @@
 /*
- * syscall.c - Implementation of the system call dispatcher.
- *
- * This module validates user-mode memory access and dispatches
- * system calls to their respective kernel implementations.
+ * syscall.c - System call dispatcher and userspace interface.
  */
 
 #include "core/syscall.h"
@@ -34,9 +31,6 @@
 #include "driver/block.h"
 #include "fs/pagecache.h"
 
-/*
- * validate_user_buffer - Verifies that a memory range is valid for user access.
- */
 int validate_user_buffer(const void *ptr, size_t len, int writable)
 {
     if (!ptr || len == 0) {
@@ -46,7 +40,7 @@ int validate_user_buffer(const void *ptr, size_t len, int writable)
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
 
-    /* Prevent wrap-around or kernel-space intrusion */
+    // Prevent wrap-around or kernel-space intrusion
     if (end < start || end > KERNEL_VMA) {
         return 0;
     }
@@ -117,9 +111,6 @@ static int copy_path_from_user(const char *upath, char **out)
     return PERS_SUCCESS;
 }
 
-/*
- * syscall_handle - The primary entry point for EL0 synchronous exceptions.
- */
 void syscall_handle(struct exception_trap_frame *tf)
 {
     uint64_t syscall_nr = tf->x[8];
@@ -140,7 +131,7 @@ void syscall_handle(struct exception_trap_frame *tf)
             const char *buf = (const char *)(tf->x[1]);
             size_t len = (size_t)(tf->x[2]);
 
-            /* Enforce maximum RW size to prevent excessive heap usage */
+            // Enforce maximum RW size to prevent excessive heap usage
             if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
@@ -175,7 +166,7 @@ void syscall_handle(struct exception_trap_frame *tf)
             size_t len = (size_t)(tf->x[2]);
             vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
-            /* Enforce maximum RW size to prevent excessive heap usage */
+            // Enforce maximum RW size to prevent excessive heap usage
             if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
@@ -386,7 +377,7 @@ void syscall_handle(struct exception_trap_frame *tf)
             struct task *curr_task = sched_get_current();
             struct process *execed = curr_task ? process_slot(curr_task->pid) : NULL;
             if (execed) {
-                /* Synchronize trap frame after successful image replacement */
+                // Synchronize trap frame after successful image replacement
                 uintptr_t kernel_stack_top = execed->vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
                 struct exception_trap_frame *new_tf =
                     (struct exception_trap_frame *)(kernel_stack_top
@@ -502,7 +493,7 @@ void syscall_handle(struct exception_trap_frame *tf)
                     break;
                 }
 
-                /* Enforce process hierarchy permissions */
+                // Enforce process hierarchy permissions
                 if (target_pid != (int)pid && target->parent_pid != pid
                     && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
                     tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
@@ -516,7 +507,7 @@ void syscall_handle(struct exception_trap_frame *tf)
                     break;
                 }
                 tf->x[0] = (uint64_t)signal_send_group(proc->pgid, sig);
-            } else { /* target_pid < -1 */
+            } else { // target_pid < -1
                 int64_t raw_pid = target_pid;
                 uint64_t abs_pgid = (uint64_t)(-raw_pid);
                 if (abs_pgid == 0 || abs_pgid >= PROCESS_TABLE_SIZE) {
@@ -731,7 +722,7 @@ sigreturn_kill:
                 schedule();
             }
 
-            /* POSIX: sigsuspend restores the caller's original mask on return. */
+            // POSIX: sigsuspend restores the caller's original mask on return.
             proc->blocked_signals = saved_mask;
             tf->x[0] = (uint64_t)-PERS_ERR_INTERRUPTED;
             break;
@@ -1060,7 +1051,7 @@ mmap_fail:
                 new_pgid = target_pid;
             }
 
-            /* A pgid is always some process's pid, so it carries the same bound. */
+            // A pgid is always some process's pid, so it carries the same bound.
             if (target_pid < 1 || target_pid >= PROCESS_TABLE_SIZE || new_pgid < 1
                 || new_pgid >= PROCESS_TABLE_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
@@ -1075,7 +1066,7 @@ mmap_fail:
                 break;
             }
 
-            /* Restrict setpgid to self or direct child */
+            // Restrict setpgid to self or direct child
             if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
                 spin_unlock_irqrestore(&process_table_lock, irqf);
                 tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
@@ -1274,7 +1265,7 @@ mmap_fail:
                 break;
             }
 
-            /* Fails if caller is already a process group leader (pgid == pid) */
+            // Fails if caller is already a process group leader (pgid == pid)
             if (curr_p->pgid == curr_p->pid) {
                 spin_unlock_irqrestore(&process_table_lock, irqf);
                 tf->x[0] = (uint64_t)-PERS_ERR_PERMISSION_DENIED;
@@ -1357,7 +1348,7 @@ mmap_fail:
                 break;
             }
 
-            /* TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now */
+            // TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now
             unsigned long ms = get_system_time();
             struct timespec ktp;
             ktp.tv_sec = (time_t)(ms / 1000);
@@ -1437,8 +1428,9 @@ mmap_fail:
             struct stat kbuf;
             int res = vfs_fstat(fd, &kbuf);
             if (res == PERS_SUCCESS) {
-                if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0)
+                if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0) {
                     res = -PERS_ERR_OUT_OF_MEMORY;
+                }
             }
             tf->x[0] = (uint64_t)res;
             break;

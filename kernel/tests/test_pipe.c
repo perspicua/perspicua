@@ -13,7 +13,7 @@
 #include "fs/pipe.h"
 #include "fs/vfs.h"
 
-/* Mirrors PIPE_BUF_SIZE in fs/pipe.c. */
+// Mirrors PIPE_BUF_SIZE in fs/pipe.c.
 #define TEST_PIPE_CAPACITY 4096
 
 void test_pipe(void)

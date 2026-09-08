@@ -25,14 +25,14 @@
 
 #define MMAP_FILE "/tmmap.tmp"
 
-/* Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack. */
+// Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack.
 static struct exception_trap_frame mmap_tf;
 
 static int64_t call_mmap(size_t length, int flags, int fd)
 {
     memset(&mmap_tf, 0, sizeof(mmap_tf));
     mmap_tf.x[8] = SYS_MMAP;
-    mmap_tf.x[0] = 0; /* addr hint, unused */
+    mmap_tf.x[0] = 0; // addr hint, unused
     mmap_tf.x[1] = length;
     mmap_tf.x[2] = PROT_READ | PROT_WRITE;
     mmap_tf.x[3] = (uint64_t)flags;

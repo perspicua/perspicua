@@ -20,7 +20,7 @@ static void cat_file(int fd)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        /* No arguments: read from stdin */
+        // No arguments: read from stdin
         cat_file(0);
         sys_exit(0);
     }

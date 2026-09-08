@@ -1,9 +1,8 @@
 /*
  * kdb.c - UART-based Kernel Debugger (KDB).
  *
- * Provides an interactive console to inspect kernel state after a panic
- * or when triggered explicitly. All I/O goes directly to the PL011 UART
- * so the debugger works even when the TTY subsystem is broken.
+ * All I/O goes directly to the PL011 UART so the debugger works even when the
+ * TTY subsystem is broken.
  *
  * Entry points:
  *   kdb_enter(reason)       -- from arbitrary kernel code
@@ -31,24 +30,24 @@
 #define KDB_BT_FRAMES 24
 #define KDB_RD_MAX    256
 
-/* Trap frame saved on entry (NULL when entered without an exception frame). */
+// Trap frame saved on entry (NULL when entered without an exception frame).
 static struct exception_trap_frame *kdb_tf;
 
-/* ------------------------------------------------------------------ */
-/* Low-level I/O – bypass the TTY layer so KDB works in broken states  */
-/* ------------------------------------------------------------------ */
+// Low-level I/O – bypass the TTY layer so KDB works in broken states
 
 static void kdb_putc(char c)
 {
-    if (c == '\n')
+    if (c == '\n') {
         uart_send('\r');
+    }
     uart_send(c);
 }
 
 static void kdb_puts(const char *s)
 {
-    while (*s)
+    while (*s) {
         kdb_putc(*s++);
+    }
 }
 
 /*
@@ -70,16 +69,17 @@ static int kdb_readline(char *buf, int maxlen)
             return pos;
         }
 
-        /* Backspace (^H) or DEL */
+        // Backspace (^H) or DEL
         if ((c == '\b' || c == 0x7f) && pos > 0) {
             pos--;
             kdb_puts("\b \b");
             continue;
         }
 
-        /* Ignore control characters and overflow */
-        if (c < 0x20 || pos >= maxlen - 1)
+        // Ignore control characters and overflow
+        if (c < 0x20 || pos >= maxlen - 1) {
             continue;
+        }
 
         buf[pos++] = c;
         kdb_putc(c);
@@ -96,47 +96,48 @@ static int kdb_tokenize(char *buf, char **argv, int maxargs)
     char *p = buf;
 
     while (*p && argc < maxargs) {
-        while (*p == ' ')
+        while (*p == ' ') {
             p++;
-        if (!*p)
+        }
+        if (!*p) {
             break;
+        }
         argv[argc++] = p;
-        while (*p && *p != ' ')
+        while (*p && *p != ' ') {
             p++;
-        if (*p)
+        }
+        if (*p) {
             *p++ = '\0';
+        }
     }
     return argc;
 }
 
-/*
- * kdb_parse_hex - Parse a hex string (optional "0x" prefix).
- */
 static unsigned long kdb_parse_hex(const char *s)
 {
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
         s += 2;
+    }
 
     unsigned long val = 0;
     while (*s) {
         char c = *s++;
         unsigned long nibble;
-        if (c >= '0' && c <= '9')
+        if (c >= '0' && c <= '9') {
             nibble = (unsigned long)(c - '0');
-        else if (c >= 'a' && c <= 'f')
+        } else if (c >= 'a' && c <= 'f') {
             nibble = (unsigned long)(c - 'a') + 10;
-        else if (c >= 'A' && c <= 'F')
+        } else if (c >= 'A' && c <= 'F') {
             nibble = (unsigned long)(c - 'A') + 10;
-        else
+        } else {
             break;
+        }
         val = (val << 4) | nibble;
     }
     return val;
 }
 
-/* ------------------------------------------------------------------ */
-/* Command implementations                                              */
-/* ------------------------------------------------------------------ */
+// Command implementations
 
 static void cmd_help(void)
 {
@@ -215,7 +216,6 @@ static void cmd_sysregs(void)
     printf("  TPIDR_EL1 : 0x%016lx  (current task)\n", tpidr);
 }
 
-/* Stringify task execution state. */
 static const char *task_state_str(enum sched_task_state s)
 {
     switch (s) {
@@ -234,7 +234,6 @@ static const char *task_state_str(enum sched_task_state s)
     }
 }
 
-/* Stringify process lifecycle state. */
 static const char *proc_state_str(process_state_t s)
 {
     switch (s) {
@@ -260,8 +259,9 @@ static void cmd_tasks(void)
     int shown = 0;
     for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
         struct process *p = process_table[i];
-        if (!p)
+        if (!p) {
             continue;
+        }
 
         shown++;
         printf("  %-5u %-8s %-5u 0x%016lx 0x%016lx  %s\n", p->pid, proc_state_str(p->state),
@@ -277,10 +277,11 @@ static void cmd_tasks(void)
 
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    if (!shown)
+    if (!shown) {
         kdb_puts("  (no user processes)\n");
+    }
 
-    /* Current kernel task */
+    // Current kernel task
     struct task *cur = sched_get_current();
     kdb_puts("\n  --- Current Kernel Task ---\n");
     if (cur) {
@@ -290,7 +291,7 @@ static void cmd_tasks(void)
         kdb_puts("  (none)\n");
     }
 
-    /* Per-core scheduler statistics */
+    // Per-core scheduler statistics
     kdb_puts("\n  --- Scheduler Statistics ---\n");
     for (int c = 0; c < SCHED_NUM_CORES; c++) {
         printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
@@ -354,8 +355,9 @@ static void cmd_bt(void)
             printf("  #%-2d 0x%016lx\n", i, ret_addr);
         }
 
-        if (!prev_fp || prev_fp <= fp)
+        if (!prev_fp || prev_fp <= fp) {
             break;
+        }
         fp = prev_fp;
     }
 }
@@ -370,8 +372,9 @@ static void cmd_rd(int argc, char **argv)
     unsigned long addr = kdb_parse_hex(argv[1]);
     unsigned long count = (argc >= 3) ? kdb_parse_hex(argv[2]) : 8;
 
-    if (count > KDB_RD_MAX)
+    if (count > KDB_RD_MAX) {
         count = KDB_RD_MAX;
+    }
 
     kdb_puts("\n");
     for (unsigned long i = 0; i < count; i++) {
@@ -396,9 +399,7 @@ static void cmd_wr(int argc, char **argv)
     printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
 }
 
-/* ------------------------------------------------------------------ */
-/* Main REPL                                                            */
-/* ------------------------------------------------------------------ */
+// Main REPL
 
 static void kdb_repl(void)
 {
@@ -409,12 +410,14 @@ static void kdb_repl(void)
         kdb_puts("kdb> ");
         kdb_readline(line, sizeof(line));
 
-        if (!line[0])
+        if (!line[0]) {
             continue;
+        }
 
         int argc = kdb_tokenize(line, argv, KDB_MAX_ARGS);
-        if (!argc)
+        if (!argc) {
             continue;
+        }
 
         if (!strcmp(argv[0], "help")) {
             cmd_help();
@@ -441,9 +444,7 @@ static void kdb_repl(void)
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Public entry points                                                  */
-/* ------------------------------------------------------------------ */
+// Public entry points
 
 void kdb_enter(const char *reason)
 {

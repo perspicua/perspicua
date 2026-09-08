@@ -9,13 +9,14 @@ static int g_force = 0;
 
 static int remove_path(const char *path);
 
-/* Empty a directory recursively, then remove the directory itself. */
+// Empty a directory recursively, then remove the directory itself.
 static int remove_dir(const char *path)
 {
     DIR *dirp = opendir(path);
     if (!dirp) {
-        if (!g_force)
+        if (!g_force) {
             printf("rm: cannot open directory '%s'\n", path);
+        }
         return 1;
     }
 
@@ -38,8 +39,9 @@ static int remove_dir(const char *path)
     closedir(dirp);
 
     if (sys_rmdir(path) < 0) {
-        if (!g_force)
+        if (!g_force) {
             printf("rm: cannot remove directory '%s'\n", path);
+        }
         rc = 1;
     }
     return rc;
@@ -49,8 +51,9 @@ static int remove_path(const char *path)
 {
     struct stat st;
     if (sys_stat(path, &st) < 0) {
-        if (!g_force)
+        if (!g_force) {
             printf("rm: cannot remove '%s': no such file\n", path);
+        }
         return g_force ? 0 : 1;
     }
 
@@ -63,8 +66,9 @@ static int remove_path(const char *path)
     }
 
     if (sys_unlink(path) < 0) {
-        if (!g_force)
+        if (!g_force) {
             printf("rm: cannot remove '%s'\n", path);
+        }
         return 1;
     }
     return 0;
@@ -89,8 +93,9 @@ int main(int argc, char **argv)
     }
 
     if (start >= argc) {
-        if (g_force)
+        if (g_force) {
             return 0;
+        }
         printf("usage: rm [-rf] FILE...\n");
         return 1;
     }

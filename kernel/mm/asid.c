@@ -29,7 +29,7 @@ static inline int asid_core_id(void)
 
 void asid_init(void)
 {
-    /* Boot-time and single-threaded; no interrupt can contend for this yet. */
+    // Boot-time and single-threaded; no interrupt can contend for this yet.
     spin_lock(&asid_lock);
     for (int i = 0; i < BITMAP_SIZE; i++) {
         asid_pool.bitmap[i] = 0;

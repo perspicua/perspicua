@@ -62,24 +62,26 @@ Structure Order:
 6. Public API Implementations.
 
 --------------------------------------------------------------------------------
-5. COMMENTING GUIDELINES (Finding the Balance)
+5. COMMENTING GUIDELINES (Contracts Over Narration)
 --------------------------------------------------------------------------------
-- Avoid Clutter: Do not over-comment. A file should not feel "noisy" with text. 
-  Remove comments that explain trivial operations and shorten verbose ones 
-  to their essence.
-- Self-Documenting Code: Prefer clear variable and function names over comments. 
-  If you need a comment to explain what a variable is, consider renaming it.
-- The "Why", not the "What": Do not explain what the code is doing (the code 
-  itself should be readable enough for that). Explain WHY it is doing it, 
-  especially for hardware quirks or non-obvious algorithms.
-- Redundancy: Avoid "stating the obvious" comments. 
-  - Bad:  `count++; // Increment the count`
-  - Good: `count++; // Account for the terminating null byte`
-- Minimum Requirements: 
-  - Every public function MUST have a BRIEF block comment explaining its intent.
-  - Every struct MUST have a BRIEF comment explaining its role in the system.
-- Internal Logic: Use `//` inside functions sparingly, only for "tricky" bits 
-  like bit manipulation, memory barriers, or complex pointer arithmetic.
+- The Core Rule: A comment is required ONLY for a contract the signature does not
+  express (ownership, locking assumptions, failure modes, or hardware quirks)
+  and NEVER for what the code already says.
+- Avoid Clutter: Do not over-comment. Code must be self-explanatory where possible.
+  Do not narrate the next line ("Wake up parked cores", "Clear the buffer").
+- No Redundant Descriptions: Never add per-function comments that merely restate
+  the name (`spin_lock` "acquires a spinlock", `vfs_read` "dispatches a read").
+- Single Source of Truth: Keep a function's contract in the header OR the source,
+  not duplicated across both (e.g. vfs.h vs vfs.c).
+- Struct Fields: Delete trailing per-field comments on structs unless documenting
+  a non-obvious unit or invariant.
+- File Headers: Delete multi-line "This module handles..." preamble boilerplate;
+  cut file headers to at most a single concise line stating purpose.
+- Invariants Over History: Turn historical comments ("the old expression added...",
+  "the hand-written version used stxr...") into a one-line statement of the
+  invariant they protect.
+- Line Comments: Standardize on `//` for all single-line comments. Use `/* ... */`
+  only for multi-line block comments.
 
 --------------------------------------------------------------------------------
 6. INCLUDE ORDER CHEAT SHEET

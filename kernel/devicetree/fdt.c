@@ -1,9 +1,5 @@
 /*
- * fdt.c - Implementation of the Flattened Device Tree (FDT) parser.
- *
- * This module provides logic for traversing and querying the DTB provided
- * by the bootloader. It handles token parsing, property retrieval, and
- * memory reservation mapping.
+ * fdt.c - Device Tree Blob (DTB) parser and property extractor.
  */
 
 #include "devicetree/fdt.h"
@@ -18,9 +14,6 @@ static const uint32_t *fdt_struct_block;
 static const char *fdt_strings_block;
 static uintptr_t fdt_base_address;
 
-/*
- * fdt_next_tag - Extracts the next token and advances the cursor.
- */
 static inline uint32_t fdt_next_tag(const uint32_t **p)
 {
     uint32_t tag = fdt32_to_cpu(**p);
@@ -45,26 +38,17 @@ static void fdt_update_pointers(uintptr_t base)
     fdt_strings_block = (const char *)(base + fdt32_to_cpu(fdt->off_dt_strings));
 }
 
-/*
- * fdt_init - Configures the parser with the initial physical DTB address.
- */
 void fdt_init(uintptr_t global_dtb_ptr)
 {
     pr_info("dtb: initializing flattened device tree parser...\n");
     fdt_update_pointers(global_dtb_ptr);
 }
 
-/*
- * fdt_rebase - Migrates parser pointers to a new virtual address mapping.
- */
 void fdt_rebase(uintptr_t new_base)
 {
     fdt_update_pointers(new_base);
 }
 
-/*
- * fdt_parse_memory_reservations - Informs the memory manager of reserved regions.
- */
 void fdt_parse_memory_reservations(void)
 {
     struct fdt_header *fdt = (struct fdt_header *)fdt_base_address;
@@ -72,7 +56,7 @@ void fdt_parse_memory_reservations(void)
 
     extern void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 
-    /* Protect the DTB itself from being reclaimed */
+    // Protect the DTB itself from being reclaimed
     pmm_reserve_range((unsigned long)fdt_base_address, totalsize, "dtb");
 
     uint32_t rsv_offset = fdt32_to_cpu(fdt->off_mem_rsvmap);
@@ -84,7 +68,7 @@ void fdt_parse_memory_reservations(void)
         (const struct fdt_reserve_entry *)(fdt_base_address + rsv_offset);
     int count = 0;
 
-    /* Parse until the null termination entry */
+    // Parse until the null termination entry
     while (rsvmap->address != 0 || rsvmap->size != 0) {
         uint64_t addr = fdt64_to_cpu(rsvmap->address);
         uint64_t size = fdt64_to_cpu(rsvmap->size);
@@ -101,9 +85,6 @@ void fdt_parse_memory_reservations(void)
     }
 }
 
-/*
- * fdt_get_property - Searches a specific node for a property by name.
- */
 int fdt_get_property(const uint32_t *node, const char *prop_name, struct fdt_property *out_prop)
 {
     if (fdt32_to_cpu(*node) != FDT_BEGIN_NODE) {
@@ -147,9 +128,6 @@ int fdt_get_property(const uint32_t *node, const char *prop_name, struct fdt_pro
     return -1;
 }
 
-/*
- * fdt_find_node_by_compatible - Locates the first node matching a compatible string.
- */
 const uint32_t *fdt_find_node_by_compatible(const char *compatible)
 {
     const uint32_t *p = fdt_struct_block;
@@ -170,7 +148,7 @@ const uint32_t *fdt_find_node_by_compatible(const char *compatible)
 
             if (strcmp(cur_name, "compatible") == 0) {
                 const char *s = value;
-                /* Match any string in the compatibility list */
+                // Match any string in the compatibility list
                 for (size_t read = 0; read < len; read += strlen(s) + 1, s += strlen(s) + 1) {
                     if (strcmp(s, compatible) == 0) {
                         return current_node;
@@ -182,9 +160,6 @@ const uint32_t *fdt_find_node_by_compatible(const char *compatible)
     return NULL;
 }
 
-/*
- * fdt_find_node_by_path - Resolves a node pointer from an absolute path.
- */
 const uint32_t *fdt_find_node_by_path(const char *path)
 {
     if (!path || path[0] != '/') {
@@ -259,7 +234,7 @@ const uint32_t *fdt_find_node_by_path(const char *path)
                 }
             }
 
-            /* Skip subtree if component didn't match */
+            // Skip subtree if component didn't match
             int skip_depth = 1;
             while (skip_depth > 0 && (tag = fdt_next_tag(&p)) != FDT_END) {
                 if (tag == FDT_BEGIN_NODE) {
@@ -286,9 +261,6 @@ const uint32_t *fdt_find_node_by_path(const char *path)
     return NULL;
 }
 
-/*
- * fdt_get_parent_node - Locates the parent node of a given node.
- */
 const uint32_t *fdt_get_parent_node(const uint32_t *target_node)
 {
     if (!target_node || target_node == fdt_struct_block) {

@@ -50,7 +50,7 @@ This describes what exists today. For planned work see
 
 **Drivers**
 - UART, GIC, GPIO, mailbox, SD card and block layer
-- Framebuffer: `fb` → `graphics` → `fb_console` (8x8 font) → `dashboard`
+- Framebuffer: `fb` -> `graphics` -> `fb_console` (8x8 font) -> `dashboard`
 - Devicetree-driven device and probe model
 
 **User/kernel interface**

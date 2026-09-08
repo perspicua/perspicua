@@ -1,9 +1,5 @@
 /*
  * test_vfs.c - Boot-phase tests for the virtual filesystem layer.
- *
- * Runs against the mounted FAT32 root, so it doubles as coverage of the
- * FAT32 vnode ops reached through the VFS. Every file this suite creates is
- * removed again before it returns.
  */
 
 #include "test.h"
@@ -12,7 +8,7 @@
 
 #include "fs/vfs.h"
 
-/* Scratch paths live at the root of the mounted image. */
+// Scratch paths live at the root of the mounted image.
 #define SCRATCH_FILE "/tvfs.tmp"
 #define SCRATCH_DIR  "/tvfsdir"
 #define RENAMED_FILE "/tvfs2.tmp"
@@ -157,8 +153,8 @@ void test_vfs(void)
     }
     TEST_PASS("mkdir/rmdir");
 
-    // "." used to be written before max_entries was consulted, so a 1-byte
-    // buffer took a whole 260-byte dirent
+    // readdir must consult max_entries before writing an entry, so a buffer
+    // too small for one dirent receives nothing rather than a 260-byte write
     {
         const size_t dirent_size = sizeof(struct vfs_dirent);
 
@@ -198,9 +194,8 @@ void test_vfs(void)
 
     /*
      * The I/O paths hold a reference for the duration of the call, so a close
-     * arriving mid-read leaves them holding the last one. Dropping it must run
-     * the driver close and free the object: the old code discarded the result
-     * of the decrement, so nothing was ever released.
+     * arriving mid-read leaves them holding the last one. Dropping that last
+     * reference must run the driver close and free the object.
      */
     {
         unsigned long before = vfs_test_live_files();

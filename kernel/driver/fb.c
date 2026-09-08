@@ -1,8 +1,5 @@
 /*
- * fb.c - Implementation of the framebuffer driver.
- *
- * This module handles mailbox communication with the VideoCore GPU to
- * initialize and manage the display buffer.
+ * fb.c - Driver for the Raspberry Pi VideoCore framebuffer.
  */
 
 #include "driver/fb.h"
@@ -19,17 +16,14 @@
 #include "mm/mmu.h"
 #include "sched/process.h"
 
-/* Mailbox message buffer for GPU requests (must be 16-byte aligned) */
+// Mailbox message buffer for GPU requests (must be 16-byte aligned)
 static __attribute__((aligned(16))) unsigned int mbox[36];
 
-/* VFS operations for the /dev/fb0 device */
+// VFS operations for the /dev/fb0 device
 static struct vfs_vnode_ops fb_vfs_ops;
 
 struct fb_info_struct fb_info;
 
-/*
- * fb_mmap - Maps the physical framebuffer into a user process address space.
- */
 static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags)
 {
     (void)file;
@@ -53,33 +47,30 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
     return 0;
 }
 
-/*
- * fb_init - Requests a 32-bit RGBA display buffer from the GPU.
- */
 void fb_init(void)
 {
     mbox[0] = 26 * 4;
     mbox[1] = 0;
-    mbox[2] = 0x48003; /* Physical Width/Height */
+    mbox[2] = 0x48003; // Physical Width/Height
     mbox[3] = 8;
     mbox[4] = 8;
     mbox[5] = 1024;
     mbox[6] = 768;
-    mbox[7] = 0x48004; /* Virtual Width/Height */
+    mbox[7] = 0x48004; // Virtual Width/Height
     mbox[8] = 8;
     mbox[9] = 8;
     mbox[10] = 1024;
     mbox[11] = 768;
-    mbox[12] = 0x48005; /* Depth (32-bit) */
+    mbox[12] = 0x48005; // Depth (32-bit)
     mbox[13] = 4;
     mbox[14] = 4;
     mbox[15] = 32;
-    mbox[16] = 0x40001; /* Allocate Buffer */
+    mbox[16] = 0x40001; // Allocate Buffer
     mbox[17] = 8;
     mbox[18] = 8;
-    mbox[19] = 4096;    /* Request: alignment / Response: address */
-    mbox[20] = 0;       /* Response: size */
-    mbox[21] = 0x40008; /* Get Pitch */
+    mbox[19] = 4096;    // Request: alignment / Response: address
+    mbox[20] = 0;       // Response: size
+    mbox[21] = 0x40008; // Get Pitch
     mbox[22] = 4;
     mbox[23] = 4;
     mbox[24] = 0;
@@ -87,7 +78,7 @@ void fb_init(void)
 
     mbox_call(mbox);
 
-    /* Response code 0x80000000 indicates success */
+    // Response code 0x80000000 indicates success
     if (mbox[20] != 0 && mbox[1] == 0x80000000) {
         uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
         if (phys_addr == 0) {
@@ -101,7 +92,7 @@ void fb_init(void)
         fb_info.pitch = mbox[24];
         fb_info.ptr = (unsigned char *)P2V(phys_addr);
 
-        /* Ensure memory manager knows this region is hardware-owned */
+        // Ensure memory manager knows this region is hardware-owned
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
         pr_info("fb: %dx%d @ %p (%lu MB, pitch %d)\n", fb_info.width, fb_info.height, fb_info.ptr,
@@ -111,18 +102,12 @@ void fb_init(void)
     }
 }
 
-/*
- * fb_register_device - Links the framebuffer to the device filesystem.
- */
 void fb_register_device(void)
 {
     fb_vfs_ops.mmap = fb_mmap;
     devfs_register_device("fb0", &fb_vfs_ops, NULL);
 }
 
-/*
- * remap_framebuffer_pages - Updates MMU mappings with device memory attributes.
- */
 void remap_framebuffer_pages(void)
 {
     if (!fb_info.ptr || fb_info.size == 0) {

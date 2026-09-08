@@ -9,8 +9,8 @@
  */
 struct device {
     const char *name;
-    const uint32_t *fdt_node; /* Pointer to the device's FDT node */
-    void *priv;               /* Driver-private data */
+    const uint32_t *fdt_node;
+    void *priv;
 };
 
 /*
@@ -18,7 +18,7 @@ struct device {
  */
 struct device_driver {
     const char *name;
-    const char *compatible; /* Devicetree compatible string to match */
+    const char *compatible;
     int (*probe)(struct device *dev);
 };
 
@@ -51,4 +51,4 @@ void driver_probe_devices(void);
 uintptr_t devm_get_io_base(struct device *dev, int index);
 unsigned int devm_get_irq(struct device *dev, int index);
 
-#endif /* PERSPICUA_DRIVER_DEVICE_H */
+#endif // PERSPICUA_DRIVER_DEVICE_H

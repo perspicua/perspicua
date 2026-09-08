@@ -1,8 +1,5 @@
 /*
  * printf.c - Implementation of the formatted output engine.
- *
- * Provides printf(), snprintf(), vprintf(), and vsnprintf() with a common
- * formatting core. All output is buffered locally to minimize UART overhead.
  */
 
 #include "stdio.h"
@@ -21,19 +18,19 @@ extern void __libc_write(const char *buf, size_t len);
 
 #define PRINTF_BUF_SIZE 256
 
-/* --- Internal Data Structures --- */
+// --- Internal Data Structures ---
 
-/* Output sink abstraction used by fmt_core. */
+// Output sink abstraction used by fmt_core.
 struct fmt_buf {
-    char *buf;   /* Destination buffer (NULL = use internal flush path) */
-    size_t size; /* Capacity including the NUL terminator */
-    size_t pos;  /* Bytes written so far (excluding NUL) */
-    int crlf;    /* 1 = translate \n to \r\n, 0 = pass through */
+    char *buf;   // Destination buffer (NULL = use internal flush path)
+    size_t size; // Capacity including the NUL terminator
+    size_t pos;  // Bytes written so far (excluding NUL)
+    int crlf;    // 1 = translate \n to \r\n, 0 = pass through
 };
 
-/* --- Private Helper Functions --- */
+// --- Private Helper Functions ---
 
-/* Appends one character to a fmt_buf. */
+// Appends one character to a fmt_buf.
 static inline void fb_putc(struct fmt_buf *fb, char c)
 {
     if (fb->buf) {
@@ -46,7 +43,7 @@ static inline void fb_putc(struct fmt_buf *fb, char c)
     }
 }
 
-/* Renders an unsigned 64-bit integer into a temporary buffer. */
+// Renders an unsigned 64-bit integer into a temporary buffer.
 static int fmt_uint(uint64_t val, int base, int uppercase, char *out)
 {
     if (val == 0) {
@@ -73,7 +70,7 @@ static int fmt_uint(uint64_t val, int base, int uppercase, char *out)
     return i;
 }
 
-/* Shared implementation called by all printf variants. */
+// Shared implementation called by all printf variants.
 static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
 {
     for (const char *p = fmt; *p != '\0'; p++) {
@@ -352,7 +349,7 @@ emit_number: {
     return (int)fb->pos;
 }
 
-/* --- Public API Implementations --- */
+// --- Public API Implementations ---
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {

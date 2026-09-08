@@ -3,8 +3,8 @@
 #include "string.h"
 #include "types.h"
 
-#define TEST_HEADER_SIZE 32   /* sizeof(block_header) */
-#define LARGE            2048 /* > SLAB_MAX (1024), forces first-fit path */
+#define TEST_HEADER_SIZE 32   // sizeof(block_header)
+#define LARGE            2048 // > SLAB_MAX (1024), forces first-fit path
 
 void test_heap(void)
 {
@@ -57,12 +57,14 @@ void test_heap(void)
         for (int i = 0; i < nsizes; i++) {
             ptrs[i] = heap_malloc(sizes[i]);
             TEST_ASSERT("align alloc non-null", ptrs[i] != NULL);
-            if (((unsigned long)ptrs[i] & 0xF) != 0)
+            if (((unsigned long)ptrs[i] & 0xF) != 0) {
                 all_aligned = 0;
+            }
         }
         TEST_ASSERT("all pointers 16-byte aligned", all_aligned);
-        for (int i = nsizes - 1; i >= 0; i--)
+        for (int i = nsizes - 1; i >= 0; i--) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("alignment 30 sizes");
 
@@ -101,13 +103,17 @@ void test_heap(void)
             TEST_ASSERT("64x alloc", ptrs[i] != NULL);
         }
         int distinct = 1;
-        for (int i = 0; i < 64 && distinct; i++)
-            for (int j = i + 1; j < 64 && distinct; j++)
-                if (ptrs[i] == ptrs[j])
+        for (int i = 0; i < 64 && distinct; i++) {
+            for (int j = i + 1; j < 64 && distinct; j++) {
+                if (ptrs[i] == ptrs[j]) {
                     distinct = 0;
+                }
+            }
+        }
         TEST_ASSERT("all 64 distinct", distinct);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < 64; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("64 allocs distinct");
 
@@ -119,10 +125,12 @@ void test_heap(void)
         memset(b, 0xBB, 64);
         int a_ok = 1, b_ok = 1;
         for (int i = 0; i < 64; i++) {
-            if (a[i] != 0xAA)
+            if (a[i] != 0xAA) {
                 a_ok = 0;
-            if (b[i] != 0xBB)
+            }
+            if (b[i] != 0xBB) {
                 b_ok = 0;
+            }
         }
         TEST_ASSERT("block a intact", a_ok);
         TEST_ASSERT("block b intact", b_ok);
@@ -236,10 +244,12 @@ void test_heap(void)
         memset(b, 0x22, LARGE);
         int a_ok = 1, b_ok = 1;
         for (int i = 0; i < LARGE; i++) {
-            if (a[i] != 0x11)
+            if (a[i] != 0x11) {
                 a_ok = 0;
-            if (b[i] != 0x22)
+            }
+            if (b[i] != 0x22) {
                 b_ok = 0;
+            }
         }
         TEST_ASSERT("split-a data intact", a_ok);
         TEST_ASSERT("split-b data intact", b_ok);
@@ -259,12 +269,14 @@ void test_heap(void)
         int count = 0;
         for (int i = 0; i < 3; i++) {
             ptrs[i] = heap_malloc(LARGE);
-            if (ptrs[i] != NULL)
+            if (ptrs[i] != NULL) {
                 count++;
+            }
         }
         TEST_ASSERT("repeated split fills block", count == 3);
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 3; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("repeated splitting");
 
@@ -411,11 +423,12 @@ void test_heap(void)
         memset(page, 0xFF, 4096);
         unsigned char *cp = (unsigned char *)page;
         int ok = 1;
-        for (int i = 0; i < 4096; i++)
+        for (int i = 0; i < 4096; i++) {
             if (cp[i] != 0xFF) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("page-size canary", ok);
         heap_free(page);
     }
@@ -427,14 +440,16 @@ void test_heap(void)
     {
         unsigned char *mem = (unsigned char *)heap_malloc(256);
         TEST_ASSERT("pattern alloc", mem != NULL);
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             mem[i] = (unsigned char)i;
+        }
         int ok = 1;
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             if (mem[i] != (unsigned char)i) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("sequential pattern", ok);
         heap_free(mem);
     }
@@ -450,14 +465,16 @@ void test_heap(void)
             unsigned char *p = (unsigned char *)heap_malloc(sizes[s]);
             TEST_ASSERT("boundary alloc", p != NULL);
             // Fill entire requested region
-            for (unsigned long i = 0; i < sizes[s]; i++)
+            for (unsigned long i = 0; i < sizes[s]; i++) {
                 p[i] = (unsigned char)(i ^ 0xAA);
+            }
             int ok = 1;
-            for (unsigned long i = 0; i < sizes[s]; i++)
+            for (unsigned long i = 0; i < sizes[s]; i++) {
                 if (p[i] != (unsigned char)(i ^ 0xAA)) {
                     ok = 0;
                     break;
                 }
+            }
             TEST_ASSERT("boundary verify", ok);
             heap_free(p);
         }
@@ -475,12 +492,15 @@ void test_heap(void)
         // Verify none corrupted each other
         int ok = 1;
         for (int i = 0; i < 128; i++) {
-            if (a[i] != 0x11)
+            if (a[i] != 0x11) {
                 ok = 0;
-            if (b[i] != 0x22)
+            }
+            if (b[i] != 0x22) {
                 ok = 0;
-            if (c[i] != 0x33)
+            }
+            if (c[i] != 0x33) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("triple isolation", ok);
         heap_free(a);
@@ -494,14 +514,16 @@ void test_heap(void)
         int nwords = 128;
         unsigned long *arr = (unsigned long *)heap_malloc(nwords * sizeof(unsigned long));
         TEST_ASSERT("word alloc", arr != NULL);
-        for (int i = 0; i < nwords; i++)
+        for (int i = 0; i < nwords; i++) {
             arr[i] = 0xDEADBEEF00000000UL | (unsigned long)i;
+        }
         int ok = 1;
-        for (int i = 0; i < nwords; i++)
+        for (int i = 0; i < nwords; i++) {
             if (arr[i] != (0xDEADBEEF00000000UL | (unsigned long)i)) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("word pattern intact", ok);
         heap_free(arr);
     }
@@ -547,55 +569,64 @@ void test_heap(void)
     // alternating holes
     {
         void *ptrs[16];
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 16; i++) {
             ptrs[i] = heap_malloc(64);
+        }
         // Free even-indexed blocks -> creates 8 "holes"
-        for (int i = 0; i < 16; i += 2)
+        for (int i = 0; i < 16; i += 2) {
             heap_free(ptrs[i]);
+        }
         // Reallocate into holes
         for (int i = 0; i < 16; i += 2) {
             ptrs[i] = heap_malloc(64);
             TEST_ASSERT("frag realloc", ptrs[i] != NULL);
         }
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 16; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("alternating holes");
 
     // every-third pattern
     {
         void *ptrs[12];
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < 12; i++) {
             ptrs[i] = heap_malloc(32);
+        }
         // Free every 3rd
-        for (int i = 0; i < 12; i += 3)
+        for (int i = 0; i < 12; i += 3) {
             heap_free(ptrs[i]);
+        }
         // Allocate into freed slots
         for (int i = 0; i < 12; i += 3) {
             ptrs[i] = heap_malloc(32);
             TEST_ASSERT("every-3rd realloc", ptrs[i] != NULL);
         }
-        for (int i = 0; i < 12; i++)
+        for (int i = 0; i < 12; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("every-third pattern");
 
     // swiss cheese: random-like free pattern
     {
         void *ptrs[20];
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 20; i++) {
             ptrs[i] = heap_malloc(48);
+        }
         // Free a scattered pattern: 1,4,6,9,11,14,16,19
         int free_idx[] = {1, 4, 6, 9, 11, 14, 16, 19};
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             heap_free(ptrs[free_idx[i]]);
+        }
         // Re-alloc same size into freed holes
         for (int i = 0; i < 8; i++) {
             ptrs[free_idx[i]] = heap_malloc(48);
             TEST_ASSERT("swiss cheese realloc", ptrs[free_idx[i]] != NULL);
         }
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 20; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("swiss cheese pattern");
 
@@ -629,8 +660,9 @@ void test_heap(void)
             ptrs[i] = heap_malloc(sz);
             TEST_ASSERT("growing alloc", ptrs[i] != NULL);
         }
-        for (int i = 8; i >= 0; i--)
+        for (int i = 8; i >= 0; i--) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("growing allocs");
 
@@ -642,8 +674,9 @@ void test_heap(void)
             ptrs[i] = heap_malloc(sz);
             TEST_ASSERT("shrinking alloc", ptrs[i] != NULL);
         }
-        for (int i = 0; i < 9; i++)
+        for (int i = 0; i < 9; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("shrinking allocs");
 
@@ -658,11 +691,12 @@ void test_heap(void)
             memset(ptr, 0xCC, po2_sizes[i]);
             int ok = 1;
             unsigned char *cp = (unsigned char *)ptr;
-            for (unsigned long j = 0; j < po2_sizes[i]; j++)
+            for (unsigned long j = 0; j < po2_sizes[i]; j++) {
                 if (cp[j] != 0xCC) {
                     ok = 0;
                     break;
                 }
+            }
             TEST_ASSERT("po2 canary", ok);
             heap_free(ptr);
         }
@@ -690,8 +724,9 @@ void test_heap(void)
             ptrs[i] = heap_malloc(64);
             TEST_ASSERT("fill alloc", ptrs[i] != NULL);
         }
-        for (int i = 127; i >= 0; i--)
+        for (int i = 127; i >= 0; i--) {
             heap_free(ptrs[i]);
+        }
 
         // After draining, allocator should still work normally
         void *p = heap_malloc(64);
@@ -708,8 +743,9 @@ void test_heap(void)
                 ptrs[i] = heap_malloc(48);
                 TEST_ASSERT("sawtooth alloc", ptrs[i] != NULL);
             }
-            for (int i = 0; i < 32; i++)
+            for (int i = 0; i < 32; i++) {
                 heap_free(ptrs[i]);
+            }
         }
     }
     TEST_PASS("sawtooth 5 rounds");
@@ -731,8 +767,9 @@ void test_heap(void)
             }
         }
         // Free remaining
-        for (int i = count - 1; i >= 0; i--)
+        for (int i = count - 1; i >= 0; i--) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("wave alloc/free");
 
@@ -749,11 +786,12 @@ void test_heap(void)
         // Verify b is still usable
         memset(b, 0xEE, 48);
         int ok = 1;
-        for (int i = 0; i < 48; i++)
+        for (int i = 0; i < 48; i++) {
             if (b[i] != 0xEE) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("header survived boundary write", ok);
         heap_free(a);
         heap_free(b);
@@ -775,11 +813,12 @@ void test_heap(void)
         memset(a2, 0xAA, 64);
         // b should be unchanged
         int ok = 1;
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < 64; i++) {
             if (b[i] != 0xBB) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("neighbor preserved after realloc", ok);
         heap_free(a2);
         heap_free(b);
@@ -813,15 +852,21 @@ void test_heap(void)
         memset(p16, 0x10, 16);
         memset(p17, 0x11, 17);
         int ok = 1;
-        for (int i = 0; i < 15; i++)
-            if (p15[i] != 0x0F)
+        for (int i = 0; i < 15; i++) {
+            if (p15[i] != 0x0F) {
                 ok = 0;
-        for (int i = 0; i < 16; i++)
-            if (p16[i] != 0x10)
+            }
+        }
+        for (int i = 0; i < 16; i++) {
+            if (p16[i] != 0x10) {
                 ok = 0;
-        for (int i = 0; i < 17; i++)
-            if (p17[i] != 0x11)
+            }
+        }
+        for (int i = 0; i < 17; i++) {
+            if (p17[i] != 0x11) {
                 ok = 0;
+            }
+        }
         TEST_ASSERT("boundary sizes intact", ok);
         heap_free(p15);
         heap_free(p16);
@@ -882,10 +927,10 @@ void test_heap(void)
     TEST_PASS("allocation is never shorter than requested");
 
     /*
-     * heap_free used to read block->size straight out of whatever preceded the
-     * pointer and locate the footer from there, so a pointer this allocator
-     * never returned sent that read anywhere. Blocks now carry a tag that says
-     * whether they are ours and whether they are live.
+     * heap_free must reject a pointer this allocator never returned. Blocks
+     * carry a tag recording whether they are ours and whether they are live,
+     * so the size is never read out of whatever happened to precede the
+     * pointer.
      */
     {
         void *p = heap_malloc(LARGE);
@@ -909,22 +954,25 @@ void test_heap(void)
     // alloc -> write -> free -> re-alloc -> verify clean
     {
         unsigned char *p = (unsigned char *)heap_malloc(256);
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             p[i] = (unsigned char)(i ^ 0x55);
+        }
         heap_free(p);
         unsigned char *q = (unsigned char *)heap_malloc(256);
         // q should be at same address
         TEST_ASSERT("lifecycle: reuse addr", q == p);
         // After free, data may or may not be zeroed, but alloc should work
         // Write new pattern
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             q[i] = (unsigned char)(i ^ 0xAA);
+        }
         int ok = 1;
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             if (q[i] != (unsigned char)(i ^ 0xAA)) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("lifecycle: new pattern ok", ok);
         heap_free(q);
     }

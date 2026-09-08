@@ -1,13 +1,5 @@
 /*
  * assert.h - Diagnostic assertion support.
- *
- * In kernel mode, assert() delegates to the existing ASSERT() macro from
- * panic.h, which triggers a full kernel panic with register dump.
- *
- * In user mode, a failed assertion prints a diagnostic message to stderr
- * and exits with status 1 via __assert_fail().
- *
- * Define NDEBUG before including this header to compile out all assertions.
  */
 
 #ifndef PERSPICUA_LIBC_ASSERT_H
@@ -23,7 +15,7 @@
         #define assert(cond) ASSERT(cond)
     #endif
 
-#else /* user space */
+#else // user space
 
     #ifdef NDEBUG
         #define assert(cond) ((void)0)
@@ -38,6 +30,6 @@ __attribute__((noreturn)) void __assert_fail(const char *expr, const char *file,
             } while (0)
     #endif
 
-#endif /* __KERNEL__ */
+#endif // __KERNEL__
 
-#endif /* PERSPICUA_LIBC_ASSERT_H */
+#endif // PERSPICUA_LIBC_ASSERT_H

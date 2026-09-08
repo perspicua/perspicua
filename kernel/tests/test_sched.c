@@ -52,7 +52,6 @@ static void task_inc_a_10x(void)
     }
 }
 
-// increment counter_a with small delay between increments
 static void task_inc_a_with_delay(void)
 {
     for (int i = 0; i < 5; i++) {
@@ -63,7 +62,6 @@ static void task_inc_a_with_delay(void)
     }
 }
 
-// task that sleeps then increments
 static void task_sleep_then_inc(void)
 {
     sched_sleep_ms(20);
@@ -72,7 +70,6 @@ static void task_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
-// task that does a longer sleep
 static void task_long_sleep_then_inc(void)
 {
     sched_sleep_ms(40);
@@ -106,28 +103,30 @@ static volatile int order_idx = 0;
 static void task_order_1(void)
 {
     unsigned long flags = spin_lock_irqsave(&test_lock);
-    if (order_idx < 16)
+    if (order_idx < 16) {
         order_log[order_idx++] = 1;
+    }
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
 static void task_order_2(void)
 {
     unsigned long flags = spin_lock_irqsave(&test_lock);
-    if (order_idx < 16)
+    if (order_idx < 16) {
         order_log[order_idx++] = 2;
+    }
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
 static void task_order_3(void)
 {
     unsigned long flags = spin_lock_irqsave(&test_lock);
-    if (order_idx < 16)
+    if (order_idx < 16) {
         order_log[order_idx++] = 3;
+    }
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
-// task that spawns another task
 static void task_spawner(void)
 {
     sched_create_task(task_inc_a);
@@ -140,8 +139,9 @@ static volatile unsigned long compute_result = 0;
 static void task_compute(void)
 {
     unsigned long sum = 0;
-    for (int i = 0; i < 10000; i++)
+    for (int i = 0; i < 10000; i++) {
         sum += (unsigned long)i;
+    }
     compute_result = sum;
 }
 
@@ -152,16 +152,18 @@ static void task_stack_depth(void)
 {
     // Use some stack with local arrays
     volatile unsigned char buf[512];
-    for (int i = 0; i < 512; i++)
+    for (int i = 0; i < 512; i++) {
         buf[i] = (unsigned char)(i & 0xFF);
+    }
     int ok = 1;
-    for (int i = 0; i < 512; i++)
-        if (buf[i] != (unsigned char)(i & 0xFF))
+    for (int i = 0; i < 512; i++) {
+        if (buf[i] != (unsigned char)(i & 0xFF)) {
             ok = 0;
+        }
+    }
     stack_test_ok = ok;
 }
 
-// task that sleeps multiple times
 static void task_multi_sleep(void)
 {
     sched_sleep_ms(10);
@@ -217,10 +219,10 @@ static void task_race_waiter(void)
     struct task *self = sched_get_current();
     unsigned long flags = irq_save();
 
-    /* 1. Pre-mark as BLOCKED (simulating pipe_wait) */
+    // 1. Pre-mark as BLOCKED (simulating pipe_wait)
     self->state = SCHED_TASK_BLOCKED;
 
-    /* 2. Add to a "queue" so the unblocker can find us */
+    // 2. Add to a "queue" so the unblocker can find us
     unsigned long lock_flags = spin_lock_irqsave(&test_lock);
     race_wait_queue = self;
     spin_unlock_irqrestore(&test_lock, lock_flags);
@@ -229,7 +231,7 @@ static void task_race_waiter(void)
      * unblocks us BEFORE we reach here, we enter schedule() with state=READY. */
     schedule();
 
-    /* 4. If we survived, mark success */
+    // 4. If we survived, mark success
     race_task_ran = 1;
     irq_restore(flags);
 }
@@ -241,8 +243,9 @@ static void task_race_unblocker(void)
         unsigned long flags = spin_lock_irqsave(&test_lock);
         struct task *t = race_wait_queue;
         spin_unlock_irqrestore(&test_lock, flags);
-        if (t)
+        if (t) {
             break;
+        }
         sched_sleep_ms(1);
     }
 
@@ -327,8 +330,9 @@ void test_scheduler(void)
     // fifo ordering: tasks enqueued in order run in order
     {
         order_idx = 0;
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 16; i++) {
             order_log[i] = 0;
+        }
         sched_create_task(task_order_1);
         sched_create_task(task_order_2);
         sched_create_task(task_order_3);
@@ -502,8 +506,9 @@ void test_scheduler(void)
     //    This stresses dead-task cleanup (task_to_free path).
     {
         counter_a = 0;
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             sched_create_task(task_inc_a);
+        }
         sched_sleep_ms(100);
         TEST_ASSERT("8 rapid tasks", counter_a == 8);
     }
@@ -513,8 +518,9 @@ void test_scheduler(void)
     {
         counter_a = 0;
         for (int round = 0; round < 3; round++) {
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 3; i++) {
                 sched_create_task(task_inc_a);
+            }
             sched_sleep_ms(50);
         }
         TEST_ASSERT("3 rounds of 3", counter_a == 9);

@@ -112,8 +112,9 @@ void test_mmu_user(void)
         int ok = 1;
         for (int i = 0; i < MP_COUNT; i++) {
             unsigned long pa;
-            if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i]))
+            if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i])) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("multi-page: all mapped correctly", ok);
 
@@ -124,8 +125,9 @@ void test_mmu_user(void)
         // confirm all unmapped
         ok = 1;
         for (int i = 0; i < MP_COUNT; i++) {
-            if (mmu_user_query(pgd, vas[i], 0, 0))
+            if (mmu_user_query(pgd, vas[i], 0, 0)) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("multi-page: all unmapped", ok);
 
@@ -366,17 +368,20 @@ void test_mmu_user(void)
         int ok = 1;
         for (int i = 0; i < STRESS_COUNT; i++) {
             unsigned long pa;
-            if (!mmu_user_query(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, &pa, 0))
+            if (!mmu_user_query(pgds[i], USER_VA_BASE + (unsigned long)i * 0x1000, &pa, 0)) {
                 ok = 0;
-            else if (pa != V2P(phys[i]))
+            } else if (pa != V2P(phys[i])) {
                 ok = 0;
+            }
 
             // verify other PGDs don't have this mapping
             for (int j = 0; j < STRESS_COUNT; j++) {
-                if (j == i)
+                if (j == i) {
                     continue;
-                if (mmu_user_query(pgds[j], USER_VA_BASE + (unsigned long)i * 0x1000, 0, 0))
+                }
+                if (mmu_user_query(pgds[j], USER_VA_BASE + (unsigned long)i * 0x1000, 0, 0)) {
                     ok = 0;
+                }
             }
         }
         TEST_ASSERT("stress: all isolated", ok);
@@ -471,8 +476,9 @@ void test_mmu_user(void)
         int ok = 1;
         for (int i = 0; i < FILL_COUNT; i++) {
             unsigned long pa;
-            if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i]))
+            if (!mmu_user_query(pgd, vas[i], &pa, 0) || pa != V2P(pages[i])) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("fill16: all correct", ok);
 
@@ -483,8 +489,9 @@ void test_mmu_user(void)
 
         ok = 1;
         for (int i = 0; i < FILL_COUNT; i++) {
-            if (mmu_user_query(pgd, vas[i], 0, 0))
+            if (mmu_user_query(pgd, vas[i], 0, 0)) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("fill16: all unmapped", ok);
 
@@ -667,7 +674,7 @@ void test_mmu_user(void)
 
         if (pgd && shared) {
             memset(shared, 0x7C, PAGE_SIZE);
-            pmm_hold_page(shared); /* stand in for a second address space */
+            pmm_hold_page(shared); // stand in for a second address space
 
             mmu_user_map_page(pgd, va, V2P(shared), MMU_PAGE_USER_RODATA | MMU_PTE_COW);
             mmu_user_query(pgd, va, &before_pa, NULL);
@@ -694,7 +701,7 @@ void test_mmu_user(void)
         TEST_ASSERT_EQ("the other holder keeps its reference", shared_rc, 1);
 
         mmu_destroy_user_pgd(pgd);
-        pmm_free_page(shared); /* the stand-in holder */
+        pmm_free_page(shared); // the stand-in holder
     }
     TEST_PASS("copy-on-write copies a shared page");
 

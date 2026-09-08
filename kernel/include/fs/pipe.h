@@ -1,8 +1,5 @@
 /*
  * pipe.h - Public API for anonymous pipes.
- *
- * This header defines the kernel-internal interface for creating and
- * managing inter-process communication pipes.
  */
 
 #ifndef PERSPICUA_FS_PIPE_H
@@ -18,4 +15,4 @@
  */
 int pipe_create(int pipefd[2]);
 
-#endif /* PERSPICUA_FS_PIPE_H */
+#endif // PERSPICUA_FS_PIPE_H

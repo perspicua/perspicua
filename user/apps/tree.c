@@ -27,12 +27,14 @@ static int is_dir(const char *path)
  */
 static void walk(const char *path, const char *prefix, int depth)
 {
-    if (depth > MAX_DEPTH)
+    if (depth > MAX_DEPTH) {
         return;
+    }
 
     DIR *d = opendir(path);
-    if (!d)
+    if (!d) {
         return;
+    }
 
     char **names = malloc(sizeof(char *) * MAX_ENTRIES);
     if (!names) {
@@ -43,10 +45,12 @@ static void walk(const char *path, const char *prefix, int depth)
     int count = 0;
     struct vfs_dirent *e;
     while ((e = readdir(d)) != NULL && count < MAX_ENTRIES) {
-        if (strcmp(e->name, ".") == 0 || strcmp(e->name, "..") == 0)
+        if (strcmp(e->name, ".") == 0 || strcmp(e->name, "..") == 0) {
             continue;
-        if (e->name[0] == '.' && !show_all)
+        }
+        if (e->name[0] == '.' && !show_all) {
             continue;
+        }
         names[count++] = strdup(e->name);
     }
     closedir(d);
@@ -67,8 +71,9 @@ static void walk(const char *path, const char *prefix, int depth)
         }
     }
 
-    for (int i = 0; i < count; i++)
+    for (int i = 0; i < count; i++) {
         free(names[i]);
+    }
     free(names);
 }
 
@@ -76,13 +81,15 @@ int main(int argc, char **argv)
 {
     const char *root = NULL;
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-a") == 0)
+        if (strcmp(argv[i], "-a") == 0) {
             show_all = 1;
-        else
+        } else {
             root = argv[i];
+        }
     }
-    if (!root)
+    if (!root) {
         root = ".";
+    }
 
     struct stat st;
     if (sys_stat(root, &st) < 0) {
@@ -91,8 +98,9 @@ int main(int argc, char **argv)
     }
 
     printf("%s\n", root);
-    if (S_ISDIR(st.st_mode))
+    if (S_ISDIR(st.st_mode)) {
         walk(root, "", 0);
+    }
 
     printf("\n%lu %s, %lu %s\n", dir_count, dir_count == 1 ? "directory" : "directories",
            file_count, file_count == 1 ? "file" : "files");

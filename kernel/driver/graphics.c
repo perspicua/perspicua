@@ -1,8 +1,5 @@
 /*
- * graphics.c - Implementation of kernel graphics primitives.
- *
- * This module provides low-level drawing functions that interact
- * directly with the primary system framebuffer.
+ * graphics.c - Low-level 2D graphics primitives for the framebuffer.
  */
 
 #include "driver/graphics.h"
@@ -12,9 +9,6 @@
 #include "driver/fb.h"
 #include "driver/font8x8.h"
 
-/*
- * graphics_put_pixel - Updates a single memory location in the framebuffer.
- */
 void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
 {
     if (x >= fb_info.width || y >= fb_info.height) {
@@ -25,9 +19,6 @@ void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
     fb[y * (fb_info.pitch >> 2) + x] = color;
 }
 
-/*
- * graphics_draw_rect - Renders solid or hollow boxes with clipping.
- */
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h,
                         uint32_t color, int fill)
 {
@@ -35,7 +26,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    /* Clip dimensions to prevent screen overflow */
+    // Clip dimensions to prevent screen overflow
     if (w > fb_info.width - x) {
         w = fb_info.width - x;
     }
@@ -62,7 +53,7 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    /* Solid fill optimized with 64-bit writes where aligned */
+    // Solid fill optimized with 64-bit writes where aligned
     uint32_t *line = &fb[y * stride + x];
     uint64_t c64 = ((uint64_t)color << 32) | color;
 
@@ -90,9 +81,6 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
     }
 }
 
-/*
- * graphics_draw_char - Renders a fixed-size character from font8x8.
- */
 void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uint32_t bg)
 {
     if ((unsigned char)c >= 128) {
@@ -121,7 +109,7 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
             dest[6] = (row_data & 0x40) ? fg : bg;
             dest[7] = (row_data & 0x80) ? fg : bg;
         } else {
-            /* Optimized transparency path */
+            // Optimized transparency path
             for (int col = 0; col < 8; col++) {
                 if ((row_data >> col) & 1) {
                     dest[col] = fg;
@@ -132,9 +120,6 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
     }
 }
 
-/*
- * graphics_draw_string - Maps a character array to the framebuffer.
- */
 void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_t fg, uint32_t bg)
 {
     while (*s) {
@@ -144,9 +129,6 @@ void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_
     }
 }
 
-/*
- * graphics_clear - Wipes the display area with a solid color.
- */
 void graphics_clear(uint32_t color)
 {
     uint64_t *fb64 = (uint64_t *)fb_info.ptr;

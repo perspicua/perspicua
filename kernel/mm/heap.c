@@ -1,8 +1,5 @@
 /*
- * heap.c - Implementation of the kernel heap allocator.
- *
- * This module manages dynamic memory using a hybrid fast-slab and first-fit
- * buddy fallback. It uses contiguous PMM pages to grow the first-fit pool.
+ * heap.c - Hybrid kernel dynamic memory allocator.
  */
 
 #include "mm/heap.h"
@@ -35,8 +32,8 @@ struct heap_block_header {
 } __attribute__((aligned(16)));
 
 #define HEAP_REDZONE_MAGIC 0xDEADBEEF
-#define HEAP_MAGIC_ALLOC   0x48454150U /* "HEAP" */
-#define HEAP_MAGIC_FREE    0x46524545U /* "FREE" */
+#define HEAP_MAGIC_ALLOC   0x48454150U // "HEAP"
+#define HEAP_MAGIC_FREE    0x46524545U // "FREE"
 
 #define HEAP_HEADER_SIZE sizeof(struct heap_block_header)
 
@@ -104,7 +101,7 @@ static void heap_insert_free(struct heap_block_header *block)
         heap_free_list = block;
     }
 
-    /* Coalesce with successor */
+    // Coalesce with successor
     if (next && next->is_free) {
         unsigned char *block_end = (unsigned char *)block + HEAP_HEADER_SIZE + block->size;
         if (block_end == (unsigned char *)next) {
@@ -113,7 +110,7 @@ static void heap_insert_free(struct heap_block_header *block)
         }
     }
 
-    /* Coalesce with predecessor */
+    // Coalesce with predecessor
     if (prev && prev->is_free) {
         unsigned char *prev_end = (unsigned char *)prev + HEAP_HEADER_SIZE + prev->size;
         if (prev_end == (unsigned char *)block) {
@@ -123,9 +120,6 @@ static void heap_insert_free(struct heap_block_header *block)
     }
 }
 
-/*
- * heap_init - Initializes slab layer and the first-fit pool.
- */
 void heap_init(void)
 {
     slab_init();
@@ -170,7 +164,7 @@ void *heap_malloc(unsigned long size)
                     heap_free_list = curr->next;
                 }
 
-                /* Split if remainder is large enough for a header and usable space */
+                // Split if remainder is large enough for a header and usable space
                 if (curr->size >= need + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
                         (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
@@ -214,9 +208,6 @@ void *heap_malloc(unsigned long size)
     }
 }
 
-/*
- * heap_free - Returns memory to pool; detects double-frees in first-fit pool.
- */
 void heap_free(void *ptr)
 {
     if (!ptr) {
@@ -232,7 +223,7 @@ void heap_free(void *ptr)
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
 
-    /* Confirm the header is ours before size is used to locate anything. */
+    // Confirm the header is ours before size is used to locate anything.
     if (block->magic == HEAP_MAGIC_FREE) {
         spin_unlock_irqrestore(&heap_lock, flags);
         PANIC("heap: double free detected");
@@ -256,17 +247,11 @@ void heap_free(void *ptr)
     spin_unlock_irqrestore(&heap_lock, flags);
 }
 
-/*
- * heap_get_used - Returns combined usage from both layers.
- */
 unsigned long heap_get_used(void)
 {
     return heap_used_size + slab_get_used();
 }
 
-/*
- * heap_get_total - Returns combined total from both layers.
- */
 unsigned long heap_get_total(void)
 {
     return heap_total_size + slab_get_total();

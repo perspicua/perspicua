@@ -1,8 +1,5 @@
 /*
  * sched.h - Public API for the kernel task scheduler.
- *
- * This file defines the task structures, scheduler states, and functions
- * responsible for multi-core preemptive multitasking and context switching.
  */
 
 #ifndef PERSPICUA_SCHED_SCHED_H
@@ -29,7 +26,7 @@
 #define SCHED_STACK_PAGES        16
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
-/* Possible execution states for a task. */
+// Possible execution states for a task.
 enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,
@@ -38,7 +35,7 @@ enum sched_task_state {
     SCHED_TASK_DEAD
 };
 
-/* Saved processor state for context switching (AArch64 callee-saved). */
+// Saved processor state for context switching (AArch64 callee-saved).
 struct cpu_context {
     unsigned long x19;
     unsigned long x20;
@@ -50,25 +47,24 @@ struct cpu_context {
     unsigned long x26;
     unsigned long x27;
     unsigned long x28;
-    unsigned long fp; /* x29 */
-    unsigned long lr; /* x30 */
+    unsigned long fp;
+    unsigned long lr;
     unsigned long sp;
 };
 
-/* Primary structure representing an execution thread (thread control block). */
 struct task {
     struct cpu_context context;
-    unsigned long ttbr0;         /* TTBR0 value containing user page table and ASID */
-    enum sched_task_state state; /* Current execution state */
-    unsigned long wake_time;     /* System time when a sleeping task should wake */
-    unsigned long id;            /* Unique numeric task identifier */
-    uint32_t pid;                /* Associated process identifier (0 for kernel tasks) */
-    unsigned char *stack;        /* Pointer to the allocated stack region */
-    struct task *rq_next;        /* Link for the per-core ready queue */
-    struct task *sleep_next;     /* Link for the timed sleep queue */
-    struct task *wait_next;      /* Link for a driver wait queue (tty/pipe/sd) */
-    int skip_signals;            /* Flag to indicate if signal handling should be deferred */
-    volatile int on_core;        /* CPU core ID currently running this task, or -1 */
+    unsigned long ttbr0;
+    enum sched_task_state state;
+    unsigned long wake_time;
+    unsigned long id;
+    uint32_t pid;
+    unsigned char *stack;
+    struct task *rq_next;
+    struct task *sleep_next;
+    struct task *wait_next;
+    int skip_signals;
+    volatile int on_core;
 };
 
 /*
@@ -87,54 +83,28 @@ static inline int get_core_id(void)
     return (int)(mpidr & 0xFF) % SCHED_NUM_CORES;
 }
 
-/* Appends a task to the end of a specific CPU's ready queue. */
 void enqueue_ready(int cpu, struct task *t);
-
-/* Initializes the scheduler on the primary CPU core. */
 void sched_init(void);
-
-/* Initializes the scheduler on a secondary CPU core. */
 void sched_secondary_init(void);
-
-/* Spawns a new kernel-mode task starting at the entry function. */
 void sched_create_task(void (*entry)(void));
-
-/* Initializes a task structure for a user-mode process. */
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid);
-
-/* Puts the current task to sleep for a minimum number of milliseconds. */
 void sched_sleep_ms(unsigned long ms);
-
-/* Core scheduling algorithm: selects next task and performs context switch. */
 void schedule(void);
-
-/* Transitions the current task to blocked state and yields. */
 void sched_block(void);
-
-/* Transitions a specific task from blocked to ready state. */
 void sched_unblock(struct task *t);
-
-/* Transitions the current task to stopped state */
 void sched_stop(void);
-
-/* Transitions a specific task from stopped to ready state. */
 void sched_continue(struct task *t);
-
-/* Returns a pointer to the task currently running on the calling CPU core. */
 struct task *sched_get_current(void);
-
-/* Returns the PID of the process currently occupying the specified CPU core. */
 int sched_get_core_pid(int cpu);
 
-/* Low-level assembly function to swap processor state. */
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
 #ifdef CONFIG_TESTS
-/* True while a task is linked in the timed sleep queue. */
+// True while a task is linked in the timed sleep queue.
 int sched_test_in_sleep_queue(const struct task *t);
 
-/* TTBR0 the scheduler would install for a process. */
+// TTBR0 the scheduler would install for a process.
 unsigned long sched_test_task_ttbr0_for(uint32_t pid);
 #endif
 
@@ -148,4 +118,4 @@ struct sched_stats {
 
 extern struct sched_stats core_sched_stats[SCHED_NUM_CORES];
 
-#endif /* PERSPICUA_SCHED_SCHED_H */
+#endif // PERSPICUA_SCHED_SCHED_H

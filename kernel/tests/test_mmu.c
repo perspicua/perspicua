@@ -203,8 +203,9 @@ void test_mmu(void)
 
         int ok = 1;
         for (int i = 0; i < FILL_COUNT; i++) {
-            if (*(volatile unsigned long *)pages[i] != (unsigned long)(0xF000 + i))
+            if (*(volatile unsigned long *)pages[i] != (unsigned long)(0xF000 + i)) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("fill: all values correct", ok);
 
@@ -216,8 +217,9 @@ void test_mmu(void)
         // verify all unmapped
         ok = 1;
         for (int i = 0; i < FILL_COUNT; i++) {
-            if (mmu_query(vas[i], 0, 0))
+            if (mmu_query(vas[i], 0, 0)) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("fill: all unmapped", ok);
 #undef FILL_COUNT

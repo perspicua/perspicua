@@ -1,8 +1,5 @@
 /*
- * dashboard.c - Implementation of the system dashboard driver.
- *
- * This module handles the rendering of real-time system metrics such as
- * uptime, memory utilization, and CPU activity.
+ * dashboard.c - On-screen hardware and scheduler metrics dashboard.
  */
 
 #include "driver/dashboard.h"
@@ -18,9 +15,6 @@
 #include "driver/graphics.h"
 #include "driver/fb.h"
 
-/*
- * uint_to_str - Converts an unsigned long to its decimal string representation.
- */
 static void uint_to_str(unsigned long n, char *buf)
 {
     int i = 0;
@@ -44,26 +38,23 @@ static void uint_to_str(unsigned long n, char *buf)
     }
 }
 
-/*
- * dashboard_update - Refresh and render the system metrics bar.
- */
 void dashboard_update(void)
 {
     char buf[64];
     unsigned int x = 10;
     unsigned long uptime = get_system_time() / 1000;
 
-    /* Background bar */
+    // Background bar
     graphics_draw_rect(0, 0, fb_info.width, 20, 0x00333333, 1);
 
-    /* Uptime */
+    // Uptime
     uint_to_str(uptime, buf);
     graphics_draw_string(x, 6, buf, 0xFFFFFF00, 0xFFFFFFFF);
     x += (strlen(buf) * 8);
     graphics_draw_string(x, 6, "s", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
 
-    /* Physical Memory Usage */
+    // Physical Memory Usage
     graphics_draw_string(x, 6, "PMM:", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
     unsigned long p_free = pmm_get_free_pages();
@@ -79,7 +70,7 @@ void dashboard_update(void)
     graphics_draw_string(x, 6, "MB", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
 
-    /* Kernel Heap Usage */
+    // Kernel Heap Usage
     graphics_draw_string(x, 6, "HEP:", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
     unsigned long h_used = heap_get_used();
@@ -95,7 +86,7 @@ void dashboard_update(void)
     graphics_draw_string(x, 6, "KB", 0xFFFFFFFF, 0xFFFFFFFF);
     x += 8 * 4;
 
-    /* Multi-core Scheduling Status */
+    // Multi-core Scheduling Status
     for (int i = 0; i < 4; i++) {
         char c_label[4] = "C0:";
         c_label[1] = '0' + i;

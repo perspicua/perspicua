@@ -1,8 +1,5 @@
 /*
- * uart.c - Implementation of the PL011 UART driver.
- *
- * This module handles register-level UART configuration, discovery
- * from the DTB, and synchronized I/O operations.
+ * uart.c - Driver for the PL011 PrimeCell UART.
  */
 
 #include "driver/uart.h"
@@ -23,7 +20,7 @@
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
 
-/* Public Register Pointers */
+// Public Register Pointers
 volatile uint32_t *uart_dr = NULL;
 volatile uint32_t *uart_fr = NULL;
 volatile uint32_t *uart_mis = NULL;
@@ -31,7 +28,7 @@ volatile uint32_t *uart_imsc = NULL;
 
 static unsigned int cached_uart_irq = 0;
 
-/* Private Register Pointers */
+// Private Register Pointers
 static volatile uint32_t *uart_ibrd = NULL;
 static volatile uint32_t *uart_fbrd = NULL;
 static volatile uint32_t *uart_lcrh = NULL;
@@ -39,13 +36,10 @@ static volatile uint32_t *uart_cr = NULL;
 static volatile uint32_t *uart_ifls = NULL;
 static volatile uint32_t *uart_icr = NULL;
 
-/* Registered interrupt callbacks */
+// Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
 
-/*
- * pl011_uart_probe - Locates the PL011 UART and initializes it for 8n1 operation.
- */
 static int pl011_uart_probe(struct device *dev)
 {
     if (uart_ready) {
@@ -57,7 +51,7 @@ static int pl011_uart_probe(struct device *dev)
         PANIC("UART: missing or invalid 'reg' property");
     }
 
-    /* Map register offsets */
+    // Map register offsets
     uart_dr = (uint32_t *)(vbase + 0x00);
     uart_fr = (uint32_t *)(vbase + 0x18);
     uart_ibrd = (uint32_t *)(vbase + 0x24);
@@ -69,19 +63,19 @@ static int pl011_uart_probe(struct device *dev)
     uart_mis = (uint32_t *)(vbase + 0x40);
     uart_icr = (uint32_t *)(vbase + 0x44);
 
-    /* Disable UART before programming */
+    // Disable UART before programming
     mmio_write(uart_cr, 0);
 
-    /* Configure GPIO 14 & 15 for UART Alt0 */
+    // Configure GPIO 14 & 15 for UART Alt0
     gpio_set_pin_function(14, GPIO_FUNC_ALT0);
     gpio_set_pin_function(15, GPIO_FUNC_ALT0);
     gpio_set_pull(14, GPIO_PUPDN_NONE);
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
     sleep_ms(10);
-    mmio_write(uart_icr, 0x7FF); /* Clear all interrupts */
+    mmio_write(uart_icr, 0x7FF);
 
-    /* Baud rate calculation for 115200 (based on 48MHz clock) */
+    // Baud rate calculation for 115200 (based on 48MHz clock)
     mmio_write(uart_ibrd, 26);
     mmio_write(uart_fbrd, 3);
     mmio_write(uart_lcrh, UART_LCRH_FEN | UART_LCRH_WLEN_8);
@@ -92,7 +86,7 @@ static int pl011_uart_probe(struct device *dev)
 
     cached_uart_irq = devm_get_irq(dev, 0);
     if (!cached_uart_irq) {
-        cached_uart_irq = 153; /* Fallback for BCM2711 */
+        cached_uart_irq = 153; // Fallback for BCM2711
     }
 
     return 0;
@@ -104,9 +98,6 @@ CORE_DRIVER(pl011_uart) = {
     .probe = pl011_uart_probe,
 };
 
-/*
- * uart_send_raw - Spin-waits for space and transmits a byte.
- */
 void uart_send_raw(char c)
 {
     while (mmio_read(uart_fr) & UART_FR_TXFF) {
@@ -115,9 +106,6 @@ void uart_send_raw(char c)
     mmio_write(uart_dr, (unsigned int)c);
 }
 
-/*
- * uart_send - Safe, synchronized single-byte transmission.
- */
 void uart_send(char c)
 {
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
@@ -125,9 +113,6 @@ void uart_send(char c)
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 
-/*
- * uart_puts_locked - Transmits a string atomically with respect to other cores.
- */
 void uart_puts_locked(const char *str)
 {
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
@@ -137,9 +122,6 @@ void uart_puts_locked(const char *str)
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 
-/*
- * uart_getc - Blocks until a byte is received.
- */
 char uart_getc(void)
 {
     while (mmio_read(uart_fr) & UART_FR_RXFE) {
@@ -148,9 +130,6 @@ char uart_getc(void)
     return (char)(mmio_read(uart_dr) & 0xFF);
 }
 
-/*
- * uart_puts - Standard string transmission.
- */
 void uart_puts(const char *str)
 {
     while (*str) {
@@ -158,57 +137,36 @@ void uart_puts(const char *str)
     }
 }
 
-/*
- * uart_data_ready - Returns 1 if at least one byte is in the RX FIFO.
- */
 int uart_data_ready(void)
 {
     return !(mmio_read(uart_fr) & UART_FR_RXFE);
 }
 
-/*
- * uart_enable_interrupts - Unmasks standard RX interrupts.
- */
 void uart_enable_interrupts(void)
 {
     mmio_write(uart_imsc, UART_IMSC_RXIM | UART_IMSC_RTIM);
 }
 
-/*
- * uart_clear_interrupt - Resets specific interrupt status bits.
- */
 void uart_clear_interrupt(uint32_t mask)
 {
     mmio_write(uart_icr, mask);
 }
 
-/*
- * uart_get_irq - Returns the interrupt line mapped to this UART.
- */
 unsigned int uart_get_irq(void)
 {
     return cached_uart_irq;
 }
 
-/*
- * uart_reg_rx_callback - Registers a function to be called for each received byte.
- */
 void uart_reg_rx_callback(uart_rx_cb_t f)
 {
     uart_rx_callback = f;
 }
 
-/*
- * uart_reg_tx_callback - Registers a function to be called when the TX FIFO drains.
- */
 void uart_reg_tx_callback(uart_tx_cb_t f)
 {
     uart_tx_callback = f;
 }
 
-/*
- * uart_handle_irq - Reads the interrupt status and dispatches to registered callbacks.
- */
 void uart_handle_irq(void)
 {
     uint32_t mis = mmio_read(uart_mis);

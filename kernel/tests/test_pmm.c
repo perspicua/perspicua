@@ -79,13 +79,17 @@ void test_pmm(void)
             TEST_ASSERT("64x aligned", ((unsigned long)pages[i] & (PAGE_SIZE - 1)) == 0);
         }
         int distinct = 1;
-        for (int i = 0; i < 64 && distinct; i++)
-            for (int j = i + 1; j < 64 && distinct; j++)
-                if (pages[i] == pages[j])
+        for (int i = 0; i < 64 && distinct; i++) {
+            for (int j = i + 1; j < 64 && distinct; j++) {
+                if (pages[i] == pages[j]) {
                     distinct = 0;
+                }
+            }
+        }
         TEST_ASSERT("all 64 distinct", distinct);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < 64; i++) {
             pmm_free_page(pages[i]);
+        }
     }
     TEST_PASS("64 pages distinct");
 
@@ -133,10 +137,12 @@ void test_pmm(void)
     // free in reverse order
     {
         void *pages[8];
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             pages[i] = pmm_alloc_page();
-        for (int i = 7; i >= 0; i--)
+        }
+        for (int i = 7; i >= 0; i--) {
             pmm_free_page(pages[i]);
+        }
         // Should still work fine after reverse-order free
         void *p = pmm_alloc_page();
         TEST_ASSERT("post-reverse alloc ok", p != NULL);
@@ -260,10 +266,12 @@ void test_pmm(void)
     // four pages free -> should merge up to order 2
     {
         void *pages[4];
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 4; i++) {
             pages[i] = pmm_alloc_page();
-        for (int i = 0; i < 4; i++)
+        }
+        for (int i = 0; i < 4; i++) {
             pmm_free_page(pages[i]);
+        }
         void *quad = pmm_alloc_pages(4);
         TEST_ASSERT("buddy merge 4p", quad != NULL);
         pmm_free_pages(quad, 4);
@@ -273,17 +281,19 @@ void test_pmm(void)
     // eight pages free -> merge to order 3
     {
         void *pages[8];
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             pages[i] = pmm_alloc_page();
-        for (int i = 0; i < 8; i++)
+        }
+        for (int i = 0; i < 8; i++) {
             pmm_free_page(pages[i]);
+        }
         void *octet = pmm_alloc_pages(8);
         TEST_ASSERT("buddy merge 8p", octet != NULL);
         pmm_free_pages(octet, 8);
     }
     TEST_PASS("buddy merge 8 pages");
 
-    // ── 6d. partial merge: free 2, keep 1 between -> no merge past held page
+    // partial merge: free 2, keep 1 between -> no merge past held page
     {
         void *a = pmm_alloc_page();
         void *b = pmm_alloc_page();
@@ -352,13 +362,16 @@ void test_pmm(void)
         unsigned char *blk = (unsigned char *)pmm_alloc_pages(count);
         TEST_ASSERT("contig alloc", blk != NULL);
         // Write a different byte at the start of each page
-        for (unsigned long i = 0; i < count; i++)
+        for (unsigned long i = 0; i < count; i++) {
             blk[i * PAGE_SIZE] = (unsigned char)(i + 1);
+        }
         // Verify all pages
         int ok = 1;
-        for (unsigned long i = 0; i < count; i++)
-            if (blk[i * PAGE_SIZE] != (unsigned char)(i + 1))
+        for (unsigned long i = 0; i < count; i++) {
+            if (blk[i * PAGE_SIZE] != (unsigned char)(i + 1)) {
                 ok = 0;
+            }
+        }
         TEST_ASSERT("contig pages intact", ok);
         pmm_free_pages(blk, count);
     }
@@ -371,12 +384,15 @@ void test_pmm(void)
         TEST_ASSERT("fill4p alloc", blk != NULL);
         // Fill entire 16KB with pattern
         unsigned long total = count * PAGE_SIZE;
-        for (unsigned long i = 0; i < total; i += PAGE_SIZE)
+        for (unsigned long i = 0; i < total; i += PAGE_SIZE) {
             blk[i] = (unsigned char)((i / PAGE_SIZE) ^ 0xAA);
+        }
         int ok = 1;
-        for (unsigned long i = 0; i < total; i += PAGE_SIZE)
-            if (blk[i] != (unsigned char)((i / PAGE_SIZE) ^ 0xAA))
+        for (unsigned long i = 0; i < total; i += PAGE_SIZE) {
+            if (blk[i] != (unsigned char)((i / PAGE_SIZE) ^ 0xAA)) {
                 ok = 0;
+            }
+        }
         TEST_ASSERT("fill4p verify", ok);
         pmm_free_pages(blk, count);
     }
@@ -395,10 +411,12 @@ void test_pmm(void)
         }
         int a_ok = 1, b_ok = 1;
         for (int i = 0; i < (int)(PAGE_SIZE / sizeof(unsigned long)); i++) {
-            if (a[i] != 0x1111111111111111UL)
+            if (a[i] != 0x1111111111111111UL) {
                 a_ok = 0;
-            if (b[i] != 0x2222222222222222UL)
+            }
+            if (b[i] != 0x2222222222222222UL) {
                 b_ok = 0;
+            }
         }
         TEST_ASSERT("page a isolated", a_ok);
         TEST_ASSERT("page b isolated", b_ok);
@@ -416,14 +434,18 @@ void test_pmm(void)
         // Spot-check pages
         int ok = 1;
         for (int pg = 0; pg < 4; pg++) {
-            if (a[pg * PAGE_SIZE] != 0xAA)
+            if (a[pg * PAGE_SIZE] != 0xAA) {
                 ok = 0;
-            if (a[pg * PAGE_SIZE + PAGE_SIZE - 1] != 0xAA)
+            }
+            if (a[pg * PAGE_SIZE + PAGE_SIZE - 1] != 0xAA) {
                 ok = 0;
-            if (b[pg * PAGE_SIZE] != 0xBB)
+            }
+            if (b[pg * PAGE_SIZE] != 0xBB) {
                 ok = 0;
-            if (b[pg * PAGE_SIZE + PAGE_SIZE - 1] != 0xBB)
+            }
+            if (b[pg * PAGE_SIZE + PAGE_SIZE - 1] != 0xBB) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("multi-page isolation", ok);
         pmm_free_pages(a, 4);
@@ -469,8 +491,9 @@ void test_pmm(void)
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("split-multi alloc", pages[i] != NULL);
         }
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 4; i++) {
             pmm_free_page(pages[i]);
+        }
     }
     TEST_PASS("multi->single split");
 
@@ -479,37 +502,43 @@ void test_pmm(void)
     // alternating free pattern
     {
         void *pages[16];
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 16; i++) {
             pages[i] = pmm_alloc_page();
+        }
         // Free even indices
-        for (int i = 0; i < 16; i += 2)
+        for (int i = 0; i < 16; i += 2) {
             pmm_free_page(pages[i]);
+        }
         // Re-alloc into freed slots
         for (int i = 0; i < 16; i += 2) {
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("frag re-alloc", pages[i] != NULL);
         }
-        for (int i = 0; i < 16; i++)
+        for (int i = 0; i < 16; i++) {
             pmm_free_page(pages[i]);
+        }
     }
     TEST_PASS("alternating frag");
 
     // swiss-cheese: free scattered pages
     {
         void *pages[20];
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 20; i++) {
             pages[i] = pmm_alloc_page();
+        }
         // Free a scattered pattern
         int free_idx[] = {1, 3, 7, 8, 12, 15, 18};
-        for (int i = 0; i < 7; i++)
+        for (int i = 0; i < 7; i++) {
             pmm_free_page(pages[free_idx[i]]);
+        }
         // Re-alloc the freed ones
         for (int i = 0; i < 7; i++) {
             pages[free_idx[i]] = pmm_alloc_page();
             TEST_ASSERT("swiss realloc", pages[free_idx[i]] != NULL);
         }
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 20; i++) {
             pmm_free_page(pages[i]);
+        }
     }
     TEST_PASS("swiss-cheese frag");
 
@@ -518,11 +547,13 @@ void test_pmm(void)
     //    verify buddy merging still works in a fragmented state.
     {
         void *pages[8];
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             pages[i] = pmm_alloc_page();
+        }
         // Free all -> buddies should merge back up
-        for (int i = 0; i < 8; i++)
+        for (int i = 0; i < 8; i++) {
             pmm_free_page(pages[i]);
+        }
         // Now alloc 8-page block — requires full merge to order 3
         void *big = pmm_alloc_pages(8);
         TEST_ASSERT("post-frag 8p alloc", big != NULL);
@@ -539,8 +570,9 @@ void test_pmm(void)
             pages[i] = pmm_alloc_page();
             TEST_ASSERT("128x alloc", pages[i] != NULL);
         }
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 128; i++) {
             pmm_free_page(pages[i]);
+        }
         // Allocator should recover
         void *p = pmm_alloc_page();
         TEST_ASSERT("post-128 alloc ok", p != NULL);
@@ -556,8 +588,9 @@ void test_pmm(void)
                 pages[i] = pmm_alloc_page();
                 TEST_ASSERT("sawtooth alloc", pages[i] != NULL);
             }
-            for (int i = 0; i < 32; i++)
+            for (int i = 0; i < 32; i++) {
                 pmm_free_page(pages[i]);
+            }
         }
     }
     TEST_PASS("sawtooth 5 rounds");
@@ -577,8 +610,9 @@ void test_pmm(void)
                 pmm_free_page(pages[count]);
             }
         }
-        for (int i = count - 1; i >= 0; i--)
+        for (int i = count - 1; i >= 0; i--) {
             pmm_free_page(pages[i]);
+        }
     }
     TEST_PASS("wave pattern");
 
@@ -590,8 +624,9 @@ void test_pmm(void)
             TEST_ASSERT("4p stress alloc", blocks[i] != NULL);
         }
         // Free in reverse order
-        for (int i = 15; i >= 0; i--)
+        for (int i = 15; i >= 0; i--) {
             pmm_free_pages(blocks[i], 4);
+        }
     }
     TEST_PASS("multi-page stress 16x4p");
 
@@ -642,14 +677,16 @@ void test_pmm(void)
     {
         unsigned char *p = (unsigned char *)pmm_alloc_page();
         TEST_ASSERT("fullpage alloc", p != NULL);
-        for (int i = 0; i < PAGE_SIZE; i++)
+        for (int i = 0; i < PAGE_SIZE; i++) {
             p[i] = (unsigned char)(i & 0xFF);
+        }
         int ok = 1;
-        for (int i = 0; i < PAGE_SIZE; i++)
+        for (int i = 0; i < PAGE_SIZE; i++) {
             if (p[i] != (unsigned char)(i & 0xFF)) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("fullpage pattern", ok);
         pmm_free_page(p);
     }
@@ -668,10 +705,12 @@ void test_pmm(void)
         }
         int ok = 1;
         for (unsigned long pg = 0; pg < count; pg++) {
-            if (blk[pg * words_per_page] != (0xAAAAAAAA00000000UL | pg))
+            if (blk[pg * words_per_page] != (0xAAAAAAAA00000000UL | pg)) {
                 ok = 0;
-            if (blk[pg * words_per_page + words_per_page - 1] != (0xBBBBBBBB00000000UL | pg))
+            }
+            if (blk[pg * words_per_page + words_per_page - 1] != (0xBBBBBBBB00000000UL | pg)) {
                 ok = 0;
+            }
         }
         TEST_ASSERT("16p boundary words ok", ok);
         pmm_free_pages(blk, count);
@@ -688,8 +727,9 @@ void test_pmm(void)
             ptrs[i] = pmm_alloc_pages(count);
             TEST_ASSERT("growing alloc", ptrs[i] != NULL);
         }
-        for (int i = 5; i >= 0; i--)
+        for (int i = 5; i >= 0; i--) {
             pmm_free_pages(ptrs[i], 1UL << i);
+        }
     }
     TEST_PASS("growing alloc sizes");
 
@@ -701,8 +741,9 @@ void test_pmm(void)
             ptrs[i] = pmm_alloc_pages(count);
             TEST_ASSERT("shrinking alloc", ptrs[i] != NULL);
         }
-        for (int i = 0; i < 6; i++)
+        for (int i = 0; i < 6; i++) {
             pmm_free_pages(ptrs[i], 32UL >> i);
+        }
     }
     TEST_PASS("shrinking alloc sizes");
 
@@ -711,18 +752,22 @@ void test_pmm(void)
     // multi-page lifecycle: alloc -> write -> free -> re-alloc
     {
         unsigned char *blk = (unsigned char *)pmm_alloc_pages(4);
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 4; i++) {
             blk[i * PAGE_SIZE] = (unsigned char)(0xF0 | i);
+        }
         pmm_free_pages(blk, 4);
         unsigned char *blk2 = (unsigned char *)pmm_alloc_pages(4);
         TEST_ASSERT("lifecycle re-alloc", blk2 != NULL);
         // Write new pattern
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < 4; i++) {
             blk2[i * PAGE_SIZE] = (unsigned char)(0xA0 | i);
+        }
         int ok = 1;
-        for (int i = 0; i < 4; i++)
-            if (blk2[i * PAGE_SIZE] != (unsigned char)(0xA0 | i))
+        for (int i = 0; i < 4; i++) {
+            if (blk2[i * PAGE_SIZE] != (unsigned char)(0xA0 | i)) {
                 ok = 0;
+            }
+        }
         TEST_ASSERT("lifecycle new data", ok);
         pmm_free_pages(blk2, 4);
     }

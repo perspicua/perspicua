@@ -20,10 +20,10 @@
 #include "core/syscall.h"
 #include "sched/process.h"
 
-/* init is created first and is the process these tests target. */
+// init is created first and is the process these tests target.
 #define INIT_PID 1
 
-/* Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack. */
+// Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack.
 static struct exception_trap_frame kill_tf;
 
 static int64_t call_kill(int64_t target_pid, int sig)
@@ -158,7 +158,7 @@ void test_signals(void)
         TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
         TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
 
-        /* Cleanup */
+        // Cleanup
         process_table[INIT_PID]->pending_signals &=
             ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
     }

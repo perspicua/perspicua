@@ -1,8 +1,5 @@
 /*
  * initrd.h - Public API for the Initial RAM Disk (InitRD) parser.
- *
- * Defines the CPIO archive structures and entry point for registering
- * the boot-time filesystem.
  */
 
 #ifndef PERSPICUA_CORE_INITRD_H
@@ -41,4 +38,4 @@ struct cpio_newc_header {
  */
 void initrd_init(void *initrd_start, size_t initrd_size);
 
-#endif /* PERSPICUA_CORE_INITRD_H */
+#endif // PERSPICUA_CORE_INITRD_H

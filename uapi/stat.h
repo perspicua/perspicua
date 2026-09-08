@@ -7,7 +7,7 @@
 
 #include "types.h"
 
-/* File types */
+// File types
 #define S_IFMT  0xF000
 #define S_IFREG 0x8000
 #define S_IFDIR 0x4000
@@ -23,7 +23,7 @@
 #define S_ISLNK(m)  (((m) & S_IFMT) == S_IFLNK)
 #define S_ISFIFO(m) (((m) & S_IFMT) == S_IFIFO)
 
-/* File permissions (currently mostly ignored but useful for API) */
+// File permissions (currently mostly ignored but useful for API)
 #define S_IRWXU 00700
 #define S_IRUSR 00400
 #define S_IWUSR 00200
@@ -55,4 +55,4 @@ struct stat {
     uint32_t st_ctime;
 };
 
-#endif /* PERSPICUA_UAPI_STAT_H */
+#endif // PERSPICUA_UAPI_STAT_H

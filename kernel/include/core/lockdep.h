@@ -5,9 +5,6 @@
 
 #ifdef CONFIG_LOCKDEP
 
-/*
- * lockdep_init - Initializes the lock dependency validator.
- */
 void lockdep_init(void);
 
 /*
@@ -22,7 +19,7 @@ void lockdep_acquire(spinlock_t *lock);
  */
 void lockdep_release(spinlock_t *lock);
 
-#else /* !CONFIG_LOCKDEP */
+#else // !CONFIG_LOCKDEP
 
 static inline void lockdep_init(void) {}
 static inline void lockdep_acquire(spinlock_t *lock)
@@ -34,6 +31,6 @@ static inline void lockdep_release(spinlock_t *lock)
     (void)lock;
 }
 
-#endif /* CONFIG_LOCKDEP */
+#endif // CONFIG_LOCKDEP
 
-#endif /* PERSPICUA_CORE_LOCKDEP_H */
+#endif // PERSPICUA_CORE_LOCKDEP_H

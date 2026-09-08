@@ -1,10 +1,5 @@
 /*
  * test_fat32.c - Tests for FAT32 behaviour beyond the generic VFS paths.
- *
- * test_vfs already covers single-cluster create/read/write through the VFS.
- * This suite targets the filesystem-specific machinery: cluster chains for
- * files larger than one cluster, nested directory traversal, and truncation
- * releasing a chain. Everything it creates is removed before it returns.
  */
 
 #include "test.h"
@@ -19,7 +14,7 @@
 #define NEST_SUB  "/tfatd/sub"
 #define NEST_FILE "/tfatd/sub/deep.txt"
 
-/* Comfortably larger than any plausible cluster size for a 32 MB volume. */
+// Comfortably larger than any plausible cluster size for a 32 MB volume.
 #define BIG_SIZE 16384
 
 static uint8_t big_pattern[BIG_SIZE];
@@ -263,12 +258,18 @@ void test_fat32(void)
     }
     TEST_PASS("seek across clusters");
 
-    /*
-     * NOT COVERED: reopening with VFS_O_TRUNC should release the chain and
-     * report size 0, but O_TRUNC is defined in vfs.h and never acted on
-     * anywhere in the kernel, so the file keeps its old contents. Add the
-     * assertion here once truncation lands (Phase 1 item 2 in docs/order.txt).
-     */
+    // reopening with O_TRUNC must release the chain and report size 0
+    {
+        int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_TRUNC);
+        TEST_ASSERT("reopen with O_TRUNC", fd >= 0);
+        TEST_ASSERT_EQ("close after O_TRUNC", vfs_close(fd), 0);
+
+        struct stat st;
+        TEST_ASSERT_EQ("stat truncated file", vfs_stat(BIG_FILE, &st), 0);
+        TEST_ASSERT_EQ("O_TRUNC emptied the file", (int)st.st_size, 0);
+    }
+    TEST_PASS("open O_TRUNC truncates");
+
     {
         TEST_ASSERT_EQ("unlink multi-cluster file", vfs_unlink(BIG_FILE), 0);
 

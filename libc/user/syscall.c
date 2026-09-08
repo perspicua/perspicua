@@ -1,12 +1,5 @@
 /*
  * syscall.c - Userspace system call wrapper implementations.
- *
- * This file provides the AArch64 assembly wrappers for the libc API,
- * using the SVC instruction to transition to the kernel.
- *
- * Each wrapper translates the kernel's negative PERS_ERR_* return value
- * into a standard POSIX errno code and returns -1 (or the appropriate
- * sentinel) on failure, matching the POSIX syscall contract.
  */
 
 #include "syscall.h"
@@ -16,7 +9,7 @@
 #include "uapi/errors.h"
 #include "uapi/mman.h"
 
-/* --- Internal errno translation --- */
+// --- Internal errno translation ---
 
 /*
  * Map a PERS_ERR_* code to the corresponding POSIX errno value.
@@ -90,22 +83,23 @@ static int __pers_to_errno(int pers_err)
     }
 }
 
-/* Set errno from a raw kernel return value and return -1. */
+// Set errno from a raw kernel return value and return -1.
 static inline int __set_errno_ret(long res)
 {
     errno = __pers_to_errno((int)-res);
     return -1;
 }
 
-/* Translate a raw kernel return to a POSIX int result. */
+// Translate a raw kernel return to a POSIX int result.
 static inline int __syscall_ret(long res)
 {
-    if (res < 0)
+    if (res < 0) {
         return __set_errno_ret(res);
+    }
     return (int)res;
 }
 
-/* Translate a raw kernel return to a POSIX off_t result. */
+// Translate a raw kernel return to a POSIX off_t result.
 static inline off_t __syscall_off_ret(long res)
 {
     if (res < 0) {
@@ -115,7 +109,7 @@ static inline off_t __syscall_off_ret(long res)
     return (off_t)res;
 }
 
-/* Translate a raw kernel return to a POSIX mmap result. */
+// Translate a raw kernel return to a POSIX mmap result.
 static inline void *__syscall_mmap_ret(long res)
 {
     if (res < 0) {
@@ -125,7 +119,7 @@ static inline void *__syscall_mmap_ret(long res)
     return (void *)res;
 }
 
-/* --- Public API Implementations --- */
+// --- Public API Implementations ---
 
 void sys_exit(int status)
 {

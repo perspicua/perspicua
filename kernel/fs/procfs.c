@@ -1,8 +1,5 @@
 /*
  * procfs.c - Implementation of the process filesystem (procfs).
- *
- * This module provides a virtual filesystem that dynamicially generates
- * text representations of kernel state and process information.
  */
 
 #include "fs/procfs.h"
@@ -44,9 +41,6 @@ static struct vfs_vnode *mounts_vnode = &mounts_vnode_struct;
 static struct vfs_vnode *cpuinfo_vnode = &cpuinfo_vnode_struct;
 static struct vfs_vnode *stat_vnode = &stat_vnode_struct;
 
-/*
- * procfs_get_vnode_path - Recursively reconstructs the absolute path of a vnode.
- */
 static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t size)
 {
     if (!node || !buf || size == 0) {
@@ -179,8 +173,9 @@ static int procfs_meminfo_read(struct vfs_file *file, void *buffer, size_t size)
 static int procfs_interrupts_read(struct vfs_file *file, void *buffer, size_t size)
 {
     char *buf = heap_malloc(1024);
-    if (!buf)
+    if (!buf) {
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     int pos = 0;
     procfs_append(buf, &pos, 1024, "           ");
@@ -216,8 +211,9 @@ static int procfs_interrupts_read(struct vfs_file *file, void *buffer, size_t si
 static int procfs_schedstat_read(struct vfs_file *file, void *buffer, size_t size)
 {
     char *buf = heap_malloc(1024);
-    if (!buf)
+    if (!buf) {
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     int pos = 0;
     procfs_append(buf, &pos, 1024, "cpu  context_switches  idle_entries\n");
@@ -348,8 +344,9 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char *buf = heap_malloc(2048);
-    if (!buf)
+    if (!buf) {
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     int pos = 0;
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -834,7 +831,7 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
             spin_unlock_irqrestore(&process_table_lock, flags);
             struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
             if (!node) {
-                return NULL; /* process_table_lock already released above */
+                return NULL; // process_table_lock already released above
             }
             memset(node, 0, sizeof(struct vfs_vnode));
             node->type = VFS_VNODE_TYPE_DIR;
@@ -855,9 +852,6 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
 static struct vfs_vnode_ops procfs_root_ops = {.readdir = procfs_root_readdir,
                                                .lookup = procfs_root_lookup};
 
-/*
- * procfs_init - Boot-time registration and mounting of /proc.
- */
 void procfs_init(void)
 {
     memset(procfs_root_vnode, 0, sizeof(struct vfs_vnode));

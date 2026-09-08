@@ -1,8 +1,5 @@
 /*
  * elf.h - Public API for the Executable and Linkable Format (ELF) parser.
- *
- * This header defines the structures and constants for the 64-bit ELF format
- * as used by the kernel to load and execute user applications on AArch64.
  */
 
 #ifndef PERSPICUA_CORE_ELF_H
@@ -22,24 +19,24 @@
 #define ELF_IDENT_PAD        9
 #define ELF_IDENT_NIDENT     16
 
-/* ELF Magic numbers: 0x7f 'E' 'L' 'F' */
+// ELF Magic numbers: 0x7f 'E' 'L' 'F'
 #define ELF_MAG0 0x7f
 #define ELF_MAG1 'E'
 #define ELF_MAG2 'L'
 #define ELF_MAG3 'F'
 
-/* ELF Class and Data constants */
-#define ELF_CLASS_64  2 /* 64-bit architecture */
-#define ELF_DATA_2LSB 1 /* Little-endian */
+// ELF Class and Data constants
+#define ELF_CLASS_64  2 // 64-bit architecture
+#define ELF_DATA_2LSB 1 // Little-endian
 
-/* ELF Type and Machine constants */
-#define ELF_TYPE_EXEC       2 /* Executable file */
+// ELF Type and Machine constants
+#define ELF_TYPE_EXEC       2 // Executable file
 #define ELF_MACHINE_AARCH64 183
 
-/* Program Header Type constants */
-#define ELF_PROG_LOAD 1 /* Loadable segment */
+// Program Header Type constants
+#define ELF_PROG_LOAD 1 // Loadable segment
 
-/* Standard ELF 64-bit types */
+// Standard ELF 64-bit types
 typedef uint64_t elf64_addr;
 typedef uint64_t elf64_off;
 typedef uint16_t elf64_half;
@@ -97,4 +94,4 @@ struct elf64_program_header {
  */
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point);
 
-#endif /* PERSPICUA_CORE_ELF_H */
+#endif // PERSPICUA_CORE_ELF_H

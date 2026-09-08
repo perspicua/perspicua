@@ -2,7 +2,7 @@
 #include "driver/block.h"
 #include "string.h"
 
-/* Offset of the 0x55AA boot signature within a 512-byte sector. */
+// Offset of the 0x55AA boot signature within a 512-byte sector.
 #define BOOT_SIG_OFFSET 510
 
 void test_sd(void)

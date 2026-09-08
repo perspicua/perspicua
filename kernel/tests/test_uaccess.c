@@ -19,10 +19,10 @@
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 
-/* A canonical user-space address that is deliberately not mapped. */
+// A canonical user-space address that is deliberately not mapped.
 #define UNMAPPED_USER_VA 0x0000000040000000UL
 
-/* A separate VA for the page the string tests read from. */
+// A separate VA for the page the string tests read from.
 #define MAPPED_USER_VA 0x0000000050000000UL
 
 void test_uaccess(void)
@@ -160,7 +160,7 @@ void test_uaccess(void)
         asm volatile("dsb ish\n tlbi vmalle1is\n dsb ish\n isb" ::: "memory");
         irq_restore(irqf);
 
-        /* Frees the mapped page along with the tables. */
+        // Frees the mapped page along with the tables.
         mmu_destroy_user_pgd(pgd);
     }
     TEST_PASS("strncpy_from_user always terminates");

@@ -18,7 +18,7 @@
 #include "string.h"
 #include "syscall.h"
 
-/* --- Minimal test framework -------------------------------------------- */
+// --- Minimal test framework --------------------------------------------
 
 static int g_passed = 0;
 static int g_failed = 0;
@@ -33,38 +33,39 @@ static int g_failed = 0;
         }                                                                     \
     } while (0)
 
-/* Run fn(), report PASS if no new failures occurred. */
+// Run fn(), report PASS if no new failures occurred.
 static void run_group(const char *name, void (*fn)(void))
 {
     int before = g_failed;
     fn();
-    if (g_failed == before)
+    if (g_failed == before) {
         printf("[PASS] %s\n", name);
-    else
+    } else {
         printf("[FAIL] %s (%d check(s) failed)\n", name, g_failed - before);
+    }
 }
 
-/* --- assert() smoke test ----------------------------------------------- */
+// --- assert() smoke test -----------------------------------------------
 
 static void test_assert(void)
 {
-    /* assert on a true condition must not abort. */
+    // assert on a true condition must not abort.
     assert(1 == 1);
     assert(0 == 0);
     assert((void *)0 == NULL);
-    CHECK(1); /* Reached only if the asserts above did not abort. */
+    CHECK(1); // Reached only if the asserts above did not abort.
 
-    /* assert(0) would call __assert_fail and exit — not tested here. */
+    // assert(0) would call __assert_fail and exit — not tested here.
 }
 
-/* --- string.h ---------------------------------------------------------- */
+// --- string.h ----------------------------------------------------------
 
 static void test_strlen(void)
 {
     CHECK(strlen("") == 0);
     CHECK(strlen("a") == 1);
     CHECK(strlen("hello") == 5);
-    CHECK(strlen("hello\0world") == 5); /* Stops at first NUL. */
+    CHECK(strlen("hello\0world") == 5); // Stops at first NUL.
 }
 
 static void test_strcpy(void)
@@ -82,10 +83,10 @@ static void test_strncpy(void)
     strncpy(buf, "hi", 8);
     CHECK(buf[0] == 'h');
     CHECK(buf[1] == 'i');
-    CHECK(buf[2] == '\0'); /* Rest padded with NULs. */
+    CHECK(buf[2] == '\0'); // Rest padded with NULs.
     CHECK(buf[7] == '\0');
 
-    /* Truncation: no NUL appended when src >= count. */
+    // Truncation: no NUL appended when src >= count.
     char trunc[3];
     strncpy(trunc, "abcde", 3);
     CHECK(trunc[0] == 'a' && trunc[1] == 'b' && trunc[2] == 'c');
@@ -118,9 +119,9 @@ static void test_strcmp(void)
 
 static void test_strncmp(void)
 {
-    CHECK(strncmp("abcX", "abcY", 3) == 0); /* First 3 chars match. */
+    CHECK(strncmp("abcX", "abcY", 3) == 0); // First 3 chars match.
     CHECK(strncmp("abcX", "abcY", 4) != 0);
-    CHECK(strncmp("abc", "abc", 0) == 0); /* Zero count always equal. */
+    CHECK(strncmp("abc", "abc", 0) == 0); // Zero count always equal.
 }
 
 static void test_strchr(void)
@@ -128,13 +129,13 @@ static void test_strchr(void)
     const char *s = "hello";
     CHECK(strchr(s, 'e') == s + 1);
     CHECK(strchr(s, 'z') == NULL);
-    CHECK(strchr(s, '\0') == s + 5); /* strchr finds the NUL terminator. */
+    CHECK(strchr(s, '\0') == s + 5); // strchr finds the NUL terminator.
 }
 
 static void test_strrchr(void)
 {
     const char *s = "hello";
-    CHECK(strrchr(s, 'l') == s + 3); /* Last 'l' is at index 3. */
+    CHECK(strrchr(s, 'l') == s + 3); // Last 'l' is at index 3.
     CHECK(strrchr(s, 'z') == NULL);
 }
 
@@ -142,7 +143,7 @@ static void test_strstr(void)
 {
     CHECK(strstr("foobar", "bar") != NULL);
     CHECK(strstr("foobar", "baz") == NULL);
-    CHECK(strstr("foobar", "") != NULL); /* Empty needle returns haystack. */
+    CHECK(strstr("foobar", "") != NULL); // Empty needle returns haystack.
     CHECK(strstr("foobar", "foobar") != NULL);
     CHECK(strstr("foobar", "foobarbaz") == NULL);
 }
@@ -159,7 +160,7 @@ static void test_strtok_r(void)
     tok = strtok_r(NULL, ",", &save);
     CHECK(tok != NULL && strcmp(tok, "two") == 0);
 
-    tok = strtok_r(NULL, ",", &save); /* Empty field skipped. */
+    tok = strtok_r(NULL, ",", &save); // Empty field skipped.
     CHECK(tok != NULL && strcmp(tok, "three") == 0);
 
     tok = strtok_r(NULL, ",", &save);
@@ -186,7 +187,7 @@ static void test_memcpy(void)
     memcpy(dst, src, sizeof(src));
     CHECK(memcmp(dst, src, sizeof(src)) == 0);
 
-    /* Unaligned sizes. */
+    // Unaligned sizes.
     char d3[3];
     memcpy(d3, "xyz", 3);
     CHECK(d3[0] == 'x' && d3[1] == 'y' && d3[2] == 'z');
@@ -194,14 +195,14 @@ static void test_memcpy(void)
 
 static void test_strnlen(void)
 {
-    CHECK(strnlen("abc", 10) == 3); /* Terminator found before the limit. */
+    CHECK(strnlen("abc", 10) == 3); // Terminator found before the limit.
     CHECK(strnlen("abc", 3) == 3);
-    CHECK(strnlen("abcdef", 3) == 3); /* Limit reached first. */
+    CHECK(strnlen("abcdef", 3) == 3); // Limit reached first.
     CHECK(strnlen("abc", 0) == 0);
     CHECK(strnlen("", 5) == 0);
     CHECK(strnlen(NULL, 5) == 0);
 
-    /* No terminator within the limit: must stop at n, not scan past the end. */
+    // No terminator within the limit: must stop at n, not scan past the end.
     char unterminated[4] = {'a', 'b', 'c', 'd'};
     CHECK(strnlen(unterminated, 4) == 4);
 }
@@ -212,9 +213,9 @@ static void test_strdup(void)
     char *dup = strdup(src);
     CHECK(dup != NULL);
     CHECK(strcmp(dup, src) == 0);
-    CHECK(dup != src); /* A copy, not the same storage. */
+    CHECK(dup != src); // A copy, not the same storage.
     dup[0] = 'D';
-    CHECK(src[0] == 'd'); /* Writing the copy must not touch the source. */
+    CHECK(src[0] == 'd'); // Writing the copy must not touch the source.
     free(dup);
 
     char *empty = strdup("");
@@ -231,7 +232,7 @@ static void test_strndup(void)
     CHECK(strcmp(trunc, "abc") == 0);
     free(trunc);
 
-    char *whole = strndup("abc", 10); /* n longer than the source. */
+    char *whole = strndup("abc", 10); // n longer than the source.
     CHECK(whole != NULL && strcmp(whole, "abc") == 0);
     free(whole);
 
@@ -239,7 +240,7 @@ static void test_strndup(void)
     CHECK(none != NULL && strlen(none) == 0);
     free(none);
 
-    /* Must terminate at n even when the source has no NUL in range. */
+    // Must terminate at n even when the source has no NUL in range.
     char unterminated[3] = {'x', 'y', 'z'};
     char *bounded = strndup(unterminated, 3);
     CHECK(bounded != NULL);
@@ -252,18 +253,18 @@ static void test_strndup(void)
 
 static void test_memmove(void)
 {
-    /* Forward overlap: src < dst. */
+    // Forward overlap: src < dst.
     char buf[16] = "abcdefgh";
-    memmove(buf + 2, buf, 6); /* "ab" -> "ababcdef" at [2..7]. */
+    memmove(buf + 2, buf, 6); // "ab" -> "ababcdef" at [2..7].
     CHECK(buf[2] == 'a' && buf[7] == 'f');
 
-    /* Backward overlap: dst < src. */
+    // Backward overlap: dst < src.
     char buf2[16] = "abcdefgh";
     memmove(buf2, buf2 + 2, 6);
     CHECK(buf2[0] == 'c' && buf2[5] == 'h');
 }
 
-/* --- malloc / free / realloc ------------------------------------------- */
+// --- malloc / free / realloc -------------------------------------------
 
 static void test_malloc_basic(void)
 {
@@ -276,15 +277,15 @@ static void test_malloc_basic(void)
 
 static void test_malloc_zero(void)
 {
-    /* malloc(0) may return NULL or a unique pointer; must not crash. */
+    // malloc(0) may return NULL or a unique pointer; must not crash.
     void *p = malloc(0);
-    free(p);  /* Freeing NULL is always safe. */
-    CHECK(1); /* Reached without crash. */
+    free(p);  // Freeing NULL is always safe.
+    CHECK(1); // Reached without crash.
 }
 
 static void test_malloc_multiple(void)
 {
-    /* Allocate several blocks and verify they don't overlap. */
+    // Allocate several blocks and verify they don't overlap.
     const int N = 8;
     void *ptrs[8];
     for (int i = 0; i < N; i++) {
@@ -292,7 +293,7 @@ static void test_malloc_multiple(void)
         CHECK(ptrs[i] != NULL);
         memset(ptrs[i], (unsigned char)i, 128);
     }
-    /* Verify no block was overwritten by a subsequent allocation. */
+    // Verify no block was overwritten by a subsequent allocation.
     for (int i = 0; i < N; i++) {
         unsigned char *p = ptrs[i];
         int ok = 1;
@@ -319,7 +320,7 @@ static void test_malloc_coalesce(void)
     free(a);
     free(b);
     free(c);
-    /* Allocate something that fits in the coalesced region. */
+    // Allocate something that fits in the coalesced region.
     void *big = malloc(512);
     CHECK(big != NULL);
     memset(big, 0, 512);
@@ -343,13 +344,13 @@ static void test_calloc(void)
 
 static void test_realloc(void)
 {
-    /* Grow an allocation. */
+    // Grow an allocation.
     char *p = malloc(32);
     CHECK(p != NULL);
     memset(p, 'A', 32);
     p = realloc(p, 128);
     CHECK(p != NULL);
-    /* Original bytes must be preserved. */
+    // Original bytes must be preserved.
     int ok = 1;
     for (int i = 0; i < 32; i++) {
         if (p[i] != 'A') {
@@ -360,19 +361,19 @@ static void test_realloc(void)
     CHECK(ok);
     free(p);
 
-    /* realloc(NULL, size) must behave like malloc. */
+    // realloc(NULL, size) must behave like malloc.
     char *q = realloc(NULL, 64);
     CHECK(q != NULL);
     free(q);
 
-    /* realloc(ptr, 0) must behave like free. */
+    // realloc(ptr, 0) must behave like free.
     char *r = malloc(16);
     CHECK(r != NULL);
     void *res = realloc(r, 0);
-    CHECK(res == NULL); /* Returns NULL after freeing. */
+    CHECK(res == NULL); // Returns NULL after freeing.
 }
 
-/* --- printf / snprintf ------------------------------------------------- */
+// --- printf / snprintf -------------------------------------------------
 
 static void test_snprintf_basic(void)
 {
@@ -405,13 +406,13 @@ static void test_snprintf_bounds(void)
 {
     char buf[5];
 
-    /* Output must be truncated and always NUL-terminated. */
+    // Output must be truncated and always NUL-terminated.
     int n = snprintf(buf, sizeof(buf), "hello world");
-    CHECK(buf[4] == '\0'); /* Always NUL-terminated. */
+    CHECK(buf[4] == '\0'); // Always NUL-terminated.
     CHECK(strncmp(buf, "hell", 4) == 0);
-    CHECK(n == 11); /* Returns the would-be length. */
+    CHECK(n == 11); // Returns the would-be length.
 
-    /* Minimal buffer: size=1 means only the NUL fits. */
+    // Minimal buffer: size=1 means only the NUL fits.
     char tiny[1];
     snprintf(tiny, 1, "abc");
     CHECK(tiny[0] == '\0');
@@ -424,7 +425,7 @@ static void test_snprintf_percent(void)
     CHECK(strcmp(buf, "100%") == 0);
 }
 
-/* --- ctype.h ------------------------------------------------------------ */
+// --- ctype.h ------------------------------------------------------------
 
 static void test_isalnum(void)
 {
@@ -436,21 +437,21 @@ static void test_isalnum(void)
 static void test_isalpha(void)
 {
     CHECK(isalpha('a') && isalpha('Z'));
-    CHECK(!isalpha('0') && !isalpha('9')); /* Digits are not alpha. */
+    CHECK(!isalpha('0') && !isalpha('9')); // Digits are not alpha.
     CHECK(!isalpha(' ') && !isalpha('.'));
 }
 
 static void test_isupper(void)
 {
     CHECK(isupper('A') && isupper('M') && isupper('Z'));
-    CHECK(!isupper('a') && !isupper('z')); /* Lowercase is not upper. */
+    CHECK(!isupper('a') && !isupper('z')); // Lowercase is not upper.
     CHECK(!isupper('5') && !isupper(' ') && !isupper('!'));
 }
 
 static void test_islower(void)
 {
     CHECK(islower('a') && islower('m') && islower('z'));
-    CHECK(!islower('A') && !islower('Z')); /* Uppercase is not lower. */
+    CHECK(!islower('A') && !islower('Z')); // Uppercase is not lower.
     CHECK(!islower('5') && !islower(' ') && !islower('!'));
 }
 
@@ -460,7 +461,7 @@ static void test_isdigit(void)
         CHECK(isdigit(c));
     }
     CHECK(!isdigit('a') && !isdigit(' ') && !isdigit('/') && !isdigit(':'));
-    /* '/' and ':' are the bytes immediately outside the '0'-'9' range. */
+    // '/' and ':' are the bytes immediately outside the '0'-'9' range.
 }
 
 static void test_isspace(void)
@@ -472,7 +473,7 @@ static void test_isspace(void)
 
 static void test_isblank(void)
 {
-    /* isblank is narrower than isspace: only space and tab. */
+    // isblank is narrower than isspace: only space and tab.
     CHECK(isblank(' ') && isblank('\t'));
     CHECK(!isblank('\n') && !isblank('\v') && !isblank('\f') && !isblank('\r'));
 }
@@ -486,7 +487,7 @@ static void test_ispunct(void)
 
 static void test_iscntrl(void)
 {
-    CHECK(iscntrl('\0') && iscntrl('\n') && iscntrl(0x1F) && iscntrl(0x7F)); /* DEL */
+    CHECK(iscntrl('\0') && iscntrl('\n') && iscntrl(0x1F) && iscntrl(0x7F)); // DEL
     CHECK(!iscntrl('a') && !iscntrl(' ') && !iscntrl('~'));
 }
 
@@ -499,19 +500,19 @@ static void test_isxdigit(void)
 
 static void test_isgraph(void)
 {
-    /* isgraph: any printable character EXCEPT space. */
+    // isgraph: any printable character EXCEPT space.
     CHECK(isgraph('a') && isgraph('Z') && isgraph('5'));
-    CHECK(isgraph('!') && isgraph('~')); /* Punctuation counts. */
-    CHECK(!isgraph(' '));                /* Space is excluded. */
+    CHECK(isgraph('!') && isgraph('~')); // Punctuation counts.
+    CHECK(!isgraph(' '));                // Space is excluded.
     CHECK(!isgraph('\t') && !isgraph('\n') && !isgraph(0x1F) && !isgraph(0x7F));
 }
 
 static void test_isprint(void)
 {
-    /* isprint: any printable character INCLUDING space. */
+    // isprint: any printable character INCLUDING space.
     CHECK(isprint('a') && isprint('Z') && isprint('5'));
     CHECK(isprint('!') && isprint('~'));
-    CHECK(isprint(' ')); /* The one difference from isgraph. */
+    CHECK(isprint(' ')); // The one difference from isgraph.
     CHECK(!isprint('\t') && !isprint('\n') && !isprint(0x1F) && !isprint(0x7F));
 }
 
@@ -519,8 +520,8 @@ static void test_toupper(void)
 {
     CHECK(toupper('a') == 'A');
     CHECK(toupper('z') == 'Z');
-    CHECK(toupper('A') == 'A'); /* Already upper: unchanged. */
-    CHECK(toupper('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(toupper('A') == 'A'); // Already upper: unchanged.
+    CHECK(toupper('5') == '5'); // Non-letter: unchanged.
     CHECK(toupper('!') == '!');
 }
 
@@ -528,14 +529,14 @@ static void test_tolower(void)
 {
     CHECK(tolower('A') == 'a');
     CHECK(tolower('Z') == 'z');
-    CHECK(tolower('a') == 'a'); /* Already lower: unchanged. */
-    CHECK(tolower('5') == '5'); /* Non-letter: unchanged. */
+    CHECK(tolower('a') == 'a'); // Already lower: unchanged.
+    CHECK(tolower('5') == '5'); // Non-letter: unchanged.
     CHECK(tolower('!') == '!');
 }
 
 static void test_ctype_bounds(void)
 {
-    /* EOF and out-of-range values must be handled without indexing OOB. */
+    // EOF and out-of-range values must be handled without indexing OOB.
     CHECK(!isalnum(EOF));
     CHECK(!isalpha(EOF));
     CHECK(!isdigit(EOF));
@@ -560,7 +561,7 @@ static void test_ctype_bounds(void)
     CHECK(tolower(200) == 200);
 }
 
-/* --- setjmp / longjmp --------------------------------------------------- */
+// --- setjmp / longjmp ---------------------------------------------------
 
 static jmp_buf g_basic_jb;
 static jmp_buf g_zero_jb;
@@ -569,7 +570,7 @@ static jmp_buf g_nest_jb;
 static void test_setjmp_direct(void)
 {
     jmp_buf local;
-    /* A setjmp with no matching longjmp reports the first-time return. */
+    // A setjmp with no matching longjmp reports the first-time return.
     CHECK(setjmp(local) == 0);
 }
 
@@ -581,11 +582,11 @@ static void test_longjmp_value(void)
     if (rc == 0) {
         before_jump = 1;
         longjmp(g_basic_jb, 42);
-        /* Unreached: falling through here would leave rc at 0 below. */
+        // Unreached: falling through here would leave rc at 0 below.
     }
 
-    CHECK(rc == 42);         /* setjmp returned longjmp's value */
-    CHECK(before_jump == 1); /* volatile local survived the jump */
+    CHECK(rc == 42);         // setjmp returned longjmp's value
+    CHECK(before_jump == 1); // volatile local survived the jump
 }
 
 static void test_longjmp_zero(void)
@@ -598,7 +599,7 @@ static void test_longjmp_zero(void)
     if (rc == 0) {
         attempts++;
         if (attempts > 2) {
-            CHECK(0); /* longjmp(buf, 0) kept returning 0 */
+            CHECK(0); // longjmp(buf, 0) kept returning 0
             return;
         }
         longjmp(g_zero_jb, 0);
@@ -607,7 +608,7 @@ static void test_longjmp_zero(void)
     CHECK(rc == 1);
 }
 
-/* Jumps out of three nested frames at once. */
+// Jumps out of three nested frames at once.
 static void nest_level3(void)
 {
     longjmp(g_nest_jb, 7);
@@ -623,7 +624,7 @@ static void nest_level1(void)
     nest_level2();
 }
 
-/* Recurses so a wrong sp after longjmp shows up as a wrong sum or a fault. */
+// Recurses so a wrong sp after longjmp shows up as a wrong sum or a fault.
 static int sum_to(int n)
 {
     return n <= 0 ? 0 : n + sum_to(n - 1);
@@ -637,13 +638,13 @@ static void test_longjmp_nested(void)
     }
 
     CHECK(rc == 7);
-    /* The abandoned frames must leave a usable stack behind. */
+    // The abandoned frames must leave a usable stack behind.
     CHECK(sum_to(10) == 55);
 }
 
 static void test_setjmp_independent(void)
 {
-    /* Two buffers must not alias: jumping through one leaves the other set. */
+    // Two buffers must not alias: jumping through one leaves the other set.
     jmp_buf a, b;
     volatile int hops = 0;
 
@@ -660,7 +661,7 @@ static void test_setjmp_independent(void)
     CHECK(hops == 2);
 }
 
-/* --- strerror ----------------------------------------------------------- */
+// --- strerror -----------------------------------------------------------
 
 static void test_strerror_keying(void)
 {
@@ -694,11 +695,11 @@ static void test_strerror_end_to_end(void)
     CHECK(strcmp(strerror(errno), "Bad file descriptor") == 0);
 }
 
-/* --- errno ------------------------------------------------------------- */
+// --- errno -------------------------------------------------------------
 
 static void test_errno_open(void)
 {
-    /* Opening a non-existent file must set errno to ENOENT. */
+    // Opening a non-existent file must set errno to ENOENT.
     errno = 0;
     int fd = sys_open("/no/such/file", VFS_O_RDONLY);
     CHECK(fd == -1);
@@ -707,7 +708,7 @@ static void test_errno_open(void)
 
 static void test_errno_close(void)
 {
-    /* Closing an invalid descriptor must set errno to EBADF. */
+    // Closing an invalid descriptor must set errno to EBADF.
     errno = 0;
     int ret = sys_close(9999);
     CHECK(ret == -1);
@@ -716,14 +717,14 @@ static void test_errno_close(void)
 
 static void test_errno_preserved(void)
 {
-    /* A successful call must not disturb errno. */
+    // A successful call must not disturb errno.
     errno = EINVAL;
     int pid = sys_getpid();
     CHECK(pid > 0);
-    CHECK(errno == EINVAL); /* Unchanged by the successful call. */
+    CHECK(errno == EINVAL); // Unchanged by the successful call.
 }
 
-/* --- strerror ------------------------------------------------------------ */
+// --- strerror ------------------------------------------------------------
 
 static void test_strerror_known(void)
 {
@@ -773,15 +774,15 @@ static void test_strerror_out_of_range(void)
 {
     char expected[32];
 
-    /* Negative values. */
+    // Negative values.
     snprintf(expected, sizeof(expected), "Unknown error %d", -1);
     CHECK(strcmp(strerror(-1), expected) == 0);
 
-    /* Just past the highest defined code (ECONNREFUSED == 111). */
+    // Just past the highest defined code (ECONNREFUSED == 111).
     snprintf(expected, sizeof(expected), "Unknown error %d", 112);
     CHECK(strcmp(strerror(112), expected) == 0);
 
-    /* Far out of range, well beyond any lookup table bound. */
+    // Far out of range, well beyond any lookup table bound.
     snprintf(expected, sizeof(expected), "Unknown error %d", 999999);
     CHECK(strcmp(strerror(999999), expected) == 0);
 
@@ -804,7 +805,7 @@ static void test_strerror_nonnull(void)
     CHECK(strerror(0) != NULL);
 }
 
-/* --- Entry point ------------------------------------------------------- */
+// --- Entry point -------------------------------------------------------
 
 int main(void)
 {

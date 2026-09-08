@@ -116,10 +116,11 @@ int fseek(FILE *stream, off_t offset, int whence)
     }
 
     int vfs_whence = VFS_SEEK_SET;
-    if (whence == SEEK_CUR)
+    if (whence == SEEK_CUR) {
         vfs_whence = VFS_SEEK_CUR;
-    else if (whence == SEEK_END)
+    } else if (whence == SEEK_END) {
         vfs_whence = VFS_SEEK_END;
+    }
 
     off_t res = sys_lseek(stream->fd, offset, vfs_whence);
     if (res < 0) {

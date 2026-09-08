@@ -1,8 +1,5 @@
 /*
  * process.h - Public API for process and address space management.
- *
- * This header defines the Process Control Block (PCB), virtual address
- * space tracking, and the lifecycle management interface.
  */
 
 #ifndef PERSPICUA_SCHED_PROCESS_H
@@ -150,7 +147,7 @@ static inline struct process *process_slot(uint32_t pid)
     return pid < PROCESS_TABLE_SIZE ? process_table[pid] : NULL;
 }
 
-/* Lifecycle and execution */
+// Lifecycle and execution
 void process_init(void);
 void process_create(void *code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char *path, uint32_t pid);
@@ -159,7 +156,7 @@ int process_fork(struct exception_trap_frame *parent_tf);
 void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 
-/* Context and identity */
+// Context and identity
 void process_drop_to_user(void *code_vaddr, void *stack_vaddr);
 int process_find_current(void);
 
@@ -174,16 +171,16 @@ struct process *process_current(void);
 unsigned long process_get_ttbr0(uint32_t pid);
 
 #ifdef CONFIG_TESTS
-/* Reserves a free PID slot, zeroed and RUNNING. Returns the pid or negative. */
+// Reserves a free PID slot, zeroed and RUNNING. Returns the pid or negative.
 int process_test_claim_slot(void);
 
-/* Frees a slot claimed by the above. */
+// Frees a slot claimed by the above.
 void process_test_release_slot(uint32_t pid);
 #endif
 
-/* Memory management */
+// Memory management
 uintptr_t process_va_alloc(struct va_allocator *va, size_t pages);
 void process_va_free(struct va_allocator *va, uintptr_t base);
 void process_flush_icache_range(void *start, size_t size);
 
-#endif /* PERSPICUA_SCHED_PROCESS_H */
+#endif // PERSPICUA_SCHED_PROCESS_H

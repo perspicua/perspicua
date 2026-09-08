@@ -1,8 +1,5 @@
 /*
  * signals.h - Kernel-internal API for signal management.
- *
- * Handles the lifecycle of signal delivery, including context saving
- * and stack frame preparation.
  */
 
 #ifndef PERSPICUA_CORE_SIGNALS_H
@@ -23,19 +20,10 @@ struct signal_frame {
     sigset_t saved_mask;
 };
 
-/*
- * signal_handle_pending - Dispatches pending signals before returning to user mode.
- */
 void signal_handle_pending(struct exception_trap_frame *tf);
 
-/*
- * signal_send - Posts a signal to a target process by its PID.
- */
 int signal_send(uint32_t target_pid, int sig);
 
-/*
- * signal_send_group - Sends a signal to all processes in a process group.
- */
 int signal_send_group(uint32_t pgid, int sig);
 
-#endif /* PERSPICUA_CORE_SIGNALS_H */
+#endif // PERSPICUA_CORE_SIGNALS_H

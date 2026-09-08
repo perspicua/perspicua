@@ -1,8 +1,5 @@
 /*
  * tty.c - Implementation of the Teletype (TTY) subsystem.
- *
- * Handles buffering, line editing, and process synchronization for
- * character devices.
  */
 
 #include "core/tty.h"
@@ -20,25 +17,16 @@
 
 struct tty console_tty;
 
-/*
- * console_rx_adapter - Bridges the UART RX callback to the console TTY.
- */
 static void console_rx_adapter(char c)
 {
     tty_handle_rx(&console_tty, c);
 }
 
-/*
- * console_tx_adapter - Bridges the UART TX callback to the console TTY.
- */
 static void console_tx_adapter(void)
 {
     tty_handle_tx(&console_tty);
 }
 
-/*
- * wait_queue_add - Appends a task to a TTY wait queue.
- */
 static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
 {
     t->wait_next = NULL;
@@ -63,7 +51,7 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
         }
         t->wait_next = NULL;
 
-        /* Skip tasks that were woken up by other signals or timeouts */
+        // Skip tasks that were woken up by other signals or timeouts
         if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_BLOCKED) {
             return t;
         }
@@ -71,9 +59,6 @@ static struct task *wait_queue_remove(struct task **head, struct task **tail)
     return NULL;
 }
 
-/*
- * wait_queue_remove_task - Unlinks a specific task from a TTY wait queue.
- */
 static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
 {
     struct task *curr = *head;
@@ -97,9 +82,6 @@ static void wait_queue_remove_task(struct task **head, struct task **tail, struc
     }
 }
 
-/*
- * tty_pump_tx - Transfers software TX buffer to hardware UART FIFO.
- */
 static void tty_pump_tx(struct tty *tty)
 {
     size_t initial_tail = tty->tx_tail;
@@ -116,7 +98,7 @@ static void tty_pump_tx(struct tty *tty)
 
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 
-    /* Wake writers if space became available */
+    // Wake writers if space became available
     if (tty->tx_tail != initial_tail) {
         struct task *t = wait_queue_remove(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail);
         if (t) {
@@ -124,7 +106,7 @@ static void tty_pump_tx(struct tty *tty)
         }
     }
 
-    /* Enable TX IRQ only if data remains in buffer */
+    // Enable TX IRQ only if data remains in buffer
     if (tty->tx_head != tty->tx_tail) {
         mmio_write(uart_imsc, mmio_read(uart_imsc) | UART_IMSC_TXIM);
     } else {
@@ -132,9 +114,6 @@ static void tty_pump_tx(struct tty *tty)
     }
 }
 
-/*
- * tty_put_tx_char - Queues a single char for transmission if space exists.
- */
 static void tty_put_tx_char(struct tty *tty, char c)
 {
     size_t next_tx_head = (tty->tx_head + 1) % TTY_BUFFER_SIZE;
@@ -144,9 +123,6 @@ static void tty_put_tx_char(struct tty *tty, char c)
     }
 }
 
-/*
- * tty_echo_char - Mirrors a char to local console and output stream.
- */
 static void tty_echo_char(struct tty *tty, char c)
 {
     if (!tty->echo_enabled) {
@@ -168,9 +144,6 @@ static void tty_echo_char(struct tty *tty, char c)
     tty_pump_tx(tty);
 }
 
-/*
- * tty_has_line - Returns non-zero if RX buffer contains a newline.
- */
 static int tty_has_line(struct tty *tty)
 {
     size_t i = tty->rx_tail;
@@ -183,9 +156,6 @@ static int tty_has_line(struct tty *tty)
     return 0;
 }
 
-/*
- * tty_init - Wipes buffers and resets TTY state.
- */
 void tty_init(struct tty *tty)
 {
     memset(tty->rx_buffer, 0, TTY_BUFFER_SIZE);
@@ -273,9 +243,6 @@ void tty_handle_tx(struct tty *tty)
     spin_unlock_irqrestore(&tty->lock, flags);
 }
 
-/*
- * tty_handle_rx - Dispatches received characters to the RX buffer or signals.
- */
 void tty_handle_rx(struct tty *tty, char c)
 {
     unsigned long flags = spin_lock_irqsave(&tty->lock);
@@ -284,7 +251,7 @@ void tty_handle_rx(struct tty *tty, char c)
         c = '\n';
     }
 
-    /* Ctrl-C and Ctrl-Z reach the foreground group as a whole. */
+    // Ctrl-C and Ctrl-Z reach the foreground group as a whole.
     if (c == 3 || c == 26) {
         int sig = (c == 3) ? SIGNAL_INT : SIGNAL_TSTP;
         uint32_t fg_pgid = tty->foreground_pgid;
@@ -295,7 +262,7 @@ void tty_handle_rx(struct tty *tty, char c)
         return;
     }
 
-    /* Backspace handling in canonical mode */
+    // Backspace handling in canonical mode
     if (tty->canon_enabled && (c == '\b' || c == 127)) {
         if (tty->rx_head != tty->rx_tail) {
             tty->rx_head = (tty->rx_head + TTY_BUFFER_SIZE - 1) % TTY_BUFFER_SIZE;
@@ -307,14 +274,14 @@ void tty_handle_rx(struct tty *tty, char c)
 
     tty_echo_char(tty, c);
 
-    /* Push character to RX buffer */
+    // Push character to RX buffer
     size_t next_rx_head = (tty->rx_head + 1) % TTY_BUFFER_SIZE;
     if (next_rx_head != tty->rx_tail) {
         tty->rx_buffer[tty->rx_head] = c;
         tty->rx_head = next_rx_head;
     }
 
-    /* Wake readers for every char (raw) or every newline (canon) */
+    // Wake readers for every char (raw) or every newline (canon)
     if (!tty->canon_enabled || c == '\n') {
         struct task *t = wait_queue_remove(&tty->wait_queue_head, &tty->wait_queue_tail);
         if (t) {
@@ -325,9 +292,6 @@ void tty_handle_rx(struct tty *tty, char c)
     spin_unlock_irqrestore(&tty->lock, flags);
 }
 
-/*
- * tty_read - Reads characters, blocking if no line or data is available.
- */
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
     switch (tty_access_check(tty, SIGNAL_TTIN)) {
@@ -374,7 +338,7 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             spin_unlock_irqrestore(&tty->lock, flags);
             schedule();
 
-            /* Cleanup after wake */
+            // Cleanup after wake
             unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
             wait_queue_remove_task(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags_cleanup);
@@ -399,15 +363,12 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
     return (int)n;
 }
 
-/*
- * tty_write - Writes data to TTY and local framebuffer console.
- */
 int tty_write(struct tty *tty, const char *buf, size_t count)
 {
     for (size_t i = 0; i < count; i++) {
         unsigned long flags = spin_lock_irqsave(&tty->lock);
 
-        /* Wait for TX space */
+        // Wait for TX space
         while ((tty->tx_head + 1) % TTY_BUFFER_SIZE == tty->tx_tail) {
             struct task *curr = sched_get_current();
             curr->state = SCHED_TASK_BLOCKED;
@@ -416,7 +377,7 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             schedule();
             flags = spin_lock_irqsave(&tty->lock);
 
-            /* Cleanup after wake */
+            // Cleanup after wake
             wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
         }
 

@@ -30,25 +30,23 @@
 
 #define PAGE_SIZE 4096
 
-/* Bounds a wave of children so a run cannot wedge the system it is testing. */
+// Bounds a wave of children so a run cannot wedge the system it is testing.
 #define DEFAULT_MAX_KIDS 96
 
-/* ------------------------------------------------------------------------ */
-/* Verdicts                                                                  */
-/* ------------------------------------------------------------------------ */
+// Verdicts
 
 enum kid_verdict {
     KID_OK = 0,
-    KID_SETUP,       /* could not set itself up; inconclusive, not a pass */
-    KID_PARENT_DATA, /* did not see the parent's snapshot */
-    KID_OWN_DATA,    /* its own store did not read back */
-    KID_ZERO_PAGE,   /* a fresh anonymous page was not zero-filled */
-    KID_PPID,        /* not reparented after its parent exited */
-    KID_STREAM,      /* pipe content or length wrong */
-    KID_ARGV,        /* exec did not deliver argv intact */
-    KID_FORK,        /* a nested fork failed unexpectedly */
-    KID_SIGNAL,      /* signal not delivered, or delivered while blocked */
-    KID_FILE,        /* file content read back wrong */
+    KID_SETUP,       // could not set itself up; inconclusive, not a pass
+    KID_PARENT_DATA, // did not see the parent's snapshot
+    KID_OWN_DATA,    // its own store did not read back
+    KID_ZERO_PAGE,   // a fresh anonymous page was not zero-filled
+    KID_PPID,        // not reparented after its parent exited
+    KID_STREAM,      // pipe content or length wrong
+    KID_ARGV,        // exec did not deliver argv intact
+    KID_FORK,        // a nested fork failed unexpectedly
+    KID_SIGNAL,      // signal not delivered, or delivered while blocked
+    KID_FILE,        // file content read back wrong
     KID_VERDICT_COUNT
 };
 
@@ -65,9 +63,7 @@ static const char *verdict_name(int v)
     return "unknown";
 }
 
-/* ------------------------------------------------------------------------ */
-/* Reporting                                                                 */
-/* ------------------------------------------------------------------------ */
+// Reporting
 
 static int g_checks;
 static int g_failures;
@@ -109,15 +105,13 @@ static void note(const char *fmt, ...)
     printf("\n");
 }
 
-/* ------------------------------------------------------------------------ */
-/* Deterministic randomness and content patterns                             */
-/* ------------------------------------------------------------------------ */
+// Deterministic randomness and content patterns
 
 static uint64_t g_rng;
 
 static uint32_t rnd(void)
 {
-    /* xorshift64*, so a printed seed reproduces the whole run */
+    // xorshift64*, so a printed seed reproduces the whole run
     g_rng ^= g_rng >> 12;
     g_rng ^= g_rng << 25;
     g_rng ^= g_rng >> 27;
@@ -146,7 +140,7 @@ static void pattern_fill(void *buf, size_t len, uint32_t key)
     }
 }
 
-/* Index of the first mismatching word, or -1 when the buffer matches. */
+// Index of the first mismatching word, or -1 when the buffer matches.
 static long pattern_check(const void *buf, size_t len, uint32_t key)
 {
     const uint32_t *w = (const uint32_t *)buf;
@@ -175,9 +169,7 @@ static long byte_pattern_check(const unsigned char *buf, size_t len, uint32_t ke
     return -1;
 }
 
-/* ------------------------------------------------------------------------ */
-/* Small helpers                                                             */
-/* ------------------------------------------------------------------------ */
+// Small helpers
 
 static void *map_anon(size_t len)
 {
@@ -185,7 +177,7 @@ static void *map_anon(size_t len)
     return p == MAP_FAILED ? NULL : p;
 }
 
-/* Pipes and files are both free to satisfy a request partially. */
+// Pipes and files are both free to satisfy a request partially.
 static int write_full(int fd, const unsigned char *buf, size_t len)
 {
     size_t done = 0;
@@ -212,7 +204,7 @@ static int read_full(int fd, unsigned char *buf, size_t len)
     return (int)done;
 }
 
-/* Generous: a wave member competing with 96 others still finishes far inside. */
+// Generous: a wave member competing with 96 others still finishes far inside.
 #define REAP_DEADLINE_MS 8000
 
 /*
@@ -229,7 +221,7 @@ static int wait_deadline(int pid, int *status, const char *what)
         int got = sys_waitpid(pid, status, WNOHANG);
 
         if (got != 0) {
-            return got; /* reaped, or no such child */
+            return got; // reaped, or no such child
         }
         sys_sleep(10);
     }
@@ -258,7 +250,7 @@ static int reap_wave(const int *pids, int n, const char *what)
             if (got >= 0) {
                 report_fail("%s: waitpid(%d) returned %d", what, pids[i], got);
             }
-            /* A deadline miss has already reported itself. */
+            // A deadline miss has already reported itself.
             if (worst < KID_SETUP) {
                 worst = KID_SETUP;
             }
@@ -276,9 +268,7 @@ static int reap_wave(const int *pids, int n, const char *what)
     return worst;
 }
 
-/* ------------------------------------------------------------------------ */
-/* cow - copy-on-write isolation under a fork storm                          */
-/* ------------------------------------------------------------------------ */
+// cow - copy-on-write isolation under a fork storm
 
 /*
  * The invariant is symmetric and both halves have been broken before: a child
@@ -330,7 +320,7 @@ static void test_cow(int max_kids)
                     sys_exit(KID_OWN_DATA);
                 }
             }
-            /* A second pass catches a store that landed in a page later reclaimed. */
+            // A second pass catches a store that landed in a page later reclaimed.
             for (size_t p = 0; p < pages; p++) {
                 if (pattern_check(region + p * PAGE_SIZE, PAGE_SIZE, own_key + (uint32_t)p) >= 0) {
                     sys_exit(KID_OWN_DATA);
@@ -365,9 +355,7 @@ static void test_cow(int max_kids)
     note("%d children verified %zu pages each", n, pages);
 }
 
-/* ------------------------------------------------------------------------ */
-/* zero - fresh anonymous memory must be zero-filled                         */
-/* ------------------------------------------------------------------------ */
+// zero - fresh anonymous memory must be zero-filled
 
 /*
  * A page handed out still carrying its last owner's data is both a leak and a
@@ -401,7 +389,7 @@ static void test_zero(int max_kids)
                         }
                     }
                 }
-                /* Leave it dirty for whoever gets these frames next. */
+                // Leave it dirty for whoever gets these frames next.
                 memset(p, 0xA5 + i, len);
                 sys_exit(KID_OK);
             }
@@ -414,9 +402,7 @@ static void test_zero(int max_kids)
     note("%d children checked %zu fresh bytes each", n, len);
 }
 
-/* ------------------------------------------------------------------------ */
-/* fork - lifecycle accounting and slot reuse                                */
-/* ------------------------------------------------------------------------ */
+// fork - lifecycle accounting and slot reuse
 
 /*
  * Each child exits with a value derived from its index, so a status delivered
@@ -482,13 +468,11 @@ static void test_fork(int max_kids)
     CHECK(high[2] >= high[0], "fork: wave 2 reached %d after wave 0 reached %d (leak)", high[2],
           high[0]);
 
-    /* Nothing is left to reap once every wave has been collected. */
+    // Nothing is left to reap once every wave has been collected.
     CHECK(sys_waitpid(-1, NULL, 0) < 0, "fork: a child outlived its wave");
 }
 
-/* ------------------------------------------------------------------------ */
-/* reap - orphans, reparenting and zombie cleanup                            */
-/* ------------------------------------------------------------------------ */
+// reap - orphans, reparenting and zombie cleanup
 
 /*
  * A child that exits before its parent waits, and a grandchild whose parent
@@ -513,11 +497,11 @@ static void test_reap(int max_kids)
                 sys_exit(KID_FORK);
             }
             if (grand == 0) {
-                /* Outlive the parent, then confirm init adopted us. */
+                // Outlive the parent, then confirm init adopted us.
                 sys_sleep(40);
                 sys_exit(sys_getppid() == 1 ? KID_OK : KID_PPID);
             }
-            sys_exit(KID_OK); /* orphan the grandchild deliberately */
+            sys_exit(KID_OK); // orphan the grandchild deliberately
         }
         pids[n++] = pid;
     }
@@ -525,7 +509,7 @@ static void test_reap(int max_kids)
     CHECK(n > 0, "reap: could not fork any children");
     reap_wave(pids, n, "reap");
 
-    /* The grandchildren belong to init now; give them time to finish. */
+    // The grandchildren belong to init now; give them time to finish.
     sys_sleep(200);
 
     int limited = 0;
@@ -534,9 +518,7 @@ static void test_reap(int max_kids)
     note("%d orphans reparented, %d slots still available", n, after);
 }
 
-/* ------------------------------------------------------------------------ */
-/* pipe - byte-exact transfer, blocking, and EOF                             */
-/* ------------------------------------------------------------------------ */
+// pipe - byte-exact transfer, blocking, and EOF
 
 /*
  * The payload is larger than any plausible pipe buffer, so the writer blocks
@@ -546,7 +528,7 @@ static void test_reap(int max_kids)
 static void test_pipe(void)
 {
     const size_t total = 96 * 1024;
-    const size_t chunk = 733; /* deliberately not a divisor of anything */
+    const size_t chunk = 733; // deliberately not a divisor of anything
     uint32_t key = rnd();
     int fds[2];
 
@@ -615,7 +597,7 @@ static void test_pipe(void)
         }
         CHECK(!short_write, "pipe: writer could not deliver the whole stream");
     }
-    sys_close(fds[1]); /* the reader's EOF */
+    sys_close(fds[1]); // the reader's EOF
 
     int status = -1;
     CHECK(sys_waitpid(pid, &status, 0) == pid, "pipe: reader did not exit");
@@ -634,7 +616,7 @@ static void test_pipe(void)
  */
 static int pipe_big_write(uint32_t key)
 {
-    const size_t len = 32768; /* several buffers' worth, in one write call */
+    const size_t len = 32768; // several buffers' worth, in one write call
     unsigned char *buf = malloc(len);
     int fds[2];
 
@@ -665,7 +647,7 @@ static int pipe_big_write(uint32_t key)
 
     sys_close(fds[0]);
     byte_pattern_fill(buf, len, key);
-    sys_sleep(80); /* the reader is blocked on an empty pipe by now */
+    sys_sleep(80); // the reader is blocked on an empty pipe by now
 
     int n = write_full(fds[1], buf, len);
     sys_close(fds[1]);
@@ -702,7 +684,7 @@ static void test_pipe_big(void)
             report_fail("pipe-big: reports %s (%d)", verdict_name(status), status);
         }
     }
-    /* A deadline miss reported itself; killing the writer frees its reader. */
+    // A deadline miss reported itself; killing the writer frees its reader.
 }
 
 /*
@@ -721,7 +703,7 @@ static void test_pipe_eof(void)
         return;
     }
 
-    /* Write end closed before any read: an immediate EOF. */
+    // Write end closed before any read: an immediate EOF.
     sys_close(fds[1]);
     CHECK(sys_read(fds[0], &byte, 1) == 0, "pipe-eof: closed pipe did not report EOF");
     sys_close(fds[0]);
@@ -739,7 +721,7 @@ static void test_pipe_eof(void)
         return;
     }
     if (pid == 0) {
-        /* Block in read first, so the parent's close has to wake us. */
+        // Block in read first, so the parent's close has to wake us.
         sys_close(fds[1]);
         unsigned char b = 0;
         int n = sys_read(fds[0], &b, 1);
@@ -747,7 +729,7 @@ static void test_pipe_eof(void)
     }
 
     sys_close(fds[0]);
-    sys_sleep(60); /* let the child reach its blocking read */
+    sys_sleep(60); // let the child reach its blocking read
     sys_close(fds[1]);
 
     int status = -1;
@@ -755,9 +737,7 @@ static void test_pipe_eof(void)
     CHECK(status == KID_OK, "pipe-eof: blocked reader reports %s", verdict_name(status));
 }
 
-/* ------------------------------------------------------------------------ */
-/* signal - delivery, masking and coalescing                                 */
-/* ------------------------------------------------------------------------ */
+// signal - delivery, masking and coalescing
 
 static volatile int g_sig_hits;
 static volatile int g_sig_stop;
@@ -787,7 +767,7 @@ static void test_signal(void)
     sys_signal(SIGNAL_USR1, count_handler);
     sys_signal(SIGNAL_USR2, count_handler);
 
-    /* Cleared before the fork, not after: the child inherits these counters. */
+    // Cleared before the fork, not after: the child inherits these counters.
     g_sig_hits = 0;
     g_sig_stop = 0;
 
@@ -813,7 +793,7 @@ static void test_signal(void)
     CHECK(sys_waitpid(pid, &status, 0) == pid, "signal: child did not exit");
     CHECK(status == KID_OK, "signal: child reports %s", verdict_name(status));
 
-    /* Masking, checked on ourselves so the pending set is directly readable. */
+    // Masking, checked on ourselves so the pending set is directly readable.
     {
         sigset_t mask = 1u << (SIGNAL_USR1 - 1);
         sigset_t pending = 0;
@@ -856,7 +836,7 @@ static void test_signal_wake(void)
         return;
     }
     if (pid == 0) {
-        /* Sleep long enough that a delivered signal is the only fast way out. */
+        // Sleep long enough that a delivered signal is the only fast way out.
         sys_sleep(400);
         sys_exit(g_sig_hits > 0 ? KID_OK : KID_SIGNAL);
     }
@@ -871,9 +851,7 @@ static void test_signal_wake(void)
     sys_signal(SIGNAL_USR1, SIGNAL_DFL);
 }
 
-/* ------------------------------------------------------------------------ */
-/* fd - descriptor exhaustion, recovery and inheritance                      */
-/* ------------------------------------------------------------------------ */
+// fd - descriptor exhaustion, recovery and inheritance
 
 /*
  * This kernel allows a process only one descriptor per non-device file, so
@@ -884,7 +862,7 @@ static void test_signal_wake(void)
 
 static void fd_probe_path(char *out, size_t len, int i)
 {
-    /* Names stay inside 8.3 or the filesystem shortens them into collisions. */
+    // Names stay inside 8.3 or the filesystem shortens them into collisions.
     snprintf(out, len, "/fd%d.tmp", i);
 }
 
@@ -921,7 +899,7 @@ static void test_fd(void)
         return;
     }
 
-    /* One descriptor per file, and a second on the same file is refused. */
+    // One descriptor per file, and a second on the same file is refused.
     {
         fd_probe_path(path, sizeof(path), 0);
         int first = sys_open(path, VFS_O_RDONLY);
@@ -945,7 +923,7 @@ static void test_fd(void)
         }
         high[round] = n;
 
-        /* Every descriptor handed out must be distinct. */
+        // Every descriptor handed out must be distinct.
         int dup_seen = 0;
         for (int i = 1; i < n && !dup_seen; i++) {
             for (int j = 0; j < i; j++) {
@@ -977,9 +955,7 @@ static void test_fd(void)
     free(fds);
 }
 
-/* ------------------------------------------------------------------------ */
-/* file - content integrity through the filesystem                           */
-/* ------------------------------------------------------------------------ */
+// file - content integrity through the filesystem
 
 #define FILE_PATH "/sfile.tmp"
 
@@ -1026,13 +1002,13 @@ static void test_file(void)
 
         CHECK(sys_lseek(fd, 0, VFS_SEEK_END) == (off_t)len, "file: size is not %zu", len);
 
-        /* A read past the end returns nothing rather than stale bytes. */
+        // A read past the end returns nothing rather than stale bytes.
         CHECK(sys_read(fd, back, 16) == 0, "file: read past the end returned data");
 
         sys_close(fd);
     }
 
-    /* Reopening must find the last content, not a cached earlier version. */
+    // Reopening must find the last content, not a cached earlier version.
     {
         uint32_t key = rnd();
         size_t len = 8000;
@@ -1087,14 +1063,14 @@ static void test_file(void)
         }
     }
 
-    /* Create/unlink churn: a leak here shows up as a later round failing. */
+    // Create/unlink churn: a leak here shows up as a later round failing.
     {
         int made[2] = {0, 0};
 
         for (int round = 0; round < 2; round++) {
             char path[64];
             for (int i = 0; i < 48; i++) {
-                /* Names stay inside 8.3 so this measures leaks, not shortening. */
+                // Names stay inside 8.3 so this measures leaks, not shortening.
                 snprintf(path, sizeof(path), "/sc%d.tmp", i);
                 int fd = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
                 if (fd < 0) {
@@ -1119,9 +1095,7 @@ static void test_file(void)
     free(back);
 }
 
-/* ------------------------------------------------------------------------ */
-/* exec - argv delivery and address-space replacement                        */
-/* ------------------------------------------------------------------------ */
+// exec - argv delivery and address-space replacement
 
 /*
  * The child re-executes this same binary and checks a relation between two
@@ -1149,7 +1123,7 @@ static void test_exec(char **envp, int max_kids)
             char *argv[] = {"stress", "--exec-child", a, b, NULL};
             sys_exec("/bin/stress.elf", argv, envp);
             sys_exec("stress.elf", argv, envp);
-            sys_exit(KID_SETUP); /* exec must not return */
+            sys_exit(KID_SETUP); // exec must not return
         }
         pids[n++] = pid;
     }
@@ -1159,11 +1133,9 @@ static void test_exec(char **envp, int max_kids)
     note("%d children re-executed and verified their argv", n);
 }
 
-/* ------------------------------------------------------------------------ */
-/* mix - subsystems running concurrently                                     */
-/* ------------------------------------------------------------------------ */
+// mix - subsystems running concurrently
 
-/* Serial tests hold one lock at a time; the bugs that survive them need two. */
+// Serial tests hold one lock at a time; the bugs that survive them need two.
 static int mix_memory(uint32_t key)
 {
     const size_t len = 6 * PAGE_SIZE;
@@ -1187,7 +1159,7 @@ static int mix_fork(uint32_t key)
     for (int round = 0; round < 6; round++) {
         int pid = sys_fork();
         if (pid < 0) {
-            /* The table being full is expected here, not a defect. */
+            // The table being full is expected here, not a defect.
             sys_sleep(10);
             continue;
         }
@@ -1323,9 +1295,7 @@ static void test_mix(int max_kids)
     note("%d workers across %d subsystems", n, nworkers);
 }
 
-/* ------------------------------------------------------------------------ */
-/* stack - deep recursion against the user stack                             */
-/* ------------------------------------------------------------------------ */
+// stack - deep recursion against the user stack
 
 static int recurse(int depth, uint32_t key)
 {
@@ -1337,7 +1307,7 @@ static int recurse(int depth, uint32_t key)
     if (depth > 0 && recurse(depth - 1, key) != 0) {
         return -1;
     }
-    /* Checked after the recursion so a callee that scribbled on us is caught. */
+    // Checked after the recursion so a callee that scribbled on us is caught.
     for (size_t i = 0; i < sizeof(frame); i++) {
         if (frame[i] != (unsigned char)(key + i + (uint32_t)depth)) {
             return -1;
@@ -1369,9 +1339,7 @@ static void test_stack(void)
           verdict_name(status));
 }
 
-/* ------------------------------------------------------------------------ */
-/* Runner                                                                    */
-/* ------------------------------------------------------------------------ */
+// Runner
 
 struct stress_test {
     const char *name;
@@ -1575,7 +1543,7 @@ int main(int argc, char **argv, char **envp)
         }
     }
     if (seed == 0) {
-        /* Nothing here is a clock, so mix in what does vary between runs. */
+        // Nothing here is a clock, so mix in what does vary between runs.
         seed = (uint32_t)sys_getpid() * 2654435761u + (uint32_t)(uintptr_t)&seed;
     }
 
@@ -1598,7 +1566,7 @@ int main(int argc, char **argv, char **envp)
              */
             printf("  %-9s %s ...\n", t->name, t->desc);
 
-            /* Each test starts from a seed derived only from the run seed. */
+            // Each test starts from a seed derived only from the run seed.
             g_rng = (uint64_t)seed * 0x2545F4914F6CDD1DULL + (uint64_t)(selected[s] + 1) * 977
                     + (uint64_t)it * 104729;
             if (g_rng == 0) {

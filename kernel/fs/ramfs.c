@@ -1,8 +1,5 @@
 /*
- * ramfs.c - Implementation of the RAM-based filesystem (ramfs).
- *
- * This module implements a simple read-only in-memory filesystem used
- * for the initial system root.
+ * ramfs.c - In-memory read-only filesystem implementation.
  */
 
 #include "fs/ramfs.h"
@@ -56,9 +53,6 @@ static int ramfs_readdir(struct vfs_file *file, void *buffer, size_t count)
     return entries_read;
 }
 
-/*
- * ramfs_read - Direct memory-to-buffer copy for file contents.
- */
 int ramfs_read(struct vfs_file *file, void *buffer, size_t size)
 {
     struct ramfs_file_data *data = (struct ramfs_file_data *)file->node->internal_info;
@@ -80,9 +74,6 @@ int ramfs_read(struct vfs_file *file, void *buffer, size_t size)
     return (int)bytes_to_read;
 }
 
-/*
- * ramfs_lookup - Scans the static file registry for a name match.
- */
 struct vfs_vnode *ramfs_lookup(struct vfs_vnode *dir, const char *filename)
 {
     if (dir->type != VFS_VNODE_TYPE_DIR) {
@@ -99,9 +90,6 @@ struct vfs_vnode *ramfs_lookup(struct vfs_vnode *dir, const char *filename)
     return NULL;
 }
 
-/*
- * ramfs_register_file - Allocates a vnode and binds it to a memory region.
- */
 void ramfs_register_file(const char *name, const void *data, size_t size)
 {
     if (ramfs_file_count >= RAMFS_MAX_FILES) {
@@ -130,9 +118,6 @@ void ramfs_register_file(const char *name, const void *data, size_t size)
     pr_info("ramfs: registered file: %s (%u bytes)\n", name, (unsigned int)size);
 }
 
-/*
- * ramfs_init - Initializes operation tables and mounts the root directory.
- */
 void ramfs_init(void)
 {
     ramfs_root_vnode = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));

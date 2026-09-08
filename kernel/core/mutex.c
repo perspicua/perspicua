@@ -14,7 +14,7 @@
 #include "core/lock.h"
 #include "sched/sched.h"
 
-/* Unlink a task from the waiter list if present. Caller holds m->guard. */
+// Unlink a task from the waiter list if present. Caller holds m->guard.
 static void kmutex_wq_remove(struct kmutex *m, struct task *t)
 {
     struct task **pp = &m->wait_head;
@@ -50,14 +50,14 @@ void kmutex_lock(struct kmutex *m)
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&m->guard);
 
-        /* Recursive re-acquisition by the current owner. */
+        // Recursive re-acquisition by the current owner.
         if (self && m->owner == self) {
             m->depth++;
             spin_unlock_irqrestore(&m->guard, flags);
             return;
         }
 
-        /* A signal wake may have left us queued; drop the stale link. */
+        // A signal wake may have left us queued; drop the stale link.
         if (self) {
             kmutex_wq_remove(m, self);
         }
@@ -70,7 +70,7 @@ void kmutex_lock(struct kmutex *m)
         }
 
         if (!self) {
-            /* Pre-scheduler context: no task to switch to, so spin. */
+            // Pre-scheduler context: no task to switch to, so spin.
             spin_unlock_irqrestore(&m->guard, flags);
             continue;
         }

@@ -20,4 +20,4 @@ DIR *opendir(const char *name);
 struct vfs_dirent *readdir(DIR *dirp);
 int closedir(DIR *dirp);
 
-#endif /* PERSPICUA_LIBC_DIRENT_H */
+#endif // PERSPICUA_LIBC_DIRENT_H

@@ -1,8 +1,5 @@
 /*
  * fat32.h - Public API for the FAT32 filesystem driver.
- *
- * This header defines the structures for MBR, BPB, and directory entries
- * used to interact with FAT32 formatted block devices.
  */
 
 #ifndef PERSPICUA_FS_FAT32_H
@@ -117,18 +114,12 @@ struct fat32_fs {
     uint32_t fat_lba_start;
     uint32_t data_lba_start;
 
-    /* Highest cluster the data area can address; anything above is corrupt. */
+    // Highest cluster the data area can address; anything above is corrupt.
     uint32_t max_cluster;
 };
 
-/*
- * fat32_init - Discovers and mounts a FAT32 partition on the given device.
- */
 int fat32_init(const char *device_name);
 
-/*
- * fat32_get_root_node - Returns a vnode representing the root directory.
- */
 struct vfs_vnode *fat32_get_root_node(void);
 
 #ifdef CONFIG_TESTS
@@ -146,4 +137,4 @@ int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition
                                  uint64_t device_blocks, struct fat32_fs *out);
 #endif
 
-#endif /* PERSPICUA_FS_FAT32_H */
+#endif // PERSPICUA_FS_FAT32_H

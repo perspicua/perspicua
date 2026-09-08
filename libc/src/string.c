@@ -1,8 +1,5 @@
 /*
  * string.c - Implementation of string and memory manipulation utilities.
- *
- * This file provides standard C string functions and optimized memory
- * operations (memset, memcpy, memmove) for the Perspicua OS.
  */
 
 #include "string.h"
@@ -14,11 +11,11 @@
 
 #ifdef __KERNEL__
     #include "core/lock.h"
-/* Global synchronization for thread-unsafe string tokenization. */
+// Global synchronization for thread-unsafe string tokenization.
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 #endif
 
-/* --- Public API Implementations --- */
+// --- Public API Implementations ---
 
 size_t strlen(const char *str)
 {

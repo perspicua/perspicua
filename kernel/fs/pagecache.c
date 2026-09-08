@@ -1,8 +1,5 @@
 /*
- * pagecache.c - Implementation of the Unified Page Cache Layer.
- *
- * This module provides an in-memory cache for 4KB virtual file pages.
- * Filesystem drivers use this layer to accelerate file I/O operations.
+ * pagecache.c - Unified page-level memory cache for file content.
  */
 
 #include "fs/pagecache.h"
@@ -17,7 +14,7 @@
 #include "core/lock.h"
 
 #define PAGECACHE_HASH_SIZE 256
-#define PAGECACHE_MAX_PAGES 1024 /* 4MB of page cache */
+#define PAGECACHE_MAX_PAGES 1024 // 4MB of page cache
 
 struct page_cache_entry {
     struct vfs_vnode *vnode;
@@ -26,7 +23,7 @@ struct page_cache_entry {
     size_t page_index;
     void *data;
     int dirty;
-    int pincount; /* In-use references; a pinned entry cannot be evicted/freed */
+    int pincount;
     struct page_cache_entry *next;
     struct page_cache_entry *lru_next;
     struct page_cache_entry *lru_prev;
@@ -90,7 +87,7 @@ void *pagecache_get_page(struct vfs_vnode *node, size_t page_index)
             && curr->page_index == page_index) {
             lru_remove(curr);
             lru_add_head(curr);
-            curr->pincount++; /* Held until the caller calls pagecache_put_page */
+            curr->pincount++; // Held until the caller calls pagecache_put_page
             void *data = curr->data;
             spin_unlock_irqrestore(&pagecache_lock, flags);
             return data;
@@ -126,7 +123,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
 {
     unsigned long flags = spin_lock_irqsave(&pagecache_lock);
 
-    /* Avoid duplicate entries */
+    // Avoid duplicate entries
     size_t h = page_hash(node, page_index);
     struct page_cache_entry *curr = hash_table[h];
     while (curr) {
@@ -138,7 +135,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         curr = curr->next;
     }
 
-    /* Evict the least-recently-used UNPINNED entry when the cache is full. */
+    // Evict the least-recently-used UNPINNED entry when the cache is full.
     struct page_cache_entry *entry = NULL;
     if (cache_count >= PAGECACHE_MAX_PAGES) {
         for (struct page_cache_entry *v = lru_tail; v; v = v->lru_prev) {
@@ -164,7 +161,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
             *pp = entry->next;
         }
 
-        /* Write back dirty page before reclaiming it */
+        // Write back dirty page before reclaiming it
         if (entry->dirty && entry->vnode && entry->vnode->ops && entry->vnode->ops->write_page) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
             entry->vnode->ops->write_page(entry->vnode, entry->page_index, entry->data, PAGE_SIZE);
@@ -173,7 +170,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
 
         pmm_free_pages(entry->data, 1);
     } else {
-        /* Under cap, or every entry is currently pinned: allocate a new slot. */
+        // Under cap, or every entry is currently pinned: allocate a new slot.
         entry = slab_alloc(sizeof(struct page_cache_entry));
         if (!entry) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
@@ -188,7 +185,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
     entry->page_index = page_index;
     entry->data = data;
     entry->dirty = 0;
-    entry->pincount = 1; /* Caller holds a pin until pagecache_put_page */
+    entry->pincount = 1; // Caller holds a pin until pagecache_put_page
 
     entry->next = hash_table[h];
     hash_table[h] = entry;
@@ -314,7 +311,7 @@ void pagecache_invalidate(struct vfs_vnode *node)
         while (*pp) {
             struct page_cache_entry *entry = *pp;
 
-            /* Skip other files' pages and any page currently pinned in use. */
+            // Skip other files' pages and any page currently pinned in use.
             if (entry->fs_ops != node->ops || entry->file_id != node->internal_info
                 || entry->pincount != 0) {
                 pp = &((*pp)->next);
@@ -324,7 +321,7 @@ void pagecache_invalidate(struct vfs_vnode *node)
             *pp = entry->next;
             lru_remove(entry);
 
-            /* Write back if dirty before invalidating */
+            // Write back if dirty before invalidating
             if (entry->dirty && node->ops && node->ops->write_page) {
                 spin_unlock_irqrestore(&pagecache_lock, flags);
                 node->ops->write_page(node, entry->page_index, entry->data, PAGE_SIZE);

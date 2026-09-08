@@ -39,13 +39,17 @@ void test_slab(void)
             TEST_ASSERT("slab 64x alloc", ptrs[i] != NULL);
         }
         int distinct = 1;
-        for (int i = 0; i < 64 && distinct; i++)
-            for (int j = i + 1; j < 64 && distinct; j++)
-                if (ptrs[i] == ptrs[j])
+        for (int i = 0; i < 64 && distinct; i++) {
+            for (int j = i + 1; j < 64 && distinct; j++) {
+                if (ptrs[i] == ptrs[j]) {
                     distinct = 0;
+                }
+            }
+        }
         TEST_ASSERT("slab all 64 distinct", distinct);
-        for (int i = 0; i < 64; i++)
+        for (int i = 0; i < 64; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("64 allocs distinct");
 
@@ -57,10 +61,12 @@ void test_slab(void)
         memset(b, 0xBB, 64);
         int a_ok = 1, b_ok = 1;
         for (int i = 0; i < 64; i++) {
-            if (a[i] != 0xAA)
+            if (a[i] != 0xAA) {
                 a_ok = 0;
-            if (b[i] != 0xBB)
+            }
+            if (b[i] != 0xBB) {
                 b_ok = 0;
+            }
         }
         TEST_ASSERT("slab block a intact", a_ok);
         TEST_ASSERT("slab block b intact", b_ok);
@@ -92,18 +98,26 @@ void test_slab(void)
         memset(p256, 0x33, 256);
         memset(p1024, 0x44, 1024);
         int ok = 1;
-        for (int i = 0; i < 16; i++)
-            if (p16[i] != 0x11)
+        for (int i = 0; i < 16; i++) {
+            if (p16[i] != 0x11) {
                 ok = 0;
-        for (int i = 0; i < 64; i++)
-            if (p64[i] != 0x22)
+            }
+        }
+        for (int i = 0; i < 64; i++) {
+            if (p64[i] != 0x22) {
                 ok = 0;
-        for (int i = 0; i < 256; i++)
-            if (p256[i] != 0x33)
+            }
+        }
+        for (int i = 0; i < 256; i++) {
+            if (p256[i] != 0x33) {
                 ok = 0;
-        for (int i = 0; i < 1024; i++)
-            if (p1024[i] != 0x44)
+            }
+        }
+        for (int i = 0; i < 1024; i++) {
+            if (p1024[i] != 0x44) {
                 ok = 0;
+            }
+        }
         TEST_ASSERT("cross-class data intact", ok);
         heap_free(p16);
         heap_free(p64);
@@ -119,12 +133,14 @@ void test_slab(void)
         int count = 0;
         for (int i = 0; i < 300; i++) {
             ptrs[i] = heap_malloc(16);
-            if (ptrs[i] != NULL)
+            if (ptrs[i] != NULL) {
                 count++;
+            }
         }
         TEST_ASSERT("slab auto-grow 300 allocs", count == 300);
-        for (int i = 0; i < 300; i++)
+        for (int i = 0; i < 300; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("auto-grow beyond one page");
 
@@ -147,8 +163,9 @@ void test_slab(void)
             ptrs[i] = heap_malloc(64);
             TEST_ASSERT("slab fill alloc", ptrs[i] != NULL);
         }
-        for (int i = 127; i >= 0; i--)
+        for (int i = 127; i >= 0; i--) {
             heap_free(ptrs[i]);
+        }
 
         // After draining, allocator should still work
         void *p = heap_malloc(64);
@@ -190,13 +207,16 @@ void test_slab(void)
         int ok = 1;
         for (int i = 0; i < n; i++) {
             unsigned char *cp = (unsigned char *)ptrs[i];
-            for (unsigned long j = 0; j < exact[i]; j++)
-                if (cp[j] != (unsigned char)(i + 1))
+            for (unsigned long j = 0; j < exact[i]; j++) {
+                if (cp[j] != (unsigned char)(i + 1)) {
                     ok = 0;
+                }
+            }
         }
         TEST_ASSERT("exact class data intact", ok);
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < n; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("exact class boundaries");
 
@@ -213,13 +233,16 @@ void test_slab(void)
         int ok = 1;
         for (int i = 0; i < n; i++) {
             unsigned char *cp = (unsigned char *)ptrs[i];
-            for (unsigned long j = 0; j < above[i]; j++)
-                if (cp[j] != 0xDD)
+            for (unsigned long j = 0; j < above[i]; j++) {
+                if (cp[j] != 0xDD) {
                     ok = 0;
+                }
+            }
         }
         TEST_ASSERT("above-class data intact", ok);
-        for (int i = 0; i < n; i++)
+        for (int i = 0; i < n; i++) {
             heap_free(ptrs[i]);
+        }
     }
     TEST_PASS("class promotion");
 

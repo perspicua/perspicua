@@ -1,8 +1,5 @@
 /*
- * lockdep.c - Kernel Lock Dependency Validator
- *
- * This module tracks spinlock acquisition order and detects
- * circular dependencies (deadlocks) and recursive locks at runtime.
+ * lockdep.c - Static-order lock validator.
  */
 
 #include "core/lockdep.h"
@@ -32,7 +29,7 @@ static int held_count[SPINLOCK_MAX_CORES] = {0};
 static uintptr_t lock_nodes[MAX_LOCK_NODES];
 static int num_lock_nodes = 0;
 
-/* graph_edges[A][B] == 1 means lock A was acquired before lock B globally */
+// graph_edges[A][B] == 1 means lock A was acquired before lock B globally
 static uint8_t graph_edges[MAX_LOCK_NODES][MAX_LOCK_NODES / 8];
 
 static int lockdep_core_id(void)
@@ -67,7 +64,7 @@ static int get_or_create_node(uintptr_t lock)
     return idx;
 }
 
-/* Raw spinlock implementation to avoid recursion */
+// Raw spinlock implementation to avoid recursion
 static void raw_spin_lock(spinlock_t *lock)
 {
     unsigned int tmp;
@@ -117,7 +114,7 @@ void lockdep_acquire(spinlock_t *lock)
 
     uintptr_t new_addr = (uintptr_t)lock;
 
-    /* Check for recursive lock acquisition */
+    // Check for recursive lock acquisition
     for (int i = 0; i < count; i++) {
         if (held_locks[core][i] == new_addr) {
             raw_spin_unlock(&lockdep_lock);
@@ -126,13 +123,14 @@ void lockdep_acquire(spinlock_t *lock)
         }
     }
 
-    /* Update dependency graph */
+    // Update dependency graph
     int new_node = get_or_create_node(new_addr);
     if (new_node >= 0) {
         for (int i = 0; i < count; i++) {
             int held_node = get_or_create_node(held_locks[core][i]);
-            if (held_node < 0)
+            if (held_node < 0) {
                 continue;
+            }
 
             if (get_edge(new_node, held_node)) {
                 raw_spin_unlock(&lockdep_lock);
@@ -149,7 +147,7 @@ void lockdep_acquire(spinlock_t *lock)
             if (!get_edge(held_node, new_node)) {
                 set_edge(held_node, new_node);
 
-                /* Update transitive closure */
+                // Update transitive closure
                 for (int x = 0; x < num_lock_nodes; x++) {
                     if (get_edge(x, held_node)) {
                         set_edge(x, new_node);
@@ -169,7 +167,7 @@ void lockdep_acquire(spinlock_t *lock)
         }
     }
 
-    /* Record the acquisition */
+    // Record the acquisition
     held_locks[core][count] = new_addr;
     held_count[core] = count + 1;
 
@@ -191,7 +189,7 @@ void lockdep_release(spinlock_t *lock)
     int count = held_count[core];
     uintptr_t addr = (uintptr_t)lock;
 
-    /* Find and remove the lock from the held list (usually the last one) */
+    // Find and remove the lock from the held list (usually the last one)
     int found = -1;
     for (int i = count - 1; i >= 0; i--) {
         if (held_locks[core][i] == addr) {
@@ -201,22 +199,23 @@ void lockdep_release(spinlock_t *lock)
     }
 
     if (found >= 0) {
-        /* Shift remaining locks down */
+        // Shift remaining locks down
         for (int i = found; i < count - 1; i++) {
             held_locks[core][i] = held_locks[core][i + 1];
         }
         held_count[core] = count - 1;
     } else {
-        /* Releasing a lock we don't hold! */
+        // Logged rather than fatal: an unbalanced release is a bug, but not one
+        // worth halting the system for. Returns here rather than falling through
+        // to the common exit, which would unlock a second time.
         raw_spin_unlock(&lockdep_lock);
         lockdep_disabled[core] = 0;
         pr_err("lockdep: attempting to release unheld lock at %p\n", (void *)addr);
-        // We don't panic here because it might just be an unbalanced lock,
-        // NOTE: but it is definitely a bug worth logging.
+        return;
     }
 
     raw_spin_unlock(&lockdep_lock);
     lockdep_disabled[core] = 0;
 }
 
-#endif /* CONFIG_LOCKDEP */
+#endif // CONFIG_LOCKDEP

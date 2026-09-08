@@ -1,8 +1,5 @@
 /*
- * pipe.c - Implementation of anonymous pipes (IPC).
- *
- * This module manages the circular buffer and task synchronization required
- * for unidirectional inter-process communication.
+ * pipe.c - Implementation of anonymous unidirectional pipes.
  */
 
 #include "fs/pipe.h"
@@ -59,9 +56,6 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
     }
 }
 
-/*
- * pipe_signal_pending - True if the caller has an unblocked pending signal.
- */
 static int pipe_signal_pending(void)
 {
     struct process *p = process_current();
@@ -82,7 +76,7 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
     struct task *self = sched_get_current();
 
-    /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
+    // Transition to BLOCKED before releasing lock to avoid lost wake-ups
     self->state = SCHED_TASK_BLOCKED;
     self->wait_next = *queue;
     *queue = self;
@@ -91,13 +85,10 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
     schedule();
 
     spin_lock(lock);
-    /* A signal wake (rather than pipe_wake) leaves us queued: unlink now. */
+    // A signal wake (rather than pipe_wake) leaves us queued: unlink now.
     pipe_queue_remove(queue, self);
 }
 
-/*
- * pipe_wake - Ready all tasks waiting on a pipe event.
- */
 static void pipe_wake(struct task **queue)
 {
     struct task *t = *queue;
@@ -258,9 +249,6 @@ static int pipe_close(struct vfs_file *file)
 static struct vfs_vnode_ops pipe_ops = {
     .read = pipe_read, .write = pipe_write, .close = pipe_close};
 
-/*
- * pipe_create - Allocates a pipe and installs descriptors in the process table.
- */
 int pipe_create(int pipefd[2])
 {
     struct process *p = process_current();
@@ -293,7 +281,7 @@ int pipe_create(int pipefd[2])
     struct vfs_file *f_write = vfs_file_alloc();
 
     if (!f_read || !f_write) {
-        /* No vnode attached yet, so these just free the objects. */
+        // No vnode attached yet, so these just free the objects.
         vfs_file_put(f_read);
         vfs_file_put(f_write);
         slab_free(node);

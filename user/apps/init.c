@@ -17,7 +17,7 @@ int main(int argc, char *argv[], char *envp[])
     }
     print_string("[ INIT ] Userspace started\n");
 
-    /* Default environment if none provided */
+    // Default environment if none provided
     char *default_env[] = {"PATH=/bin:/", NULL};
     char **current_env = (envp && envp[0]) ? envp : default_env;
 
@@ -32,7 +32,7 @@ int main(int argc, char *argv[], char *envp[])
         }
 
         if (shell_pid == 0) {
-            /* Child process: execute the shell */
+            // Child process: execute the shell
             char *argv[] = {"/bin/sh.elf", NULL};
             sys_exec("/bin/sh.elf", argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
@@ -44,13 +44,13 @@ int main(int argc, char *argv[], char *envp[])
                 int status = 0;
                 int reaped = sys_waitpid(-1, &status, 0);
                 if (reaped == shell_pid) {
-                    /* The shell itself exited */
+                    // The shell itself exited
                     break;
                 } else if (reaped > 0) {
-                    /* We reaped an orphan! Just continue waiting. */
+                    // We reaped an orphan! Just continue waiting.
                     continue;
                 } else {
-                    /* Error or no more children (shouldn't happen as we have shell_pid) */
+                    // Error or no more children (shouldn't happen as we have shell_pid)
                     break;
                 }
             }
