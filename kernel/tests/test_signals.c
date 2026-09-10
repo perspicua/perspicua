@@ -119,8 +119,7 @@ void test_signals(void)
      */
     sigset_t orig_blocked = process_table[INIT_PID]->blocked_signals;
     __atomic_fetch_or(&process_table[INIT_PID]->blocked_signals,
-                      (1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)),
-                      __ATOMIC_SEQ_CST);
+                      (1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)), __ATOMIC_SEQ_CST);
 
     {
         TEST_ASSERT_EQ("send SIGUSR1 to init", signal_send(INIT_PID, SIGNAL_USR1), 0);
