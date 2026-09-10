@@ -108,7 +108,20 @@ void test_signals(void)
     /*
      * A valid signal to a live process must be accepted and recorded in the
      * pending mask. The bit is (sig - 1) because signal numbering starts at 1.
+     *
+     * SMP hazard: signal_send() unblocks init (which is sleeping in waitpid),
+     * and on another CPU core signal_handle_pending() fires on the syscall
+     * return path and discards SIGUSR1/SIGUSR2 (default action = ignore)
+     * before we can read pending_signals.  Block both signals for the duration
+     * of these three blocks so signal_handle_pending() leaves the pending bits
+     * alone; a blocked signal is still ORed into pending_signals by
+     * signal_send(), it just will not be popped until we restore the mask.
      */
+    sigset_t orig_blocked = process_table[INIT_PID]->blocked_signals;
+    __atomic_fetch_or(&process_table[INIT_PID]->blocked_signals,
+                      (1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)),
+                      __ATOMIC_SEQ_CST);
+
     {
         TEST_ASSERT_EQ("send SIGUSR1 to init", signal_send(INIT_PID, SIGNAL_USR1), 0);
 
@@ -132,6 +145,8 @@ void test_signals(void)
         uint32_t after = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("resend leaves mask unchanged", before == after);
     }
+
+    process_table[INIT_PID]->blocked_signals = orig_blocked;
 
     // POSIX mutual discard: stop signals clear pending SIGCONT, and SIGCONT clears pending stop
     // signals
