@@ -19,7 +19,8 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm clang-format mtools cpio          
+          sudo apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools cpio pipx
+          pipx install clang-format
 
       - name: Check Format
         run: just check-format
