@@ -39,10 +39,10 @@ void test_fat32(void)
 
     /*
      * The LFN sequence number is an on-disk byte that indexes the write into
-     * the name buffer. Values outside 1..20 must be refused outright: before
-     * this was checked, sequence 0 wrote 13 bytes below the buffer and
-     * sequence 63 wrote roughly 550 bytes past the end of a 256-byte stack
-     * array, straight through the caller's saved registers.
+     * the name buffer. Values outside 1..20 must be refused outright: sequence
+     * 0 lands 13 bytes below the buffer and sequence 63 roughly 550 bytes past
+     * the end of a 256-byte stack array, straight through the caller's saved
+     * registers.
      */
     {
         struct fat32_lfn_entry lfn;

@@ -412,10 +412,9 @@ int vprintf(const char *fmt, va_list args)
         .sink = 1,
 /*
  * The kernel writes straight to the UART and must inject CR itself. Userspace
- * output instead flows through the tty, which already translates \n to \r\n
- * (ONLCR); translating again here double-printed CR to the terminal and, worse,
- * wrote \r\n into redirected files and pipes — inflating byte counts and
- * leaving stray \r for tools like grep. So userspace emits plain \n.
+ * output flows through the tty, which already translates \n to \r\n (ONLCR), so
+ * it emits plain \n: translating here too would double the CR at the terminal
+ * and write \r\n into redirected files and pipes.
  */
 #ifdef __KERNEL__
         .crlf = 1,
@@ -449,15 +448,6 @@ int printf(const char *fmt, ...)
 }
 
 #ifdef __KERNEL__
-/*
- * printk - Writes a timestamped kernel log line.
- *
- * The timestamp shares the body's sink buffer so the whole line leaves as a
- * single __libc_write, which the UART driver emits under one lock hold.
- * Writing the timestamp separately left a gap in which a concurrent tty write
- * on another core could splice its output into the line. Lines longer than
- * PRINTF_BUF_SIZE still flush in pieces and can interleave.
- */
 int printk(const char *fmt, ...)
 {
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
@@ -475,6 +465,7 @@ int printk(const char *fmt, ...)
         .crlf = 1,
     };
 
+    // Shares the body's sink so the line reaches the UART as a single write.
     char ts_buf[32];
     snprintf(ts_buf, sizeof(ts_buf), "[%5lu.%06lu] ", sec, rem_ms * 1000);
     for (const char *t = ts_buf; *t; t++) {
@@ -491,7 +482,6 @@ int printk(const char *fmt, ...)
 
     spin_unlock_irqrestore(&printf_lock, irqflags);
 
-    // The timestamp is framing, not output the caller asked for.
     return (int)(fb.total - ts_len);
 }
 #endif

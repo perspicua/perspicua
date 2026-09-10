@@ -114,7 +114,7 @@ static void tty_pump_tx(struct tty *tty)
     }
 }
 
-// Slots free in the TX ring; one is always left empty to separate full from empty.
+// One slot is always left empty so a full ring is distinguishable from an empty one.
 static size_t tty_tx_space(const struct tty *tty)
 {
     return (tty->tx_tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
@@ -369,14 +369,6 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
     return (int)n;
 }
 
-/*
- * tty_write - Queues a buffer for transmission, translating \n to \r\n (ONLCR).
- *
- * Fills the ring and pumps once at the end rather than pumping per character.
- * Pumping per character released uart_tx_lock between every byte, which let a
- * kernel log line from another core splice itself into the middle of this one.
- * A write that fits in the ring now reaches the UART as one uninterrupted run.
- */
 int tty_write(struct tty *tty, const char *buf, size_t count)
 {
     unsigned long flags = spin_lock_irqsave(&tty->lock);
@@ -388,8 +380,7 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
         size_t need = (c == '\n') ? 2 : 1;
 
         while (tty_tx_space(tty) < need) {
-            // Drain what we can first; this also arms the TX interrupt that
-            // wakes us once the hardware has taken more of the buffer.
+            // Arms the TX interrupt, which is what wakes us once space frees up.
             tty_pump_tx(tty);
             if (tty_tx_space(tty) >= need) {
                 break;

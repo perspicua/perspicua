@@ -271,9 +271,9 @@ static int reap_wave(const int *pids, int n, const char *what)
 // cow - copy-on-write isolation under a fork storm
 
 /*
- * The invariant is symmetric and both halves have been broken before: a child
- * must see the parent's memory exactly as it stood at fork and never a later
- * write, and each side's own stores must read back. The failure this is built
+ * The invariant is symmetric, and both halves are checked: a child must see the
+ * parent's memory exactly as it stood at fork and never a later write, and each
+ * side's own stores must read back. The failure this is built
  * to catch is a fault resolved for the wrong address, which leaves the page
  * read-only so the store is silently dropped -- registers advance, memory does
  * not. Yielding between write and re-read puts a context switch inside the

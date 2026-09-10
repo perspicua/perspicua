@@ -1286,8 +1286,6 @@ cleanup:
     return new_cursor;
 }
 
-// static void completion(char *cmd_buffer, size_t cmd_len) {}
-
 static void print_prompt(void)
 {
     char cwd[256];

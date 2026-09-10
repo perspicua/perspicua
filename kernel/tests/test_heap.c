@@ -852,7 +852,8 @@ void test_heap(void)
     }
 
     // a request matching a free block's capacity must still get every byte it
-    // asked for; the redzone footer used to be carved out of the caller's region
+    // asked for, with the redzone footer carved from the block rather than from
+    // the caller's region
     {
         for (unsigned long n = LARGE; n <= LARGE + 512; n += 16) {
             void *lo = heap_malloc(n);

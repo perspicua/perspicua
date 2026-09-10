@@ -71,10 +71,9 @@ struct task {
  * Returns the index of the current CPU core.
  *
  * Every per-core array is sized by SCHED_NUM_CORES, so the result is folded
- * into that range. Masking with a literal 3 indexed out of bounds whenever the
- * build was configured for fewer than four cores. smp_init only releases cores
- * below the bound, so in practice the fold never triggers -- it keeps a core
- * that should not be running from writing past the end of an array.
+ * into that range rather than masked against a fixed core count. smp_init only
+ * releases cores below the bound, so in practice the fold never triggers -- it
+ * keeps a core that should not be running from writing past the end of an array.
  */
 static inline int get_core_id(void)
 {

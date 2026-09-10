@@ -206,8 +206,8 @@ void lockdep_release(spinlock_t *lock)
         held_count[core] = count - 1;
     } else {
         // Logged rather than fatal: an unbalanced release is a bug, but not one
-        // worth halting the system for. Returns here rather than falling through
-        // to the common exit, which would unlock a second time.
+        // worth halting the system for. Unlocks and returns on this path; the
+        // common exit below does its own unlock.
         raw_spin_unlock(&lockdep_lock);
         lockdep_disabled[core] = 0;
         pr_err("lockdep: attempting to release unheld lock at %p\n", (void *)addr);

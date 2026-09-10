@@ -18,7 +18,7 @@
 
 /*
  * Process slots. PCBs are allocated on demand, so a slot costs one pointer
- * until it is used and this no longer multiplies the per-process limits below.
+ * until it is used and this does not multiply the per-process limits below.
  *
  * This is *not* sized by memory or by the ASID pool, both of which would allow
  * far more. It is the backpressure that keeps fork() inside the range the
@@ -128,9 +128,8 @@ struct process {
 };
 
 /*
- * Slots are pointers to PCBs allocated on demand. A null entry is a free slot.
- * Holding whole PCBs inline made every per-process limit cost
- * PROCESS_TABLE_SIZE times its size, whether or not the processes existed.
+ * Slots are pointers to PCBs allocated on demand. A null entry is a free slot,
+ * so a slot costs one pointer until it is used rather than a whole PCB.
  *
  * Entries are published and cleared under process_table_lock.
  */

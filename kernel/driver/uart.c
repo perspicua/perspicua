@@ -113,14 +113,8 @@ void uart_send(char c)
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 
-/*
- * uart_write_locked - Emits a whole buffer under a single uart_tx_lock hold.
- *
- * Callers that emit a complete line need this rather than a uart_send loop:
- * the TTY drains its ring under the same lock from another core, so a
- * per-character loop lets userspace output splice itself into the middle of a
- * kernel log line.
- */
+// Holds uart_tx_lock across the whole buffer so no other core can interleave
+// bytes into it.
 void uart_write_locked(const char *buf, size_t len)
 {
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);

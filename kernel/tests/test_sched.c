@@ -227,8 +227,9 @@ static void task_race_waiter(void)
     race_wait_queue = self;
     spin_unlock_irqrestore(&test_lock, lock_flags);
 
-    /* 3. Call schedule().  In the bug, if an interrupt or another core
-     * unblocks us BEFORE we reach here, we enter schedule() with state=READY. */
+    /* 3. Call schedule(). If an interrupt or another core unblocks us BEFORE we
+     * reach here, we enter schedule() with state=READY, which must still be
+     * handled rather than losing the wake. */
     schedule();
 
     // 4. If we survived, mark success

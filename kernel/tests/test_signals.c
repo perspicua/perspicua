@@ -88,7 +88,7 @@ void test_signals(void)
     /*
      * kill() takes a signed pid straight from the user. Everything outside
      * 1..PROCESS_TABLE_SIZE-1 must be refused before it indexes the table:
-     * -1 used to clear the upper-bound check and read process_table[-1]->
+     * -1 clears an upper-bound check on its own and reads process_table[-1].
      */
     {
         TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
@@ -106,12 +106,11 @@ void test_signals(void)
     }
 
     /*
-     * Pending-signal bookkeeping runs against a claimed slot, not init. init is
-     * scheduled while this suite runs, so it drains its own pending bits
-     * between any two reads here -- which made "resend leaves mask unchanged"
-     * fail whenever it happened to run in that window. A claimed slot has no
-     * task, so nothing ever consumes what this queues. signal_send only reaches
-     * main_task behind a NULL check, so an empty slot is a valid target.
+     * Pending-signal bookkeeping runs against a claimed slot, not init: init is
+     * scheduled while this suite runs and would drain its own pending bits
+     * between any two reads here. A claimed slot has no task, so nothing ever
+     * consumes what this queues. signal_send only reaches main_task behind a
+     * NULL check, so an empty slot is a valid target.
      */
     {
         int slot = process_test_claim_slot();

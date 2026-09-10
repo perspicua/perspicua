@@ -311,8 +311,7 @@ void syscall_handle(struct exception_trap_frame *tf)
             void *buf = (void *)(tf->x[1]);
             size_t count = (size_t)(tf->x[2]);
 
-            /* The only buffer-taking syscall that had no ceiling: each call
-             * pins count bytes of kernel heap for its bounce buffer. */
+            /* Each call pins count bytes of kernel heap for its bounce buffer. */
             if (count == 0 || count > SYSCALL_MAX_RW_SIZE) {
                 tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
                 break;
@@ -808,9 +807,8 @@ sigreturn_kill:
             /*
              * Every mapping must have something behind it. An anonymous request
              * takes no descriptor; a file-backed one needs a vnode that can
-             * actually supply pages. Falling through with neither used to hand
-             * back an address the caller could only discover was empty by
-             * faulting on it.
+             * actually supply pages. With neither, the address handed back is
+             * one the caller can only discover is empty by faulting on it.
              */
             int anonymous = (flags & MAP_ANONYMOUS) != 0;
             if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {

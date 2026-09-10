@@ -154,8 +154,8 @@ void test_process(void)
     /*
      * mmap must never hand back a region with nothing behind it. Only the
      * framebuffer implements the vnode mmap operation, so a mapping of an
-     * ordinary file used to succeed and return an address that faulted on
-     * first touch.
+     * ordinary file has no pages to supply and must be refused rather than
+     * returning an address that faults on first touch.
      *
      * Driving this needs an address space, and the test task is pid 0, which
      * has none: lend it one for the duration and take it back before asserting.

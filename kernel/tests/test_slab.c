@@ -236,10 +236,9 @@ void test_slab(void)
 
     /*
      * The bytes of a live object belong to its owner, so no value stored in
-     * them may be mistaken for allocator state. Freeing used to panic when an
-     * object happened to hold the free marker at offset 8 -- reachable from
-     * userspace with write(fd, buf, 16) and the right eight bytes, since small
-     * syscall bounce buffers come from here.
+     * them may be mistaken for allocator state -- in particular the free marker
+     * at offset 8, which userspace can plant with write(fd, buf, 16) and the
+     * right eight bytes, since small syscall bounce buffers come from here.
      */
     {
         const uint64_t poison = 0xDEADBEEFDEADBEEFULL;

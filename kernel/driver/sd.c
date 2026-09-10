@@ -233,7 +233,7 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
  * clean lock state on both the sleeping and the woken task.
  *
  * Fallback: if sd_irq_num is 0 (no GIC binding) or there is no current task,
- * fall back to the original busy-wait polling so we never hang.
+ * busy-wait on the status register instead so we never hang.
  */
 static int sd_wait_interrupt(uint32_t mask)
 {
