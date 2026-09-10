@@ -68,7 +68,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         diff is reviewable by eye. Every later item is then written in the new
         style instead of adding to the backlog of comments to strip.
 
-   2. Test harness honesty + CI
+   2. Test harness honesty + CI [DONE]
       Effort: S | Unlocks: a gate that every item below can be checked against
       Scope: TEST_ASSERT currently returns out of the test function on the
         first failure, so the rest of that suite is silently skipped, and
