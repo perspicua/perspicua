@@ -44,7 +44,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
 "bug". A refactor commit that also fixes something is two commits.
 ================================================================================
 
-   1. Comment and style reset
+   1. Comment and style reset [DONE]
       Effort: M (mechanical) | Unlocks: every later diff is in the final style
       Scope: rewrite coding_style_guidelines.txt §5 so a comment is required
         only for a contract the signature does not express (ownership, locking,
