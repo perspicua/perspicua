@@ -388,9 +388,8 @@ void *pmm_alloc_pages(unsigned long count)
     return vaddr;
 }
 
-void pmm_free_pages(void *ptr, unsigned long count)
+void pmm_free_pages(void *ptr)
 {
-    (void)count;
     if (!ptr) {
         return;
     }
@@ -495,7 +494,7 @@ void *pmm_alloc_page(void)
 
 void pmm_free_page(void *ptr)
 {
-    pmm_free_pages(ptr, 1);
+    pmm_free_pages(ptr);
 }
 
 unsigned long pmm_get_free_pages(void)

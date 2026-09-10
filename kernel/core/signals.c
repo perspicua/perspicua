@@ -109,8 +109,6 @@ void signal_handle_pending(struct exception_trap_frame *tf)
 
         // Terminate process for all other signals
         process_exit(curr_pid, 128 + sig);
-        sched_get_current()->state = SCHED_TASK_DEAD;
-        schedule();
         return;
     }
 
@@ -174,8 +172,6 @@ void signal_handle_pending(struct exception_trap_frame *tf)
 
 deliver_kill:
     process_exit(curr_pid, -1);
-    sched_get_current()->state = SCHED_TASK_DEAD;
-    schedule();
 }
 
 /*

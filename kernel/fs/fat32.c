@@ -507,7 +507,7 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
             if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
                 page_data = fresh; // add_page pinned it
             } else {
-                pmm_free_pages(fresh, 1);
+                pmm_free_pages(fresh);
                 page_data = pagecache_get_page(file->node, page_index);
             }
         }
@@ -567,7 +567,7 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
             if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
                 page_data = fresh; // add_page pinned it
             } else {
-                pmm_free_pages(fresh, 1);
+                pmm_free_pages(fresh);
                 page_data = pagecache_get_page(file->node, page_index);
                 if (!page_data) {
                     return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_OUT_OF_MEMORY;
@@ -1016,7 +1016,7 @@ static int fat32_mkdir(struct vfs_vnode *parent, const char *name)
 
     struct vfs_vnode *existing = fat32_vfs_lookup(parent, name);
     if (existing) {
-        slab_free(existing);
+        vfs_vnode_put(existing);
         return -PERS_ERR_ALREADY_EXISTS;
     }
 
@@ -1355,10 +1355,11 @@ struct vfs_vnode *fat32_get_root_node(void)
     if (!node) {
         return NULL;
     }
+    memset(node, 0, sizeof(*node));
     node->type = VFS_VNODE_TYPE_DIR;
     node->ops = &fat32_vnode_ops;
     node->internal_info = (void *)(uintptr_t)current_fs.root_cluster;
-    node->file_size = 0;
+    node->refcount.counter = 1;
     return node;
 }
 

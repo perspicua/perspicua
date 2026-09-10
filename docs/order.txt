@@ -81,7 +81,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: a suite with two failing assertions reports two, not one; a PR
         that breaks a test or the format is red before review.
 
-   3. Bug fixes found by the review
+   3. Bug fixes found by the review [DONE]
       Effort: S each | Unlocks: nothing structural, but these should not be
         carried through the refactors below
       Scope: (a) fat32_mkdir frees the lookup result with slab_free instead of

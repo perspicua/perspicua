@@ -566,19 +566,6 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
         }
     }
 
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    for (size_t i = 0; i < VFS_MAX_FDS; i++) {
-        struct vfs_file *f = p->fd_table[i];
-        if (f && f->node->internal_info == node->internal_info && f->node->ops == node->ops) {
-            if (node->type != VFS_VNODE_TYPE_DEVICE) {
-                spin_unlock_irqrestore(&p->fd_lock, fdflags);
-                vfs_vnode_put(node);
-                return -PERS_ERR_ALREADY_EXISTS;
-            }
-        }
-    }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
-
     if ((flags & VFS_O_TRUNC) && node->type == VFS_VNODE_TYPE_REGULAR
         && ((flags & VFS_O_ACCMODE) != VFS_O_RDONLY)) {
         int tres = vfs_vnode_truncate(node, 0);
@@ -598,7 +585,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     new_file->flags = flags;
 
     int slot = -1;
-    fdflags = spin_lock_irqsave(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
             p->fd_table[i] = new_file;

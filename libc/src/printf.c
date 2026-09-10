@@ -22,25 +22,47 @@ extern void __libc_write(const char *buf, size_t len);
 
 // Output sink abstraction used by fmt_core.
 struct fmt_buf {
-    char *buf;   // Destination buffer (NULL = use internal flush path)
-    size_t size; // Capacity including the NUL terminator
-    size_t pos;  // Bytes written so far (excluding NUL)
-    int crlf;    // 1 = translate \n to \r\n, 0 = pass through
+    char *buf;    // Destination buffer (NULL = write each character out directly)
+    size_t size;  // Capacity including the NUL terminator
+    size_t pos;   // Bytes currently held in buf
+    size_t total; // Characters produced; this is what the printf family returns
+    int crlf;     // 1 = translate \n to \r\n, 0 = pass through
+    int sink;     // 1 = buf is a scratch sink: flush when full instead of truncating
 };
 
 // Private Helper Functions
 
+// Writes out whatever a sink buffer currently holds and empties it.
+static inline void fb_flush(struct fmt_buf *fb)
+{
+    if (fb->pos > 0) {
+        __libc_write(fb->buf, fb->pos);
+        fb->pos = 0;
+    }
+}
+
 // Appends one character to a fmt_buf.
 static inline void fb_putc(struct fmt_buf *fb, char c)
 {
-    if (fb->buf) {
-        if (fb->pos < fb->size - 1) {
-            fb->buf[fb->pos] = c;
-        }
-        fb->pos++;
-    } else {
+    fb->total++;
+
+    if (!fb->buf) {
         __libc_write(&c, 1);
+        return;
     }
+
+    if (fb->sink) {
+        if (fb->pos == fb->size) {
+            fb_flush(fb);
+        }
+        fb->buf[fb->pos++] = c;
+        return;
+    }
+
+    if (fb->pos < fb->size - 1) {
+        fb->buf[fb->pos] = c;
+    }
+    fb->pos++;
 }
 
 // Renders an unsigned 64-bit integer into a temporary buffer.
@@ -214,50 +236,48 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
                 base = 2;
                 goto unsigned_common;
 
-unsigned_common:
-                {
-                    uint64_t uval;
-                    if (is_longlong) {
-                        uval = (uint64_t)va_arg(args, unsigned long long);
-                    } else if (is_long) {
-                        uval = (uint64_t)va_arg(args, unsigned long);
-                    } else if (is_size) {
-                        uval = (uint64_t)va_arg(args, size_t);
-                    } else {
-                        uval = (uint64_t)va_arg(args, unsigned int);
-                    }
-                    num_len = fmt_uint(uval, base, uppercase, num_buf);
-                    goto emit_number;
-                }
+unsigned_common: {
+    uint64_t uval;
+    if (is_longlong) {
+        uval = (uint64_t)va_arg(args, unsigned long long);
+    } else if (is_long) {
+        uval = (uint64_t)va_arg(args, unsigned long);
+    } else if (is_size) {
+        uval = (uint64_t)va_arg(args, size_t);
+    } else {
+        uval = (uint64_t)va_arg(args, unsigned int);
+    }
+    num_len = fmt_uint(uval, base, uppercase, num_buf);
+    goto emit_number;
+}
 
-emit_number:
-                {
-                    int field = num_len + (sign_char ? 1 : 0);
-                    int pad = (width > field) ? width - field : 0;
+emit_number: {
+    int field = num_len + (sign_char ? 1 : 0);
+    int pad = (width > field) ? width - field : 0;
 
-                    if (!flag_left && !flag_zero) {
-                        for (int i = 0; i < pad; i++) {
-                            fb_putc(fb, ' ');
-                        }
-                    }
-                    if (sign_char) {
-                        fb_putc(fb, sign_char);
-                    }
-                    if (!flag_left && flag_zero) {
-                        for (int i = 0; i < pad; i++) {
-                            fb_putc(fb, '0');
-                        }
-                    }
-                    for (int i = 0; i < num_len; i++) {
-                        fb_putc(fb, num_buf[i]);
-                    }
-                    if (flag_left) {
-                        for (int i = 0; i < pad; i++) {
-                            fb_putc(fb, ' ');
-                        }
-                    }
-                    break;
-                }
+    if (!flag_left && !flag_zero) {
+        for (int i = 0; i < pad; i++) {
+            fb_putc(fb, ' ');
+        }
+    }
+    if (sign_char) {
+        fb_putc(fb, sign_char);
+    }
+    if (!flag_left && flag_zero) {
+        for (int i = 0; i < pad; i++) {
+            fb_putc(fb, '0');
+        }
+    }
+    for (int i = 0; i < num_len; i++) {
+        fb_putc(fb, num_buf[i]);
+    }
+    if (flag_left) {
+        for (int i = 0; i < pad; i++) {
+            fb_putc(fb, ' ');
+        }
+    }
+    break;
+}
 
             case 'p': {
                 unsigned long val = va_arg(args, unsigned long);
@@ -348,7 +368,7 @@ emit_number:
         }
     }
 
-    return (int)fb->pos;
+    return (int)fb->total;
 }
 
 // Public API Implementations
@@ -389,6 +409,7 @@ int vprintf(const char *fmt, va_list args)
         .buf = stack_buf,
         .size = sizeof(stack_buf),
         .pos = 0,
+        .sink = 1,
 /*
  * The kernel writes straight to the UART and must inject CR itself. Userspace
  * output instead flows through the tty, which already translates \n to \r\n
@@ -404,15 +425,9 @@ int vprintf(const char *fmt, va_list args)
     };
 
     fmt_core(&fb, fmt, args);
+    fb_flush(&fb);
 
-    size_t write_len = fb.pos < sizeof(stack_buf) ? fb.pos : sizeof(stack_buf) - 1;
-    stack_buf[write_len] = '\0';
-
-    if (write_len > 0) {
-        __libc_write(stack_buf, write_len);
-    }
-
-    return (int)fb.pos;
+    return (int)fb.total;
 }
 
 int printf(const char *fmt, ...)

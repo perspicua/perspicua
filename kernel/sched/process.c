@@ -68,7 +68,7 @@ static void free_kernel_stack(void *stack_base)
 
     // Remap guard page so PMM can zero the memory safely
     mmu_map_page((unsigned long)alloc_base, V2P(alloc_base), MMU_FLAGS_KERNEL_RW);
-    pmm_free_pages(alloc_base, SCHED_STACK_PAGES);
+    pmm_free_pages(alloc_base);
 }
 
 static void open_std_fds(uint32_t pid)

@@ -168,7 +168,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
             flags = spin_lock_irqsave(&pagecache_lock);
         }
 
-        pmm_free_pages(entry->data, 1);
+        pmm_free_pages(entry->data);
     } else {
         // Under cap, or every entry is currently pinned: allocate a new slot.
         entry = slab_alloc(sizeof(struct page_cache_entry));
@@ -328,7 +328,7 @@ void pagecache_invalidate(struct vfs_vnode *node)
                 flags = spin_lock_irqsave(&pagecache_lock);
             }
 
-            pmm_free_pages(entry->data, 1);
+            pmm_free_pages(entry->data);
             slab_free(entry);
             cache_count--;
         }

@@ -198,8 +198,6 @@ void syscall_handle(struct exception_trap_frame *tf)
         case SYS_EXIT: {
             int status = (int)tf->x[0];
             process_exit(pid, status);
-            curr->state = SCHED_TASK_DEAD;
-            schedule();
             break;
         }
 
@@ -374,16 +372,6 @@ void syscall_handle(struct exception_trap_frame *tf)
                 break;
             }
 
-            struct task *curr_task = sched_get_current();
-            struct process *execed = curr_task ? process_slot(curr_task->pid) : NULL;
-            if (execed) {
-                // Synchronize trap frame after successful image replacement
-                uintptr_t kernel_stack_top = execed->vaddr_kernel_stack + SCHED_TASK_STACK_SIZE;
-                struct exception_trap_frame *new_tf =
-                    (struct exception_trap_frame *)(kernel_stack_top
-                                                    - sizeof(struct exception_trap_frame));
-                memcpy(tf, new_tf, sizeof(struct exception_trap_frame));
-            }
             break;
         }
 
@@ -575,9 +563,7 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
 
 sigreturn_kill:
-            proc->exit_status = -1;
-            curr->state = SCHED_TASK_DEAD;
-            schedule();
+            process_exit(pid, -1);
             break;
         }
 
@@ -1463,6 +1449,7 @@ mmap_fail:
 
         default: {
             pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
+            tf->x[0] = (uint64_t)-PERS_ERR_NOT_IMPLEMENTED;
             break;
         }
     }

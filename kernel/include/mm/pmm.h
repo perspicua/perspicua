@@ -26,7 +26,7 @@ void *pmm_alloc_pages(unsigned long count);
 
 void pmm_free_page(void *ptr);
 
-void pmm_free_pages(void *ptr, unsigned long count);
+void pmm_free_pages(void *ptr);
 
 void pmm_hold_page(void *ptr);
 

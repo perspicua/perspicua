@@ -105,7 +105,7 @@ static void free_task_stack(unsigned char *stack)
     }
 
     mmu_map_page((unsigned long)stack, V2P(stack), MMU_FLAGS_KERNEL_RW);
-    pmm_free_pages(stack, SCHED_STACK_PAGES);
+    pmm_free_pages(stack);
 }
 
 static void init_task_stack_context(struct task *t, unsigned char *stack, void (*entry)(void))

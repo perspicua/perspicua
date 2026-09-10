@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <string.h>
 #include <errno.h>
+#include "uapi/errors.h"
+#include "uapi/syscalls.h"
 
 void test_pread_pwrite(void)
 {
@@ -340,6 +342,96 @@ void test_procfs(void)
     printf("[ TEST ] procfs completeness passed!\n");
 }
 
+// Issues a syscall directly so an unassigned number can be reached.
+static long raw_syscall(long nr, long arg0)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(arg0), "r"(nr)
+                 : "x0", "x8", "memory");
+    return res;
+}
+
+void test_review_bugfixes(void)
+{
+    printf("[ TEST ] Running review bug-fix regressions...\n");
+
+    // An unassigned syscall number must report ENOSYS rather than handing back
+    // whatever the caller happened to leave in x0.
+    {
+        long res = raw_syscall(999, 0x1234);
+        assert(res != 0x1234);
+        assert(res == -PERS_ERR_NOT_IMPLEMENTED);
+    }
+
+    // The same regular file may be opened more than once at a time.
+    {
+        const char *path = "dupopen.txt";
+        int a = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        assert(a >= 0);
+        int b = sys_open(path, VFS_O_RDONLY);
+        assert(b >= 0);
+        assert(a != b);
+        sys_close(a);
+        sys_close(b);
+        sys_unlink(path);
+    }
+
+    // printf must not stop at its internal buffer size.
+    {
+        static char big[1001];
+        memset(big, 'x', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+
+        const char *path = "ptrunc.txt";
+        int fd = sys_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+        assert(fd >= 0);
+
+        int saved = sys_dup2(1, 9);
+        assert(saved >= 0);
+        assert(sys_dup2(fd, 1) >= 0);
+        printf("%s", big);
+        assert(sys_dup2(saved, 1) >= 0);
+        sys_close(saved);
+        sys_close(fd);
+
+        int rfd = sys_open(path, VFS_O_RDONLY);
+        assert(rfd >= 0);
+        int total = 0, n;
+        char buf[256];
+        while ((n = sys_read(rfd, buf, sizeof(buf))) > 0) {
+            total += n;
+        }
+        sys_close(rfd);
+        sys_unlink(path);
+        assert(total == (int)sizeof(big) - 1);
+    }
+
+    // A process killed by a bad sigreturn frame must still become a zombie its
+    // parent can reap, rather than leaking its slot.
+    {
+        int pid = sys_fork();
+        assert(pid >= 0);
+        if (pid == 0) {
+            // sp_el0 == 0 makes the frame pointer fail validation outright.
+            asm volatile("mov x9, #0\n"
+                         "mov sp, x9\n"
+                         "mov x8, %0\n"
+                         "svc #0" ::"i"(SYS_SIGRETURN)
+                         : "x8", "x9", "memory");
+            sys_exit(0);
+        }
+        int status = 0;
+        assert(sys_waitpid(pid, &status, 0) == pid);
+    }
+
+    printf("[ TEST ] review bug-fix regressions passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -351,6 +443,7 @@ int main(void)
     test_fstat();
     test_truncate();
     test_procfs();
+    test_review_bugfixes();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

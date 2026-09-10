@@ -118,7 +118,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
 
         int res = ops->orig_read_blocks(dev, temp_buf, block_nr, 1);
         if (res != PERS_SUCCESS) {
-            pmm_free_pages(temp_buf, (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+            pmm_free_pages(temp_buf);
             return res;
         }
 
@@ -129,7 +129,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         entry = cache_lookup(dev, block_nr);
         if (entry) {
             memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
-            pmm_free_pages(temp_buf, (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+            pmm_free_pages(temp_buf);
             continue;
         }
 
@@ -154,7 +154,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
                 // Re-lookup evict entry as it might have changed
                 evict = lru_tail;
                 if (!evict) {
-                    pmm_free_pages(temp_buf, pages_needed);
+                    pmm_free_pages(temp_buf);
                     spin_unlock_irqrestore(&cache_lock, flags);
                     return -PERS_ERR_UNKNOWN;
                 }
@@ -173,17 +173,17 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             // If the evicted entry's buffer size doesn't match, reallocate
             size_t old_pages = (evict->dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
             if (old_pages != pages_needed) {
-                pmm_free_pages(evict->data, old_pages);
+                pmm_free_pages(evict->data);
                 evict->data = temp_buf;
             } else {
                 memcpy(evict->data, temp_buf, dev->block_size);
-                pmm_free_pages(temp_buf, pages_needed);
+                pmm_free_pages(temp_buf);
             }
             entry = evict;
         } else {
             entry = slab_alloc(sizeof(struct block_cache_entry));
             if (!entry) {
-                pmm_free_pages(temp_buf, pages_needed);
+                pmm_free_pages(temp_buf);
                 spin_unlock_irqrestore(&cache_lock, flags);
                 return -PERS_ERR_OUT_OF_MEMORY;
             }

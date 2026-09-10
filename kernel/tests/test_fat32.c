@@ -8,6 +8,7 @@
 
 #include "fs/fat32.h"
 #include "fs/vfs.h"
+#include "mm/slab.h"
 
 #define BIG_FILE  "/tfatbig.tmp"
 #define NEST_DIR  "/tfatd"
@@ -293,6 +294,22 @@ void test_fat32(void)
         TEST_ASSERT("rmdir on non-empty dir fails", vfs_rmdir(NEST_SUB) != 0);
     }
 
+    /*
+     * mkdir on a name that already exists must release the vnode its lookup
+     * returned. That vnode holds a reference on its parent, so freeing it
+     * without going through vfs_vnode_put strands the parent: the directory
+     * vnode is never reclaimed, and slab use climbs once per failed call.
+     */
+    {
+        TEST_ASSERT("duplicate mkdir refused", vfs_mkdir(NEST_SUB) != 0);
+
+        unsigned long before = slab_get_used();
+        for (int i = 0; i < 16; i++) {
+            TEST_ASSERT("duplicate mkdir refused", vfs_mkdir(NEST_SUB) != 0);
+        }
+        TEST_ASSERT_EQ("failed mkdir reclaims every vnode", slab_get_used(), before);
+    }
+
     // teardown, innermost first
     {
         TEST_ASSERT_EQ("unlink nested file", vfs_unlink(NEST_FILE), 0);
@@ -301,6 +318,29 @@ void test_fat32(void)
 
         struct stat st;
         TEST_ASSERT("nested tree removed", vfs_stat(NEST_DIR, &st) != 0);
+    }
+
+    /*
+     * The root vnode is handed out from raw slab memory, so every field it does
+     * not set explicitly must still read as zero. Dirty a same-sized slab object
+     * first: the allocator reuses it, so an unzeroed field shows up as 0xAB.
+     */
+    {
+        struct vfs_vnode *dirt = slab_alloc(sizeof(struct vfs_vnode));
+        TEST_ASSERT("slab object for root-node poison", dirt != NULL);
+        if (dirt) {
+            memset(dirt, 0xAB, sizeof(*dirt));
+            slab_free(dirt);
+        }
+
+        struct vfs_vnode *root = fat32_get_root_node();
+        TEST_ASSERT("root node allocated", root != NULL);
+        if (root) {
+            TEST_ASSERT_EQ("root node refcount is one", root->refcount.counter, 1);
+            TEST_ASSERT("root node has no parent", root->parent == NULL);
+            TEST_ASSERT("root node name is empty", root->name[0] == '\0');
+            slab_free(root);
+        }
     }
 
     TEST_SUITE_END("FAT32");
