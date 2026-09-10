@@ -7,8 +7,8 @@
 
 #include "types.h"
 
-#define SPINLOCK_INIT  {0}
-#define ATOMIC_INIT(i) {(i)}
+#define SPINLOCK_INIT  { 0 }
+#define ATOMIC_INIT(i) { (i) }
 
 /*
  * Cores tracked by the per-core preemption counter. Must cover every core that

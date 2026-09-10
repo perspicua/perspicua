@@ -26,7 +26,7 @@ struct kmutex {
     struct task *wait_tail;
 };
 
-#define KMUTEX_INIT {SPINLOCK_INIT, NULL, 0, NULL, NULL}
+#define KMUTEX_INIT { SPINLOCK_INIT, NULL, 0, NULL, NULL }
 
 void kmutex_init(struct kmutex *m);
 void kmutex_lock(struct kmutex *m);
