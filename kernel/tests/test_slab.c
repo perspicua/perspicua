@@ -19,7 +19,6 @@ void test_slab(void)
             heap_free(p);
         }
     }
-    TEST_PASS("basic alloc/free all classes");
 
     // LIFO reuse: free then re-alloc same size returns same pointer
     {
@@ -29,7 +28,6 @@ void test_slab(void)
         TEST_ASSERT("slab LIFO reuse", p2 == p1);
         heap_free(p2);
     }
-    TEST_PASS("LIFO reuse");
 
     // all slots distinct within a size class
     {
@@ -51,7 +49,6 @@ void test_slab(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("64 allocs distinct");
 
     // data isolation between adjacent slab slots
     {
@@ -73,7 +70,6 @@ void test_slab(void)
         heap_free(a);
         heap_free(b);
     }
-    TEST_PASS("data isolation");
 
     // slab_owns correctly identifies slab pointers
     {
@@ -85,7 +81,6 @@ void test_slab(void)
         heap_free(slab_ptr);
         heap_free(heap_ptr);
     }
-    TEST_PASS("slab_owns dispatch");
 
     // cross-class allocations don't interfere
     {
@@ -124,7 +119,6 @@ void test_slab(void)
         heap_free(p256);
         heap_free(p1024);
     }
-    TEST_PASS("cross-class isolation");
 
     // slab grows automatically when a page fills up
     // 16-byte class: ~254 slots per page (4096 - header) / 16
@@ -142,7 +136,6 @@ void test_slab(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("auto-grow beyond one page");
 
     // rapid alloc/free cycle (stress)
     {
@@ -154,7 +147,6 @@ void test_slab(void)
             heap_free(p);
         }
     }
-    TEST_PASS("rapid cycle x500");
 
     // fill-and-drain: alloc many, free all, alloc again
     {
@@ -172,7 +164,6 @@ void test_slab(void)
         TEST_ASSERT("slab post-drain alloc", p != NULL);
         heap_free(p);
     }
-    TEST_PASS("fill-and-drain 128");
 
     // mixed slab + first-fit: interleaved small/large allocations
     {
@@ -192,7 +183,6 @@ void test_slab(void)
         heap_free(l2);
         heap_free(s3);
     }
-    TEST_PASS("mixed slab+first-fit");
 
     // boundary: size exactly at each class boundary
     {
@@ -218,7 +208,6 @@ void test_slab(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("exact class boundaries");
 
     // boundary: size one byte above each class -> promoted to next class
     {
@@ -244,7 +233,6 @@ void test_slab(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("class promotion");
 
     /*
      * The bytes of a live object belong to its owner, so no value stored in
@@ -280,7 +268,6 @@ void test_slab(void)
         TEST_ASSERT("freed slot is reusable", again != NULL);
         slab_free(again);
     }
-    TEST_PASS("object data is not allocator state");
 
     TEST_SUITE_END("Slab Allocator");
 }

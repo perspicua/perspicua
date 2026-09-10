@@ -37,7 +37,6 @@ void test_uaccess(void)
         TEST_ASSERT_EQ("zero length rejected", validate_user_buffer((void *)UNMAPPED_USER_VA, 0, 0),
                        0);
     }
-    TEST_PASS("degenerate arguments");
 
     // a kernel address must never pass as a user buffer
     {
@@ -47,7 +46,6 @@ void test_uaccess(void)
         TEST_ASSERT_EQ("KERNEL_VMA boundary rejected",
                        validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
     }
-    TEST_PASS("kernel addresses");
 
     /*
      * A length that wraps past the top of the address space must be caught by
@@ -60,14 +58,12 @@ void test_uaccess(void)
         TEST_ASSERT_EQ("range crossing into kernel rejected",
                        validate_user_buffer((void *)(KERNEL_VMA - 8), 64, 0), 0);
     }
-    TEST_PASS("range overflow");
 
     // an unmapped user address is well-formed but has no translation
     {
         TEST_ASSERT_EQ("unmapped user VA rejected",
                        validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
     }
-    TEST_PASS("unmapped user address");
 
     /*
      * The copy helpers must survive a bad pointer via the exception fixup
@@ -84,7 +80,6 @@ void test_uaccess(void)
         res = copy_to_user((void *)UNMAPPED_USER_VA, kbuf, 32);
         TEST_ASSERT("copy_to_user to unmapped VA fails", res != 0);
     }
-    TEST_PASS("fault fixup recovers");
 
     // strncpy_from_user must fail on a bad source without writing a string
     {
@@ -93,7 +88,6 @@ void test_uaccess(void)
         TEST_ASSERT("strncpy_from_user on unmapped VA fails", res < 0);
         TEST_ASSERT("strncpy_from_user terminates on fault", kbuf[0] == '\0');
     }
-    TEST_PASS("strncpy_from_user fixup");
 
     /*
      * The truncation contract needs a source EL0 can actually read, so map one
@@ -163,7 +157,6 @@ void test_uaccess(void)
         // Frees the mapped page along with the tables.
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("strncpy_from_user always terminates");
 
     TEST_SUITE_END("User Access");
 }

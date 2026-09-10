@@ -18,12 +18,10 @@ void test_sd(void)
     TEST_ASSERT("block count nonzero", dev->block_count > 0);
     TEST_ASSERT("read_blocks bound", dev->read_blocks != NULL);
     TEST_ASSERT("write_blocks bound", dev->write_blocks != NULL);
-    TEST_PASS("registration");
 
     // lookup of an unregistered name must not invent a device
     TEST_ASSERT("lookup unknown returns NULL", block_device_lookup("no_such_dev") == NULL);
     TEST_ASSERT("lookup empty returns NULL", block_device_lookup("") == NULL);
-    TEST_PASS("lookup");
 
     /*
      * Block 0 of the QEMU-attached image is a FAT32 boot sector, so its
@@ -38,14 +36,12 @@ void test_sd(void)
     TEST_ASSERT_EQ("read block 0", res, 0);
     TEST_ASSERT_EQ("boot sig low", buf[BOOT_SIG_OFFSET], 0x55);
     TEST_ASSERT_EQ("boot sig high", buf[BOOT_SIG_OFFSET + 1], 0xAA);
-    TEST_PASS("read block 0");
 
     // a second read of the same block must return identical bytes
     static uint8_t buf2[512];
     memset(buf2, 0x5A, sizeof(buf2));
     TEST_ASSERT_EQ("reread block 0", dev->read_blocks(dev, buf2, 0, 1), 0);
     TEST_ASSERT("reads are consistent", memcmp(buf, buf2, 512) == 0);
-    TEST_PASS("read consistency");
 
     // a zero-block read is a no-op that must leave the buffer alone
     static uint8_t untouched[512];
@@ -54,14 +50,12 @@ void test_sd(void)
     for (int i = 0; i < 512; i++) {
         TEST_ASSERT("zero-block read wrote nothing", untouched[i] == 0x3C);
     }
-    TEST_PASS("zero-block read");
 
     // multi-block read must place block 0 at the front, unchanged
     static uint8_t multi[1024];
     memset(multi, 0, sizeof(multi));
     TEST_ASSERT_EQ("two-block read", dev->read_blocks(dev, multi, 0, 2), 0);
     TEST_ASSERT("multi-block block 0 matches", memcmp(multi, buf, 512) == 0);
-    TEST_PASS("multi-block read");
 
     /*
      * Write path, exercised on the last sector so no filesystem structure is
@@ -102,7 +96,6 @@ void test_sd(void)
     TEST_ASSERT("written data reads back", memcmp(readback, pattern, 512) == 0);
     TEST_ASSERT_EQ("restore scratch block", restore, 0);
     TEST_ASSERT("scratch block restored", restore_ok != 0);
-    TEST_PASS("write roundtrip");
 
     TEST_SUITE_END("SD Driver");
 }

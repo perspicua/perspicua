@@ -273,7 +273,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("race task resumed correctly", race_task_ran == 1);
     }
-    TEST_PASS("unblock-before-schedule race");
 
     // single task creation & execution
 
@@ -284,7 +283,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("single task ran", counter_a == 1);
     }
-    TEST_PASS("single task");
 
     // task with loop (10 increments)
     {
@@ -293,7 +291,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("loop task complete", counter_a == 10);
     }
-    TEST_PASS("looping task");
 
     // multiple concurrent tasks
 
@@ -310,7 +307,6 @@ void test_scheduler(void)
         TEST_ASSERT("multi b ran", counter_b == 1);
         TEST_ASSERT("multi c ran", counter_c == 1);
     }
-    TEST_PASS("three concurrent tasks");
 
     // same function spawned multiple times
     {
@@ -323,7 +319,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("5x same fn", counter_a == 5);
     }
-    TEST_PASS("5x same function");
 
     // task execution order
 
@@ -343,7 +338,6 @@ void test_scheduler(void)
         TEST_ASSERT("order[1]==2", order_log[1] == 2);
         TEST_ASSERT("order[2]==3", order_log[2] == 3);
     }
-    TEST_PASS("FIFO task order");
 
     // sched_sleep_ms
 
@@ -357,7 +351,6 @@ void test_scheduler(void)
         TEST_ASSERT("sleep >= 30ms", elapsed >= 30);
         TEST_ASSERT("sleep < 300ms", elapsed < 300);
     }
-    TEST_PASS("sleep_ms basic timing");
 
     // short sleep
     {
@@ -366,7 +359,6 @@ void test_scheduler(void)
         unsigned long after = get_system_time();
         TEST_ASSERT("short sleep elapsed", (after - before) >= 10);
     }
-    TEST_PASS("short sleep");
 
     // multiple sequential sleeps
     {
@@ -378,7 +370,6 @@ void test_scheduler(void)
         unsigned long elapsed = after - before;
         TEST_ASSERT("3x30ms >= 60", elapsed >= 60);
     }
-    TEST_PASS("sequential sleeps");
 
     // sleep ordering: short sleeper wakes before long sleeper
     {
@@ -391,7 +382,6 @@ void test_scheduler(void)
         TEST_ASSERT("long done", ts_long_done != 0);
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);
     }
-    TEST_PASS("sleep queue ordering");
 
     // a task woken before its deadline must leave the sleep queue: otherwise
     // cleanup_dead_task frees it while sleep_drain still walks the list
@@ -419,7 +409,6 @@ void test_scheduler(void)
         sched_sleep_ms(30);
         TEST_ASSERT("woken sleeper ran to completion", early_wake_ran == 1);
     }
-    TEST_PASS("early wake leaves the sleep queue");
 
     // task with sleep inside
 
@@ -430,7 +419,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("sleep-then-inc", counter_a == 1);
     }
-    TEST_PASS("task with internal sleep");
 
     // task with multiple sleeps
     {
@@ -439,7 +427,6 @@ void test_scheduler(void)
         sched_sleep_ms(80);
         TEST_ASSERT("multi-sleep task", counter_a == 3);
     }
-    TEST_PASS("task with multiple sleeps");
 
     // task with interleaved work and sleep
     {
@@ -448,7 +435,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("work+sleep task", counter_a == 5);
     }
-    TEST_PASS("work+sleep interleaved");
 
     // concurrent sleepers
 
@@ -464,7 +450,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("long sleeper done", counter_b == 1);
     }
-    TEST_PASS("concurrent sleepers");
 
     // task spawning tasks
 
@@ -475,7 +460,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("spawned children ran", counter_a == 2);
     }
-    TEST_PASS("task spawning children");
 
     // compute-bound task
 
@@ -487,7 +471,6 @@ void test_scheduler(void)
         // sum of 0..9999 = 49995000
         TEST_ASSERT("compute result", compute_result == 49995000UL);
     }
-    TEST_PASS("compute-bound task");
 
     // stack integrity
 
@@ -498,7 +481,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("stack integrity", stack_test_ok == 1);
     }
-    TEST_PASS("stack integrity");
 
     // rapid task creation
 
@@ -512,7 +494,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("8 rapid tasks", counter_a == 8);
     }
-    TEST_PASS("rapid 8 tasks");
 
     // batch-and-wait ×3 rounds
     {
@@ -525,7 +506,6 @@ void test_scheduler(void)
         }
         TEST_ASSERT("3 rounds of 3", counter_a == 9);
     }
-    TEST_PASS("batch-and-wait 3x3");
 
     // shared data with mutual exclusion
 
@@ -537,7 +517,6 @@ void test_scheduler(void)
         sched_sleep_ms(100);
         TEST_ASSERT("2x10 = 20", counter_a == 20);
     }
-    TEST_PASS("concurrent increment 2x10");
 
     // mixed fast and slow tasks
 
@@ -553,7 +532,6 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("slow done", counter_b == 1);
     }
-    TEST_PASS("mixed fast/slow tasks");
 
     // yield loop task
     {
@@ -563,7 +541,6 @@ void test_scheduler(void)
         sched_sleep_ms(150);
         TEST_ASSERT("2x50 yields completed", yield_count == 100);
     }
-    TEST_PASS("yield loop tasks");
 
     // system time monotonicity under scheduling
 
@@ -580,7 +557,6 @@ void test_scheduler(void)
         TEST_ASSERT("time monotonic t2>t1", t2 > t1);
         TEST_ASSERT("time monotonic t3>t2", t3 > t2);
     }
-    TEST_PASS("time monotonicity");
 
     // lifecycle: complex sequence
 
@@ -603,7 +579,6 @@ void test_scheduler(void)
         TEST_ASSERT("phase2 a", counter_a == 3);
         TEST_ASSERT("phase2 b", counter_b == 2);
     }
-    TEST_PASS("multi-phase lifecycle");
 
     TEST_SUITE_END("Scheduler");
 }

@@ -47,21 +47,18 @@ void test_signals(void)
         TEST_ASSERT("signal SIGNAL_COUNT rejected", signal_send(INIT_PID, SIGNAL_COUNT) < 0);
         TEST_ASSERT("far out-of-range signal rejected", signal_send(INIT_PID, 9999) < 0);
     }
-    TEST_PASS("signal number validation");
 
     // pid 0 and out-of-table pids have no process to receive anything
     {
         TEST_ASSERT("pid 0 rejected", signal_send(0, SIGNAL_USR1) < 0);
         TEST_ASSERT("out-of-range pid rejected", signal_send(0xFFFFFFFFu, SIGNAL_USR1) < 0);
     }
-    TEST_PASS("target validation");
 
     // an empty process slot is not a valid target
     {
         int sent = signal_send(PROCESS_TABLE_SIZE - 1, SIGNAL_USR1);
         TEST_ASSERT("empty slot rejected", sent < 0);
     }
-    TEST_PASS("empty slot");
 
     /*
      * A zombie's task is freed as soon as it stops running, but its slot lives
@@ -87,7 +84,6 @@ void test_signals(void)
         TEST_ASSERT("zombie test slot claimed", slot > 0);
         TEST_ASSERT("zombie slot rejected", sent < 0);
     }
-    TEST_PASS("zombie slot");
 
     /*
      * kill() takes a signed pid straight from the user. Everything outside
@@ -108,7 +104,6 @@ void test_signals(void)
         // pid 0 is the kernel and stays a permission error, not a lookup failure
         TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGNAL_TERM), -PERS_ERR_PERMISSION_DENIED);
     }
-    TEST_PASS("kill pid bounds");
 
     /*
      * A valid signal to a live process must be accepted and recorded in the
@@ -120,7 +115,6 @@ void test_signals(void)
         uint32_t pending = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
     }
-    TEST_PASS("pending bit set");
 
     // a second distinct signal must accumulate rather than replace
     {
@@ -130,7 +124,6 @@ void test_signals(void)
         TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
         TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
     }
-    TEST_PASS("pending signals accumulate");
 
     // re-sending an already-pending signal is idempotent, not a counter
     {
@@ -139,7 +132,6 @@ void test_signals(void)
         uint32_t after = process_table[INIT_PID]->pending_signals;
         TEST_ASSERT("resend leaves mask unchanged", before == after);
     }
-    TEST_PASS("delivery is idempotent");
 
     // POSIX mutual discard: stop signals clear pending SIGCONT, and SIGCONT clears pending stop
     // signals
@@ -162,7 +154,6 @@ void test_signals(void)
         process_table[INIT_PID]->pending_signals &=
             ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
     }
-    TEST_PASS("POSIX mutual signal discard");
 
     /*
      * Clear what this suite queued so init is not left holding signals it
@@ -174,7 +165,6 @@ void test_signals(void)
                    (long)(process_table[INIT_PID]->pending_signals
                           & ((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)))),
                    0);
-    TEST_PASS("cleanup");
 
     TEST_SUITE_END("Signals");
 }

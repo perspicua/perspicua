@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    # Ubuntu 24.04 ships QEMU 8.2 which lacks raspi4b; use 25.04 (QEMU 9.2+).
+    container:
+      image: ubuntu:25.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # This ensures 'just' is installed correctly on the runner
+      - uses: extractions/setup-just@v2
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools cpio pipx git
+          pipx install clang-format
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check Format
+        run: just check-format
+
+      - name: Run Tests
+        run: just test

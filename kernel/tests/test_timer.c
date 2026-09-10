@@ -10,7 +10,6 @@ void test_timer(void)
         unsigned long t = get_system_time();
         TEST_ASSERT("system time non-zero", t > 0);
     }
-    TEST_PASS("timer system time");
 
     // monotonicity
     {
@@ -19,7 +18,6 @@ void test_timer(void)
         unsigned long t2 = get_system_time();
         TEST_ASSERT("time monotonic", t2 >= t1);
     }
-    TEST_PASS("timer monotonicity");
 
     // sleep_ms accuracy (rough check)
     {
@@ -30,7 +28,6 @@ void test_timer(void)
         TEST_ASSERT("sleep 50ms lower bound", elapsed >= 40);
         TEST_ASSERT("sleep 50ms upper bound", elapsed < 200);
     }
-    TEST_PASS("timer sleep_ms accuracy");
 
     // multiple sleeps accumulate
     {
@@ -42,7 +39,6 @@ void test_timer(void)
         TEST_ASSERT("double sleep lower", elapsed >= 30);
         TEST_ASSERT("double sleep upper", elapsed < 200);
     }
-    TEST_PASS("timer cumulative sleep");
 
     // sleep 0 ms shouldn't hang and should return quickly
     {
@@ -51,7 +47,6 @@ void test_timer(void)
         unsigned long after = get_system_time();
         TEST_ASSERT("sleep 0ms returns", (after - before) < 50);
     }
-    TEST_PASS("timer sleep 0ms");
 
     // irq_save / irq_restore
     {
@@ -69,7 +64,6 @@ void test_timer(void)
         asm volatile("mrs %0, daif" : "=r"(flags_after));
         TEST_ASSERT_EQ("irq restored", flags_after, flags_before);
     }
-    TEST_PASS("timer irq save/restore");
 
     TEST_SUITE_END("Timer");
 }

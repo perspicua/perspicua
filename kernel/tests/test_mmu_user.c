@@ -23,7 +23,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("create/destroy empty PGD");
 
     // basic user map + query
     {
@@ -45,7 +44,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, vaddr);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("user map+query");
 
     // unmap removes mapping
     {
@@ -61,7 +59,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("user unmap");
 
     // user code vs data flags
     {
@@ -94,7 +91,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, va_data);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("user code vs data flags");
 
     // multiple pages in same PGD
     {
@@ -134,7 +130,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
 #undef MP_COUNT
     }
-    TEST_PASS("multiple pages same PGD");
 
     // pages across different L2 regions (different 2MB windows)
     {
@@ -155,7 +150,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, va2);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("pages across L2 regions");
 
     // pages across different L1 entries (different 1GB windows)
     {
@@ -176,7 +170,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, va2);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("pages across L1 entries");
 
     // remap: unmap then map different phys to same VA
     {
@@ -196,7 +189,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, vaddr);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("remap same VA different phys");
 
     // two PGDs are fully isolated
     {
@@ -229,7 +221,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd_a);
         mmu_destroy_user_pgd(pgd_b);
     }
-    TEST_PASS("two PGDs fully isolated");
 
     // destroy PGD with active mappings frees table pages
     {
@@ -255,14 +246,12 @@ void test_mmu_user(void)
         TEST_ASSERT("destroy: no table page leak", after != 0);
         pmm_free_page(after);
     }
-    TEST_PASS("destroy PGD frees table pages");
 
     // kernel_ttbr0 returns non-zero
     {
         unsigned long kttbr0 = mmu_kernel_ttbr0();
         TEST_ASSERT("kernel_ttbr0: non-zero", kttbr0 != 0);
     }
-    TEST_PASS("kernel_ttbr0 non-zero");
 
     // mmu_switch_user sets TTBR0 correctly
     {
@@ -286,7 +275,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("mmu_switch_user sets TTBR0");
 
     // ASID encoding in TTBR0
     {
@@ -310,7 +298,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd1);
         mmu_destroy_user_pgd(pgd2);
     }
-    TEST_PASS("ASID encoding in TTBR0");
 
     // query unmapped VA in user PGD returns 0
     {
@@ -330,7 +317,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, USER_VA_BASE);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("query unmapped in user PGD");
 
     // destroy PGD with mappings across multiple L1 entries
     {
@@ -349,7 +335,6 @@ void test_mmu_user(void)
         TEST_ASSERT("destroy multi-L1: PMM ok", check != 0);
         pmm_free_page(check);
     }
-    TEST_PASS("destroy PGD multi-L1 subtrees");
 
     // stress: create many PGDs, map, destroy
     {
@@ -391,7 +376,6 @@ void test_mmu_user(void)
         }
 #undef STRESS_COUNT
     }
-    TEST_PASS("stress: 4 PGDs isolated");
 
     // shared physical page in two PGDs
     {
@@ -416,7 +400,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd_a);
         mmu_destroy_user_pgd(pgd_b);
     }
-    TEST_PASS("shared physical page in two PGDs");
 
     // same physical page mapped to multiple VAs in same PGD
     {
@@ -439,7 +422,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, va2);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("shared physical page multiple VAs in same PGD");
 
     // mapping over an existing mapping must replace it, and the VA must still
     // query cleanly afterwards
@@ -457,7 +439,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, va);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("map over existing mapping");
 
     // fill: 16 pages in user PGD
     {
@@ -497,7 +478,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
 #undef FILL_COUNT
     }
-    TEST_PASS("fill 16 pages in user PGD");
 
     // user PGD doesn't affect kernel page tables
     {
@@ -518,7 +498,6 @@ void test_mmu_user(void)
         mmu_user_unmap_page(pgd, USER_VA_BASE + 0x8000);
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("user PGD doesn't affect kernel");
 
     /*
      * process_exit relies on this to stop TTBR0 naming tables it is about to
@@ -554,7 +533,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("leaving a user address space");
 
     /*
      * Range validation for user buffers. This is what stands between a syscall
@@ -630,7 +608,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("user range validation");
 
     /*
      * Copy-on-write resolution. Copying is only correct when someone else still
@@ -661,7 +638,6 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("copy-on-write promotes the last reference in place");
 
     // a genuinely shared page must be copied, not promoted
     {
@@ -702,7 +678,6 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
         pmm_free_page(shared); // the stand-in holder
     }
-    TEST_PASS("copy-on-write copies a shared page");
 
     TEST_SUITE_END("MMU Per-Process Page Tables");
 }

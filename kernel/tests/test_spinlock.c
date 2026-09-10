@@ -12,7 +12,6 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         TEST_ASSERT_EQ("init unlocked", lock.locked, 0);
     }
-    TEST_PASS("spinlock init");
 
     // spinlock_init zeroes the struct
     {
@@ -20,7 +19,6 @@ void test_spinlock(void)
         TEST_ASSERT_EQ("init struct size", sizeof(lock.locked), sizeof(unsigned int));
         TEST_ASSERT_EQ("init value zero", lock.locked, 0);
     }
-    TEST_PASS("spinlock struct layout");
 
     // basic lock / unlock
     {
@@ -30,7 +28,6 @@ void test_spinlock(void)
         spin_unlock(&lock);
         TEST_ASSERT_EQ("unlocked", lock.locked, 0);
     }
-    TEST_PASS("spinlock lock/unlock");
 
     // irqsave / irqrestore
     {
@@ -40,7 +37,6 @@ void test_spinlock(void)
         spin_unlock_irqrestore(&lock, flags);
         TEST_ASSERT_EQ("irqrestore unlocked", lock.locked, 0);
     }
-    TEST_PASS("spinlock irqsave/irqrestore");
 
     // irqs are actually masked while holding lock
     {
@@ -53,7 +49,6 @@ void test_spinlock(void)
 
         spin_unlock_irqrestore(&lock, flags);
     }
-    TEST_PASS("spinlock irqs masked while held");
 
     // irq flags preserved across lock/unlock
     {
@@ -70,7 +65,6 @@ void test_spinlock(void)
 
         TEST_ASSERT_EQ("irq flags preserved", after_flags, before_flags);
     }
-    TEST_PASS("spinlock irq flags preservation");
 
     // irqsave with irqs already disabled
     {
@@ -93,7 +87,6 @@ void test_spinlock(void)
 
         irq_restore(outer);
     }
-    TEST_PASS("spinlock nested irq disable");
 
     // re-acquire after unlock
     {
@@ -104,7 +97,6 @@ void test_spinlock(void)
         spin_unlock(&lock);
         TEST_ASSERT_EQ("re-acquire clean", lock.locked, 0);
     }
-    TEST_PASS("spinlock re-acquire");
 
     // lock protects a shared counter (single-core)
     {
@@ -118,7 +110,6 @@ void test_spinlock(void)
         }
         TEST_ASSERT_EQ("protected counter", counter, 500);
     }
-    TEST_PASS("spinlock protected counter");
 
     // lock protects a shared counter (irqsave variant)
     {
@@ -132,7 +123,6 @@ void test_spinlock(void)
         }
         TEST_ASSERT_EQ("irqsave counter", counter, 500);
     }
-    TEST_PASS("spinlock irqsave counter");
 
     // many sequential lock/unlock cycles
     {
@@ -143,7 +133,6 @@ void test_spinlock(void)
         }
         TEST_ASSERT_EQ("stress unlocked", stress_lock.locked, 0);
     }
-    TEST_PASS("spinlock 10000x lock/unlock");
 
     // irqsave stress
     {
@@ -154,7 +143,6 @@ void test_spinlock(void)
         }
         TEST_ASSERT_EQ("irq stress unlocked", irq_lock.locked, 0);
     }
-    TEST_PASS("spinlock 1000x irqsave/restore");
 
     // multiple independent locks
     {
@@ -170,7 +158,6 @@ void test_spinlock(void)
         TEST_ASSERT_EQ("lock_a released", lock_a.locked, 0);
         TEST_ASSERT_EQ("lock_b released", lock_b.locked, 0);
     }
-    TEST_PASS("spinlock multiple independent");
 
     // three-lock nesting (ordered acquire/release)
     {
@@ -191,7 +178,6 @@ void test_spinlock(void)
         TEST_ASSERT_EQ("3-lock b free", lb.locked, 0);
         TEST_ASSERT_EQ("3-lock c free", lc.locked, 0);
     }
-    TEST_PASS("spinlock 3-lock nesting");
 
     // irqsave nesting with multiple locks
     {
@@ -215,7 +201,6 @@ void test_spinlock(void)
         asm volatile("mrs %0, daif" : "=r"(flags_after));
         TEST_ASSERT_EQ("nested irq flags restored", flags_after, flags_before);
     }
-    TEST_PASS("spinlock nested irqsave multi-lock");
 
     // memory barrier semantics: data visible after unlock
     {
@@ -231,7 +216,6 @@ void test_spinlock(void)
         TEST_ASSERT("barrier: data visible", shared == 0xDEADBEEFCAFEBABEUL);
         spin_unlock(&lock);
     }
-    TEST_PASS("spinlock memory barrier");
 
     // lock protecting a buffer write
     {
@@ -256,7 +240,6 @@ void test_spinlock(void)
         TEST_ASSERT("buffer intact under lock", ok);
         spin_unlock(&lock);
     }
-    TEST_PASS("spinlock buffer protection");
 
     // alternating lock/unlock doesn't corrupt state
     {
@@ -271,7 +254,6 @@ void test_spinlock(void)
         }
         TEST_ASSERT_EQ("alt final value", val, 199);
     }
-    TEST_PASS("spinlock alternating state");
 
     // lock/unlock timing: doesn't hang
     {
@@ -288,7 +270,6 @@ void test_spinlock(void)
         // 5000 uncontended lock/unlock cycles should complete in <1s
         TEST_ASSERT("timing: not hung", elapsed < 1000);
     }
-    TEST_PASS("spinlock timing sanity");
 
     TEST_SUITE_END("Spinlock");
 }
