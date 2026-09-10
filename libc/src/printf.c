@@ -214,48 +214,50 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
                 base = 2;
                 goto unsigned_common;
 
-unsigned_common: {
-    uint64_t uval;
-    if (is_longlong) {
-        uval = (uint64_t)va_arg(args, unsigned long long);
-    } else if (is_long) {
-        uval = (uint64_t)va_arg(args, unsigned long);
-    } else if (is_size) {
-        uval = (uint64_t)va_arg(args, size_t);
-    } else {
-        uval = (uint64_t)va_arg(args, unsigned int);
-    }
-    num_len = fmt_uint(uval, base, uppercase, num_buf);
-    goto emit_number;
-}
+unsigned_common:
+                {
+                    uint64_t uval;
+                    if (is_longlong) {
+                        uval = (uint64_t)va_arg(args, unsigned long long);
+                    } else if (is_long) {
+                        uval = (uint64_t)va_arg(args, unsigned long);
+                    } else if (is_size) {
+                        uval = (uint64_t)va_arg(args, size_t);
+                    } else {
+                        uval = (uint64_t)va_arg(args, unsigned int);
+                    }
+                    num_len = fmt_uint(uval, base, uppercase, num_buf);
+                    goto emit_number;
+                }
 
-emit_number: {
-    int field = num_len + (sign_char ? 1 : 0);
-    int pad = (width > field) ? width - field : 0;
+emit_number:
+                {
+                    int field = num_len + (sign_char ? 1 : 0);
+                    int pad = (width > field) ? width - field : 0;
 
-    if (!flag_left && !flag_zero) {
-        for (int i = 0; i < pad; i++) {
-            fb_putc(fb, ' ');
-        }
-    }
-    if (sign_char) {
-        fb_putc(fb, sign_char);
-    }
-    if (!flag_left && flag_zero) {
-        for (int i = 0; i < pad; i++) {
-            fb_putc(fb, '0');
-        }
-    }
-    for (int i = 0; i < num_len; i++) {
-        fb_putc(fb, num_buf[i]);
-    }
-    if (flag_left) {
-        for (int i = 0; i < pad; i++) {
-            fb_putc(fb, ' ');
-        }
-    }
-    break;
-}
+                    if (!flag_left && !flag_zero) {
+                        for (int i = 0; i < pad; i++) {
+                            fb_putc(fb, ' ');
+                        }
+                    }
+                    if (sign_char) {
+                        fb_putc(fb, sign_char);
+                    }
+                    if (!flag_left && flag_zero) {
+                        for (int i = 0; i < pad; i++) {
+                            fb_putc(fb, '0');
+                        }
+                    }
+                    for (int i = 0; i < num_len; i++) {
+                        fb_putc(fb, num_buf[i]);
+                    }
+                    if (flag_left) {
+                        for (int i = 0; i < pad; i++) {
+                            fb_putc(fb, ' ');
+                        }
+                    }
+                    break;
+                }
 
             case 'p': {
                 unsigned long val = va_arg(args, unsigned long);
