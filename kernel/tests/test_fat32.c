@@ -75,7 +75,6 @@ void test_fat32(void)
             TEST_ASSERT("no write past the name buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
         }
     }
-    TEST_PASS("LFN sequence bounds");
 
     // a well-formed fragment still lands where the chain expects it
     {
@@ -111,7 +110,6 @@ void test_fat32(void)
             TEST_ASSERT("clipped fragment stays in the buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
         }
     }
-    TEST_PASS("LFN fragment placement");
 
     /*
      * Every BPB field is attacker-controlled on a removable volume, and the
@@ -193,7 +191,6 @@ void test_fat32(void)
         TEST_ASSERT("data area past the device refused",
                     fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
     }
-    TEST_PASS("BPB validation");
 
     // the root node the VFS was mounted on must be a directory
     {
@@ -202,7 +199,6 @@ void test_fat32(void)
         TEST_ASSERT_EQ("root node is a directory", root->type, VFS_VNODE_TYPE_DIR);
         TEST_ASSERT("root node has ops", root->ops != NULL);
     }
-    TEST_PASS("root node");
 
     /*
      * A file spanning many clusters exercises chain allocation on write and
@@ -224,7 +220,6 @@ void test_fat32(void)
         TEST_ASSERT_EQ("stat multi-cluster file", vfs_stat(BIG_FILE, &st), 0);
         TEST_ASSERT_EQ("size matches bytes written", (int)st.st_size, BIG_SIZE);
     }
-    TEST_PASS("multi-cluster write");
 
     // reading it back must walk the chain and return every byte in order
     {
@@ -238,7 +233,6 @@ void test_fat32(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("multi-cluster read");
 
     // seeking into a later cluster must land on the right bytes
     {
@@ -256,7 +250,6 @@ void test_fat32(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("seek across clusters");
 
     // reopening with O_TRUNC must release the chain and report size 0
     {
@@ -268,7 +261,6 @@ void test_fat32(void)
         TEST_ASSERT_EQ("stat truncated file", vfs_stat(BIG_FILE, &st), 0);
         TEST_ASSERT_EQ("O_TRUNC emptied the file", (int)st.st_size, 0);
     }
-    TEST_PASS("open O_TRUNC truncates");
 
     {
         TEST_ASSERT_EQ("unlink multi-cluster file", vfs_unlink(BIG_FILE), 0);
@@ -276,7 +268,6 @@ void test_fat32(void)
         struct stat st;
         TEST_ASSERT("unlinked file is gone", vfs_stat(BIG_FILE, &st) != 0);
     }
-    TEST_PASS("unlink releases file");
 
     // nested directories must resolve through multiple levels
     {
@@ -296,13 +287,11 @@ void test_fat32(void)
         TEST_ASSERT("nested contents correct", strcmp(buf, "nested") == 0);
         vfs_close(fd);
     }
-    TEST_PASS("nested directories");
 
     // a non-empty directory must not be removable
     {
         TEST_ASSERT("rmdir on non-empty dir fails", vfs_rmdir(NEST_SUB) != 0);
     }
-    TEST_PASS("rmdir refuses non-empty");
 
     // teardown, innermost first
     {
@@ -313,7 +302,6 @@ void test_fat32(void)
         struct stat st;
         TEST_ASSERT("nested tree removed", vfs_stat(NEST_DIR, &st) != 0);
     }
-    TEST_PASS("teardown");
 
     TEST_SUITE_END("FAT32");
 }

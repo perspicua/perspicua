@@ -19,19 +19,15 @@ void test_heap(void)
         TEST_ASSERT("heap_malloc 16-byte aligned", ((unsigned long)p & 0xF) == 0);
         heap_free(p);
     }
-    TEST_PASS("basic alloc/free");
 
     // zero-size returns null
     TEST_ASSERT("zero alloc returns null", heap_malloc(0) == NULL);
-    TEST_PASS("zero-size returns NULL");
 
     // excessively large alloc should return null
     TEST_ASSERT("huge alloc returns null", heap_malloc(0xFFFFFFFFFFFFFFFFULL) == NULL);
-    TEST_PASS("huge alloc returns NULL");
 
     // heap_free(null) is safe
     heap_free(NULL);
-    TEST_PASS("heap_free(NULL) safe");
 
     // 1-byte allocation
     {
@@ -42,7 +38,6 @@ void test_heap(void)
         TEST_ASSERT("1-byte write", *(unsigned char *)p == 0x42);
         heap_free(p);
     }
-    TEST_PASS("1-byte alloc");
 
     // alignment guarantees
 
@@ -66,7 +61,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("alignment 30 sizes");
 
     // alignment after free-and-realloc cycle
     {
@@ -76,7 +70,6 @@ void test_heap(void)
             heap_free(p);
         }
     }
-    TEST_PASS("alignment after reuse");
 
     // non-overlapping allocations
 
@@ -93,7 +86,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(b);
     }
-    TEST_PASS("two allocs no overlap");
 
     // many small allocs all distinct
     {
@@ -115,7 +107,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("64 allocs distinct");
 
     // adjacent alloc data isolation
     {
@@ -137,7 +128,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(b);
     }
-    TEST_PASS("data isolation");
 
     // memory reuse
 
@@ -149,7 +139,6 @@ void test_heap(void)
         TEST_ASSERT("reuses freed block", p2 == p1);
         heap_free(p2);
     }
-    TEST_PASS("reuse same size");
 
     // freed block reused for smaller alloc (first-fit path, sizes > SLAB_MAX)
     {
@@ -160,7 +149,6 @@ void test_heap(void)
         TEST_ASSERT("reuses for smaller", p2 == p1);
         heap_free(p2);
     }
-    TEST_PASS("reuse smaller alloc");
 
     // first-fit: earlier free block chosen over later (sizes > SLAB_MAX)
     {
@@ -175,7 +163,6 @@ void test_heap(void)
         heap_free(d);
         heap_free(b);
     }
-    TEST_PASS("first-fit ordering");
 
     /*
      * The tests from here to the end of the coalescing group assert *where* a
@@ -219,7 +206,6 @@ void test_heap(void)
         heap_free(small);
         heap_free(next);
     }
-    TEST_PASS("block splitting basic");
 
     // no split when remainder < header_size + 16 (48)
     //    If the remaining space after alloc is < 48 bytes, no split occurs.
@@ -231,7 +217,6 @@ void test_heap(void)
         TEST_ASSERT("no-split same size reuse", q == p);
         heap_free(q);
     }
-    TEST_PASS("no unnecessary split");
 
     // split creates usable blocks (write to both halves, sizes > SLAB_MAX)
     {
@@ -256,7 +241,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(b);
     }
-    TEST_PASS("split blocks usable");
 
     // repeated splitting exhausts a block correctly (sizes > SLAB_MAX)
     {
@@ -278,7 +262,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("repeated splitting");
 
     // coalescing (sizes > SLAB_MAX)
 
@@ -296,7 +279,6 @@ void test_heap(void)
         heap_free(merged);
         heap_free(guard);
     }
-    TEST_PASS("two-block coalesce");
 
     // three adjacent free blocks coalesce (chain)
     {
@@ -314,7 +296,6 @@ void test_heap(void)
         heap_free(merged);
         heap_free(guard);
     }
-    TEST_PASS("three-block coalesce");
 
     // non-adjacent free blocks do not coalesce
     {
@@ -330,7 +311,6 @@ void test_heap(void)
         heap_free(big);
         heap_free(b);
     }
-    TEST_PASS("non-adjacent no coalesce");
 
     // coalesce then split: free two adjacent, alloc smaller
     {
@@ -348,7 +328,6 @@ void test_heap(void)
         heap_free(next);
         heap_free(guard);
     }
-    TEST_PASS("coalesce then split");
 
     // free in reverse order still coalesces
     {
@@ -363,7 +342,6 @@ void test_heap(void)
         heap_free(merged);
         heap_free(guard);
     }
-    TEST_PASS("reverse-order coalesce");
 
     for (int i = layout_nfill - 1; i >= 0; i--) {
         heap_free(layout_fill[i]);
@@ -383,7 +361,6 @@ void test_heap(void)
         TEST_ASSERT("expand: last byte", *((volatile unsigned char *)big + 8191) == 0xAD);
         heap_free(big);
     }
-    TEST_PASS("heap expansion 8KB");
 
     // large allocation (1 mb)
     {
@@ -399,7 +376,6 @@ void test_heap(void)
         TEST_ASSERT("1MB last", *((volatile unsigned char *)big + 1024 * 1024 - 1) == 0xEF);
         heap_free(big);
     }
-    TEST_PASS("heap expansion 1MB");
 
     // multiple expansions
     {
@@ -413,7 +389,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(c);
     }
-    TEST_PASS("multiple expansions");
 
     // page-aligned allocation sizes
     {
@@ -432,7 +407,6 @@ void test_heap(void)
         TEST_ASSERT("page-size canary", ok);
         heap_free(page);
     }
-    TEST_PASS("page-aligned alloc");
 
     // write pattern & data integrity
 
@@ -453,7 +427,6 @@ void test_heap(void)
         TEST_ASSERT("sequential pattern", ok);
         heap_free(mem);
     }
-    TEST_PASS("sequential byte pattern");
 
     // boundary writes to exact allocation size
     //    Write every byte up to the requested size, making sure we don't
@@ -479,7 +452,6 @@ void test_heap(void)
             heap_free(p);
         }
     }
-    TEST_PASS("boundary writes");
 
     // alloc does not destroy neighbor data
     {
@@ -507,7 +479,6 @@ void test_heap(void)
         heap_free(b);
         heap_free(c);
     }
-    TEST_PASS("neighbor data isolation");
 
     // unsigned long pattern (word-aligned writes)
     {
@@ -527,7 +498,6 @@ void test_heap(void)
         TEST_ASSERT("word pattern intact", ok);
         heap_free(arr);
     }
-    TEST_PASS("word-aligned pattern");
 
     // free-order independence
 
@@ -540,7 +510,6 @@ void test_heap(void)
         heap_free(b);
         heap_free(c);
     }
-    TEST_PASS("FIFO free");
 
     // lifo free
     {
@@ -551,7 +520,6 @@ void test_heap(void)
         heap_free(b);
         heap_free(a);
     }
-    TEST_PASS("LIFO free");
 
     // middle-first free
     {
@@ -562,7 +530,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(c);
     }
-    TEST_PASS("middle-first free");
 
     // fragmentation patterns
 
@@ -585,7 +552,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("alternating holes");
 
     // every-third pattern
     {
@@ -606,7 +572,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("every-third pattern");
 
     // swiss cheese: random-like free pattern
     {
@@ -628,7 +593,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("swiss cheese pattern");
 
     // mixed size allocations
 
@@ -650,7 +614,6 @@ void test_heap(void)
         heap_free(s1);
         heap_free(m2);
     }
-    TEST_PASS("mixed sizes interleaved");
 
     // growing allocations: 16 -> 32 -> 64 -> ... -> 4096
     {
@@ -664,7 +627,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("growing allocs");
 
     // shrinking allocations: 4096 -> 2048 -> ... -> 16
     {
@@ -678,7 +640,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("shrinking allocs");
 
     // power-of-2 allocations with canary
     {
@@ -701,7 +662,6 @@ void test_heap(void)
             heap_free(ptr);
         }
     }
-    TEST_PASS("power-of-2 canary");
 
     // stress tests
 
@@ -715,7 +675,6 @@ void test_heap(void)
             heap_free(ptr);
         }
     }
-    TEST_PASS("rapid cycle x200");
 
     // fill-and-drain 128 blocks
     {
@@ -733,7 +692,6 @@ void test_heap(void)
         TEST_ASSERT("post-drain alloc", p != NULL);
         heap_free(p);
     }
-    TEST_PASS("fill-and-drain 128");
 
     // sawtooth: alloc batch then free batch, repeat
     {
@@ -748,7 +706,6 @@ void test_heap(void)
             }
         }
     }
-    TEST_PASS("sawtooth 5 rounds");
 
     // interleaved alloc/free (wave pattern)
     {
@@ -771,7 +728,6 @@ void test_heap(void)
             heap_free(ptrs[i]);
         }
     }
-    TEST_PASS("wave alloc/free");
 
     // header integrity after operations
 
@@ -800,7 +756,6 @@ void test_heap(void)
         TEST_ASSERT("post-boundary alloc ok", p != NULL);
         heap_free(p);
     }
-    TEST_PASS("header integrity");
 
     // free+realloc preserves subsequent block
     {
@@ -823,7 +778,6 @@ void test_heap(void)
         heap_free(a2);
         heap_free(b);
     }
-    TEST_PASS("realloc preserves neighbor");
 
     // edge cases
 
@@ -836,7 +790,6 @@ void test_heap(void)
         TEST_ASSERT("min alloc write", *(unsigned char *)p == 0x42);
         heap_free(p);
     }
-    TEST_PASS("minimum allocation");
 
     // alloc sizes near align boundary (15, 16, 17)
     {
@@ -872,7 +825,6 @@ void test_heap(void)
         heap_free(p16);
         heap_free(p17);
     }
-    TEST_PASS("ALIGN boundary sizes");
 
     // alloc sizes near split threshold (sizes > SLAB_MAX)
     //    Split happens when remaining >= HEADER_SIZE(32) + 16 = 48.
@@ -888,7 +840,6 @@ void test_heap(void)
         heap_free(a);
         heap_free(split_part);
     }
-    TEST_PASS("split threshold edge");
 
     // exact size alloc (no waste)
     {
@@ -899,7 +850,6 @@ void test_heap(void)
         TEST_ASSERT("exact reuse", q == p);
         heap_free(q);
     }
-    TEST_PASS("exact size reuse");
 
     // a request matching a free block's capacity must still get every byte it
     // asked for; the redzone footer used to be carved out of the caller's region
@@ -924,7 +874,6 @@ void test_heap(void)
             heap_free(hi);
         }
     }
-    TEST_PASS("allocation is never shorter than requested");
 
     /*
      * heap_free must reject a pointer this allocator never returned. Blocks
@@ -947,7 +896,6 @@ void test_heap(void)
         TEST_ASSERT("foreign memory is not tagged",
                     !heap_test_is_tagged_allocated(not_heap + sizeof(not_heap) / 2));
     }
-    TEST_PASS("block headers are identifiable");
 
     // full lifecycle
 
@@ -976,7 +924,6 @@ void test_heap(void)
         TEST_ASSERT("lifecycle: new pattern ok", ok);
         heap_free(q);
     }
-    TEST_PASS("full lifecycle");
 
     // complex multi-size lifecycle (sizes > SLAB_MAX)
     {
@@ -1004,7 +951,6 @@ void test_heap(void)
         TEST_ASSERT("lifecycle2: post-coalesce", f != NULL);
         heap_free(f);
     }
-    TEST_PASS("multi-size lifecycle");
 
     TEST_SUITE_END("Heap Allocator");
 }

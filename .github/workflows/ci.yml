@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # This ensures 'just' is installed correctly on the runner
+      - uses: extractions/setup-just@v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm clang-format mtools cpio          
+
+      - name: Check Format
+        run: just check-format
+
+      - name: Run Tests
+        run: just test

@@ -25,7 +25,6 @@ void test_mutex(void)
         TEST_ASSERT("init leaves empty wait queue", m.wait_head == NULL);
         TEST_ASSERT("init leaves null wait tail", m.wait_tail == NULL);
     }
-    TEST_PASS("init");
 
     // the static initialiser must match kmutex_init
     {
@@ -34,7 +33,6 @@ void test_mutex(void)
         TEST_ASSERT_EQ("static init depth 0", (long)statically.depth, 0);
         TEST_ASSERT("static init empty queue", statically.wait_head == NULL);
     }
-    TEST_PASS("static initialiser");
 
     // uncontended lock takes ownership and unlock releases it
     {
@@ -49,7 +47,6 @@ void test_mutex(void)
         TEST_ASSERT("unlock clears owner", m.owner == NULL);
         TEST_ASSERT_EQ("unlock clears depth", (long)m.depth, 0);
     }
-    TEST_PASS("lock/unlock");
 
     /*
      * Recursion is the whole point of kmutex over a plain sleeping lock: the
@@ -78,7 +75,6 @@ void test_mutex(void)
         TEST_ASSERT_EQ("final unlock clears depth", (long)m.depth, 0);
         TEST_ASSERT("final unlock releases ownership", m.owner == NULL);
     }
-    TEST_PASS("recursive locking");
 
     // relocking after a full release must start from a clean depth
     {
@@ -93,7 +89,6 @@ void test_mutex(void)
         kmutex_unlock(&m);
         TEST_ASSERT_EQ("relock released", (long)m.depth, 0);
     }
-    TEST_PASS("relock after release");
 
     // independent mutexes must not share state
     {
@@ -111,7 +106,6 @@ void test_mutex(void)
         kmutex_unlock(&a);
         TEST_ASSERT("both released", a.owner == NULL && b.owner == NULL);
     }
-    TEST_PASS("independent mutexes");
 
     TEST_SUITE_END("Mutex");
 }

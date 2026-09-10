@@ -15,7 +15,6 @@ void test_pmm(void)
         TEST_ASSERT("page aligned", ((unsigned long)p & (PAGE_SIZE - 1)) == 0);
         pmm_free_page(p);
     }
-    TEST_PASS("single page alloc");
 
     // pmm_alloc_pages(1) equivalent
     {
@@ -24,25 +23,21 @@ void test_pmm(void)
         TEST_ASSERT("alloc_pages(1) aligned", ((unsigned long)p & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(p, 1);
     }
-    TEST_PASS("alloc_pages(1)");
 
     // edge cases
 
     // zero-count returns null
     TEST_ASSERT("alloc_pages(0) is null", pmm_alloc_pages(0) == NULL);
-    TEST_PASS("zero-count returns NULL");
 
     // excessive order (beyond max order 10)
     {
         void *p = pmm_alloc_pages(2048); // order 11 is 2048 pages
         TEST_ASSERT("alloc_pages(2048) beyond max order", p == NULL);
     }
-    TEST_PASS("excessive order returns NULL");
 
     // free null is safe
     pmm_free_page(NULL);
     pmm_free_pages(NULL, 4);
-    TEST_PASS("free(NULL) safe");
 
     // writable page
     {
@@ -52,7 +47,6 @@ void test_pmm(void)
         TEST_ASSERT("write verify", *p == 0xDEADBEEFCAFEBABEUL);
         pmm_free_page((void *)p);
     }
-    TEST_PASS("page writable");
 
     // distinct allocations
 
@@ -68,7 +62,6 @@ void test_pmm(void)
         pmm_free_page(a);
         pmm_free_page(b);
     }
-    TEST_PASS("two pages distinct");
 
     // many single pages all distinct
     {
@@ -91,7 +84,6 @@ void test_pmm(void)
             pmm_free_page(pages[i]);
         }
     }
-    TEST_PASS("64 pages distinct");
 
     // multi-page blocks don't overlap
     {
@@ -107,7 +99,6 @@ void test_pmm(void)
         pmm_free_pages(a, 4);
         pmm_free_pages(b, 4);
     }
-    TEST_PASS("multi-page no overlap");
 
     // free and reuse
 
@@ -119,7 +110,6 @@ void test_pmm(void)
         TEST_ASSERT("reuse after free", q != NULL);
         pmm_free_page(q);
     }
-    TEST_PASS("reuse after free");
 
     // rapid alloc/free cycle ×50
     {
@@ -132,7 +122,6 @@ void test_pmm(void)
             pmm_free_page(pg);
         }
     }
-    TEST_PASS("rapid cycle x50");
 
     // free in reverse order
     {
@@ -148,7 +137,6 @@ void test_pmm(void)
         TEST_ASSERT("post-reverse alloc ok", p != NULL);
         pmm_free_page(p);
     }
-    TEST_PASS("reverse-order free");
 
     // contiguous multi-page (power-of-2 orders)
 
@@ -168,7 +156,6 @@ void test_pmm(void)
             pmm_free_pages(blk, count);
         }
     }
-    TEST_PASS("orders 0-5 (1..32 pages)");
 
     // order 6 = 64 pages (256 kb)
     {
@@ -184,7 +171,6 @@ void test_pmm(void)
         TEST_ASSERT("64p last", *((volatile unsigned char *)blk + 63 * PAGE_SIZE) == 0xCC);
         pmm_free_pages(blk, 64);
     }
-    TEST_PASS("64-page alloc (256KB)");
 
     // order 8 = 256 pages (1 mb)
     {
@@ -196,7 +182,6 @@ void test_pmm(void)
         TEST_ASSERT("1MB first", *(volatile unsigned long *)blk == 0x1234567890ABCDEFULL);
         pmm_free_pages(blk, 256);
     }
-    TEST_PASS("256-page alloc (1MB)");
 
     // order 10 = 1024 pages (4 mb) — max order
     {
@@ -205,7 +190,6 @@ void test_pmm(void)
         TEST_ASSERT("max-order aligned", ((unsigned long)blk & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(blk, 1024);
     }
-    TEST_PASS("max-order 1024 pages (4MB)");
 
     // non-power-of-2 counts (rounded up internally by get_order)
 
@@ -221,7 +205,6 @@ void test_pmm(void)
         }
         pmm_free_pages(blk, 3);
     }
-    TEST_PASS("3-page alloc (order 2)");
 
     // 5 pages -> order 3 = 8 pages
     {
@@ -234,7 +217,6 @@ void test_pmm(void)
         }
         pmm_free_pages(blk, 5);
     }
-    TEST_PASS("5-page alloc (order 3)");
 
     // 7, 9, 15, 17 pages
     {
@@ -246,7 +228,6 @@ void test_pmm(void)
             pmm_free_pages(blk, counts[c]);
         }
     }
-    TEST_PASS("non-power-of-2 counts");
 
     // buddy merging
 
@@ -261,7 +242,6 @@ void test_pmm(void)
         TEST_ASSERT("buddy merge aligned", ((unsigned long)pair & (PAGE_SIZE - 1)) == 0);
         pmm_free_pages(pair, 2);
     }
-    TEST_PASS("buddy merge 2 pages");
 
     // four pages free -> should merge up to order 2
     {
@@ -276,7 +256,6 @@ void test_pmm(void)
         TEST_ASSERT("buddy merge 4p", quad != NULL);
         pmm_free_pages(quad, 4);
     }
-    TEST_PASS("buddy merge 4 pages");
 
     // eight pages free -> merge to order 3
     {
@@ -291,7 +270,6 @@ void test_pmm(void)
         TEST_ASSERT("buddy merge 8p", octet != NULL);
         pmm_free_pages(octet, 8);
     }
-    TEST_PASS("buddy merge 8 pages");
 
     // partial merge: free 2, keep 1 between -> no merge past held page
     {
@@ -308,7 +286,6 @@ void test_pmm(void)
         pmm_free_pages(pair, 2);
         pmm_free_page(b);
     }
-    TEST_PASS("partial buddy merge");
 
     // free a 2-page block, then re-alloc as 2 singles
     {
@@ -323,7 +300,6 @@ void test_pmm(void)
         pmm_free_page(a);
         pmm_free_page(b);
     }
-    TEST_PASS("free 2p then alloc 2x1p");
 
     // buddy splitting
 
@@ -341,7 +317,6 @@ void test_pmm(void)
         pmm_free_page(small);
         pmm_free_page(small2);
     }
-    TEST_PASS("split high-order to low");
 
     // progressive splitting: alloc 16p, free, alloc 1p
     {
@@ -352,7 +327,6 @@ void test_pmm(void)
         TEST_ASSERT("deep split", tiny != NULL);
         pmm_free_page(tiny);
     }
-    TEST_PASS("deep order-4 split");
 
     // contiguity verification
 
@@ -375,7 +349,6 @@ void test_pmm(void)
         TEST_ASSERT("contig pages intact", ok);
         pmm_free_pages(blk, count);
     }
-    TEST_PASS("contiguity 8 pages");
 
     // fill entire multi-page block
     {
@@ -396,7 +369,6 @@ void test_pmm(void)
         TEST_ASSERT("fill4p verify", ok);
         pmm_free_pages(blk, count);
     }
-    TEST_PASS("fill 4-page block");
 
     // data isolation
 
@@ -423,7 +395,6 @@ void test_pmm(void)
         pmm_free_page(a);
         pmm_free_page(b);
     }
-    TEST_PASS("data isolation");
 
     // multi-page blocks don't corrupt each other
     {
@@ -451,7 +422,6 @@ void test_pmm(void)
         pmm_free_pages(a, 4);
         pmm_free_pages(b, 4);
     }
-    TEST_PASS("multi-page isolation");
 
     // mixed single + multi-page
 
@@ -479,7 +449,6 @@ void test_pmm(void)
         pmm_free_pages(m1, 4);
         pmm_free_page(s2);
     }
-    TEST_PASS("mixed single/multi interleaved");
 
     // alloc multi, free, alloc singles from it
     {
@@ -495,7 +464,6 @@ void test_pmm(void)
             pmm_free_page(pages[i]);
         }
     }
-    TEST_PASS("multi->single split");
 
     // fragmentation patterns
 
@@ -518,7 +486,6 @@ void test_pmm(void)
             pmm_free_page(pages[i]);
         }
     }
-    TEST_PASS("alternating frag");
 
     // swiss-cheese: free scattered pages
     {
@@ -540,7 +507,6 @@ void test_pmm(void)
             pmm_free_page(pages[i]);
         }
     }
-    TEST_PASS("swiss-cheese frag");
 
     // fragment then request larger block
     //    Fragment the allocator, then request a multi-page block to
@@ -559,7 +525,6 @@ void test_pmm(void)
         TEST_ASSERT("post-frag 8p alloc", big != NULL);
         pmm_free_pages(big, 8);
     }
-    TEST_PASS("frag then large alloc");
 
     // stress tests
 
@@ -578,7 +543,6 @@ void test_pmm(void)
         TEST_ASSERT("post-128 alloc ok", p != NULL);
         pmm_free_page(p);
     }
-    TEST_PASS("stress 128 pages");
 
     // sawtooth: batch alloc/free ×5
     {
@@ -593,7 +557,6 @@ void test_pmm(void)
             }
         }
     }
-    TEST_PASS("sawtooth 5 rounds");
 
     // wave pattern: alloc 4, free 2, repeat
     {
@@ -614,7 +577,6 @@ void test_pmm(void)
             pmm_free_page(pages[i]);
         }
     }
-    TEST_PASS("wave pattern");
 
     // multi-page stress: alloc/free 4p blocks ×16
     {
@@ -628,7 +590,6 @@ void test_pmm(void)
             pmm_free_pages(blocks[i], 4);
         }
     }
-    TEST_PASS("multi-page stress 16x4p");
 
     // free-order independence
 
@@ -643,7 +604,6 @@ void test_pmm(void)
         pmm_free_page(c);
         pmm_free_page(d);
     }
-    TEST_PASS("FIFO free");
 
     // lifo free
     {
@@ -656,7 +616,6 @@ void test_pmm(void)
         pmm_free_page(b);
         pmm_free_page(a);
     }
-    TEST_PASS("LIFO free");
 
     // scrambled free
     {
@@ -669,7 +628,6 @@ void test_pmm(void)
         pmm_free_page(d);
         pmm_free_page(b);
     }
-    TEST_PASS("scrambled free");
 
     // full-page write verification
 
@@ -690,7 +648,6 @@ void test_pmm(void)
         TEST_ASSERT("fullpage pattern", ok);
         pmm_free_page(p);
     }
-    TEST_PASS("full 4KB write");
 
     // write boundary words of each page in multi-page block
     {
@@ -715,7 +672,6 @@ void test_pmm(void)
         TEST_ASSERT("16p boundary words ok", ok);
         pmm_free_pages(blk, count);
     }
-    TEST_PASS("16-page boundary words");
 
     // growing & shrinking allocation sizes
 
@@ -731,7 +687,6 @@ void test_pmm(void)
             pmm_free_pages(ptrs[i], 1UL << i);
         }
     }
-    TEST_PASS("growing alloc sizes");
 
     // shrinking: 32p -> 16p -> 8p -> 4p -> 2p -> 1p
     {
@@ -745,7 +700,6 @@ void test_pmm(void)
             pmm_free_pages(ptrs[i], 32UL >> i);
         }
     }
-    TEST_PASS("shrinking alloc sizes");
 
     // lifecycle
 
@@ -771,7 +725,6 @@ void test_pmm(void)
         TEST_ASSERT("lifecycle new data", ok);
         pmm_free_pages(blk2, 4);
     }
-    TEST_PASS("multi-page lifecycle");
 
     // complex multi-order lifecycle
     {
@@ -802,7 +755,6 @@ void test_pmm(void)
         TEST_ASSERT("lifecycle big alloc", big != NULL);
         pmm_free_pages(big, 16);
     }
-    TEST_PASS("complex multi-order lifecycle");
 
     TEST_SUITE_END("Physical Memory Manager");
 }

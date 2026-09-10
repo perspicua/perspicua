@@ -1,0 +1,84 @@
+Contributing to Perspicua
+=========================
+
+This is the entry point for making a change end to end. It ties together the
+detailed docs rather than repeating them — follow the links for specifics.
+
+  Documentation map ......... docs/README.txt
+  Architecture tour ......... docs/architecture.txt
+  What to build next ........ docs/order.txt   (backlog: docs/ideas.txt)
+  House code style .......... docs/coding_style_guidelines.txt
+  Branch/release model ...... docs/branch_workflow.txt
+  Testing ................... docs/testing.txt
+
+
+--------------------------------------------------------------------------------
+PREREQUISITES
+--------------------------------------------------------------------------------
+An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, mtools, and cpio.
+QEMU (qemu-system-aarch64) for running. See README.txt for the toolchain file.
+
+
+--------------------------------------------------------------------------------
+THE LOOP
+--------------------------------------------------------------------------------
+  1. Branch off dev (never off main, never commit to main directly):
+       git checkout dev && git pull origin dev
+       git checkout -b feature/short-descriptive-name
+
+  2. Build and iterate:
+       just build            # Debug by default; `just build release` for opt
+       just run              # headless in QEMU
+       just run-gui          # windowed
+       just debug / just gdb # start under GDB and attach
+
+  3. Match the house style (docs/coding_style_guidelines.txt). Before you push:
+       just format           # apply clang-format
+       just check-format     # verify it's clean (this is enforced)
+
+  4. Test — see docs/testing.txt:
+       just test             # builds the CONFIG_TESTS kernel and runs the
+                             # in-kernel suites headless; must exit 0
+
+  5. Push and open a PR INTO dev (not main):
+       git push origin feature/short-descriptive-name
+     Keep the PR focused; explain the "why," not just the "what."
+
+  6. After review and merge, delete the feature branch.
+
+
+--------------------------------------------------------------------------------
+GETTING TO A RELEASE
+--------------------------------------------------------------------------------
+Promotion is dev -> main, and main is meant to be flashable at any moment. The
+full rules (hotfixes, tags, branch protection) are in docs/branch_workflow.txt.
+The two gates that are easy to forget:
+
+  - `just test` must pass in QEMU, AND
+  - dev must be validated ON REAL HARDWARE before it is merged to main.
+
+QEMU-green alone is not enough to promote — see docs/testing.txt.
+
+
+--------------------------------------------------------------------------------
+COMMIT MESSAGES
+--------------------------------------------------------------------------------
+Use a type prefix consistent with the existing history, e.g.:
+  feat:      a new capability
+  fix:       a bug fix (name the subsystem: `fix(fat32): ...`)
+  refactor:  behavior-preserving restructuring
+  docs:      documentation only
+  test:      tests only
+  build:     build system / config
+
+Write the subject in the imperative mood and keep the body focused on intent.
+
+
+--------------------------------------------------------------------------------
+A FEW GROUND RULES
+--------------------------------------------------------------------------------
+  - uapi/ is the user/kernel ABI. Changing a syscall number or a shared struct
+    layout affects both sides at once — do it deliberately.
+  - Never trust a user pointer in the kernel; go through the uaccess helpers.
+  - Correctness of the foundation beats breadth of features. Finish and test a
+    layer before building the next one on top of it.

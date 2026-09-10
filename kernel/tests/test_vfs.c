@@ -60,14 +60,12 @@ void test_vfs(void)
         TEST_ASSERT("resolve missing returns NULL", missing == NULL);
         TEST_ASSERT("resolve missing sets error", err != 0);
     }
-    TEST_PASS("path resolution");
 
     // opening a file that does not exist must fail rather than create one
     {
         int fd = vfs_open("/definitely_not_here", VFS_O_RDONLY);
         TEST_ASSERT("open missing fails", fd < 0);
     }
-    TEST_PASS("open missing");
 
     /*
      * Create, write, read back, and remove a scratch file. This exercises the
@@ -98,7 +96,6 @@ void test_vfs(void)
 
         TEST_ASSERT_EQ("close scratch file", vfs_close(fd), 0);
     }
-    TEST_PASS("create/write/read");
 
     // the file must be visible to stat with the size just written
     {
@@ -107,7 +104,6 @@ void test_vfs(void)
         TEST_ASSERT_EQ("stat scratch file", vfs_stat(SCRATCH_FILE, &st), 0);
         TEST_ASSERT_EQ("stat reports size", (int)st.st_size, 29);
     }
-    TEST_PASS("stat");
 
     // reopening must see the persisted contents, not a fresh file
     {
@@ -121,7 +117,6 @@ void test_vfs(void)
         TEST_ASSERT("reopen contents persisted", strncmp(buf, "perspicua vfs", 13) == 0);
         vfs_close(fd);
     }
-    TEST_PASS("persistence across reopen");
 
     // rename then unlink
     {
@@ -134,7 +129,6 @@ void test_vfs(void)
         TEST_ASSERT_EQ("unlink renamed file", vfs_unlink(RENAMED_FILE), 0);
         TEST_ASSERT("unlinked file is gone", vfs_stat(RENAMED_FILE, &st) != 0);
     }
-    TEST_PASS("rename/unlink");
 
     // directory create and remove
     {
@@ -151,7 +145,6 @@ void test_vfs(void)
         TEST_ASSERT_EQ("rmdir", vfs_rmdir(SCRATCH_DIR), 0);
         TEST_ASSERT("removed directory is gone", vfs_stat(SCRATCH_DIR, &st) != 0);
     }
-    TEST_PASS("mkdir/rmdir");
 
     // readdir must consult max_entries before writing an entry, so a buffer
     // too small for one dirent receives nothing rather than a 260-byte write
@@ -171,7 +164,6 @@ void test_vfs(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("readdir rejects undersized buffers");
 
     // a buffer sized for exactly one entry must yield exactly one entry
     {
@@ -190,7 +182,6 @@ void test_vfs(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("readdir honours a one-entry buffer");
 
     /*
      * The I/O paths hold a reference for the duration of the call, so a close
@@ -220,7 +211,6 @@ void test_vfs(void)
 
         vfs_unlink(SCRATCH_FILE);
     }
-    TEST_PASS("in-flight reference releases the file");
 
     // an ordinary open/close pair must balance
     {
@@ -233,7 +223,6 @@ void test_vfs(void)
 
         vfs_unlink(SCRATCH_FILE);
     }
-    TEST_PASS("open/close balances");
 
     // bad descriptors must be rejected, not indexed blindly
     {
@@ -243,7 +232,6 @@ void test_vfs(void)
         TEST_ASSERT("close on bad fd fails", vfs_close(-1) < 0);
         TEST_ASSERT("close on out-of-range fd fails", vfs_close(VFS_MAX_FDS + 100) < 0);
     }
-    TEST_PASS("bad descriptors");
 
     TEST_SUITE_END("VFS");
 }

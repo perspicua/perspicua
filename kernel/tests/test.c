@@ -31,8 +31,6 @@ void run_all_tests(void)
     test_mutex();
     test_uaccess();
     test_process();
-    // test_kasan_heap();
-    // test_kasan_slab();
 
     printk("\n");
 

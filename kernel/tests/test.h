@@ -14,7 +14,8 @@ extern int _suite_failed;
         if (!(cond)) {                                      \
             pr_err("test: %s: %s [FAILED]\n", name, #cond); \
             tests_failed++;                                 \
-            return;                                         \
+        } else {                                            \
+            tests_passed++;                                 \
         }                                                   \
     } while (0)
 
@@ -25,7 +26,8 @@ extern int _suite_failed;
         if (_a != _e) {                                                         \
             pr_err("test: %s: expected %ld, got %ld [FAILED]\n", name, _e, _a); \
             tests_failed++;                                                     \
-            return;                                                             \
+        } else {                                                                \
+            tests_passed++;                                                     \
         }                                                                       \
     } while (0)
 
@@ -36,13 +38,9 @@ extern int _suite_failed;
         if (_a == _u) {                                                    \
             pr_err("test: %s: unexpected value %ld [FAILED]\n", name, _u); \
             tests_failed++;                                                \
-            return;                                                        \
+        } else {                                                           \
+            tests_passed++;                                                \
         }                                                                  \
-    } while (0)
-
-#define TEST_PASS(name) \
-    do {                \
-        tests_passed++; \
     } while (0)
 
 #define TEST_SUITE_BEGIN(name)        \

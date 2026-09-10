@@ -31,7 +31,6 @@ void test_pipe(void)
         TEST_ASSERT_EQ("close read end", vfs_close(fds[0]), 0);
         TEST_ASSERT_EQ("close write end", vfs_close(fds[1]), 0);
     }
-    TEST_PASS("create/close");
 
     // bytes written come back in order and unmodified
     {
@@ -51,7 +50,6 @@ void test_pipe(void)
         vfs_close(fds[0]);
         vfs_close(fds[1]);
     }
-    TEST_PASS("byte transfer");
 
     // the pipe is a stream: separate writes coalesce for the reader
     {
@@ -69,7 +67,6 @@ void test_pipe(void)
         vfs_close(fds[0]);
         vfs_close(fds[1]);
     }
-    TEST_PASS("stream semantics");
 
     // a partial read leaves the remainder queued
     {
@@ -90,7 +87,6 @@ void test_pipe(void)
         vfs_close(fds[0]);
         vfs_close(fds[1]);
     }
-    TEST_PASS("partial reads");
 
     // reading after the write end closes must report EOF, not block
     {
@@ -108,7 +104,6 @@ void test_pipe(void)
 
         vfs_close(fds[0]);
     }
-    TEST_PASS("EOF on writer close");
 
     // a full pipe must accept exactly its capacity and give it all back
     {
@@ -132,7 +127,6 @@ void test_pipe(void)
         vfs_close(fds[0]);
         vfs_close(fds[1]);
     }
-    TEST_PASS("full capacity");
 
     TEST_SUITE_END("Pipe");
 }

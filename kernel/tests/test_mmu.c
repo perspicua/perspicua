@@ -29,7 +29,6 @@ void test_mmu(void)
         mmu_unmap_page(vaddr);
         pmm_free_page(phys_page);
     }
-    TEST_PASS("basic map+query");
 
     // unmap makes page not-mapped
     {
@@ -45,7 +44,6 @@ void test_mmu(void)
 
         pmm_free_page(phys_page);
     }
-    TEST_PASS("unmap");
 
     // query unmapped address returns 0
     {
@@ -54,7 +52,6 @@ void test_mmu(void)
         int mapped = mmu_query(vaddr, 0, 0);
         TEST_ASSERT("query unmapped returns 0", mapped == 0);
     }
-    TEST_PASS("query unmapped");
 
     // map, write, read through new mapping
     {
@@ -75,7 +72,6 @@ void test_mmu(void)
         mmu_unmap_page(vaddr);
         pmm_free_page(phys_page);
     }
-    TEST_PASS("write through mapping");
 
     // map multiple pages in same L2 region
     {
@@ -112,7 +108,6 @@ void test_mmu(void)
         pmm_free_page(p2);
         pmm_free_page(p3);
     }
-    TEST_PASS("multiple pages same L2");
 
     // map pages across different L2 entries (different 2MB regions)
     {
@@ -136,7 +131,6 @@ void test_mmu(void)
         pmm_free_page(p1);
         pmm_free_page(p2);
     }
-    TEST_PASS("pages across L2 entries");
 
     // query existing 2MB block mapping (set up by mmu_init)
     {
@@ -147,7 +141,6 @@ void test_mmu(void)
         TEST_ASSERT("2MB block: mapped", mapped == 1);
         TEST_ASSERT("2MB block: paddr", pa == 0x200000);
     }
-    TEST_PASS("query 2MB block mapping");
 
     // map and unmap cycle — re-map same VA to different phys
     {
@@ -170,7 +163,6 @@ void test_mmu(void)
         pmm_free_page(p1);
         pmm_free_page(p2);
     }
-    TEST_PASS("remap same VA");
 
     // read-only mapping: verify flags
     {
@@ -187,7 +179,6 @@ void test_mmu(void)
         mmu_unmap_page(vaddr);
         pmm_free_page(phys_page);
     }
-    TEST_PASS("read-only flags");
 
     // fill test: map 16 pages, verify all, unmap all
     {
@@ -224,7 +215,6 @@ void test_mmu(void)
         TEST_ASSERT("fill: all unmapped", ok);
 #undef FILL_COUNT
     }
-    TEST_PASS("fill 16 pages");
 
     TEST_SUITE_END("MMU Dynamic Mapping");
 }
