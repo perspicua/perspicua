@@ -449,6 +449,15 @@ int printf(const char *fmt, ...)
 }
 
 #ifdef __KERNEL__
+/*
+ * printk - Writes a timestamped kernel log line.
+ *
+ * The timestamp shares the body's sink buffer so the whole line leaves as a
+ * single __libc_write, which the UART driver emits under one lock hold.
+ * Writing the timestamp separately left a gap in which a concurrent tty write
+ * on another core could splice its output into the line. Lines longer than
+ * PRINTF_BUF_SIZE still flush in pieces and can interleave.
+ */
 int printk(const char *fmt, ...)
 {
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
@@ -457,22 +466,32 @@ int printk(const char *fmt, ...)
     unsigned long sec = ms / 1000;
     unsigned long rem_ms = ms % 1000;
 
+    char stack_buf[PRINTF_BUF_SIZE];
+    struct fmt_buf fb = {
+        .buf = stack_buf,
+        .size = sizeof(stack_buf),
+        .pos = 0,
+        .sink = 1,
+        .crlf = 1,
+    };
+
     char ts_buf[32];
     snprintf(ts_buf, sizeof(ts_buf), "[%5lu.%06lu] ", sec, rem_ms * 1000);
-
-    size_t ts_len = 0;
-    while (ts_buf[ts_len]) {
-        ts_len++;
+    for (const char *t = ts_buf; *t; t++) {
+        fb_putc(&fb, *t);
     }
-    __libc_write(ts_buf, ts_len);
+    size_t ts_len = fb.total;
 
     va_list args;
     va_start(args, fmt);
-    int ret = vprintf(fmt, args);
+    fmt_core(&fb, fmt, args);
     va_end(args);
+
+    fb_flush(&fb);
 
     spin_unlock_irqrestore(&printf_lock, irqflags);
 
-    return ret;
+    // The timestamp is framing, not output the caller asked for.
+    return (int)(fb.total - ts_len);
 }
 #endif

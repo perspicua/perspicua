@@ -114,6 +114,12 @@ static void tty_pump_tx(struct tty *tty)
     }
 }
 
+// Slots free in the TX ring; one is always left empty to separate full from empty.
+static size_t tty_tx_space(const struct tty *tty)
+{
+    return (tty->tx_tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
+}
+
 static void tty_put_tx_char(struct tty *tty, char c)
 {
     size_t next_tx_head = (tty->tx_head + 1) % TTY_BUFFER_SIZE;
@@ -363,13 +369,32 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
     return (int)n;
 }
 
+/*
+ * tty_write - Queues a buffer for transmission, translating \n to \r\n (ONLCR).
+ *
+ * Fills the ring and pumps once at the end rather than pumping per character.
+ * Pumping per character released uart_tx_lock between every byte, which let a
+ * kernel log line from another core splice itself into the middle of this one.
+ * A write that fits in the ring now reaches the UART as one uninterrupted run.
+ */
 int tty_write(struct tty *tty, const char *buf, size_t count)
 {
-    for (size_t i = 0; i < count; i++) {
-        unsigned long flags = spin_lock_irqsave(&tty->lock);
+    unsigned long flags = spin_lock_irqsave(&tty->lock);
 
-        // Wait for TX space
-        while ((tty->tx_head + 1) % TTY_BUFFER_SIZE == tty->tx_tail) {
+    for (size_t i = 0; i < count; i++) {
+        char c = buf[i];
+
+        // A newline needs both slots at once, or the CR goes out without its LF.
+        size_t need = (c == '\n') ? 2 : 1;
+
+        while (tty_tx_space(tty) < need) {
+            // Drain what we can first; this also arms the TX interrupt that
+            // wakes us once the hardware has taken more of the buffer.
+            tty_pump_tx(tty);
+            if (tty_tx_space(tty) >= need) {
+                break;
+            }
+
             struct task *curr = sched_get_current();
             curr->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
@@ -381,15 +406,16 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
         }
 
-        char c = buf[i];
         if (c == '\n') {
             tty_put_tx_char(tty, '\r');
         }
         tty_put_tx_char(tty, c);
 
         fb_console_putc(c);
-        tty_pump_tx(tty);
-        spin_unlock_irqrestore(&tty->lock, flags);
     }
+
+    tty_pump_tx(tty);
+    spin_unlock_irqrestore(&tty->lock, flags);
+
     return (int)count;
 }

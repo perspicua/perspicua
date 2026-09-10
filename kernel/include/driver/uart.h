@@ -50,7 +50,7 @@ char uart_getc(void);
 
 void uart_puts(const char *str);
 
-void uart_puts_locked(const char *str);
+void uart_write_locked(const char *buf, size_t len);
 
 int uart_data_ready(void);
 

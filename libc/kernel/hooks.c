@@ -15,7 +15,5 @@ void __libc_write(const char *buf, size_t len)
         return;
     }
 
-    for (size_t i = 0; i < len; i++) {
-        uart_send(buf[i]);
-    }
+    uart_write_locked(buf, len);
 }
