@@ -36,6 +36,8 @@ THE LOOP
        just format           # apply clang-format
        just check-format     # verify it's clean (this is enforced)
 
+     Use clang-format 22.1.8, which is what CI pins.
+
   4. Test — see docs/testing.txt:
        just test             # builds the CONFIG_TESTS kernel and runs the
                              # in-kernel suites headless; must exit 0
