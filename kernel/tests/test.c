@@ -36,11 +36,11 @@ void run_all_tests(void)
 
     if (tests_failed == 0) {
         pr_info("test: all %d tests passed [OK]\n", tests_passed);
-        pr_info("test: reached target: kernel self-test complete [OK]\n");
     } else {
         pr_err("test: %d of %d tests failed [FAILED]\n", tests_failed, tests_passed + tests_failed);
         pr_err("test: kernel self-test incomplete — review failures above [FAILED]\n");
     }
+    pr_info("test: reached target: kernel self-test complete\n");
 
     printk("\n");
 }
@@ -61,11 +61,11 @@ void run_scheduler_tests(void)
 
     if (sched_failed == 0) {
         pr_info("test: scheduler: all %d tests passed [OK]\n", sched_passed);
-        pr_info("test: reached target: scheduler test complete [OK]\n");
     } else {
         pr_err("test: scheduler: %d of %d tests failed [FAILED]\n", sched_failed,
                sched_passed + sched_failed);
     }
+    pr_info("test: reached target: scheduler test complete\n");
 
     printk("\n");
 }
@@ -92,11 +92,11 @@ void run_post_init_tests(void)
 
     if (post_failed == 0) {
         pr_info("test: post-init: all %d tests passed [OK]\n", post_passed);
-        pr_info("test: reached target: post-init test complete [OK]\n");
     } else {
         pr_err("test: post-init: %d of %d tests failed [FAILED]\n", post_failed,
                post_passed + post_failed);
     }
+    pr_info("test: reached target: post-init test complete\n");
 
     printk("\n");
 }

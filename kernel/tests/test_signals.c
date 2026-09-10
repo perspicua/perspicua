@@ -106,65 +106,56 @@ void test_signals(void)
     }
 
     /*
-     * A valid signal to a live process must be accepted and recorded in the
-     * pending mask. The bit is (sig - 1) because signal numbering starts at 1.
+     * Pending-signal bookkeeping runs against a claimed slot, not init. init is
+     * scheduled while this suite runs, so it drains its own pending bits
+     * between any two reads here -- which made "resend leaves mask unchanged"
+     * fail whenever it happened to run in that window. A claimed slot has no
+     * task, so nothing ever consumes what this queues. signal_send only reaches
+     * main_task behind a NULL check, so an empty slot is a valid target.
      */
     {
-        TEST_ASSERT_EQ("send SIGUSR1 to init", signal_send(INIT_PID, SIGNAL_USR1), 0);
+        int slot = process_test_claim_slot();
+        TEST_ASSERT("pending-signal test slot claimed", slot > 0);
 
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+        if (slot > 0) {
+            uint32_t target = (uint32_t)slot;
+
+            // recorded in the pending mask; the bit is (sig - 1)
+            TEST_ASSERT_EQ("send SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            uint32_t pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+
+            // a second distinct signal accumulates rather than replaces
+            TEST_ASSERT_EQ("send SIGUSR2", signal_send(target, SIGNAL_USR2), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
+            TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+
+            // re-sending an already-pending signal is idempotent, not a counter
+            uint32_t before = process_table[target]->pending_signals;
+            TEST_ASSERT_EQ("resend SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            uint32_t after = process_table[target]->pending_signals;
+            TEST_ASSERT("resend leaves mask unchanged", before == after);
+
+            // POSIX mutual discard: a stop signal clears pending SIGCONT, and
+            // SIGCONT clears pending stop signals
+            TEST_ASSERT_EQ("send SIGCONT", signal_send(target, SIGNAL_CONT), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+
+            TEST_ASSERT_EQ("send SIGSTOP", signal_send(target, SIGNAL_STOP), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
+            TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
+
+            TEST_ASSERT_EQ("send SIGCONT again", signal_send(target, SIGNAL_CONT), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+            TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
+
+            process_test_release_slot(target);
+        }
     }
-
-    // a second distinct signal must accumulate rather than replace
-    {
-        TEST_ASSERT_EQ("send SIGUSR2 to init", signal_send(INIT_PID, SIGNAL_USR2), 0);
-
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
-        TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
-    }
-
-    // re-sending an already-pending signal is idempotent, not a counter
-    {
-        uint32_t before = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT_EQ("resend SIGUSR1", signal_send(INIT_PID, SIGNAL_USR1), 0);
-        uint32_t after = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("resend leaves mask unchanged", before == after);
-    }
-
-    // POSIX mutual discard: stop signals clear pending SIGCONT, and SIGCONT clears pending stop
-    // signals
-    {
-        TEST_ASSERT_EQ("send SIGCONT", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
-
-        TEST_ASSERT_EQ("send SIGSTOP", signal_send(INIT_PID, SIGNAL_STOP), 0);
-        pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
-        TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
-
-        TEST_ASSERT_EQ("send SIGCONT again", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
-        TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
-
-        // Cleanup
-        process_table[INIT_PID]->pending_signals &=
-            ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
-    }
-
-    /*
-     * Clear what this suite queued so init is not left holding signals it
-     * never asked for once it runs.
-     */
-    process_table[INIT_PID]->pending_signals &=
-        ~((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)));
-    TEST_ASSERT_EQ("test signals cleared",
-                   (long)(process_table[INIT_PID]->pending_signals
-                          & ((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)))),
-                   0);
 
     TEST_SUITE_END("Signals");
 }
