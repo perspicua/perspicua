@@ -77,8 +77,14 @@ struct vfs_dirent {
  * struct vfs_vnode_ops - Functional interface for filesystem-specific operations.
  */
 struct vfs_vnode_ops {
-    int (*read)(struct vfs_file *file, void *buffer, size_t size);
-    int (*write)(struct vfs_file *file, const void *buffer, size_t size);
+    /*
+     * read/write operate at *offset and advance it by what they transferred.
+     * The cursor is passed rather than taken from file->offset so pread and
+     * pwrite can supply their own without disturbing the descriptor's. Streams
+     * with no position (pipes, ttys) leave it alone.
+     */
+    int (*read)(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset);
+    int (*write)(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *offset);
     int (*truncate)(struct vfs_vnode *node, vfs_off_t length);
     struct vfs_vnode *(*lookup)(struct vfs_vnode *dir, const char *filename);
     int (*readdir)(struct vfs_file *file, void *buffer, size_t count);

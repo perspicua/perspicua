@@ -94,18 +94,18 @@ static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
  * A reader renders its file whole, then hands the result here to serve the
  * window the caller's offset and size ask for.
  */
-static int procfs_copy_out(struct vfs_file *file, void *buffer, size_t size, const char *content,
+static int procfs_copy_out(vfs_off_t *offset, void *buffer, size_t size, const char *content,
                            size_t len)
 {
-    if (file->offset >= (vfs_off_t)len) {
+    if (*offset >= (vfs_off_t)len) {
         return 0;
     }
 
-    size_t available = len - (size_t)file->offset;
+    size_t available = len - (size_t)*offset;
     size_t to_copy = (size < available) ? size : available;
 
-    memcpy(buffer, content + file->offset, to_copy);
-    file->offset += (vfs_off_t)to_copy;
+    memcpy(buffer, content + *offset, to_copy);
+    *offset += (vfs_off_t)to_copy;
 
     return (int)to_copy;
 }
@@ -230,7 +230,8 @@ static int procfs_gen_stat(char *buf, int size)
  * The generator the vnode names renders the file into scratch space, and the
  * window the caller asked for is copied out of that.
  */
-static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t size,
+                                 vfs_off_t *offset)
 {
     procfs_generate_fn generate = (procfs_generate_fn)(uintptr_t)file->node->internal_info;
     if (!generate) {
@@ -243,13 +244,13 @@ static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t siz
     }
 
     int len = generate(buf, PROCFS_CONTENT_MAX);
-    int ret = (len > 0) ? procfs_copy_out(file, buffer, size, buf, (size_t)len) : 0;
+    int ret = (len > 0) ? procfs_copy_out(offset, buffer, size, buf, (size_t)len) : 0;
 
     heap_free(buf);
     return ret;
 }
 
-static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char *buf = heap_malloc(2048);
@@ -272,13 +273,14 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    int ret = procfs_copy_out(file, buffer, size, buf, strlen(buf));
+    int ret = procfs_copy_out(offset, buffer, size, buf, strlen(buf));
 
     heap_free(buf);
     return ret;
 }
 
-static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t size,
+                                  vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char buf[512];
@@ -323,10 +325,11 @@ static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t si
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     size_t len = strlen(buf);
-    return procfs_copy_out(file, buffer, size, buf, len);
+    return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
-static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t size,
+                                   vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char buf[128];
@@ -340,10 +343,10 @@ static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t s
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     size_t len = strlen(buf);
-    return procfs_copy_out(file, buffer, size, buf, len);
+    return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
-static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     struct process *p = process_slot((uint32_t)pid);
@@ -373,10 +376,11 @@ static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size)
         path_buf[len] = '\0';
     }
 
-    return procfs_copy_out(file, buffer, size, path_buf, len);
+    return procfs_copy_out(offset, buffer, size, path_buf, len);
 }
 
-static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t size,
+                                    vfs_off_t *offset)
 {
     uintptr_t info = (uintptr_t)file->node->internal_info;
     uint32_t pid = (info >> 16) & 0xFFFF;
@@ -413,7 +417,7 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
         path_buf[len] = '\0';
     }
 
-    return procfs_copy_out(file, buffer, size, path_buf, len);
+    return procfs_copy_out(offset, buffer, size, path_buf, len);
 }
 
 static struct vfs_vnode_ops procfs_generated_ops = {.read = procfs_generated_read};

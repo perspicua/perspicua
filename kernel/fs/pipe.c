@@ -102,8 +102,10 @@ static void pipe_wake(struct task **queue)
     }
 }
 
-static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
+static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_t *offset)
 {
+    (void)offset; // A pipe has no position.
+
     struct pipe *pipe = (struct pipe *)file->node->internal_info;
     char *buf = (char *)buffer;
     size_t read = 0;
@@ -146,8 +148,10 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
     return (int)read;
 }
 
-static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
+static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, vfs_off_t *offset)
 {
+    (void)offset; // A pipe has no position.
+
     struct pipe *pipe = (struct pipe *)file->node->internal_info;
     const char *buf = (const char *)buffer;
     size_t written = 0;

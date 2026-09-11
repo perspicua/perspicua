@@ -138,7 +138,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         .counter directly (pipe.c, fat32.c, procfs.c, devfs.c do today).
       Done: each of those concepts has exactly one definition.
 
-   6. VFS helpers
+   6. VFS helpers [DONE]
       Effort: M | Unlocks: a vfs.c a third shorter, and one place to fix fd
         semantics when threads arrive
       Scope: vfs_file_get(fd) that looks up the descriptor under fd_lock and

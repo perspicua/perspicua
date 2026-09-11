@@ -466,14 +466,14 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
     return (int)bytes_written;
 }
 
-static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
+static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *pos)
 {
     if (!file || !file->node || !buffer) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
     uint32_t file_size = (uint32_t)file->node->file_size;
-    uint32_t offset = (uint32_t)file->offset;
+    uint32_t offset = (uint32_t)*pos;
 
     if (offset >= file_size) {
         return 0;
@@ -524,11 +524,11 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size)
         bytes_read += to_copy;
     }
 
-    file->offset += bytes_read;
+    *pos += (vfs_off_t)bytes_read;
     return (int)bytes_read;
 }
 
-static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t size)
+static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *pos)
 {
     if (!file || !file->node || !buffer) {
         return -PERS_ERR_INVALID_ARGUMENT;
@@ -538,7 +538,7 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
         return -PERS_ERR_IS_A_DIRECTORY;
     }
 
-    uint32_t offset = (uint32_t)file->offset;
+    uint32_t offset = (uint32_t)*pos;
     uint32_t bytes_written = 0;
     const uint8_t *in_buf = (const uint8_t *)buffer;
 
@@ -600,10 +600,10 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
         bytes_written += to_copy;
     }
 
-    file->offset += bytes_written;
+    *pos += (vfs_off_t)bytes_written;
 
-    if (file->offset > file->node->file_size) {
-        file->node->file_size = file->offset;
+    if (*pos > file->node->file_size) {
+        file->node->file_size = *pos;
         fat32_update_dir_entry(file->node);
     }
 
@@ -1202,18 +1202,18 @@ static int fat32_create(struct vfs_vnode *parent, const char *name)
  * The lock is recursive so page-cache eviction can re-enter write_page while a
  * read/write already holds it.
  */
-static int fat32_op_read(struct vfs_file *file, void *buffer, size_t size)
+static int fat32_op_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *pos)
 {
     kmutex_lock(&fat32_lock);
-    int r = fat32_vfs_read(file, buffer, size);
+    int r = fat32_vfs_read(file, buffer, size, pos);
     kmutex_unlock(&fat32_lock);
     return r;
 }
 
-static int fat32_op_write(struct vfs_file *file, const void *buffer, size_t size)
+static int fat32_op_write(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *pos)
 {
     kmutex_lock(&fat32_lock);
-    int r = fat32_vfs_write(file, buffer, size);
+    int r = fat32_vfs_write(file, buffer, size, pos);
     kmutex_unlock(&fat32_lock);
     return r;
 }

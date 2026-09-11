@@ -86,14 +86,19 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     return entries_read;
 }
 
-static int devfs_tty_read(struct vfs_file *file, void *buffer, size_t size)
+static int devfs_tty_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
+    (void)offset; // A terminal has no position.
+
     struct tty *tty = (struct tty *)file->node->internal_info;
     return tty_read(tty, file, (char *)buffer, size);
 }
 
-static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t size)
+static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t size,
+                           vfs_off_t *offset)
 {
+    (void)offset; // A terminal has no position.
+
     struct tty *tty = (struct tty *)file->node->internal_info;
     return tty_write(tty, (const char *)buffer, size);
 }

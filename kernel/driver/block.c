@@ -294,41 +294,43 @@ int block_cache_sync(void)
 static struct block_device *devices[BLOCK_MAX_DEVICES];
 static size_t nr_devices = 0;
 
-static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t size)
+static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t size,
+                                 vfs_off_t *offset)
 {
     struct block_device *dev = (struct block_device *)file->node->internal_info;
 
     // Enforce block-aligned offsets and sizes
-    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0) {
+    if (*offset % dev->block_size != 0 || size % dev->block_size != 0) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    size_t start_block = file->offset / dev->block_size;
+    size_t start_block = (size_t)(*offset / dev->block_size);
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->read_blocks(dev, buffer, start_block, num_blocks);
     if (res == PERS_SUCCESS) {
-        file->offset += size;
+        *offset += (vfs_off_t)size;
         return (int)size;
     }
 
     return res;
 }
 
-static int block_device_vfs_write(struct vfs_file *file, const void *buffer, size_t size)
+static int block_device_vfs_write(struct vfs_file *file, const void *buffer, size_t size,
+                                  vfs_off_t *offset)
 {
     struct block_device *dev = (struct block_device *)file->node->internal_info;
 
-    if (file->offset % dev->block_size != 0 || size % dev->block_size != 0) {
+    if (*offset % dev->block_size != 0 || size % dev->block_size != 0) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
-    size_t start_block = file->offset / dev->block_size;
+    size_t start_block = (size_t)(*offset / dev->block_size);
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->write_blocks(dev, buffer, start_block, num_blocks);
     if (res == PERS_SUCCESS) {
-        file->offset += size;
+        *offset += (vfs_off_t)size;
         return (int)size;
     }
 
