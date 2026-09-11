@@ -742,7 +742,7 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
                     node->file_size = dirs[i].size;
                     node->parent = dir;
                     atomic_inc(&dir->refcount);
-                    node->refcount.counter = 1;
+                    atomic_set(&node->refcount, 1);
                     return node;
                 }
 reset_lfn:
@@ -1359,7 +1359,7 @@ struct vfs_vnode *fat32_get_root_node(void)
     node->type = VFS_VNODE_TYPE_DIR;
     node->ops = &fat32_vnode_ops;
     node->internal_info = (void *)(uintptr_t)current_fs.root_cluster;
-    node->refcount.counter = 1;
+    atomic_set(&node->refcount, 1);
     return node;
 }
 

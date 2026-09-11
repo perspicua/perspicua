@@ -62,6 +62,6 @@ struct irq_stats {
     uint64_t uart_count;
 };
 
-extern struct irq_stats core_irq_stats[SCHED_NUM_CORES];
+extern struct irq_stats core_irq_stats[CPU_MAX_CORES];
 
 #endif // PERSPICUA_ARCH_EXCEPTION_H

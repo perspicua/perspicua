@@ -116,7 +116,7 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
     node->internal_info = internal_info;
     node->file_size = 0;
     node->parent = devfs_root_vnode;
-    node->refcount.counter = 1;
+    atomic_set(&node->refcount, 1);
 
     struct devfs_node *dev_node = (struct devfs_node *)slab_alloc(sizeof(struct devfs_node));
     if (!dev_node) {
@@ -153,7 +153,7 @@ void devfs_init(void)
     devfs_root_vnode->internal_info = NULL;
     devfs_root_vnode->parent = NULL;
     devfs_root_vnode->file_size = 0;
-    devfs_root_vnode->refcount.counter = 1;
+    atomic_set(&devfs_root_vnode->refcount, 1);
 
     if (devfs_register_device("console", &devfs_tty_ops, &console_tty) != 0) {
         PANIC("devfs: console registration failed");

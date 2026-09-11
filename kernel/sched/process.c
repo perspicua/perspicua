@@ -40,42 +40,55 @@ static void va_init(struct va_allocator *va)
     }
 }
 
-/*
- * alloc_kernel_stack - Allocates a guarded kernel stack.
- */
-static void *alloc_kernel_stack(void)
-{
-    unsigned char *base = (unsigned char *)pmm_alloc_pages(SCHED_STACK_PAGES);
-    if (!base) {
-        return NULL;
-    }
-
-    // Guard page: unmap to trap stack underflow
-    mmu_unmap_page((unsigned long)base);
-
-    // Set canary at the bottom of the usable region
-    *(unsigned long *)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
-
-    return base + PAGE_SIZE;
-}
-
-static void free_kernel_stack(void *stack_base)
-{
-    if (!stack_base) {
-        return;
-    }
-    void *alloc_base = (void *)((uintptr_t)stack_base - PAGE_SIZE);
-
-    // Remap guard page so PMM can zero the memory safely
-    mmu_map_page((unsigned long)alloc_base, V2P(alloc_base), MMU_FLAGS_KERNEL_RW);
-    pmm_free_pages(alloc_base);
-}
-
 static void open_std_fds(uint32_t pid)
 {
     vfs_open_pid("/dev/console", VFS_O_RDONLY, pid);
     vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
     vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
+}
+
+// Names a process after the file it runs, truncating rather than overflowing.
+static void process_set_name(struct process *p, const char *path)
+{
+    const char *last_slash = strrchr(path, '/');
+    const char *filename = last_slash ? last_slash + 1 : path;
+
+    strncpy(p->name, filename, sizeof(p->name) - 1);
+    p->name[sizeof(p->name) - 1] = '\0';
+}
+
+// Every signal at its default disposition, as a process with no history has.
+static void process_init_signals(struct process *p)
+{
+    memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
+    for (int i = 0; i < SIGNAL_COUNT; i++) {
+        p->signal_handlers[i].sa_handler = SIGNAL_DFL;
+    }
+}
+
+/*
+ * process_clone_fds - Gives a child its own reference to each of the parent's
+ * open files. Runs under the parent's fd_lock so a concurrent close cannot free
+ * a file between the read and the reference being taken.
+ */
+static void process_clone_fds(struct process *child, struct process *parent)
+{
+    unsigned long fdflags = spin_lock_irqsave(&parent->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (parent->fd_table[i]) {
+            child->fd_table[i] = parent->fd_table[i];
+            child->fd_flags[i] = parent->fd_flags[i];
+            atomic_inc(&child->fd_table[i]->refcount);
+        }
+    }
+    spin_unlock_irqrestore(&parent->fd_lock, fdflags);
+}
+
+// Publishes a built task as the process's thread and makes it runnable.
+static void process_start_task(struct process *p, struct task *t)
+{
+    p->main_task = t;
+    enqueue_ready(cpu_id(), t);
 }
 
 static void close_all_fds(struct process *p)
@@ -94,14 +107,25 @@ static void close_all_fds(struct process *p)
 }
 
 /*
+ * kstack_trap_frame - Where a task's trap frame sits on its kernel stack.
+ *
+ * ret_to_user pops the frame from the top of the stack, so both the freshly
+ * built frame and the one fork copies from its parent have to land on the same
+ * address.
+ */
+static struct exception_trap_frame *kstack_trap_frame(uintptr_t kstack_base)
+{
+    uintptr_t top = kstack_top((const void *)kstack_base);
+    return (struct exception_trap_frame *)((top - sizeof(struct exception_trap_frame)) & ~15UL);
+}
+
+/*
  * build_trap_frame - Sets initial register state for a return to user-space.
  */
 static struct exception_trap_frame *build_trap_frame(uintptr_t kstack_base, uint64_t entry_pc,
                                                      uintptr_t user_sp_top)
 {
-    uintptr_t kernel_stack_top = kstack_base + SCHED_TASK_STACK_SIZE;
-    uintptr_t tf_addr = (kernel_stack_top - sizeof(struct exception_trap_frame)) & ~15UL;
-    struct exception_trap_frame *tf = (struct exception_trap_frame *)tf_addr;
+    struct exception_trap_frame *tf = kstack_trap_frame(kstack_base);
 
     memset(tf, 0, sizeof(*tf));
     tf->elr_el1 = entry_pc;
@@ -352,7 +376,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     }
 
     uintptr_t vaddr_stack = setup_user_stack(&p->va, user_pgd, PROCESS_USER_STACK_PAGES);
-    void *kstack = alloc_kernel_stack();
+    void *kstack = kstack_alloc();
 
     if (!vaddr_stack || !kstack) {
         mmu_destroy_user_pgd(user_pgd);
@@ -371,10 +395,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     p->vaddr_kernel_stack = (uintptr_t)kstack;
     p->paddr_kernel_stack = V2P(kstack);
 
-    const char *last_slash = strrchr(path, '/');
-    const char *filename = last_slash ? last_slash + 1 : path;
-    strncpy(p->name, filename, sizeof(p->name) - 1);
-    p->name[sizeof(p->name) - 1] = '\0';
+    process_set_name(p, path);
 
     uintptr_t user_sp_top = vaddr_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     struct exception_trap_frame *tf = build_trap_frame((uintptr_t)kstack, entry_point, user_sp_top);
@@ -390,10 +411,7 @@ int process_create_from_file(const char *path, uint32_t pid)
     }
     open_std_fds(pid);
 
-    memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
-    for (int i = 0; i < SIGNAL_COUNT; i++) {
-        p->signal_handlers[i].sa_handler = SIGNAL_DFL;
-    }
+    process_init_signals(p);
 
     struct task *t =
         sched_create_user_task(p->context.sp, p->context.lr, p->vaddr_kernel_stack, pid);
@@ -402,14 +420,13 @@ int process_create_from_file(const char *path, uint32_t pid)
         if (p->cwd) {
             vfs_vnode_put(p->cwd);
         }
-        free_kernel_stack(kstack);
+        kstack_free(kstack);
         mmu_destroy_user_pgd(user_pgd);
         process_release_slot(pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    p->main_task = t;
-    enqueue_ready(get_core_id(), t);
+    process_start_task(p, t);
 
     pr_info("proc: loaded '%s' (PID %u)\n", path, pid);
     return PERS_SUCCESS;
@@ -615,10 +632,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->va = new_va;
     p->ttbr0 = V2P(new_pgd) | asid_ttbr_field(p->asid);
 
-    const char *last_slash = strrchr(path, '/');
-    const char *filename = last_slash ? last_slash + 1 : path;
-    strncpy(p->name, filename, sizeof(p->name) - 1);
-    p->name[sizeof(p->name) - 1] = '\0';
+    process_set_name(p, path);
 
     mmu_switch_user(new_pgd, p->asid);
     unsigned long asid_field = asid_ttbr_field(p->asid);
@@ -809,7 +823,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     struct process *child = process_table[child_pid];
 
     unsigned long *child_pgd = mmu_copy_user_pgd(parent->user_pgd);
-    void *kstack = alloc_kernel_stack();
+    void *kstack = kstack_alloc();
 
     if (!child_pgd || !kstack) {
         mmu_destroy_user_pgd(child_pgd);
@@ -843,19 +857,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
         atomic_inc(&child->cwd->refcount);
     }
 
-    unsigned long fdflags = spin_lock_irqsave(&parent->fd_lock);
-    for (int i = 0; i < VFS_MAX_FDS; i++) {
-        if (parent->fd_table[i]) {
-            child->fd_table[i] = parent->fd_table[i];
-            child->fd_flags[i] = parent->fd_flags[i];
-            atomic_inc(&child->fd_table[i]->refcount);
-        }
-    }
-    spin_unlock_irqrestore(&parent->fd_lock, fdflags);
+    process_clone_fds(child, parent);
 
-    uintptr_t kernel_stack_top = (uintptr_t)kstack + SCHED_TASK_STACK_SIZE;
-    uintptr_t tf_addr = (kernel_stack_top - sizeof(struct exception_trap_frame)) & ~15UL;
-    struct exception_trap_frame *child_tf = (struct exception_trap_frame *)tf_addr;
+    struct exception_trap_frame *child_tf = kstack_trap_frame((uintptr_t)kstack);
 
     memcpy(child_tf, parent_tf, sizeof(*child_tf));
     child_tf->x[0] = 0; // Child returns 0 from fork
@@ -870,14 +874,13 @@ int process_fork(struct exception_trap_frame *parent_tf)
         if (child->cwd) {
             vfs_vnode_put(child->cwd);
         }
-        free_kernel_stack(kstack);
+        kstack_free(kstack);
         mmu_destroy_user_pgd(child_pgd);
         process_release_slot((uint32_t)child_pid);
         return -PERS_ERR_OUT_OF_MEMORY;
     }
 
-    child->main_task = t;
-    enqueue_ready(get_core_id(), t);
+    process_start_task(child, t);
 
     pr_info("proc: PID %d forked -> PID %d\n", parent_pid, child_pid);
     return child_pid;

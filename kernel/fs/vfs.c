@@ -242,7 +242,7 @@ struct vfs_file *vfs_file_alloc(void)
     }
 
     memset(f, 0, sizeof(*f));
-    f->refcount.counter = 1;
+    atomic_set(&f->refcount, 1);
 
 #ifdef CONFIG_TESTS
     atomic_inc(&vfs_live_files);

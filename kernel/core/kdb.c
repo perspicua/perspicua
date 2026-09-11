@@ -293,7 +293,7 @@ static void cmd_tasks(void)
 
     // Per-core scheduler statistics
     kdb_puts("\n  --- Scheduler Statistics ---\n");
-    for (int c = 0; c < SCHED_NUM_CORES; c++) {
+    for (int c = 0; c < CPU_MAX_CORES; c++) {
         printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
                (unsigned long long)core_sched_stats[c].context_switches,
                (unsigned long long)core_sched_stats[c].idle_count);
@@ -452,7 +452,7 @@ void kdb_enter(const char *reason)
     kdb_tf = NULL;
 
     printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           get_core_id());
+           cpu_id());
     cmd_help();
     kdb_repl();
 }
@@ -463,7 +463,7 @@ void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf)
     kdb_tf = tf;
 
     printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           get_core_id());
+           cpu_id());
     cmd_help();
     kdb_repl();
 }

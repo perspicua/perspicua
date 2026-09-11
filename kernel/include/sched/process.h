@@ -106,7 +106,7 @@ struct process {
 
     uintptr_t vaddr_code;
     uintptr_t vaddr_user_stack;
-    uintptr_t vaddr_kernel_stack;
+    uintptr_t vaddr_kernel_stack; // kstack_alloc base; see kstack_top()
 
     unsigned long *user_pgd;
     unsigned long asid;

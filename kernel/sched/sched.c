@@ -29,25 +29,25 @@ _Static_assert(SCHED_TASK_DEAD == 4, "task_wrapper_asm stores this value literal
 
 // Sentinels to detect BSS corruption.
 static uint64_t s_canary_lo = 0xAAAAAAAAAAAAAAAAULL;
-static struct task sched_boot_tasks[SCHED_NUM_CORES];
+static struct task sched_boot_tasks[CPU_MAX_CORES];
 static uint64_t s_canary_hi = 0xBBBBBBBBBBBBBBBBULL;
 
 // Per-core idle tasks and ready queues.
-static struct task *sched_idle[SCHED_NUM_CORES];
-static struct task *sched_rq_head[SCHED_NUM_CORES];
-static struct task *sched_rq_tail[SCHED_NUM_CORES];
-static spinlock_t sched_rq_lock[SCHED_NUM_CORES] = {[0 ... SCHED_NUM_CORES - 1] = SPINLOCK_INIT};
+static struct task *sched_idle[CPU_MAX_CORES];
+static struct task *sched_rq_head[CPU_MAX_CORES];
+static struct task *sched_rq_tail[CPU_MAX_CORES];
+static spinlock_t sched_rq_lock[CPU_MAX_CORES] = {[0 ... CPU_MAX_CORES - 1] = SPINLOCK_INIT};
 
 // Global sleep queue (ordered by wake_time).
 static struct task *sched_sleep_head;
 static spinlock_t sched_sleep_lock = SPINLOCK_INIT;
 
 // Per-core state tracking.
-static struct task *sched_cleanup[SCHED_NUM_CORES];
-static struct task *sched_prev_task[SCHED_NUM_CORES];
-static int sched_core_pid[SCHED_NUM_CORES];
+static struct task *sched_cleanup[CPU_MAX_CORES];
+static struct task *sched_prev_task[CPU_MAX_CORES];
+static int sched_core_pid[CPU_MAX_CORES];
 
-struct sched_stats core_sched_stats[SCHED_NUM_CORES];
+struct sched_stats core_sched_stats[CPU_MAX_CORES];
 
 // Task ID allocation.
 static unsigned long sched_next_id;
@@ -80,37 +80,36 @@ static unsigned long alloc_task_id(void)
     return id;
 }
 
-// Allocates a kernel stack with a guard page.
-static unsigned char *alloc_task_stack(void)
+void *kstack_alloc(void)
 {
     unsigned char *base = (unsigned char *)pmm_alloc_pages(SCHED_STACK_PAGES);
     if (!base) {
         return NULL;
     }
 
-    mmu_unmap_page((unsigned long)base); // Guard page
+    mmu_unmap_page((unsigned long)base); // Guard page traps a stack underflow
     *(unsigned long *)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
     return base;
 }
 
-// Frees a kernel stack and restores the guard page mapping.
-static void free_task_stack(unsigned char *stack)
+void kstack_free(void *stack_base)
 {
-    if (!stack) {
+    if (!stack_base) {
         return;
     }
 
-    if ((unsigned long)stack < KERNEL_VMA) {
-        PANIC("sched: corrupted t->stack in free_task_stack");
+    if ((unsigned long)stack_base < KERNEL_VMA) {
+        PANIC("sched: corrupted kernel stack base in kstack_free");
     }
 
-    mmu_map_page((unsigned long)stack, V2P(stack), MMU_FLAGS_KERNEL_RW);
-    pmm_free_pages(stack);
+    // Remap the guard page so the PMM can zero the whole block safely.
+    mmu_map_page((unsigned long)stack_base, V2P(stack_base), MMU_FLAGS_KERNEL_RW);
+    pmm_free_pages(stack_base);
 }
 
 static void init_task_stack_context(struct task *t, unsigned char *stack, void (*entry)(void))
 {
-    unsigned long sp = ((unsigned long)(stack + PAGE_SIZE) + SCHED_TASK_STACK_SIZE) & ~15UL;
+    unsigned long sp = kstack_top(stack) & ~15UL;
     t->stack = stack;
     t->context.sp = sp;
     t->context.lr = (unsigned long)task_wrapper_asm;
@@ -257,7 +256,7 @@ static void sleep_drain(int cpu)
 // Cleans up predecessor of a task that bypassed normal return path.
 static void idle_entry(void)
 {
-    int cpu = get_core_id();
+    int cpu = cpu_id();
     if (sched_prev_task[cpu]) {
         sched_prev_task[cpu]->on_core = -1;
         sched_prev_task[cpu] = NULL;
@@ -277,7 +276,7 @@ static struct task *create_idle_task(int core_id)
     }
     memset(t, 0, sizeof(*t));
 
-    unsigned char *stack = alloc_task_stack();
+    unsigned char *stack = kstack_alloc();
     if (!stack) {
         PANIC("sched: OOM allocating idle task stack");
     }
@@ -316,10 +315,10 @@ static void cleanup_dead_task(int cpu)
     // Last line of defence: the sleep queue must not outlive the task.
     sleep_dequeue(dead);
 
-    free_task_stack(dead->stack);
+    kstack_free(dead->stack);
     dead->stack = NULL;
 
-    int is_boot = (dead >= &sched_boot_tasks[0] && dead < &sched_boot_tasks[SCHED_NUM_CORES]);
+    int is_boot = (dead >= &sched_boot_tasks[0] && dead < &sched_boot_tasks[CPU_MAX_CORES]);
     if (!is_boot) {
         heap_free(dead);
     }
@@ -350,12 +349,12 @@ void sched_init(void)
     sched_idle[0] = create_idle_task(0);
     sched_core_pid[0] = 0;
 
-    pr_info("sched: Initialized with %d cores\n", SCHED_NUM_CORES);
+    pr_info("sched: Initialized with %d cores\n", CPU_MAX_CORES);
 }
 
 void sched_secondary_init(void)
 {
-    int core_id = get_core_id();
+    int core_id = cpu_id();
     struct task *boot = &sched_boot_tasks[core_id];
     memset(boot, 0, sizeof(*boot));
 
@@ -384,7 +383,7 @@ void sched_create_task(void (*entry)(void))
     }
     memset(t, 0, sizeof(*t));
 
-    unsigned char *stack = alloc_task_stack();
+    unsigned char *stack = kstack_alloc();
     if (!stack) {
         PANIC("sched_create_task: OOM for stack");
     }
@@ -396,7 +395,7 @@ void sched_create_task(void (*entry)(void))
     t->id = alloc_task_id();
     t->on_core = -1;
 
-    rq_enqueue(get_core_id(), t);
+    rq_enqueue(cpu_id(), t);
 }
 
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
@@ -414,7 +413,7 @@ struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forge
     t->pid = pid;
     t->id = alloc_task_id();
     t->on_core = -1;
-    t->stack = (unsigned char *)(kstack_base - PAGE_SIZE);
+    t->stack = (unsigned char *)kstack_base;
     t->ttbr0 = process_get_ttbr0(pid);
 
     return t;
@@ -423,7 +422,7 @@ struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forge
 void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
-    int cpu = get_core_id();
+    int cpu = cpu_id();
     struct task *curr = sched_get_current();
 
     if (!curr || curr == sched_idle[cpu]) {
@@ -442,7 +441,7 @@ void sched_sleep_ms(unsigned long ms)
 void sched_block(void)
 {
     unsigned long flags = irq_save();
-    int cpu = get_core_id();
+    int cpu = cpu_id();
     struct task *curr = sched_get_current();
 
     if (!curr || curr == sched_idle[cpu]) {
@@ -472,14 +471,14 @@ void sched_unblock(struct task *t)
          * sleep_drain can re-ready it out of an unrelated later block, or walk
          * it after the task has been freed. */
         sleep_dequeue(t);
-        rq_enqueue(get_core_id(), t);
+        rq_enqueue(cpu_id(), t);
     }
 }
 
 void sched_stop(void)
 {
     unsigned long flags = irq_save();
-    int cpu = get_core_id();
+    int cpu = cpu_id();
     struct task *curr = sched_get_current();
 
     if (!curr || curr == sched_idle[cpu]) {
@@ -506,7 +505,7 @@ void sched_continue(struct task *t)
     if (__atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
                                     __ATOMIC_SEQ_CST)) {
         sleep_dequeue(t);
-        rq_enqueue(get_core_id(), t);
+        rq_enqueue(cpu_id(), t);
     }
 }
 
@@ -519,7 +518,7 @@ struct task *sched_get_current(void)
 
 int sched_get_core_pid(int cpu)
 {
-    if (cpu < 0 || cpu >= SCHED_NUM_CORES) {
+    if (cpu < 0 || cpu >= CPU_MAX_CORES) {
         return -PERS_ERR_INVALID_ARGUMENT;
     }
     return sched_core_pid[cpu];
@@ -579,7 +578,7 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 void schedule(void)
 {
     unsigned long flags = irq_save();
-    int cpu = get_core_id();
+    int cpu = cpu_id();
 
     // Clean up predecessor if it bypassed normal return.
     if (sched_prev_task[cpu]) {
@@ -619,8 +618,8 @@ void schedule(void)
 
     struct task *next = rq_dequeue(cpu, 1);
     if (!next) {
-        for (int i = 1; i <= SCHED_NUM_CORES; i++) {
-            int victim = (cpu + i) % SCHED_NUM_CORES;
+        for (int i = 1; i <= CPU_MAX_CORES; i++) {
+            int victim = (cpu + i) % CPU_MAX_CORES;
             next = rq_dequeue(victim, 0);
             if (next) {
                 break;
@@ -660,7 +659,7 @@ void schedule(void)
         switch_context(&prev->context, &next->context);
 
         // Resumed on NEW stack. Re-fetch core ID in case of migration.
-        int new_cpu = get_core_id();
+        int new_cpu = cpu_id();
         if (sched_prev_task[new_cpu]) {
             sched_prev_task[new_cpu]->on_core = -1;
             sched_prev_task[new_cpu] = NULL;

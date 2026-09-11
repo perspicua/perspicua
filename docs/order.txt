@@ -121,7 +121,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Note: git remembers. "We might want it later" is not a reason to keep a
         file that does not compile into the image.
 
-   5. Small consolidations
+   5. Small consolidations [DONE]
       Effort: S-M | Unlocks: one implementation per concept before the big
         refactors touch the same code
       Scope: one cpu_id() in arch/, replacing the four copies (get_core_id,

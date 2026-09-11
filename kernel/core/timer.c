@@ -6,6 +6,8 @@
 
 #include "stdio.h"
 
+#include "arch/cpu.h"
+
 static inline unsigned int read_cntfrq(void)
 {
     unsigned int val;
@@ -60,12 +62,10 @@ void disable_interrupts(void)
 
 void timer_interrupt_init(void)
 {
-    unsigned long core_id;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
-    core_id &= 3;
+    int core = cpu_id();
 
     // Base address for RPi4 local interrupt routing (QA7)
-    unsigned long base_addr = 0xFFFFFF80FF800040 + (core_id * 4);
+    unsigned long base_addr = 0xFFFFFF80FF800040 + ((unsigned long)core * 4);
     volatile unsigned int *core_timer_irq_ctrl = (unsigned int *)base_addr;
 
     // Route physical timer interrupts to this core
@@ -77,7 +77,7 @@ void timer_interrupt_init(void)
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
-    if (core_id == 0) {
+    if (core == 0) {
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }

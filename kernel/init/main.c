@@ -70,7 +70,7 @@ static void smp_init(void)
     unsigned long entry_phys = V2P((unsigned long)_entry);
     int target_cores = 1;
 
-    for (int i = 1; i < SCHED_NUM_CORES; i++) {
+    for (int i = 1; i < CPU_MAX_CORES; i++) {
         char path[32];
         snprintf(path, sizeof(path), "/cpus/cpu@%d", i);
         const uint32_t *node = fdt_find_node_by_path(path);
@@ -108,15 +108,11 @@ static void smp_init(void)
 
 __attribute__((used)) void secondary_main(void)
 {
-    unsigned long core_id;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
-    core_id &= 3;
-
     mmu_secondary_init();
     gic_secondary_init();
     timer_interrupt_init();
 
-    pr_info("smp: CPU%lu online\n", core_id);
+    pr_info("smp: CPU%d online\n", cpu_id());
 
     __atomic_fetch_add(&cores_online_count, 1, __ATOMIC_SEQ_CST);
     asm volatile("sev");

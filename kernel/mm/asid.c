@@ -1,12 +1,6 @@
 #include "mm/asid.h"
 #include "core/lock.h"
 
-#ifdef CONFIG_NR_CPUS
-    #define ASID_MAX_CORES CONFIG_NR_CPUS
-#else
-    #define ASID_MAX_CORES 4
-#endif
-
 static struct asid_pool_t asid_pool;
 static spinlock_t asid_lock = SPINLOCK_INIT;
 
@@ -18,14 +12,7 @@ static spinlock_t asid_lock = SPINLOCK_INIT;
  * window that a broadcast rollover flush alone leaves open for a process that
  * keeps running (and refilling its TLB) on another core across the rollover.
  */
-static unsigned long cpu_asid_gen[ASID_MAX_CORES];
-
-static inline int asid_core_id(void)
-{
-    unsigned long mpidr;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-    return (int)(mpidr & (ASID_MAX_CORES - 1));
-}
+static unsigned long cpu_asid_gen[CPU_MAX_CORES];
 
 void asid_init(void)
 {
@@ -64,7 +51,7 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
     /* If this core has not yet caught up to the current generation, its local
      * TLB may hold stale entries for recycled ASIDs. Flush once (local only)
      * before using any ASID of this generation. */
-    int cpu = asid_core_id();
+    int cpu = cpu_id();
     if (cpu_asid_gen[cpu] != asid_pool.generation) {
         asm volatile("tlbi vmalle1\n"
                      "dsb nsh\n"

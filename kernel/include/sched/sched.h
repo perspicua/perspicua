@@ -8,11 +8,7 @@
 #include "types.h"
 #include "mm/pmm.h"
 
-#ifdef CONFIG_NR_CPUS
-    #define SCHED_NUM_CORES CONFIG_NR_CPUS
-#else
-    #define SCHED_NUM_CORES 4
-#endif
+#include "arch/cpu.h"
 
 /*
  * Kernel stack per task, including one unmapped guard page at the bottom.
@@ -25,6 +21,21 @@
 #define SCHED_STACK_USABLE_PAGES 15
 #define SCHED_STACK_PAGES        16
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
+
+/*
+ * Kernel stacks. A "stack base" is always the address the allocator returned,
+ * with the guard page at its front; the usable region starts one page in.
+ * Every holder of a stack pointer stores that base, so none of them has to
+ * know where the guard page ends.
+ */
+void *kstack_alloc(void);
+void kstack_free(void *stack_base);
+
+// Highest address a task's kernel stack can grow to, given its base.
+static inline uintptr_t kstack_top(const void *stack_base)
+{
+    return (uintptr_t)stack_base + PAGE_SIZE + SCHED_TASK_STACK_SIZE;
+}
 
 // Possible execution states for a task.
 enum sched_task_state {
@@ -67,21 +78,6 @@ struct task {
     volatile int on_core;
 };
 
-/*
- * Returns the index of the current CPU core.
- *
- * Every per-core array is sized by SCHED_NUM_CORES, so the result is folded
- * into that range rather than masked against a fixed core count. smp_init only
- * releases cores below the bound, so in practice the fold never triggers -- it
- * keeps a core that should not be running from writing past the end of an array.
- */
-static inline int get_core_id(void)
-{
-    unsigned long mpidr;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(mpidr));
-    return (int)(mpidr & 0xFF) % SCHED_NUM_CORES;
-}
-
 void enqueue_ready(int cpu, struct task *t);
 void sched_init(void);
 void sched_secondary_init(void);
@@ -115,6 +111,6 @@ struct sched_stats {
     uint64_t idle_count;
 };
 
-extern struct sched_stats core_sched_stats[SCHED_NUM_CORES];
+extern struct sched_stats core_sched_stats[CPU_MAX_CORES];
 
 #endif // PERSPICUA_SCHED_SCHED_H

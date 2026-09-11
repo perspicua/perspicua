@@ -275,7 +275,7 @@ int pipe_create(int pipefd[2])
     node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &pipe_ops;
     node->internal_info = pipe;
-    node->refcount.counter = 2;
+    atomic_set(&node->refcount, 2);
 
     struct vfs_file *f_read = vfs_file_alloc();
     struct vfs_file *f_write = vfs_file_alloc();

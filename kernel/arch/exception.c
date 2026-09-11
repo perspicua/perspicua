@@ -37,7 +37,7 @@ extern unsigned long __ex_table_end[];
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
 
-struct irq_stats core_irq_stats[SCHED_NUM_CORES];
+struct irq_stats core_irq_stats[CPU_MAX_CORES];
 
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the
@@ -226,7 +226,7 @@ void exception_irq_handler(void)
         return;
     }
 
-    int current_core = get_core_id();
+    int current_core = cpu_id();
 
     if (irq_id == 0) {
         // SGI 0: panic IPI broadcast
