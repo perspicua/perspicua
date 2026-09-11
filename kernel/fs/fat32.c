@@ -528,6 +528,23 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
     return (int)bytes_read;
 }
 
+// Assigns a start cluster to a file that has none, recording it on disk.
+static int fat32_ensure_start_cluster(struct vfs_vnode *node)
+{
+    if ((uint32_t)(uintptr_t)node->internal_info != 0) {
+        return PERS_SUCCESS;
+    }
+
+    uint32_t cluster = allocate_cluster();
+    if (cluster == 0) {
+        return -PERS_ERR_NO_SPACE_LEFT;
+    }
+
+    node->internal_info = (void *)(uintptr_t)cluster;
+    fat32_update_dir_entry(node);
+    return PERS_SUCCESS;
+}
+
 static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *pos)
 {
     if (!file || !file->node || !buffer) {
@@ -536,6 +553,11 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
 
     if (file->node->type == VFS_VNODE_TYPE_DIR) {
         return -PERS_ERR_IS_A_DIRECTORY;
+    }
+
+    int cluster_err = fat32_ensure_start_cluster(file->node);
+    if (cluster_err != PERS_SUCCESS) {
+        return cluster_err;
     }
 
     uint32_t offset = (uint32_t)*pos;
@@ -1293,6 +1315,8 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
         return PERS_SUCCESS; // no-op
     }
 
+    pagecache_invalidate(node);
+
     uint32_t start_cluster = (uint32_t)(uintptr_t)node->internal_info;
 
     if (length == 0) {
@@ -1323,7 +1347,6 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
 
     node->file_size = length;
     fat32_update_dir_entry(node);
-    pagecache_invalidate(node);
     return PERS_SUCCESS;
 }
 

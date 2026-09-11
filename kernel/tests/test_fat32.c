@@ -310,6 +310,65 @@ void test_fat32(void)
         TEST_ASSERT_EQ("failed mkdir reclaims every vnode", slab_get_used(), before);
     }
 
+    /*
+     * Truncating to zero releases the start cluster, and the page cache is keyed
+     * on it. Rewriting afterwards must serve the new content, not whatever was
+     * cached against the old key -- and the allocator hands the same cluster
+     * straight back, so a stale page lands on exactly the file that freed it.
+     */
+    {
+        const int len = 2048;
+        int ok = 1;
+
+        for (int round = 0; round < 3 && ok; round++) {
+            uint8_t mark = (uint8_t)(0x10 + round);
+
+            int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+            if (fd < 0) {
+                ok = 0;
+                break;
+            }
+
+            for (int i = 0; i < len; i++) {
+                big_pattern[i] = mark;
+            }
+            if (vfs_write(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+
+            // Read back through the same descriptor, before any close.
+            memset(big_pattern, 0, len);
+            if (vfs_lseek(fd, 0, VFS_SEEK_SET) != 0 || vfs_read(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+            for (int i = 0; i < len && ok; i++) {
+                if (big_pattern[i] != mark) {
+                    ok = 0;
+                }
+            }
+            vfs_close(fd);
+
+            // And again after reopening, which must find the same bytes.
+            fd = vfs_open(BIG_FILE, VFS_O_RDONLY);
+            if (fd < 0) {
+                ok = 0;
+                break;
+            }
+            memset(big_pattern, 0, len);
+            if (vfs_read(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+            for (int i = 0; i < len && ok; i++) {
+                if (big_pattern[i] != mark) {
+                    ok = 0;
+                }
+            }
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT("rewrite after truncate reads back what was written", ok);
+    }
+
     // teardown, innermost first
     {
         TEST_ASSERT_EQ("unlink nested file", vfs_unlink(NEST_FILE), 0);

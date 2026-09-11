@@ -853,11 +853,7 @@ static void test_signal_wake(void)
 
 // fd - descriptor exhaustion, recovery and inheritance
 
-/*
- * This kernel allows a process only one descriptor per non-device file, so
- * exhaustion needs one file per descriptor. That restriction is checked here
- * too: it is a deliberate deviation from POSIX and worth pinning down.
- */
+// Distinct files, so exhaustion is reached through the descriptor table itself.
 #define FD_PROBE_FILES 96
 
 static void fd_probe_path(char *out, size_t len, int i)
@@ -899,14 +895,18 @@ static void test_fd(void)
         return;
     }
 
-    // One descriptor per file, and a second on the same file is refused.
+    // One file may back several descriptors, each with its own cursor.
     {
         fd_probe_path(path, sizeof(path), 0);
         int first = sys_open(path, VFS_O_RDONLY);
         CHECK(first >= 0, "fd: probe file would not open");
         if (first >= 0) {
-            CHECK(sys_open(path, VFS_O_RDONLY) < 0,
-                  "fd: the same file opened twice in one process");
+            int second = sys_open(path, VFS_O_RDONLY);
+            CHECK(second >= 0, "fd: the same file could not be opened twice");
+            CHECK(second != first, "fd: reopening returned the same descriptor");
+            if (second >= 0) {
+                CHECK(sys_close(second) == 0, "fd: close of the second descriptor failed");
+            }
             CHECK(sys_close(first) == 0, "fd: close of the probe failed");
         }
     }
