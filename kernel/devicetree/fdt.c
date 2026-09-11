@@ -54,8 +54,6 @@ void fdt_parse_memory_reservations(void)
     struct fdt_header *fdt = (struct fdt_header *)fdt_base_address;
     uint32_t totalsize = fdt32_to_cpu(fdt->totalsize);
 
-    extern void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
-
     // Protect the DTB itself from being reclaimed
     pmm_reserve_range((unsigned long)fdt_base_address, totalsize, "dtb");
 

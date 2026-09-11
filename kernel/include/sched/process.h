@@ -148,7 +148,6 @@ static inline struct process *process_slot(uint32_t pid)
 
 // Lifecycle and execution
 void process_init(void);
-void process_create(void *code_ptr, size_t code_size, uint32_t pid);
 int process_create_from_file(const char *path, uint32_t pid);
 int process_exec(const char *path, char *const argv[], char *const envp[]);
 int process_fork(struct exception_trap_frame *parent_tf);
@@ -156,7 +155,6 @@ void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 
 // Context and identity
-void process_drop_to_user(void *code_vaddr, void *stack_vaddr);
 int process_find_current(void);
 
 /*

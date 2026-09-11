@@ -30,6 +30,8 @@ void pmm_free_pages(void *ptr);
 
 void pmm_hold_page(void *ptr);
 
+void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
+
 int pmm_is_managed(void *ptr);
 
 unsigned int pmm_page_refcount(void *ptr);

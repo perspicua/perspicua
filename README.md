@@ -87,7 +87,7 @@ Full detail is in [`docs/architecture.txt`](docs/architecture.txt).
 ## Building
 
 Requires an AArch64 cross-compiler, CMake, [just](https://github.com/casey/just),
-mtools, and cpio.
+and mtools.
 
 ```
 just build [type]   Build the project (default: debug)

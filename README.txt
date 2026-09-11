@@ -11,7 +11,7 @@ HARDWARE SUPPORT:
   - Graphics: Framebuffer console
 
 BUILDING THE KERNEL:
-  - Requires: AArch64 cross-compiler, CMake, Just, mtools, and cpio.
+  - Requires: AArch64 cross-compiler, CMake, Just, and mtools.
   - Commands:
       just build [type] # Build the project (default: debug)
       just run          # Compile and run in QEMU

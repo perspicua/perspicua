@@ -132,13 +132,6 @@ char uart_getc(void)
     return (char)(mmio_read(uart_dr) & 0xFF);
 }
 
-void uart_puts(const char *str)
-{
-    while (*str) {
-        uart_send(*str++);
-    }
-}
-
 int uart_data_ready(void)
 {
     return !(mmio_read(uart_fr) & UART_FR_RXFE);

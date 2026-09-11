@@ -39,6 +39,9 @@ extern volatile uint32_t *uart_mis;
 extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
+// Set once the UART is programmed and safe to write to.
+extern int uart_ready;
+
 typedef void (*uart_rx_cb_t)(char c);
 typedef void (*uart_tx_cb_t)(void);
 
@@ -47,8 +50,6 @@ void uart_send(char c);
 void uart_send_raw(char c);
 
 char uart_getc(void);
-
-void uart_puts(const char *str);
 
 void uart_write_locked(const char *buf, size_t len);
 

@@ -9,9 +9,6 @@
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
 
-extern struct device_driver __drivers_bus_start[];
-extern struct device_driver __drivers_bus_end[];
-
 extern struct device_driver __drivers_irq_start[];
 extern struct device_driver __drivers_irq_end[];
 
@@ -55,12 +52,6 @@ void driver_probe_core(void)
 {
     pr_info("driver: probing CORE level drivers...\n");
     probe_driver_list(__drivers_core_start, __drivers_core_end);
-}
-
-void driver_probe_bus(void)
-{
-    pr_info("driver: probing BUS level drivers...\n");
-    probe_driver_list(__drivers_bus_start, __drivers_bus_end);
 }
 
 void driver_probe_irqs(void)

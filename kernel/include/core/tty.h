@@ -42,6 +42,9 @@ struct tty {
     uint32_t session_id;
 };
 
+// The system console, initialised at boot and never freed.
+extern struct tty console_tty;
+
 void tty_init(struct tty *tty);
 
 void tty_session_exit(uint32_t sid);

@@ -315,101 +315,6 @@ void process_init(void)
             sizeof(struct process));
 }
 
-void process_create(void *code_ptr, size_t code_size, uint32_t pid)
-{
-    if (pid >= PROCESS_TABLE_SIZE || code_size == 0 || code_size > PAGE_SIZE) {
-        return;
-    }
-
-    // Allocated before the lock: heap_malloc must not run with interrupts off.
-    struct process *p = process_alloc_pcb(pid);
-    if (!p) {
-        return;
-    }
-
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    if (process_table[pid]) {
-        spin_unlock_irqrestore(&process_table_lock, flags);
-        heap_free(p);
-        return;
-    }
-    process_table[pid] = p;
-    spin_unlock_irqrestore(&process_table_lock, flags);
-
-    va_init(&p->va);
-
-    unsigned long *user_pgd = mmu_create_user_pgd();
-    if (!user_pgd) {
-        PANIC("process_create: failed to create user PGD");
-    }
-
-    void *code_page = pmm_alloc_page();
-    if (!code_page) {
-        PANIC("process_create: OOM for code page");
-    }
-
-    uintptr_t vaddr_code = process_va_alloc(&p->va, 1);
-    if (!vaddr_code) {
-        PANIC("process_create: VA space exhausted");
-    }
-
-    mmu_user_map_page(user_pgd, vaddr_code, V2P(code_page), MMU_PAGE_USER_CODE);
-    memcpy(code_page, code_ptr, code_size);
-    process_flush_icache_range(code_page, code_size);
-    asm volatile("ic ialluis\n dsb ish\n isb");
-
-    uintptr_t vaddr_user_stack = setup_user_stack(&p->va, user_pgd, PROCESS_USER_STACK_PAGES);
-    if (!vaddr_user_stack) {
-        PANIC("process_create: user stack OOM");
-    }
-
-    void *kstack = alloc_kernel_stack();
-    if (!kstack) {
-        PANIC("process_create: kernel stack OOM");
-    }
-
-    p->parent_pid = 0;
-    p->pid = pid;
-    p->user_pgd = user_pgd;
-    p->asid = 0;
-    p->asid_generation = 0;
-    p->ttbr0 = V2P(user_pgd);
-    p->vaddr_code = vaddr_code;
-    p->paddr_code = V2P(code_page);
-    p->vaddr_user_stack = vaddr_user_stack;
-    p->vaddr_kernel_stack = (uintptr_t)kstack;
-    p->paddr_kernel_stack = V2P(kstack);
-    strcpy(p->name, "init");
-
-    uintptr_t user_sp_top = vaddr_user_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
-    struct exception_trap_frame *tf =
-        build_trap_frame((uintptr_t)kstack, (uint64_t)vaddr_code, user_sp_top);
-
-    p->context.sp = (unsigned long)tf;
-    p->context.lr = (unsigned long)ret_to_user;
-
-    int err;
-    p->cwd = vfs_resolve_path("/", NULL, &err);
-    for (int i = 0; i < VFS_MAX_FDS; i++) {
-        p->fd_table[i] = NULL;
-        p->fd_flags[i] = 0;
-    }
-    open_std_fds(pid);
-
-    memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
-    for (int i = 0; i < SIGNAL_COUNT; i++) {
-        p->signal_handlers[i].sa_handler = SIGNAL_DFL;
-    }
-
-    struct task *t =
-        sched_create_user_task(p->context.sp, p->context.lr, p->vaddr_kernel_stack, pid);
-    if (!t) {
-        PANIC("process_create: task creation failed");
-    }
-    p->main_task = t;
-    enqueue_ready(get_core_id(), t);
-}
-
 int process_create_from_file(const char *path, uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE) {
@@ -1053,16 +958,4 @@ int process_waitpid(int pid, int *status, int options)
         schedule();
         irq_restore(irqf);
     }
-}
-
-void process_drop_to_user(void *code_vaddr, void *stack_vaddr)
-{
-    uint64_t spsr = SPSR_EL0_USER;
-    asm volatile("msr spsr_el1, %0\n"
-                 "msr elr_el1,  %1\n"
-                 "msr sp_el0,   %2\n"
-                 "eret\n"
-                 :
-                 : "r"(spsr), "r"(code_vaddr), "r"(stack_vaddr)
-                 : "memory");
 }

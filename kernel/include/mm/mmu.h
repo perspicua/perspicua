@@ -28,8 +28,7 @@
 #define MMU_PTE_NG (1ULL << 11)
 
 // Software-defined bits
-#define MMU_PTE_COW    (1ULL << 55)
-#define MMU_PTE_SHARED (1ULL << 56)
+#define MMU_PTE_COW (1ULL << 55)
 
 // MAIR_EL1 index bits
 #define MMU_ATTR_NORMAL    (0ULL << 2)

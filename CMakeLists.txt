@@ -43,15 +43,10 @@ endif()
 find_program(MFORMAT mformat)
 find_program(MCOPY mcopy)
 find_program(MMD mmd)
-find_program(CPIO cpio)
 find_program(QEMU qemu-system-aarch64)
 
 if(NOT MFORMAT OR NOT MCOPY OR NOT MMD)
     message(FATAL_ERROR "mtools (mformat, mcopy, mmd) not found. Required for SD image generation.")
-endif()
-
-if(NOT CPIO)
-    message(FATAL_ERROR "cpio not found. Required for initrd generation.")
 endif()
 
 if(NOT QEMU)
@@ -87,7 +82,7 @@ add_custom_command(
 add_custom_target(sdcard
     COMMAND ${MCOPY} -o -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
     COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.txt" ::/
-    DEPENDS ${SD_IMAGE} initrd
+    DEPENDS ${SD_IMAGE} ${USER_ELFS}
     VERBATIM
     COMMENT "Updating SD card image (incremental)"
 )

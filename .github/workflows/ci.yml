@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools cpio pipx git
+          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git
           pipx install clang-format==22.1.8
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 

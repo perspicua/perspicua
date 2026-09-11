@@ -15,7 +15,7 @@ detailed docs rather than repeating them — follow the links for specifics.
 --------------------------------------------------------------------------------
 PREREQUISITES
 --------------------------------------------------------------------------------
-An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, mtools, and cpio.
+An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, and mtools.
 QEMU (qemu-system-aarch64) for running. See README.txt for the toolchain file.
 
 

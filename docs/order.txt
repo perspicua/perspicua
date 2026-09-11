@@ -106,7 +106,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: each fix lands with a test that failed before it, where a test can
         reach it (a, b, c, d, e, f can; g, h, i are deletions).
 
-   4. Delete dead code
+   4. Delete dead code [DONE]
       Effort: S | Unlocks: less to read and less to reshape in items 5-9
       Scope: fs/ramfs.c, core/initrd.c and core/user_programs.S (both symbols
         are literally 0, nothing calls initrd_init); process_create (the raw

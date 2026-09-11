@@ -28,8 +28,6 @@ struct device_driver {
 #define CORE_DRIVER(_name) \
     static const struct device_driver _name __attribute__((used, section(".drivers.core")))
 
-#define BUS_DRIVER(_name) \
-    static const struct device_driver _name __attribute__((used, section(".drivers.bus")))
 #define DEVICE_DRIVER(_name) \
     static const struct device_driver _name __attribute__((used, section(".drivers.device")))
 
@@ -41,7 +39,6 @@ struct device_driver {
  * Call these from main.c at appropriate initialization stages.
  */
 void driver_probe_core(void);
-void driver_probe_bus(void);
 void driver_probe_irqs(void);
 void driver_probe_devices(void);
 

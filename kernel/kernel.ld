@@ -32,10 +32,6 @@ SECTIONS
         KEEP(*(.drivers.core))
         __drivers_core_end = .;
         
-        __drivers_bus_start = .;
-        KEEP(*(.drivers.bus))
-        __drivers_bus_end = .;
-        
         __drivers_device_start = .;
         KEEP(*(.drivers.device))
         __drivers_device_end = .;

@@ -20,19 +20,18 @@
 #include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/tty.h"
-#include "core/initrd.h"
 
 #include "sched/sched.h"
 #include "sched/process.h"
 
 #include "fs/vfs.h"
-#include "fs/ramfs.h"
 #include "fs/devfs.h"
 #include "fs/procfs.h"
 #include "fs/fat32.h"
 #include "fs/pagecache.h"
 
 #include "driver/gpio.h"
+#include "driver/device.h"
 #include "driver/uart.h"
 #include "driver/gic.h"
 #include "driver/mailbox.h"
@@ -51,9 +50,8 @@
 // Kernel metadata and versioning
 #define KERNEL_VERSION "0.1"
 
-// Symbols defined in the linker script and assembly files
+// Defined in arch/boot.S
 extern void _entry(void);
-extern struct tty console_tty;
 
 #ifdef CONFIG_SMP
 
@@ -153,29 +151,12 @@ static void dashboard_task(void)
     }
 }
 
-/*
- * writeback_daemon - Periodic background flush of dirty page cache entries.
- *
- * Runs every 5 seconds. Normally has nothing to flush (FAT32 is write-through),
- * but clears any pages that were dirtied without a corresponding write-through
- * (e.g. a failed write retry, or future write-back paths).
- */
-static void writeback_daemon(void)
-{
-    while (1) {
-        sched_sleep_ms(5000);
-        pagecache_sync();
-        block_cache_sync();
-    }
-}
-
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
     // Stage 0: Devicetree parser initialization
     fdt_init(global_dtb_ptr);
 
     // Stage 1: Basic hardware and console bring-up
-    extern void driver_probe_core(void);
     driver_probe_core();
 
     fb_init();
@@ -193,7 +174,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     mmu_init();
     asid_init();
 
-    extern void pagecache_init(void);
     pagecache_init();
 
     // Re-base DTB pointers to virtual addresses post-MMU
@@ -203,7 +183,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     heap_init();
 
     // Stage 3: Interrupts and scheduling
-    extern void driver_probe_irqs(void);
     driver_probe_irqs();
 
     uart_enable_interrupts();
@@ -221,13 +200,11 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     devfs_init();
     fb_register_device();
 
-    extern void driver_probe_devices(void);
     driver_probe_devices();
 
     // Root filesystem initialization (FAT32)
     if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
-        sched_create_task(writeback_daemon);
     }
 
     // Mount auxiliary filesystems
