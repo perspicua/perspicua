@@ -100,10 +100,9 @@ int sys_sync(void);
 int sys_fsync(int fd);
 
 // Signal handling
-int sys_signal(int sig, signal_handler_t handler);
+signal_handler_t sys_signal(int sig, signal_handler_t handler);
 int sys_kill(int pid, int sig);
 void sys_sigreturn(void);
-void sys_sigrestore(uintptr_t restorer);
 int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact);
 int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset);
 int sys_sigpending(sigset_t *set);

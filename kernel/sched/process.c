@@ -623,7 +623,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         }
     }
     p->pending_signals = 0;
-    p->default_sigrestorer = 0;
 
     unsigned long *old_pgd = p->user_pgd;
     p->user_pgd = new_pgd;
@@ -850,7 +849,6 @@ int process_fork(struct exception_trap_frame *parent_tf)
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
     child->pending_signals = 0;
     child->blocked_signals = parent->blocked_signals;
-    child->default_sigrestorer = parent->default_sigrestorer;
 
     if (parent->cwd) {
         child->cwd = parent->cwd;

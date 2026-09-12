@@ -217,13 +217,6 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
-        case SYS_SLEEP: {
-            unsigned long ms = tf->x[0];
-            sched_sleep_ms(ms);
-            tf->x[0] = PERS_SUCCESS;
-            break;
-        }
-
         case SYS_OPEN: {
             const char *path = (const char *)(tf->x[0]);
             int flags = (int)(tf->x[1]);
@@ -428,25 +421,6 @@ void syscall_handle(struct exception_trap_frame *tf)
             break;
         }
 
-        case SYS_SIGNAL: {
-            int sig = (int)tf->x[0];
-            signal_handler_t handler = (signal_handler_t)tf->x[1];
-
-            if (sig >= SIGNAL_COUNT || sig < 1 || sig == SIGNAL_KILL || sig == SIGNAL_STOP) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            signal_handler_t old = proc->signal_handlers[sig - 1].sa_handler;
-            proc->signal_handlers[sig - 1].sa_handler = handler;
-            proc->signal_handlers[sig - 1].sa_mask = 0;
-            proc->signal_handlers[sig - 1].sa_flags = 0;
-            proc->signal_handlers[sig - 1].sa_restorer = NULL;
-
-            tf->x[0] = (uint64_t)old;
-            break;
-        }
-
         case SYS_KILL: {
             int target_pid = (int)tf->x[0];
             int sig = (int)tf->x[1];
@@ -563,17 +537,6 @@ void syscall_handle(struct exception_trap_frame *tf)
 
 sigreturn_kill:
             process_exit(pid, -1);
-            break;
-        }
-
-        case SYS_SIGRESTORE: {
-            uintptr_t restorer = (uintptr_t)tf->x[0];
-            if (restorer >= KERNEL_VMA) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-            proc->default_sigrestorer = restorer;
-            tf->x[0] = PERS_SUCCESS;
             break;
         }
 

@@ -124,7 +124,6 @@ struct process {
     sigset_t pending_signals;
     sigset_t blocked_signals;
     struct sigaction signal_handlers[SIGNAL_COUNT];
-    uintptr_t default_sigrestorer;
 };
 
 /*
