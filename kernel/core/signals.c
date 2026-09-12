@@ -151,18 +151,11 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         tf->sp_el0 = new_sp;
         tf->x[0] = (uint64_t)sig;
 
-        if (sa->sa_flags & SA_RESTORER) {
-            if ((uintptr_t)sa->sa_restorer >= KERNEL_VMA) {
-                goto deliver_kill;
-            }
-            tf->x30 = (uintptr_t)sa->sa_restorer;
-        } else {
-            if (curr_process->default_sigrestorer == 0
-                || curr_process->default_sigrestorer >= KERNEL_VMA) {
-                goto deliver_kill;
-            }
-            tf->x30 = curr_process->default_sigrestorer;
+        if (!(sa->sa_flags & SA_RESTORER) || (uintptr_t)sa->sa_restorer == 0
+            || (uintptr_t)sa->sa_restorer >= KERNEL_VMA) {
+            goto deliver_kill;
         }
+        tf->x30 = (uintptr_t)sa->sa_restorer;
 
         if (sa->sa_flags & SA_RESETHAND) {
             sa->sa_handler = SIGNAL_DFL;

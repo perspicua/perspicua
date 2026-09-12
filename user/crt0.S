@@ -15,11 +15,6 @@ _start:
     mov x20, x1
     mov x21, x2
 
-    adrp x0, __sigrestorer
-    add x0, x0, :lo12:__sigrestorer
-    mov x8, #SYS_SIGRESTORE
-    svc #0
-
     // Restore argc/argv/envp for _libc_init
     mov x0, x19
     mov x1, x20
