@@ -8,6 +8,7 @@
 #include "stdio.h"
 #include "string.h"
 
+#include "types.h"
 #include "uapi/errors.h"
 
 #include "core/lock.h"
@@ -17,7 +18,7 @@
 #include "mm/pmm.h"
 #include "mm/addr.h"
 #include <stdint.h>
-
+#include <stdbool.h>
 /*
  * A FAT32 long name is at most 255 characters, carried 13 at a time by up to
  * 20 chained LFN entries. The sequence number of an entry indexes the write, so
@@ -721,23 +722,78 @@ enum fat32_walk_action {
     FAT32_WALK_ERROR = 2,
 };
 
+struct lookup_ctx {
+    const char *filename;
+    struct vfs_vnode *dir;
+    struct vfs_vnode *result;
+};
+
 typedef enum fat32_walk_action (*fat32_dir_walk_cb)(struct fat32_dir_entry *entry,
                                                     const char *lfn_name, int has_lfn, uint32_t lba,
                                                     int sector_index, int entry_index, void *ctx,
                                                     int *out_err);
 
-int fat32_dir_walk(uint32_t parent_cluster, bool grow_chain, fat32_dir_walk_cb cb, void *ctx);
+int fat32_dir_walk(uint32_t parent_cluster, bool grow_chain, fat32_dir_walk_cb cb, void *ctx_)
+{
+    uint32_t cluster = parent_cluster;
+    struct fat32_dir_entry dirs[16];
+
+    char lfn_name[FAT32_LFN_BUF_SIZE];
+    memset(lfn_name, 0, sizeof(lfn_name));
+    int has_lfn = 0;
+
+    while (cluster_valid(cluster)) {
+        uint32_t lba = cluster_to_lba(cluster);
+        for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
+            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
+                return -PERS_ERR_IO_ERROR;
+            }
+            for (int i = 0; i < 16; i++) {
+                if (dirs[i].name[0] == 0x00) {
+                    return -PERS_ERR_NOT_FOUND;
+                }
+                if (dirs[i].name[0] == 0xE5) {
+                    goto reset_lfn;
+                }
+
+                if (dirs[i].attributes == 0x0F) {
+                    struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
+                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
+                        /* Drop the partial name so a malformed fragment cannot
+                         * leak into the match for a later entry. */
+                        has_lfn = 0;
+                        memset(lfn_name, 0, sizeof(lfn_name));
+                        continue;
+                    }
+                    has_lfn = 1;
+                    continue;
+                }
+                int out_err;
+                enum fat32_walk_action action =
+                    cb(&dirs[i], lfn_name, has_lfn, lba, s, i, ctx_, &out_err);
+
+                switch (action) {
+                    case FAT32_WALK_STOP:
+                        return PERS_SUCCESS;
+                    case FAT32_WALK_ERROR:
+                        return out_err;
+                    case FAT32_WALK_CONTINUE:
+                        break;
+                }
+reset_lfn:
+                has_lfn = 0;
+                memset(lfn_name, 0, sizeof(lfn_name));
+            }
+        }
+        cluster = get_next_cluster(cluster);
+    }
+    return -PERS_ERR_NOT_FOUND;
+}
 // to implement
 
-struct lookup_ctx {
-    const char *filename;
-    struct vfs_node *dir;
-    struct vfs_node *result;
-}
-
-static enum fat32_walk_action
-lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name, int has_lfn, uint32_t lba, int s,
-          int i, void *ctx_, int *out_err)
+static enum fat32_walk_action lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name,
+                                        int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+                                        int *out_err)
 {
     struct lookup_ctx *ctx = ctx_;
     (void)lba;
@@ -761,7 +817,7 @@ lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name, int has_lfn, uint
     node->ops = &fat32_vnode_ops;
     node->internal_info = (void *)(uintptr_t)((entry->cluster_high << 16) | entry->cluster_low);
     node->file_size = entry->size;
-    node->parent = ctx->dir;
+    node->parent = (struct vfs_vnode *)ctx->dir;
     atomic_inc(&ctx->dir->refcount);
     atomic_set(&node->refcount, 1);
     ctx->result = node;
@@ -770,66 +826,10 @@ lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name, int has_lfn, uint
 
 static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *filename)
 {
+    struct lookup_ctx ctx = {.filename = filename, .dir = dir, .result = NULL};
     uint32_t cluster = (uint32_t)(uintptr_t)dir->internal_info;
-    struct fat32_dir_entry dirs[16];
-
-    char lfn_name[FAT32_LFN_BUF_SIZE];
-    memset(lfn_name, 0, sizeof(lfn_name));
-    int has_lfn = 0;
-
-    while (cluster_valid(cluster)) {
-        uint32_t lba = cluster_to_lba(cluster);
-        for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
-            if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
-                return NULL;
-            }
-            for (int i = 0; i < 16; i++) {
-                if (dirs[i].name[0] == 0x00) {
-                    return NULL;
-                }
-                if (dirs[i].name[0] == 0xE5) {
-                    goto reset_lfn;
-                }
-
-                if (dirs[i].attributes == 0x0F) {
-                    struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
-                        /* Drop the partial name so a malformed fragment cannot
-                         * leak into the match for a later entry. */
-                        has_lfn = 0;
-                        memset(lfn_name, 0, sizeof(lfn_name));
-                        continue;
-                    }
-                    has_lfn = 1;
-                    continue;
-                }
-                if ((has_lfn && strcmp(filename, lfn_name) == 0)
-                    || name_match(filename, &dirs[i])) {
-                    struct vfs_vnode *node =
-                        (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
-                    if (!node) {
-                        return NULL;
-                    }
-                    memset(node, 0, sizeof(struct vfs_vnode));
-                    node->type =
-                        (dirs[i].attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
-                    node->ops = &fat32_vnode_ops;
-                    node->internal_info =
-                        (void *)(uintptr_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
-                    node->file_size = dirs[i].size;
-                    node->parent = dir;
-                    atomic_inc(&dir->refcount);
-                    atomic_set(&node->refcount, 1);
-                    return node;
-                }
-reset_lfn:
-                has_lfn = 0;
-                memset(lfn_name, 0, sizeof(lfn_name));
-            }
-        }
-        cluster = get_next_cluster(cluster);
-    }
-    return NULL;
+    fat32_dir_walk(cluster, false, lookup_cb, &ctx);
+    return ctx.result;
 }
 
 static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
