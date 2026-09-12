@@ -4,6 +4,7 @@
 
 #include "fs/fat32.h"
 
+#include "fs/vfs.h"
 #include "stdio.h"
 #include "string.h"
 
@@ -15,6 +16,7 @@
 #include "fs/pagecache.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"
+#include <stdint.h>
 
 /*
  * A FAT32 long name is at most 255 characters, carried 13 at a time by up to
@@ -711,6 +713,59 @@ static int fat32_write_entry_to_parent(uint32_t parent_cluster, struct fat32_dir
         cluster = next;
     }
     return -PERS_ERR_OUT_OF_MEMORY;
+}
+
+enum fat32_walk_action {
+    FAT32_WALK_CONTINUE = 0,
+    FAT32_WALK_STOP = 1,
+    FAT32_WALK_ERROR = 2,
+};
+
+typedef enum fat32_walk_action (*fat32_dir_walk_cb)(struct fat32_dir_entry *entry,
+                                                    const char *lfn_name, int has_lfn, uint32_t lba,
+                                                    int sector_index, int entry_index, void *ctx,
+                                                    int *out_err);
+
+int fat32_dir_walk(uint32_t parent_cluster, bool grow_chain, fat32_dir_walk_cb cb, void *ctx);
+// to implement
+
+struct lookup_ctx {
+    const char *filename;
+    struct vfs_node *dir;
+    struct vfs_node *result;
+}
+
+static enum fat32_walk_action
+lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name, int has_lfn, uint32_t lba, int s,
+          int i, void *ctx_, int *out_err)
+{
+    struct lookup_ctx *ctx = ctx_;
+    (void)lba;
+    (void)s;
+    (void)i;
+
+    if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
+        return FAT32_WALK_CONTINUE;
+    }
+    if (!((has_lfn && strcmp(ctx->filename, lfn_name) == 0) || name_match(ctx->filename, entry))) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
+    if (!node) {
+        *out_err = -PERS_ERR_OUT_OF_MEMORY;
+        return FAT32_WALK_ERROR;
+    }
+    memset(node, 0, sizeof(struct vfs_vnode));
+    node->type = (entry->attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
+    node->ops = &fat32_vnode_ops;
+    node->internal_info = (void *)(uintptr_t)((entry->cluster_high << 16) | entry->cluster_low);
+    node->file_size = entry->size;
+    node->parent = ctx->dir;
+    atomic_inc(&ctx->dir->refcount);
+    atomic_set(&node->refcount, 1);
+    ctx->result = node;
+    return FAT32_WALK_STOP;
 }
 
 static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *filename)
