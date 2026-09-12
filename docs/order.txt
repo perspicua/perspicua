@@ -162,7 +162,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: fat32.c has one directory scan; every operation is a callback on
         it. Behavior is unchanged (the LFN-write gap is item 15).
 
-   8. Syscall table
+   8. Syscall table [DONE]
       Effort: M | Unlocks: strace-lite (Phase 3 item 6) as a two-line hook;
         the boundary fuzzer (Phase 1 item 7) can enumerate syscalls
       Scope: one function per syscall, dispatched through a static table

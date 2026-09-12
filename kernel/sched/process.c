@@ -669,13 +669,19 @@ void process_exit(uint32_t pid, int exit_status)
 {
     struct process *p = process_slot(pid);
     if (!p) {
-        return;
+        PANIC("process_exit: no such process");
     }
 
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
-        return;
+        struct task *dying = sched_get_current();
+        if (dying) {
+            dying->state = SCHED_TASK_DEAD;
+        }
+        for (;;) {
+            schedule();
+        }
     }
 
     if (p->sid == p->pid) {
@@ -755,8 +761,9 @@ void process_exit(uint32_t pid, int exit_status)
         dying->state = SCHED_TASK_DEAD;
     }
 
-    schedule();
-    __builtin_unreachable();
+    for (;;) {
+        schedule();
+    }
 }
 
 static int process_claim_slot(void)
