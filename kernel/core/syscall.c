@@ -111,6 +111,87 @@ static int copy_path_from_user(const char *upath, char **out)
     return PERS_SUCCESS;
 }
 
+/*
+ * copy_buf_from_user - Copies a user buffer into a fresh kernel buffer.
+ *
+ * Validates that the user range is readable and within size bounds.
+ * On success the caller owns *out and must heap_free it.
+ */
+static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
+{
+    *out = NULL;
+
+    if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (!validate_user_buffer(ubuf, len, 0)) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    void *kbuf = heap_malloc(len);
+    if (!kbuf) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    if (copy_from_user(kbuf, ubuf, len) != 0) {
+        heap_free(kbuf);
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    *out = kbuf;
+    return PERS_SUCCESS;
+}
+
+/*
+ * alloc_user_out_buf - Prepares a kernel bounce buffer for writing to user memory.
+ *
+ * Validates that the destination user range is writable and within size bounds.
+ * On success the caller owns *out and must heap_free it.
+ */
+static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
+{
+    *out = NULL;
+
+    if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (!validate_user_buffer(ubuf, len, 1)) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    void *kbuf = heap_malloc(len);
+    if (!kbuf) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    *out = kbuf;
+    return PERS_SUCCESS;
+}
+
+/*
+ * copy_buf_to_user - Validates and copies a kernel buffer to a user buffer.
+ *
+ * Used when the output length is only known after the kernel operation finishes.
+ */
+static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
+{
+    if (len == 0) {
+        return PERS_SUCCESS;
+    }
+
+    if (!validate_user_buffer(ubuf, len, 1)) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    if (copy_to_user(ubuf, kbuf, len) != 0) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+
+    return PERS_SUCCESS;
+}
+
 void syscall_handle(struct exception_trap_frame *tf)
 {
     uint64_t syscall_nr = tf->x[8];
@@ -131,26 +212,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             const char *buf = (const char *)(tf->x[1]);
             size_t len = (size_t)(tf->x[2]);
 
-            // Enforce maximum RW size to prevent excessive heap usage
-            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            if (!validate_user_buffer(buf, len, 0)) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            char *kbuf = heap_malloc(len);
-            if (!kbuf) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-
-            if (copy_from_user(kbuf, buf, len) != 0) {
-                heap_free(kbuf);
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            void *kbuf;
+            int err = copy_buf_from_user(buf, len, &kbuf);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -166,26 +231,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             size_t len = (size_t)(tf->x[2]);
             vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
-            // Enforce maximum RW size to prevent excessive heap usage
-            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            if (!validate_user_buffer(buf, len, 0)) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            char *kbuf = heap_malloc(len);
-            if (!kbuf) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
-                break;
-            }
-
-            if (copy_from_user(kbuf, buf, len) != 0) {
-                heap_free(kbuf);
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            void *kbuf;
+            int err = copy_buf_from_user(buf, len, &kbuf);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -236,29 +285,20 @@ void syscall_handle(struct exception_trap_frame *tf)
 
         case SYS_READ: {
             int fd = (int)(tf->x[0]);
-            char *buf = (char *)(tf->x[1]);
+            void *buf = (void *)(tf->x[1]);
             size_t len = (size_t)(tf->x[2]);
 
-            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            if (!validate_user_buffer(buf, len, 1)) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            char *kbuf = heap_malloc(len);
-            if (!kbuf) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            void *kbuf;
+            int err = alloc_user_out_buf(buf, len, &kbuf);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
             int bytes = vfs_read(fd, kbuf, len);
             if (bytes > 0) {
                 if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-                    bytes = -PERS_ERR_OUT_OF_MEMORY;
+                    bytes = -PERS_ERR_INVALID_ARGUMENT;
                 }
             }
             heap_free(kbuf);
@@ -268,30 +308,21 @@ void syscall_handle(struct exception_trap_frame *tf)
 
         case SYS_PREAD: {
             int fd = (int)(tf->x[0]);
-            char *buf = (char *)(tf->x[1]);
+            void *buf = (void *)(tf->x[1]);
             size_t len = (size_t)(tf->x[2]);
             vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
-            if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            if (!validate_user_buffer(buf, len, 1)) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            char *kbuf = heap_malloc(len);
-            if (!kbuf) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            void *kbuf;
+            int err = alloc_user_out_buf(buf, len, &kbuf);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
             int bytes = vfs_pread(fd, kbuf, len, offset);
             if (bytes > 0) {
                 if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-                    bytes = -PERS_ERR_OUT_OF_MEMORY;
+                    bytes = -PERS_ERR_INVALID_ARGUMENT;
                 }
             }
             heap_free(kbuf);
@@ -304,20 +335,10 @@ void syscall_handle(struct exception_trap_frame *tf)
             void *buf = (void *)(tf->x[1]);
             size_t count = (size_t)(tf->x[2]);
 
-            /* Each call pins count bytes of kernel heap for its bounce buffer. */
-            if (count == 0 || count > SYSCALL_MAX_RW_SIZE) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            if (!validate_user_buffer(buf, count, 1)) {
-                tf->x[0] = (uint64_t)-PERS_ERR_INVALID_ARGUMENT;
-                break;
-            }
-
-            void *kbuf = heap_malloc(count);
-            if (!kbuf) {
-                tf->x[0] = (uint64_t)-PERS_ERR_OUT_OF_MEMORY;
+            void *kbuf;
+            int err = alloc_user_out_buf(buf, count, &kbuf);
+            if (err != PERS_SUCCESS) {
+                tf->x[0] = (uint64_t)err;
                 break;
             }
 
@@ -716,8 +737,11 @@ sigreturn_kill:
                 size_t len = strlen(kbuf) + 1;
                 if (len > size) {
                     res = -PERS_ERR_INVALID_ARGUMENT;
-                } else if (copy_to_user(buf, kbuf, len) != 0) {
-                    res = -PERS_ERR_INVALID_ARGUMENT;
+                } else {
+                    int err = copy_buf_to_user(buf, kbuf, len);
+                    if (err != PERS_SUCCESS) {
+                        res = err;
+                    }
                 }
             }
 
