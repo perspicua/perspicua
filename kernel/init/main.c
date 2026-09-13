@@ -18,6 +18,7 @@
 
 #include "core/lock.h"
 #include "core/lockdep.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/tty.h"
 

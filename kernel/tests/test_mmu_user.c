@@ -1,5 +1,5 @@
 #include "test.h"
-#include "core/timer.h"
+#include "arch/irq.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"

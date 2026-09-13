@@ -17,6 +17,7 @@
 #include "string.h"
 
 #include "arch/exception.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/lock.h"
 #include "driver/uart.h"

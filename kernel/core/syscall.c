@@ -17,6 +17,7 @@
 
 #include "core/signals.h"
 #include "core/tty.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "fs/vfs.h"
 #include "fs/devfs.h"

@@ -2,6 +2,7 @@
 #include "sched/sched.h"
 #include "mm/heap.h"
 #include "core/lock.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "string.h"
 

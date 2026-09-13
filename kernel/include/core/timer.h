@@ -1,5 +1,5 @@
 /*
- * timer.h - Public API for system time and interrupt control.
+ * timer.h - Public API for system time.
  */
 
 #ifndef PERSPICUA_CORE_TIMER_H
@@ -12,13 +12,5 @@ void sleep_ms(unsigned long ms);
 void timer_interrupt_init(void);
 
 void timer_interrupt_reset(void);
-
-void enable_interrupts(void);
-
-void disable_interrupts(void);
-
-unsigned long irq_save(void);
-
-void irq_restore(unsigned long flags);
 
 #endif // PERSPICUA_CORE_TIMER_H

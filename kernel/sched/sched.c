@@ -16,6 +16,7 @@
 #include "mm/pmm.h"
 #include "mm/heap.h"
 #include "mm/addr.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/lock.h"
 #include "sched/process.h"

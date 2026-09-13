@@ -10,6 +10,7 @@
 
 #include "arch/uaccess.h"
 
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/syscall.h"
 #include "mm/mmu.h"

@@ -50,16 +50,6 @@ void sleep_ms(unsigned long ms)
     }
 }
 
-void enable_interrupts(void)
-{
-    asm volatile("msr daifclr, #2");
-}
-
-void disable_interrupts(void)
-{
-    asm volatile("msr daifset, #2");
-}
-
 void timer_interrupt_init(void)
 {
     int core = cpu_id();
@@ -86,17 +76,4 @@ void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
-}
-
-unsigned long irq_save(void)
-{
-    unsigned long flags;
-    asm volatile("mrs %0, daif" : "=r"(flags));
-    asm volatile("msr daifset, #2");
-    return flags;
-}
-
-void irq_restore(unsigned long flags)
-{
-    asm volatile("msr daif, %0" : : "r"(flags));
 }
