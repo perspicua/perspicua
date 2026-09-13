@@ -7,6 +7,12 @@
 #include "stdio.h"
 
 #include "arch/cpu.h"
+#include "arch/irq.h"
+#include "core/lock.h"
+#include "panic.h"
+#include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "driver/gic.h"
 
 static inline unsigned int read_cntfrq(void)
 {
@@ -50,26 +56,57 @@ void sleep_ms(unsigned long ms)
     }
 }
 
-void enable_interrupts(void)
+/*
+ * Offset of the "Core n timers interrupt control" registers within the QA7
+ * block, one 32-bit register per core.
+ */
+#define QA7_CORE_TIMER_IRQCNTL 0x40
+
+// Resolved once by the boot core; the secondaries only index into it.
+static volatile unsigned int *qa7_timer_irq_ctrl = NULL;
+
+static void qa7_timer_routing_init(void)
 {
-    asm volatile("msr daifclr, #2");
+    const uint32_t *node = fdt_find_node_by_compatible("brcm,bcm2836-l1-intc");
+    if (!node) {
+        PANIC("timer: no ARM-local interrupt controller in the devicetree");
+    }
+
+    struct device dev = {
+        .name = "arm-local-intc",
+        .fdt_node = node,
+        .priv = NULL,
+    };
+
+    uintptr_t vbase = devm_get_io_base(&dev, 0);
+    if (!vbase) {
+        PANIC("timer: ARM-local interrupt controller has no usable 'reg'");
+    }
+
+    qa7_timer_irq_ctrl = (volatile unsigned int *)(vbase + QA7_CORE_TIMER_IRQCNTL);
 }
 
-void disable_interrupts(void)
+static irq_result_t timer_irq_handler(void *ctx)
 {
-    asm volatile("msr daifset, #2");
+    (void)ctx;
+    timer_interrupt_reset();
+
+    if (preempt_active()) {
+        return IRQ_HANDLED;
+    }
+    return IRQ_HANDLED_RESCHED;
 }
 
 void timer_interrupt_init(void)
 {
     int core = cpu_id();
 
-    // Base address for RPi4 local interrupt routing (QA7)
-    unsigned long base_addr = 0xFFFFFF80FF800040 + ((unsigned long)core * 4);
-    volatile unsigned int *core_timer_irq_ctrl = (unsigned int *)base_addr;
+    if (core == 0) {
+        qa7_timer_routing_init();
+    }
 
     // Route physical timer interrupts to this core
-    *core_timer_irq_ctrl = (1 << 1);
+    qa7_timer_irq_ctrl[core] = (1 << 1);
 
     unsigned int freq = read_cntfrq();
 
@@ -78,6 +115,9 @@ void timer_interrupt_init(void)
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
     if (core == 0) {
+        if (request_irq(GIC_TIMER_IRQ, timer_irq_handler, NULL, "timer") != 0) {
+            PANIC("timer: the timer interrupt line is already claimed");
+        }
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }
@@ -86,17 +126,4 @@ void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
-}
-
-unsigned long irq_save(void)
-{
-    unsigned long flags;
-    asm volatile("mrs %0, daif" : "=r"(flags));
-    asm volatile("msr daifset, #2");
-    return flags;
-}
-
-void irq_restore(unsigned long flags)
-{
-    asm volatile("msr daif, %0" : : "r"(flags));
 }

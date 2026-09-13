@@ -214,7 +214,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         every week it waits, because every new app is written against the
         custom names (Phase 1 item 5 already added ten of them).
 
-  11. Interrupt and CPU plumbing
+  11. Interrupt and CPU plumbing [DONE]
       Effort: M | Unlocks: adding a device without editing exception.c;
         CONFIG_NR_CPUS that is actually honored
       Scope: move irq_save/irq_restore/enable_interrupts out of core/timer.c

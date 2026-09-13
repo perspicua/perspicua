@@ -8,7 +8,6 @@
 #include "panic.h"
 
 #include "core/lock.h"
-#include "core/timer.h"
 #include "mm/slab.h"
 #include "mm/pmm.h"
 

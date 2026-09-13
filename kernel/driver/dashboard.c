@@ -87,7 +87,7 @@ void dashboard_update(void)
     x += 8 * 4;
 
     // Multi-core Scheduling Status
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < CPU_MAX_CORES; i++) {
         char c_label[4] = "C0:";
         c_label[1] = '0' + i;
         graphics_draw_string(x, 6, c_label, 0xFFAAAAAA, 0xFFFFFFFF);

@@ -14,7 +14,7 @@
 #include "uapi/errors.h"
 
 #include "arch/uaccess.h"
-#include "core/timer.h"
+#include "arch/irq.h"
 #include "mm/addr.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"

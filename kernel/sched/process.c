@@ -19,7 +19,7 @@
 #include "mm/slab.h"
 #include "stdio.h"
 #include "string.h"
-#include "core/timer.h"
+#include "arch/irq.h"
 #include "types.h"
 #include "core/tty.h"
 #include "fs/vfs.h"

@@ -11,6 +11,7 @@
 
 #include "arch/exception.h"
 
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "debug/kdb.h"
 #include "driver/gic.h"

@@ -17,7 +17,7 @@
 #include "sched/sched.h"
 #include "sched/process.h"
 #include "core/lock.h"
-#include "core/timer.h"
+#include "arch/irq.h"
 
 /*
  * signal_handle_pending - Dispatches signals before returning to user mode.

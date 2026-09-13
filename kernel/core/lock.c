@@ -9,7 +9,7 @@
 
 #include "arch/exception.h"
 
-#include "core/timer.h"
+#include "arch/irq.h"
 
 /*
  * Per-core count of spinlocks held. The timer interrupt consults this before

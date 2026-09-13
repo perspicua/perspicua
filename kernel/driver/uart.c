@@ -9,11 +9,13 @@
 #include "stdio.h"
 #include "types.h"
 
+#include "arch/irq.h"
 #include "core/lock.h"
 #include "core/timer.h"
 #include "panic.h"
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
+#include "driver/gic.h"
 #include "driver/gpio.h"
 #include "uapi/errors.h"
 
@@ -39,6 +41,13 @@ static volatile uint32_t *uart_icr = NULL;
 // Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
+
+static irq_result_t uart_irq_handler(void *ctx)
+{
+    (void)ctx;
+    uart_handle_irq();
+    return IRQ_HANDLED;
+}
 
 static int pl011_uart_probe(struct device *dev)
 {
@@ -87,6 +96,11 @@ static int pl011_uart_probe(struct device *dev)
     cached_uart_irq = devm_get_irq(dev, 0);
     if (!cached_uart_irq) {
         cached_uart_irq = 153; // Fallback for BCM2711
+    }
+
+    int err = request_irq(cached_uart_irq, uart_irq_handler, NULL, "uart");
+    if (err != 0) {
+        pr_warn("uart: could not claim IRQ %u; input will not work\n", cached_uart_irq);
     }
 
     return 0;

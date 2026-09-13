@@ -1,4 +1,5 @@
 #include "test.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 
 void test_timer(void)
