@@ -15,7 +15,7 @@ detailed docs rather than repeating them — follow the links for specifics.
 --------------------------------------------------------------------------------
 PREREQUISITES
 --------------------------------------------------------------------------------
-An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, mtools, and cpio.
+An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, and mtools.
 QEMU (qemu-system-aarch64) for running. See README.txt for the toolchain file.
 
 
@@ -35,6 +35,8 @@ THE LOOP
   3. Match the house style (docs/coding_style_guidelines.txt). Before you push:
        just format           # apply clang-format
        just check-format     # verify it's clean (this is enforced)
+
+     Use clang-format 22.1.8, which is what CI pins.
 
   4. Test — see docs/testing.txt:
        just test             # builds the CONFIG_TESTS kernel and runs the

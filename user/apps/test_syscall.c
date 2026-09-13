@@ -3,6 +3,8 @@
 #include <assert.h>
 #include <string.h>
 #include <errno.h>
+#include "uapi/errors.h"
+#include "uapi/syscalls.h"
 
 void test_pread_pwrite(void)
 {
@@ -11,11 +13,11 @@ void test_pread_pwrite(void)
     int fd = sys_open("test_pw.txt", VFS_O_CREAT | VFS_O_RDWR);
     assert(fd >= 0);
 
-    /* 1. Write initial data. Cursor moves to 10. */
+    // 1. Write initial data. Cursor moves to 10.
     int res = sys_write(fd, "0123456789", 10);
     assert(res == 10);
 
-    /* 2. pwrite at offset 2. This must NOT move the cursor from 10. */
+    // 2. pwrite at offset 2. This must NOT move the cursor from 10.
     res = sys_pwrite(fd, "abcde", 5, 2);
     assert(res == 5);
 
@@ -30,7 +32,7 @@ void test_pread_pwrite(void)
     res = sys_pread(fd, buf, 5, 2);
     assert(res == 5);
     assert(strcmp(buf, "abcde") == 0);
-    /* pread must not have moved the cursor: it is still at 13 from step 3. */
+    // pread must not have moved the cursor: it is still at 13 from step 3.
     assert(sys_lseek(fd, 0, VFS_SEEK_CUR) == 13);
 
     /* 5. Verify the entire file.
@@ -77,11 +79,11 @@ void test_time_syscalls(void)
 {
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
 
-    /* 1. Invalid arguments */
+    // 1. Invalid arguments
     assert(sys_gettimeofday(NULL, NULL) < 0);
     assert(sys_clock_gettime(9999, NULL) < 0);
 
-    /* 2. Valid gettimeofday */
+    // 2. Valid gettimeofday
     struct timeval tv;
     memset(&tv, 0, sizeof(tv));
     int res = sys_gettimeofday(&tv, NULL);
@@ -89,7 +91,7 @@ void test_time_syscalls(void)
     assert(tv.tv_sec >= 0);
     assert(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
 
-    /* 3. Valid clock_gettime */
+    // 3. Valid clock_gettime
     struct timespec ts;
     memset(&ts, 0, sizeof(ts));
     res = sys_clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -111,7 +113,7 @@ void test_nanosleep(void)
 {
     printf("[ TEST ] Running nanosleep tests...\n");
 
-    /* 1. Invalid inputs */
+    // 1. Invalid inputs
     assert(sys_nanosleep(NULL, NULL) < 0);
 
     struct timespec invalid_nsec = {0, 2000000000};
@@ -120,12 +122,12 @@ void test_nanosleep(void)
     struct timespec invalid_sec = {-1, 0};
     assert(sys_nanosleep(&invalid_sec, NULL) < 0);
 
-    /* 2. Valid short sleep (50 ms) */
+    // 2. Valid short sleep (50 ms)
     struct timespec t_before = {0, 0};
     struct timespec t_after = {0, 0};
     assert(sys_clock_gettime(CLOCK_MONOTONIC, &t_before) == 0);
 
-    struct timespec req = {0, 50000000}; /* 50 ms */
+    struct timespec req = {0, 50000000}; // 50 ms
     assert(sys_nanosleep(&req, NULL) == 0);
 
     assert(sys_clock_gettime(CLOCK_MONOTONIC, &t_after) == 0);
@@ -134,15 +136,15 @@ void test_nanosleep(void)
                              + (unsigned long)(t_after.tv_nsec - t_before.tv_nsec) / 1000000;
     assert(delta_ms >= 40);
 
-    /* 3. rem zeroed when non-NULL pre-filled with garbage */
+    // 3. rem zeroed when non-NULL pre-filled with garbage
     struct timespec rem;
     rem.tv_sec = 1234;
     rem.tv_nsec = 5678;
-    struct timespec req_short = {0, 10000000}; /* 10 ms */
+    struct timespec req_short = {0, 10000000}; // 10 ms
     assert(sys_nanosleep(&req_short, &rem) == 0);
     assert(rem.tv_sec == 0 && rem.tv_nsec == 0);
 
-    /* 4. Zero sleep returns immediately */
+    // 4. Zero sleep returns immediately
     struct timespec req_zero = {0, 0};
     assert(sys_nanosleep(&req_zero, NULL) == 0);
 
@@ -156,12 +158,11 @@ void test_fstat(void)
     struct stat st;
     memset(&st, 0, sizeof(st));
 
-    /* 1. Bad fd: unopened or negative */
+    // 1. Bad fd: unopened or negative
     assert(sys_fstat(-1, &st) < 0);
     assert(sys_fstat(999, &st) < 0);
 
-    /* 2. Regular file: open a file you wrote N bytes to, sys_fstat(fd, &st) == 0, assert
-     * S_ISREG(st.st_mode) and st.st_size == N */
+    // 2. A regular file reports its size and mode
     const char *test_path = "test_fstat.txt";
     int fd = sys_open(test_path, VFS_O_CREAT | VFS_O_RDWR);
     assert(fd >= 0);
@@ -176,8 +177,7 @@ void test_fstat(void)
     assert(S_ISREG(st.st_mode));
     assert(st.st_size == (uint64_t)len);
 
-    /* 3. Consistency with path stat: sys_stat(path, &sp) and sys_fstat(fd, &sf) on the same file
-     * agree on st_size and st_mode */
+    // 3. stat and fstat agree on the same file
     struct stat sp;
     memset(&sp, 0, sizeof(sp));
     res = sys_stat(test_path, &sp);
@@ -185,12 +185,12 @@ void test_fstat(void)
     assert(sp.st_size == st.st_size);
     assert(sp.st_mode == st.st_mode);
 
-    /* 4. Close and re-check bad fd: after sys_close(fd), sys_fstat(fd, &st) < 0 */
+    // 4. A closed fd is rejected
     sys_close(fd);
     memset(&st, 0, sizeof(st));
     assert(sys_fstat(fd, &st) < 0);
 
-    /* Cleanup test file */
+    // Cleanup test file
     sys_unlink(test_path);
 
     printf("[ TEST ] fstat passed!\n");
@@ -204,13 +204,13 @@ void test_truncate(void)
     int fd = sys_open(test_path, VFS_O_CREAT | VFS_O_RDWR);
     assert(fd >= 0);
 
-    /* 1. Setup: write 100 bytes */
+    // 1. Setup: write 100 bytes
     char buf100[100];
     memset(buf100, 'A', sizeof(buf100));
     int res = sys_write(fd, buf100, sizeof(buf100));
     assert(res == 100);
 
-    /* 2. Shrink: sys_ftruncate(fd, 10) == 0 */
+    // 2. Shrink
     res = sys_ftruncate(fd, 10);
     assert(res == 0);
 
@@ -224,13 +224,13 @@ void test_truncate(void)
     int rbytes = sys_read(fd, rbuf, sizeof(rbuf));
     assert(rbytes == 10);
 
-    /* 3. Truncate to zero: sys_ftruncate(fd, 0) == 0 */
+    // 3. Truncate to zero
     res = sys_ftruncate(fd, 0);
     assert(res == 0);
     assert(sys_fstat(fd, &st) == 0);
     assert(st.st_size == 0);
 
-    /* 4. Path-based truncate: write again, sys_truncate(path, 5) == 0 */
+    // 4. Path-based truncate
     sys_lseek(fd, 0, VFS_SEEK_SET);
     assert(sys_write(fd, "0123456789", 10) == 10);
     assert(sys_truncate(test_path, 5) == 0);
@@ -239,7 +239,7 @@ void test_truncate(void)
     assert(sys_stat(test_path, &st) == 0);
     assert(st.st_size == 5);
 
-    /* 5. O_TRUNC payoff test: write 50 bytes, close, open with O_TRUNC, fstat -> size 0 */
+    // 5. O_TRUNC empties the file on open
     sys_lseek(fd, 0, VFS_SEEK_SET);
     char buf50[50];
     memset(buf50, 'B', sizeof(buf50));
@@ -253,13 +253,13 @@ void test_truncate(void)
     assert(st.st_size == 0);
     sys_close(trunc_fd);
 
-    /* 6. Error handling */
+    // 6. Error handling
     assert(sys_ftruncate(-1, 0) < 0);
     assert(sys_truncate("/nonexistent_file_xyz", 0) < 0);
 
     int err_fd = sys_open(test_path, VFS_O_RDWR);
     assert(err_fd >= 0);
-    /* Grow attempt returns error in first-cut implementation */
+    // Grow attempt returns error in first-cut implementation
     assert(sys_ftruncate(err_fd, 999999) < 0);
     sys_close(err_fd);
     sys_unlink(test_path);
@@ -302,7 +302,7 @@ void test_procfs(void)
 {
     printf("[ TEST ] Running procfs completeness tests...\n");
 
-    /* 1. Read /proc/mounts */
+    // 1. Read /proc/mounts
     int fd = sys_open("/proc/mounts", VFS_O_RDONLY);
     assert(fd >= 0);
     char buf[512] = {0};
@@ -311,7 +311,7 @@ void test_procfs(void)
     assert(strstr(buf, "procfs") != NULL);
     sys_close(fd);
 
-    /* 2. Read /proc/cpuinfo */
+    // 2. Read /proc/cpuinfo
     fd = sys_open("/proc/cpuinfo", VFS_O_RDONLY);
     assert(fd >= 0);
     memset(buf, 0, sizeof(buf));
@@ -320,7 +320,7 @@ void test_procfs(void)
     assert(strstr(buf, "ARM Cortex-A72") != NULL);
     sys_close(fd);
 
-    /* 3. Read /proc/stat */
+    // 3. Read /proc/stat
     fd = sys_open("/proc/stat", VFS_O_RDONLY);
     assert(fd >= 0);
     memset(buf, 0, sizeof(buf));
@@ -330,7 +330,7 @@ void test_procfs(void)
     assert(strstr(buf, "processes") != NULL);
     sys_close(fd);
 
-    /* 4. Read /proc/self/status */
+    // 4. Read /proc/self/status
     fd = sys_open("/proc/self/status", VFS_O_RDONLY);
     assert(fd >= 0);
     memset(buf, 0, sizeof(buf));
@@ -340,6 +340,96 @@ void test_procfs(void)
     sys_close(fd);
 
     printf("[ TEST ] procfs completeness passed!\n");
+}
+
+// Issues a syscall directly so an unassigned number can be reached.
+static long raw_syscall(long nr, long arg0)
+{
+    long res;
+    asm volatile("mov x0, %1\n"
+                 "mov x8, %2\n"
+                 "svc #0\n"
+                 "mov %0, x0"
+                 : "=r"(res)
+                 : "r"(arg0), "r"(nr)
+                 : "x0", "x8", "memory");
+    return res;
+}
+
+void test_review_bugfixes(void)
+{
+    printf("[ TEST ] Running review bug-fix regressions...\n");
+
+    // An unassigned syscall number must report ENOSYS rather than handing back
+    // whatever the caller happened to leave in x0.
+    {
+        long res = raw_syscall(999, 0x1234);
+        assert(res != 0x1234);
+        assert(res == -PERS_ERR_NOT_IMPLEMENTED);
+    }
+
+    // The same regular file may be opened more than once at a time.
+    {
+        const char *path = "dupopen.txt";
+        int a = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        assert(a >= 0);
+        int b = sys_open(path, VFS_O_RDONLY);
+        assert(b >= 0);
+        assert(a != b);
+        sys_close(a);
+        sys_close(b);
+        sys_unlink(path);
+    }
+
+    // printf must not stop at its internal buffer size.
+    {
+        static char big[1001];
+        memset(big, 'x', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+
+        const char *path = "ptrunc.txt";
+        int fd = sys_open(path, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+        assert(fd >= 0);
+
+        int saved = sys_dup2(1, 9);
+        assert(saved >= 0);
+        assert(sys_dup2(fd, 1) >= 0);
+        printf("%s", big);
+        assert(sys_dup2(saved, 1) >= 0);
+        sys_close(saved);
+        sys_close(fd);
+
+        int rfd = sys_open(path, VFS_O_RDONLY);
+        assert(rfd >= 0);
+        int total = 0, n;
+        char buf[256];
+        while ((n = sys_read(rfd, buf, sizeof(buf))) > 0) {
+            total += n;
+        }
+        sys_close(rfd);
+        sys_unlink(path);
+        assert(total == (int)sizeof(big) - 1);
+    }
+
+    // A process killed by a bad sigreturn frame must still become a zombie its
+    // parent can reap, rather than leaking its slot.
+    {
+        int pid = sys_fork();
+        assert(pid >= 0);
+        if (pid == 0) {
+            // sp_el0 == 0 makes the frame pointer fail validation outright.
+            asm volatile("mov x9, #0\n"
+                         "mov sp, x9\n"
+                         "mov x8, %0\n"
+                         "svc #0" ::"i"(SYS_SIGRETURN)
+                         : "x8", "x9", "memory");
+            sys_exit(0);
+        }
+        int status = 0;
+        assert(sys_waitpid(pid, &status, 0) == pid);
+    }
+
+    printf("[ TEST ] review bug-fix regressions passed!\n");
 }
 
 int main(void)
@@ -353,6 +443,7 @@ int main(void)
     test_fstat();
     test_truncate();
     test_procfs();
+    test_review_bugfixes();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

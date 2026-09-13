@@ -1,9 +1,6 @@
 /*
- * ctype.h - Standard functions that classify and modify chars.
- *
- * This file of the C Standard Library declares several functions that are useful for testing and
- * mapping characters.
- * */
+ * ctype.h - Functions that classify and modify chars.
+ */
 
 #ifndef PERSPICUA_LIBC_CTYPE_H
 #define PERSPICUA_LIBC_CTYPE_H

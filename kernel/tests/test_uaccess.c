@@ -14,15 +14,15 @@
 #include "uapi/errors.h"
 
 #include "arch/uaccess.h"
-#include "core/timer.h"
+#include "arch/irq.h"
 #include "mm/addr.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 
-/* A canonical user-space address that is deliberately not mapped. */
+// A canonical user-space address that is deliberately not mapped.
 #define UNMAPPED_USER_VA 0x0000000040000000UL
 
-/* A separate VA for the page the string tests read from. */
+// A separate VA for the page the string tests read from.
 #define MAPPED_USER_VA 0x0000000050000000UL
 
 void test_uaccess(void)
@@ -33,21 +33,20 @@ void test_uaccess(void)
 
     // degenerate arguments are rejected rather than dereferenced
     {
-        TEST_ASSERT_EQ("NULL pointer rejected", validate_user_buffer(NULL, 8, 0), 0);
-        TEST_ASSERT_EQ("zero length rejected", validate_user_buffer((void *)UNMAPPED_USER_VA, 0, 0),
-                       0);
+        TEST_ASSERT_EQ("NULL pointer rejected", syscall_validate_user_buffer(NULL, 8, 0), 0);
+        TEST_ASSERT_EQ("zero length rejected",
+                       syscall_validate_user_buffer((void *)UNMAPPED_USER_VA, 0, 0), 0);
     }
-    TEST_PASS("degenerate arguments");
 
     // a kernel address must never pass as a user buffer
     {
-        TEST_ASSERT_EQ("kernel address rejected", validate_user_buffer(kbuf, sizeof(kbuf), 0), 0);
+        TEST_ASSERT_EQ("kernel address rejected",
+                       syscall_validate_user_buffer(kbuf, sizeof(kbuf), 0), 0);
         TEST_ASSERT_EQ("kernel address rejected for write",
-                       validate_user_buffer(kbuf, sizeof(kbuf), 1), 0);
+                       syscall_validate_user_buffer(kbuf, sizeof(kbuf), 1), 0);
         TEST_ASSERT_EQ("KERNEL_VMA boundary rejected",
-                       validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
+                       syscall_validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
     }
-    TEST_PASS("kernel addresses");
 
     /*
      * A length that wraps past the top of the address space must be caught by
@@ -56,18 +55,16 @@ void test_uaccess(void)
      */
     {
         TEST_ASSERT_EQ("wrap-around rejected",
-                       validate_user_buffer((void *)0xFFFFFFFFFFFFFFF0UL, 64, 0), 0);
+                       syscall_validate_user_buffer((void *)0xFFFFFFFFFFFFFFF0UL, 64, 0), 0);
         TEST_ASSERT_EQ("range crossing into kernel rejected",
-                       validate_user_buffer((void *)(KERNEL_VMA - 8), 64, 0), 0);
+                       syscall_validate_user_buffer((void *)(KERNEL_VMA - 8), 64, 0), 0);
     }
-    TEST_PASS("range overflow");
 
     // an unmapped user address is well-formed but has no translation
     {
         TEST_ASSERT_EQ("unmapped user VA rejected",
-                       validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
+                       syscall_validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
     }
-    TEST_PASS("unmapped user address");
 
     /*
      * The copy helpers must survive a bad pointer via the exception fixup
@@ -84,7 +81,6 @@ void test_uaccess(void)
         res = copy_to_user((void *)UNMAPPED_USER_VA, kbuf, 32);
         TEST_ASSERT("copy_to_user to unmapped VA fails", res != 0);
     }
-    TEST_PASS("fault fixup recovers");
 
     // strncpy_from_user must fail on a bad source without writing a string
     {
@@ -93,7 +89,6 @@ void test_uaccess(void)
         TEST_ASSERT("strncpy_from_user on unmapped VA fails", res < 0);
         TEST_ASSERT("strncpy_from_user terminates on fault", kbuf[0] == '\0');
     }
-    TEST_PASS("strncpy_from_user fixup");
 
     /*
      * The truncation contract needs a source EL0 can actually read, so map one
@@ -109,7 +104,7 @@ void test_uaccess(void)
         mmu_user_map_page(pgd, MAPPED_USER_VA, V2P(page), MMU_PAGE_USER_DATA);
         strcpy((char *)page, "abcdefghij"); // 10 chars
 
-        /* schedule() reinstalls the running task's TTBR0, so a timer tick here
+        /* sched_schedule() reinstalls the running task's TTBR0, so a timer tick here
          * would swap the scratch space out mid-test. Keep IRQs masked. */
         unsigned long irqf = irq_save();
 
@@ -160,10 +155,9 @@ void test_uaccess(void)
         asm volatile("dsb ish\n tlbi vmalle1is\n dsb ish\n isb" ::: "memory");
         irq_restore(irqf);
 
-        /* Frees the mapped page along with the tables. */
+        // Frees the mapped page along with the tables.
         mmu_destroy_user_pgd(pgd);
     }
-    TEST_PASS("strncpy_from_user always terminates");
 
     TEST_SUITE_END("User Access");
 }

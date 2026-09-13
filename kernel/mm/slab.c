@@ -1,9 +1,5 @@
 /*
  * slab.c - Implementation of the size-class slab allocator.
- *
- * This module manages per-page object pools. It groups objects into
- * power-of-two size classes to reduce internal fragmentation and uses
- * per-class locks to minimize core contention.
  */
 
 #include "mm/slab.h"
@@ -18,7 +14,7 @@
 #define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
 #define SLAB_NUM_CLASSES 7
 
-/* A page of the smallest class holds the most objects, bounding the bitmap. */
+// A page of the smallest class holds the most objects, bounding the bitmap.
 #define SLAB_MAX_SLOTS    (PAGE_SIZE / 16)
 #define SLAB_BITMAP_WORDS (SLAB_MAX_SLOTS / 64)
 

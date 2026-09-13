@@ -48,9 +48,16 @@ el1_entry:
     msr cpacr_el1, x0
     isb
 
-    // are we Core 0 or a Secondary Core?
+    // The BCM2711 always has four cores; #3 extracts the id of whichever one
+    // this is. CONFIG_NR_CPUS says how many of them the kernel actually uses,
+    // so anything above it parks here rather than running on a stack slot and
+    // per-core arrays that were never sized for it.
     mrs x0, mpidr_el1
     and x0, x0, #3
+    cmp x0, #CONFIG_NR_CPUS
+    b.hs _entry_loop
+
+    // are we Core 0 or a Secondary Core?
     cmp x0, #0
     b.ne enable_mmu // cores 1, 2, 3 skip page table creation
 

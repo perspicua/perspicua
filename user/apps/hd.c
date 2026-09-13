@@ -9,16 +9,19 @@ static void print_line(unsigned long offset, const unsigned char *buf, int n)
 {
     printf("%08lx  ", offset);
     for (int i = 0; i < 16; i++) {
-        if (i < n)
+        if (i < n) {
             printf("%02x ", buf[i]);
-        else
+        } else {
             printf("   ");
-        if (i == 7)
-            printf(" "); /* gap between the two 8-byte halves */
+        }
+        if (i == 7) {
+            printf(" "); // gap between the two 8-byte halves
+        }
     }
     printf(" |");
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++) {
         printf("%c", (buf[i] >= 32 && buf[i] <= 126) ? buf[i] : '.');
+    }
     printf("|\n");
 }
 

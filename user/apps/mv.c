@@ -25,7 +25,7 @@ int main(int argc, char **argv)
     const char *src = argv[1];
     const char *dst = argv[2];
 
-    /* mv SRC DIR moves into DIR under SRC's basename. */
+    // mv SRC DIR moves into DIR under SRC's basename.
     char target[512];
     if (is_dir(dst)) {
         int n = strlen(dst);

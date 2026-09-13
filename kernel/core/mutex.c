@@ -1,9 +1,9 @@
 /*
  * mutex.c - Recursive sleeping mutex built on the scheduler wait queue.
  *
- * A task blocks (schedule) rather than spins when the lock is contended, so a
+ * A task blocks (sched_schedule()) rather than spins when the lock is contended, so a
  * kmutex may be held across blocking operations such as SD card I/O. The short
- * internal `guard` spinlock is never held across schedule(), keeping lockdep's
+ * internal `guard` spinlock is never held across sched_schedule(), keeping lockdep's
  * per-core tracking clean.
  */
 
@@ -14,7 +14,7 @@
 #include "core/lock.h"
 #include "sched/sched.h"
 
-/* Unlink a task from the waiter list if present. Caller holds m->guard. */
+// Unlink a task from the waiter list if present. Caller holds m->guard.
 static void kmutex_wq_remove(struct kmutex *m, struct task *t)
 {
     struct task **pp = &m->wait_head;
@@ -45,19 +45,19 @@ void kmutex_init(struct kmutex *m)
 
 void kmutex_lock(struct kmutex *m)
 {
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
 
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&m->guard);
 
-        /* Recursive re-acquisition by the current owner. */
+        // Recursive re-acquisition by the current owner.
         if (self && m->owner == self) {
             m->depth++;
             spin_unlock_irqrestore(&m->guard, flags);
             return;
         }
 
-        /* A signal wake may have left us queued; drop the stale link. */
+        // A signal wake may have left us queued; drop the stale link.
         if (self) {
             kmutex_wq_remove(m, self);
         }
@@ -70,7 +70,7 @@ void kmutex_lock(struct kmutex *m)
         }
 
         if (!self) {
-            /* Pre-scheduler context: no task to switch to, so spin. */
+            // Pre-scheduler context: no task to switch to, so spin.
             spin_unlock_irqrestore(&m->guard, flags);
             continue;
         }
@@ -85,7 +85,7 @@ void kmutex_lock(struct kmutex *m)
         }
 
         spin_unlock_irqrestore(&m->guard, flags);
-        schedule();
+        sched_schedule();
     }
 }
 
@@ -102,7 +102,7 @@ void kmutex_unlock(struct kmutex *m)
         spin_unlock_irqrestore(&m->guard, flags);
         PANIC("kmutex: unlock of a mutex that is not held");
     }
-    if (m->owner != sched_get_current()) {
+    if (m->owner != sched_current_task()) {
         spin_unlock_irqrestore(&m->guard, flags);
         PANIC("kmutex: unlock by a task that does not own the mutex");
     }

@@ -36,12 +36,12 @@ task_wrapper_asm:
     bl  enable_interrupts
     blr x0              // call entry point
     bl  disable_interrupts
-    bl  sched_get_current
+    bl  sched_current_task
     cbz x0, 1f
     // SCHED_TASK_DEAD. Both the value and the offset are asserted in sched.c:
     // marking a finished task with the wrong state leaks its stack silently.
     mov x1, #4
     str x1, [x0, #112]  // offset of 'state' in struct task
-    bl  schedule
+    bl  sched_schedule
 1:  wfe
     b 1b

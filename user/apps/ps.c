@@ -3,19 +3,22 @@
 #include "stdio.h"
 #include "dirent.h"
 
-/* Copy the value following "Key:" out of a /proc status blob. */
+// Copy the value following "Key:" out of a /proc status blob.
 static void field(const char *blob, const char *key, char *out, int max)
 {
     out[0] = '\0';
     const char *p = strstr(blob, key);
-    if (!p)
+    if (!p) {
         return;
+    }
     p += strlen(key);
-    while (*p == ' ' || *p == '\t')
+    while (*p == ' ' || *p == '\t') {
         p++;
+    }
     int i = 0;
-    while (*p && *p != '\n' && i < max - 1)
+    while (*p && *p != '\n' && i < max - 1) {
         out[i++] = *p++;
+    }
     out[i] = '\0';
 }
 
@@ -32,14 +35,14 @@ int main(void)
     struct vfs_dirent *e;
     while ((e = readdir(d)) != NULL) {
         if (e->name[0] < '0' || e->name[0] > '9') {
-            continue; /* only numeric process directories */
+            continue; // only numeric process directories
         }
 
         char path[256];
         snprintf(path, sizeof(path), "/proc/%s/status", e->name);
         int fd = sys_open(path, VFS_O_RDONLY);
         if (fd < 0) {
-            continue; /* process may have exited between readdir and open */
+            continue; // process may have exited between readdir and open
         }
 
         char blob[512];

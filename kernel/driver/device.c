@@ -9,9 +9,6 @@
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
 
-extern struct device_driver __drivers_bus_start[];
-extern struct device_driver __drivers_bus_end[];
-
 extern struct device_driver __drivers_irq_start[];
 extern struct device_driver __drivers_irq_end[];
 
@@ -32,13 +29,13 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
          */
         const uint32_t *node = fdt_find_node_by_compatible(drv->compatible);
         if (node) {
-            /* Create a dummy device instance for now */
+            // Create a dummy device instance for now
             struct device dev;
             dev.name = drv->name;
             dev.fdt_node = node;
             dev.priv = NULL;
 
-            /* Probe the driver */
+            // Probe the driver
             int ret = drv->probe(&dev);
             if (ret != 0) {
                 if (ret != -PERS_ERR_NOT_FOUND) {
@@ -55,12 +52,6 @@ void driver_probe_core(void)
 {
     pr_info("driver: probing CORE level drivers...\n");
     probe_driver_list(__drivers_core_start, __drivers_core_end);
-}
-
-void driver_probe_bus(void)
-{
-    pr_info("driver: probing BUS level drivers...\n");
-    probe_driver_list(__drivers_bus_start, __drivers_bus_end);
 }
 
 void driver_probe_irqs(void)
@@ -92,15 +83,15 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
 
     const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
 
-    /* Find parent node to get #address-cells and #size-cells */
-    uint32_t address_cells = 1; /* Default if not found */
-    uint32_t size_cells = 1;    /* Default if not found */
+    // Find parent node to get #address-cells and #size-cells
+    uint32_t address_cells = 1; // Default if not found
+    uint32_t size_cells = 1;    // Default if not found
 
     const uint32_t *parent = fdt_get_parent_node(dev->fdt_node);
     if (parent) {
         struct fdt_property ac_prop;
         if (fdt_get_property(parent, "#address-cells", &ac_prop) == 0) {
-            /* For the memory mapped registers, #address-cells is usually 1 or 2 */
+            // For the memory mapped registers, #address-cells is usually 1 or 2
             address_cells = fdt32_to_cpu(*(const uint32_t *)ac_prop.value);
         }
 
@@ -110,11 +101,11 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
         }
     }
 
-    /* Each 'reg' entry takes (address_cells + size_cells) * 4 bytes */
+    // Each 'reg' entry takes (address_cells + size_cells) * 4 bytes
     uint32_t entry_cells = address_cells + size_cells;
     uint32_t offset = index * entry_cells;
 
-    /* Ensure we don't read past the property size */
+    // Ensure we don't read past the property size
     if ((offset + address_cells) * 4 > reg_prop.size) {
         return 0;
     }
@@ -126,10 +117,10 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
         phys_base =
             ((uint64_t)fdt32_to_cpu(reg_data[offset]) << 32) | fdt32_to_cpu(reg_data[offset + 1]);
     } else {
-        return 0; /* Unsupported #address-cells size */
+        return 0; // Unsupported #address-cells size
     }
 
-    /* Handle legacy BCM address translation if needed */
+    // Handle legacy BCM address translation if needed
     if (phys_base >= 0x40000000 && phys_base < 0x41000000) {
         phys_base = (phys_base & 0x00FFFFFF) | 0xFF800000;
     } else if (phys_base < 0xFC000000) {
@@ -156,10 +147,7 @@ unsigned int devm_get_irq(struct device *dev, int index)
 
     const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
 
-    /*
-     * simplified assumptions again matching original code.
-     * ARM GIC bindings typically have 3 cells: type, number, flags.
-     */
+    // ARM GIC bindings typically have 3 cells: type, number, flags.
     uint32_t type = fdt32_to_cpu(irq_data[index * 3]);
     uint32_t num = fdt32_to_cpu(irq_data[index * 3 + 1]);
 

@@ -1,7 +1,7 @@
 /*
  * mutex.h - Sleeping mutual-exclusion lock.
  *
- * Unlike a spinlock, a task may sleep (call schedule) while holding a kmutex,
+ * Unlike a spinlock, a task may sleep (call sched_schedule()) while holding a kmutex,
  * so it is safe to hold across blocking I/O. Recursive: the owning task may
  * re-acquire it without deadlocking.
  */
@@ -19,10 +19,10 @@ struct task;
  * struct kmutex - Recursive sleeping lock backed by a scheduler wait queue.
  */
 struct kmutex {
-    spinlock_t guard;       /* Protects the fields below */
-    struct task *owner;     /* Task currently holding the lock, or NULL */
-    unsigned int depth;     /* Recursion count held by the owner */
-    struct task *wait_head; /* FIFO of blocked waiters (via task->wait_next) */
+    spinlock_t guard;
+    struct task *owner;
+    unsigned int depth;
+    struct task *wait_head;
     struct task *wait_tail;
 };
 
@@ -32,4 +32,4 @@ void kmutex_init(struct kmutex *m);
 void kmutex_lock(struct kmutex *m);
 void kmutex_unlock(struct kmutex *m);
 
-#endif /* PERSPICUA_CORE_MUTEX_H */
+#endif // PERSPICUA_CORE_MUTEX_H

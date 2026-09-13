@@ -12,14 +12,14 @@ static void test_observable_stop_cont(void)
     assert(child_pid >= 0);
 
     if (child_pid == 0) {
-        /* Child: infinite loop printing heartbeat */
+        // Child: infinite loop printing heartbeat
         int i = 0;
         while (1) {
             printf("tick %d\n", i++);
             sys_sleep(100);
         }
     } else {
-        /* Parent */
+        // Parent
         sys_sleep(250);
 
         printf("[parent sends STOP]\n");
@@ -101,7 +101,7 @@ static void test_cont_racing_stop(void)
         sys_close(fds[1]);
         sys_sleep(100);
 
-        /* Set non-blocking on pipe read end and drain any initial ticks */
+        // Set non-blocking on pipe read end and drain any initial ticks
         int flags = sys_fcntl(fds[0], VFS_F_GETFL, 0);
         sys_fcntl(fds[0], VFS_F_SETFL, flags | VFS_O_NONBLOCK);
         char dummy[64];
@@ -113,7 +113,7 @@ static void test_cont_racing_stop(void)
         res = sys_kill(child_pid, SIGNAL_CONT);
         assert(res == 0);
 
-        /* Wait a stretch to verify child continues ticking */
+        // Wait a stretch to verify child continues ticking
         sys_sleep(300);
 
         char buf[64];
@@ -121,7 +121,7 @@ static void test_cont_racing_stop(void)
         assert(bytes > 0);
         printf("[parent] verified child is still ticking (%d bytes read from pipe)\n", bytes);
 
-        /* Clean up child */
+        // Clean up child
         res = sys_kill(child_pid, SIGNAL_KILL);
         assert(res == 0);
 
@@ -139,7 +139,7 @@ static void test_session_daemon(void)
 {
     printf("--- Test: Session Daemon & Setsid Immunity ---\n");
 
-    /* Child 1: calls setsid to detach into its own session (daemon) */
+    // Child 1: calls setsid to detach into its own session (daemon)
     int daemon_pid = sys_fork();
     assert(daemon_pid >= 0);
 
@@ -148,7 +148,7 @@ static void test_session_daemon(void)
         assert(sid > 0);
         assert(sid == sys_getpid());
 
-        /* Verify setsid fails if already a session/group leader */
+        // Verify setsid fails if already a session/group leader
         int err = sys_setsid();
         assert(err < 0);
 
@@ -157,7 +157,7 @@ static void test_session_daemon(void)
         }
     }
 
-    /* Child 2: stays in parent's session/group */
+    // Child 2: stays in parent's session/group
     int fg_pid = sys_fork();
     assert(fg_pid >= 0);
 
@@ -169,11 +169,11 @@ static void test_session_daemon(void)
 
     sys_sleep(100);
 
-    /* Verify parent cannot setpgid daemon_pid into parent's group across sessions */
+    // Verify parent cannot setpgid daemon_pid into parent's group across sessions
     int err = sys_setpgid(daemon_pid, sys_getpid());
     assert(err < 0);
 
-    /* Send SIGINT to fg_pid */
+    // Send SIGINT to fg_pid
     int res = sys_kill(fg_pid, SIGNAL_INT);
     assert(res == 0);
 
@@ -182,7 +182,7 @@ static void test_session_daemon(void)
     assert(res == fg_pid);
     assert(status == 130);
 
-    /* Daemon child must still be alive! Clean it up with KILL */
+    // Daemon child must still be alive! Clean it up with KILL
     res = sys_kill(daemon_pid, SIGNAL_KILL);
     assert(res == 0);
     status = -1;
@@ -202,7 +202,7 @@ static void test_background_read(void)
 {
     printf("--- Test: Background read raises SIGTTIN ---\n");
 
-    /* Child that ignores SIGTTIN must fail the read instead of stopping. */
+    // Child that ignores SIGTTIN must fail the read instead of stopping.
     int ign_pid = sys_fork();
     assert(ign_pid >= 0);
 
@@ -218,7 +218,7 @@ static void test_background_read(void)
     assert(sys_waitpid(ign_pid, &status, 0) == ign_pid);
     assert(status == 42);
 
-    /* Child that leaves SIGTTIN at default must stop, not exit. */
+    // Child that leaves SIGTTIN at default must stop, not exit.
     int stop_pid = sys_fork();
     assert(stop_pid >= 0);
 

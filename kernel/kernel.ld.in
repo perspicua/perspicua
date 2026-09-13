@@ -32,10 +32,6 @@ SECTIONS
         KEEP(*(.drivers.core))
         __drivers_core_end = .;
         
-        __drivers_bus_start = .;
-        KEEP(*(.drivers.bus))
-        __drivers_bus_end = .;
-        
         __drivers_device_start = .;
         KEEP(*(.drivers.device))
         __drivers_device_end = .;
@@ -65,8 +61,9 @@ SECTIONS
     } :data
 
     . = ALIGN(4096);
+    /* One 64 KB boot stack per core the kernel was configured for. */
     _stack_bottom = .;
-    . += 0x40000;
+    . += @CONFIG_NR_CPUS@ * 64K;
     _stack_top = .;
 
     . = ALIGN(4096);

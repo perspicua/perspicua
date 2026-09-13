@@ -1,10 +1,5 @@
 /*
  * setjmp.h - Non-local jumps.
- *
- * Minimal AArch64 variant: the integer callee-saved registers, the frame
- * pointer, the link register and the stack pointer are saved. The callee-saved
- * floating-point registers (d8-d15) are NOT saved, so a jump across code that
- * relies on their values being preserved is unsupported.
  */
 
 #ifndef PERSPICUA_LIBC_SETJMP_H
@@ -38,4 +33,4 @@ int setjmp(jmp_buf env) __attribute__((returns_twice));
  */
 __attribute__((noreturn)) void longjmp(jmp_buf env, int val);
 
-#endif /* PERSPICUA_LIBC_SETJMP_H */
+#endif // PERSPICUA_LIBC_SETJMP_H

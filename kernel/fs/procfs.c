@@ -1,8 +1,5 @@
 /*
  * procfs.c - Implementation of the process filesystem (procfs).
- *
- * This module provides a virtual filesystem that dynamicially generates
- * text representations of kernel state and process information.
  */
 
 #include "fs/procfs.h"
@@ -23,30 +20,11 @@
 #include "sched/process.h"
 #include "sched/sched.h"
 #include "arch/exception.h"
+#include "arch/irq.h"
 
 static struct vfs_vnode root_vnode_struct;
-static struct vfs_vnode version_vnode_struct;
-static struct vfs_vnode meminfo_vnode_struct;
-static struct vfs_vnode uptime_vnode_struct;
-static struct vfs_vnode interrupts_vnode_struct;
-static struct vfs_vnode schedstat_vnode_struct;
-static struct vfs_vnode mounts_vnode_struct;
-static struct vfs_vnode cpuinfo_vnode_struct;
-static struct vfs_vnode stat_vnode_struct;
-
 static struct vfs_vnode *procfs_root_vnode = &root_vnode_struct;
-static struct vfs_vnode *version_vnode = &version_vnode_struct;
-static struct vfs_vnode *meminfo_vnode = &meminfo_vnode_struct;
-static struct vfs_vnode *uptime_vnode = &uptime_vnode_struct;
-static struct vfs_vnode *interrupts_vnode = &interrupts_vnode_struct;
-static struct vfs_vnode *schedstat_vnode = &schedstat_vnode_struct;
-static struct vfs_vnode *mounts_vnode = &mounts_vnode_struct;
-static struct vfs_vnode *cpuinfo_vnode = &cpuinfo_vnode_struct;
-static struct vfs_vnode *stat_vnode = &stat_vnode_struct;
 
-/*
- * procfs_get_vnode_path - Recursively reconstructs the absolute path of a vnode.
- */
 static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t size)
 {
     if (!node || !buf || size == 0) {
@@ -109,209 +87,131 @@ static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
     }
 }
 
-static int procfs_version_read(struct vfs_file *file, void *buffer, size_t size)
-{
-    const char *version_str = "perspicua kernel v0.1\n";
-    size_t len = strlen(version_str);
+#define PROCFS_CONTENT_MAX 4096
 
-    if (file->offset >= (vfs_off_t)len) {
+/*
+ * procfs_copy_out - The tail every procfs read shares.
+ *
+ * A reader renders its file whole, then hands the result here to serve the
+ * window the caller's offset and size ask for.
+ */
+static int procfs_copy_out(vfs_off_t *offset, void *buffer, size_t size, const char *content,
+                           size_t len)
+{
+    if (*offset >= (vfs_off_t)len) {
         return 0;
     }
 
-    size_t available = len - file->offset;
+    size_t available = len - (size_t)*offset;
     size_t to_copy = (size < available) ? size : available;
 
-    memcpy(buffer, version_str + file->offset, to_copy);
-    file->offset += to_copy;
+    memcpy(buffer, content + *offset, to_copy);
+    *offset += (vfs_off_t)to_copy;
 
-    return to_copy;
+    return (int)to_copy;
 }
 
-static int procfs_uptime_read(struct vfs_file *file, void *buffer, size_t size)
+/*
+ * Renders a whole /proc file into buf, returning its length.
+ *
+ * Each of these files is small and is regenerated on every read, so the content
+ * a reader sees is one consistent sample rather than pieces taken at different
+ * offsets as it seeks through.
+ */
+typedef int (*procfs_generate_fn)(char *buf, int size);
+
+static int procfs_gen_version(char *buf, int size)
 {
-    char buf[64];
-    unsigned long uptime_ms = get_system_time();
-    snprintf(buf, sizeof(buf), "%lu.%02lu\n", uptime_ms / 1000, (uptime_ms % 1000) / 10);
-    size_t len = strlen(buf);
-
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
+    int pos = 0;
+    procfs_append(buf, &pos, size, "perspicua kernel v0.1\n");
+    return pos;
 }
 
-static int procfs_meminfo_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_gen_uptime(char *buf, int size)
 {
-    char buf[256];
-    unsigned long total_pages = pmm_get_total_pages();
-    unsigned long free_pages = pmm_get_free_pages();
-    unsigned long slab_used = slab_get_used();
-    unsigned long slab_total = slab_get_total();
-
-    snprintf(buf, sizeof(buf),
-             "MemTotal: %lu kB\n"
-             "MemFree:  %lu kB\n"
-             "SlabUsed: %lu kB\n"
-             "SlabTotal:%lu kB\n",
-             total_pages * 4, free_pages * 4, slab_used / 1024, slab_total / 1024);
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
-}
-
-static int procfs_interrupts_read(struct vfs_file *file, void *buffer, size_t size)
-{
-    char *buf = heap_malloc(1024);
-    if (!buf)
-        return -PERS_ERR_OUT_OF_MEMORY;
+    unsigned long uptime_ms = timer_get_system_time();
 
     int pos = 0;
-    procfs_append(buf, &pos, 1024, "           ");
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024, "CPU%-10d", i);
-    }
-    procfs_append(buf, &pos, 1024, "\nTimer:     ");
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024, "%-13lu", core_irq_stats[i].timer_count);
-    }
-    procfs_append(buf, &pos, 1024, "\nUART:      ");
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024, "%-13lu", core_irq_stats[i].uart_count);
-    }
-    procfs_append(buf, &pos, 1024, "\n");
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    heap_free(buf);
-    return to_copy;
+    procfs_append(buf, &pos, size, "%lu.%02lu\n", uptime_ms / 1000, (uptime_ms % 1000) / 10);
+    return pos;
 }
 
-static int procfs_schedstat_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_gen_meminfo(char *buf, int size)
 {
-    char *buf = heap_malloc(1024);
-    if (!buf)
-        return -PERS_ERR_OUT_OF_MEMORY;
-
     int pos = 0;
-    procfs_append(buf, &pos, 1024, "cpu  context_switches  idle_entries\n");
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 1024, "%-5d%-18lu%-13lu\n", i,
+    procfs_append(buf, &pos, size,
+                  "MemTotal: %lu kB\n"
+                  "MemFree:  %lu kB\n"
+                  "SlabUsed: %lu kB\n"
+                  "SlabTotal:%lu kB\n",
+                  pmm_get_total_pages() * 4, pmm_get_free_pages() * 4, slab_get_used() / 1024,
+                  slab_get_total() / 1024);
+    return pos;
+}
+
+static int procfs_gen_interrupts(char *buf, int size)
+{
+    int pos = 0;
+    procfs_append(buf, &pos, size, "           ");
+    for (int i = 0; i < CPU_MAX_CORES; i++) {
+        procfs_append(buf, &pos, size, "CPU%-10d", i);
+    }
+    procfs_append(buf, &pos, size, "\n");
+
+    for (unsigned int irq = 0; irq < IRQ_MAX; irq++) {
+        const struct irq_desc *desc = irq_get_desc(irq);
+        if (desc == NULL || desc->handler == NULL) {
+            continue;
+        }
+
+        procfs_append(buf, &pos, size, "%-4u%-7s", irq, desc->name);
+        for (int i = 0; i < CPU_MAX_CORES; i++) {
+            procfs_append(buf, &pos, size, "%-13lu", desc->count[i]);
+        }
+        procfs_append(buf, &pos, size, "\n");
+    }
+    return pos;
+}
+
+static int procfs_gen_schedstat(char *buf, int size)
+{
+    int pos = 0;
+    procfs_append(buf, &pos, size, "cpu  context_switches  idle_entries\n");
+    for (int i = 0; i < CPU_MAX_CORES; i++) {
+        procfs_append(buf, &pos, size, "%-5d%-18lu%-13lu\n", i,
                       core_sched_stats[i].context_switches, core_sched_stats[i].idle_count);
     }
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    heap_free(buf);
-    return to_copy;
+    return pos;
 }
 
-static int procfs_mounts_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_gen_mounts(char *buf, int size)
 {
-    char *buf = heap_malloc(4096);
-    if (!buf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
-    }
+    char path[VFS_MAX_MOUNT_PATH];
 
     int pos = 0;
-    char path[VFS_MAX_MOUNT_PATH];
     for (size_t i = 0;; i++) {
         if (vfs_get_mount(i, path, sizeof(path)) != PERS_SUCCESS) {
             break;
         }
-        procfs_append(buf, &pos, 4096, "none %s procfs rw 0 0\n", path);
+        procfs_append(buf, &pos, size, "none %s procfs rw 0 0\n", path);
     }
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    heap_free(buf);
-    return to_copy;
+    return pos;
 }
 
-static int procfs_cpuinfo_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_gen_cpuinfo(char *buf, int size)
 {
-    char *buf = heap_malloc(4096);
-    if (!buf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
-    }
-
     int pos = 0;
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
-        procfs_append(buf, &pos, 4096,
+    for (int i = 0; i < CPU_MAX_CORES; i++) {
+        procfs_append(buf, &pos, size,
                       "processor\t: %d\nmodel name\t: ARM Cortex-A72 (BCM2711)\n\n", i);
     }
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    heap_free(buf);
-    return to_copy;
+    return pos;
 }
 
-static int procfs_stat_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_gen_stat(char *buf, int size)
 {
-    char *buf = heap_malloc(4096);
-    if (!buf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
-    }
-
     uint64_t total_ctx = 0;
-    for (int i = 0; i < SCHED_NUM_CORES; i++) {
+    for (int i = 0; i < CPU_MAX_CORES; i++) {
         total_ctx += core_sched_stats[i].context_switches;
     }
 
@@ -325,31 +225,44 @@ static int procfs_stat_read(struct vfs_file *file, void *buffer, size_t size)
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     int pos = 0;
-    procfs_append(buf, &pos, 4096, "ctxt %llu\nbtime 0\nprocesses %d\n",
+    procfs_append(buf, &pos, size, "ctxt %llu\nbtime 0\nprocesses %d\n",
                   (unsigned long long)total_ctx, proc_count);
-
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    heap_free(buf);
-    return to_copy;
+    return pos;
 }
 
-static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size)
+/*
+ * procfs_generated_read - The read operation every generated file shares.
+ *
+ * The generator the vnode names renders the file into scratch space, and the
+ * window the caller asked for is copied out of that.
+ */
+static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t size,
+                                 vfs_off_t *offset)
+{
+    procfs_generate_fn generate = (procfs_generate_fn)(uintptr_t)file->node->internal_info;
+    if (!generate) {
+        return -PERS_ERR_IO_ERROR;
+    }
+
+    char *buf = heap_malloc(PROCFS_CONTENT_MAX);
+    if (!buf) {
+        return -PERS_ERR_OUT_OF_MEMORY;
+    }
+
+    int len = generate(buf, PROCFS_CONTENT_MAX);
+    int ret = (len > 0) ? procfs_copy_out(offset, buffer, size, buf, (size_t)len) : 0;
+
+    heap_free(buf);
+    return ret;
+}
+
+static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char *buf = heap_malloc(2048);
-    if (!buf)
+    if (!buf) {
         return -PERS_ERR_OUT_OF_MEMORY;
+    }
 
     int pos = 0;
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -366,23 +279,14 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        heap_free(buf);
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
+    int ret = procfs_copy_out(offset, buffer, size, buf, strlen(buf));
 
     heap_free(buf);
-    return to_copy;
+    return ret;
 }
 
-static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t size,
+                                  vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char buf[512];
@@ -427,20 +331,11 @@ static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t si
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
+    return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
-static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t size,
+                                   vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char buf[128];
@@ -454,20 +349,10 @@ static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t s
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     size_t len = strlen(buf);
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
+    return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
-static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     struct process *p = process_slot((uint32_t)pid);
@@ -497,20 +382,11 @@ static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size)
         path_buf[len] = '\0';
     }
 
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, path_buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
+    return procfs_copy_out(offset, buffer, size, path_buf, len);
 }
 
-static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t size)
+static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t size,
+                                    vfs_off_t *offset)
 {
     uintptr_t info = (uintptr_t)file->node->internal_info;
     uint32_t pid = (info >> 16) & 0xFFFF;
@@ -547,27 +423,29 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
         path_buf[len] = '\0';
     }
 
-    if (file->offset >= (vfs_off_t)len) {
-        return 0;
-    }
-
-    size_t available = len - file->offset;
-    size_t to_copy = (size < available) ? size : available;
-
-    memcpy(buffer, path_buf + file->offset, to_copy);
-    file->offset += to_copy;
-
-    return to_copy;
+    return procfs_copy_out(offset, buffer, size, path_buf, len);
 }
 
-static struct vfs_vnode_ops procfs_version_ops = {.read = procfs_version_read};
-static struct vfs_vnode_ops procfs_uptime_ops = {.read = procfs_uptime_read};
-static struct vfs_vnode_ops procfs_meminfo_ops = {.read = procfs_meminfo_read};
-static struct vfs_vnode_ops procfs_interrupts_ops = {.read = procfs_interrupts_read};
-static struct vfs_vnode_ops procfs_schedstat_ops = {.read = procfs_schedstat_read};
-static struct vfs_vnode_ops procfs_mounts_ops = {.read = procfs_mounts_read};
-static struct vfs_vnode_ops procfs_cpuinfo_ops = {.read = procfs_cpuinfo_read};
-static struct vfs_vnode_ops procfs_stat_ops = {.read = procfs_stat_read};
+static struct vfs_vnode_ops procfs_generated_ops = {.read = procfs_generated_read};
+
+/*
+ * The files directly under /proc. Each is backed by a generator and a vnode at
+ * the matching index, so adding one means adding a row here and nothing else.
+ */
+static const struct procfs_static_file {
+    const char *name;
+    procfs_generate_fn generate;
+} procfs_static_files[] = {
+    {"version", procfs_gen_version},     {"uptime", procfs_gen_uptime},
+    {"meminfo", procfs_gen_meminfo},     {"interrupts", procfs_gen_interrupts},
+    {"schedstat", procfs_gen_schedstat}, {"mounts", procfs_gen_mounts},
+    {"cpuinfo", procfs_gen_cpuinfo},     {"stat", procfs_gen_stat},
+};
+
+#define PROCFS_STATIC_COUNT (sizeof(procfs_static_files) / sizeof(procfs_static_files[0]))
+
+static struct vfs_vnode procfs_static_vnodes[PROCFS_STATIC_COUNT];
+
 static struct vfs_vnode_ops procfs_pid_status_ops = {.read = procfs_pid_status_read};
 static struct vfs_vnode_ops procfs_pid_maps_ops = {.read = procfs_pid_maps_read};
 static struct vfs_vnode_ops procfs_pid_cmdline_ops = {.read = procfs_pid_cmdline_read};
@@ -656,7 +534,7 @@ static struct vfs_vnode *procfs_pid_fd_lookup(struct vfs_vnode *dir, const char 
     memset(node, 0, sizeof(struct vfs_vnode));
     node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &procfs_pid_fd_entry_ops;
-    node->refcount.counter = 1;
+    atomic_set(&node->refcount, 1);
     node->internal_info = (void *)(uintptr_t)((pid << 16) | fd);
     node->parent = dir;
     atomic_inc(&dir->refcount);
@@ -702,7 +580,7 @@ static struct vfs_vnode *procfs_pid_lookup(struct vfs_vnode *dir, const char *fi
             memset(node, 0, sizeof(struct vfs_vnode));
             node->type = types[i];
             node->ops = ops[i];
-            node->refcount.counter = 1;
+            atomic_set(&node->refcount, 1);
             node->internal_info = dir->internal_info;
             node->parent = dir;
             atomic_inc(&dir->refcount);
@@ -722,14 +600,16 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
     size_t max_entries = count / sizeof(struct vfs_dirent);
     int entries_written = 0;
 
-    const char *static_names[] = {"version", "uptime",  "meminfo", "interrupts", "schedstat",
-                                  "mounts",  "cpuinfo", "stat",    "self"};
-    int static_count = 9;
+    // The generated files, then "self", then one entry per live process.
+    int static_count = (int)PROCFS_STATIC_COUNT + 1;
 
     while (entries_written < (int)max_entries) {
         if (file->offset < static_count) {
+            const char *name = (file->offset < (vfs_off_t)PROCFS_STATIC_COUNT)
+                                   ? procfs_static_files[file->offset].name
+                                   : "self";
             vfs_buffer[entries_written].ino = (ino_t)(file->offset + 1);
-            strncpy(vfs_buffer[entries_written].name, static_names[file->offset], 255);
+            strncpy(vfs_buffer[entries_written].name, name, 255);
             vfs_buffer[entries_written].name[255] = '\0';
             file->offset++;
             entries_written++;
@@ -763,40 +643,14 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
 
 static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *filename)
 {
-    if (strcmp(filename, "version") == 0) {
-        atomic_inc(&version_vnode->refcount);
-        return version_vnode;
-    }
-    if (strcmp(filename, "uptime") == 0) {
-        atomic_inc(&uptime_vnode->refcount);
-        return uptime_vnode;
-    }
-    if (strcmp(filename, "meminfo") == 0) {
-        atomic_inc(&meminfo_vnode->refcount);
-        return meminfo_vnode;
-    }
-    if (strcmp(filename, "interrupts") == 0) {
-        atomic_inc(&interrupts_vnode->refcount);
-        return interrupts_vnode;
-    }
-    if (strcmp(filename, "schedstat") == 0) {
-        atomic_inc(&schedstat_vnode->refcount);
-        return schedstat_vnode;
-    }
-    if (strcmp(filename, "mounts") == 0) {
-        atomic_inc(&mounts_vnode->refcount);
-        return mounts_vnode;
-    }
-    if (strcmp(filename, "cpuinfo") == 0) {
-        atomic_inc(&cpuinfo_vnode->refcount);
-        return cpuinfo_vnode;
-    }
-    if (strcmp(filename, "stat") == 0) {
-        atomic_inc(&stat_vnode->refcount);
-        return stat_vnode;
+    for (size_t i = 0; i < PROCFS_STATIC_COUNT; i++) {
+        if (strcmp(filename, procfs_static_files[i].name) == 0) {
+            atomic_inc(&procfs_static_vnodes[i].refcount);
+            return &procfs_static_vnodes[i];
+        }
     }
     if (strcmp(filename, "self") == 0) {
-        int pid = process_find_current();
+        int pid = process_current_pid();
         if (pid < 0) {
             return NULL;
         }
@@ -807,7 +661,7 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
         memset(node, 0, sizeof(struct vfs_vnode));
         node->type = VFS_VNODE_TYPE_DIR;
         node->ops = &procfs_pid_dir_ops;
-        node->refcount.counter = 1;
+        atomic_set(&node->refcount, 1);
         node->internal_info = (void *)(uintptr_t)pid;
         node->parent = dir;
         atomic_inc(&dir->refcount);
@@ -834,12 +688,12 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
             spin_unlock_irqrestore(&process_table_lock, flags);
             struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
             if (!node) {
-                return NULL; /* process_table_lock already released above */
+                return NULL; // process_table_lock already released above
             }
             memset(node, 0, sizeof(struct vfs_vnode));
             node->type = VFS_VNODE_TYPE_DIR;
             node->ops = &procfs_pid_dir_ops;
-            node->refcount.counter = 1;
+            atomic_set(&node->refcount, 1);
             node->internal_info = (void *)(uintptr_t)pid;
             node->parent = dir;
             atomic_inc(&dir->refcount);
@@ -855,81 +709,27 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
 static struct vfs_vnode_ops procfs_root_ops = {.readdir = procfs_root_readdir,
                                                .lookup = procfs_root_lookup};
 
-/*
- * procfs_init - Boot-time registration and mounting of /proc.
- */
 void procfs_init(void)
 {
     memset(procfs_root_vnode, 0, sizeof(struct vfs_vnode));
     procfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
     procfs_root_vnode->ops = &procfs_root_ops;
-    procfs_root_vnode->refcount.counter = 1;
+    atomic_set(&procfs_root_vnode->refcount, 1);
     procfs_root_vnode->parent = NULL;
     strcpy(procfs_root_vnode->name, "proc");
 
-    memset(version_vnode, 0, sizeof(struct vfs_vnode));
-    version_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    version_vnode->ops = &procfs_version_ops;
-    version_vnode->refcount.counter = 1;
-    version_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(version_vnode->name, "version");
+    for (size_t i = 0; i < PROCFS_STATIC_COUNT; i++) {
+        struct vfs_vnode *node = &procfs_static_vnodes[i];
 
-    memset(uptime_vnode, 0, sizeof(struct vfs_vnode));
-    uptime_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    uptime_vnode->ops = &procfs_uptime_ops;
-    uptime_vnode->refcount.counter = 1;
-    uptime_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(uptime_vnode->name, "uptime");
-
-    memset(meminfo_vnode, 0, sizeof(struct vfs_vnode));
-    meminfo_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    meminfo_vnode->ops = &procfs_meminfo_ops;
-    meminfo_vnode->refcount.counter = 1;
-    meminfo_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(meminfo_vnode->name, "meminfo");
-
-    memset(interrupts_vnode, 0, sizeof(struct vfs_vnode));
-    interrupts_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    interrupts_vnode->ops = &procfs_interrupts_ops;
-    interrupts_vnode->refcount.counter = 1;
-    interrupts_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(interrupts_vnode->name, "interrupts");
-
-    memset(schedstat_vnode, 0, sizeof(struct vfs_vnode));
-    schedstat_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    schedstat_vnode->ops = &procfs_schedstat_ops;
-    schedstat_vnode->refcount.counter = 1;
-    schedstat_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(schedstat_vnode->name, "schedstat");
-
-    memset(mounts_vnode, 0, sizeof(struct vfs_vnode));
-    mounts_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    mounts_vnode->ops = &procfs_mounts_ops;
-    mounts_vnode->refcount.counter = 1;
-    mounts_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(mounts_vnode->name, "mounts");
-
-    memset(cpuinfo_vnode, 0, sizeof(struct vfs_vnode));
-    cpuinfo_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    cpuinfo_vnode->ops = &procfs_cpuinfo_ops;
-    cpuinfo_vnode->refcount.counter = 1;
-    cpuinfo_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(cpuinfo_vnode->name, "cpuinfo");
-
-    memset(stat_vnode, 0, sizeof(struct vfs_vnode));
-    stat_vnode->type = VFS_VNODE_TYPE_REGULAR;
-    stat_vnode->ops = &procfs_stat_ops;
-    stat_vnode->refcount.counter = 1;
-    stat_vnode->parent = procfs_root_vnode;
-    atomic_inc(&procfs_root_vnode->refcount);
-    strcpy(stat_vnode->name, "stat");
+        memset(node, 0, sizeof(*node));
+        node->type = VFS_VNODE_TYPE_REGULAR;
+        node->ops = &procfs_generated_ops;
+        node->internal_info = (void *)(uintptr_t)procfs_static_files[i].generate;
+        atomic_set(&node->refcount, 1);
+        node->parent = procfs_root_vnode;
+        atomic_inc(&procfs_root_vnode->refcount);
+        strcpy(node->name, procfs_static_files[i].name);
+    }
 
     vfs_mount("/proc", procfs_root_vnode);
 

@@ -1,8 +1,5 @@
 /*
- * pipe.c - Implementation of anonymous pipes (IPC).
- *
- * This module manages the circular buffer and task synchronization required
- * for unidirectional inter-process communication.
+ * pipe.c - Implementation of anonymous unidirectional pipes.
  */
 
 #include "fs/pipe.h"
@@ -14,7 +11,6 @@
 #include "uapi/errors.h"
 
 #include "core/lock.h"
-#include "core/timer.h"
 #include "mm/slab.h"
 #include "mm/heap.h"
 #include "fs/vfs.h"
@@ -59,9 +55,6 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
     }
 }
 
-/*
- * pipe_signal_pending - True if the caller has an unblocked pending signal.
- */
 static int pipe_signal_pending(void)
 {
     struct process *p = process_current();
@@ -80,24 +73,21 @@ static int pipe_signal_pending(void)
  */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
 
-    /* Transition to BLOCKED before releasing lock to avoid lost wake-ups */
+    // Transition to BLOCKED before releasing lock to avoid lost wake-ups
     self->state = SCHED_TASK_BLOCKED;
     self->wait_next = *queue;
     *queue = self;
 
     spin_unlock(lock);
-    schedule();
+    sched_schedule();
 
     spin_lock(lock);
-    /* A signal wake (rather than pipe_wake) leaves us queued: unlink now. */
+    // A signal wake (rather than pipe_wake) leaves us queued: unlink now.
     pipe_queue_remove(queue, self);
 }
 
-/*
- * pipe_wake - Ready all tasks waiting on a pipe event.
- */
 static void pipe_wake(struct task **queue)
 {
     struct task *t = *queue;
@@ -111,8 +101,10 @@ static void pipe_wake(struct task **queue)
     }
 }
 
-static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
+static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_t *offset)
 {
+    (void)offset; // A pipe has no position.
+
     struct pipe *pipe = (struct pipe *)file->node->internal_info;
     char *buf = (char *)buffer;
     size_t read = 0;
@@ -155,8 +147,10 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count)
     return (int)read;
 }
 
-static int pipe_write(struct vfs_file *file, const void *buffer, size_t count)
+static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, vfs_off_t *offset)
 {
+    (void)offset; // A pipe has no position.
+
     struct pipe *pipe = (struct pipe *)file->node->internal_info;
     const char *buf = (const char *)buffer;
     size_t written = 0;
@@ -258,9 +252,6 @@ static int pipe_close(struct vfs_file *file)
 static struct vfs_vnode_ops pipe_ops = {
     .read = pipe_read, .write = pipe_write, .close = pipe_close};
 
-/*
- * pipe_create - Allocates a pipe and installs descriptors in the process table.
- */
 int pipe_create(int pipefd[2])
 {
     struct process *p = process_current();
@@ -287,13 +278,13 @@ int pipe_create(int pipefd[2])
     node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &pipe_ops;
     node->internal_info = pipe;
-    node->refcount.counter = 2;
+    atomic_set(&node->refcount, 2);
 
     struct vfs_file *f_read = vfs_file_alloc();
     struct vfs_file *f_write = vfs_file_alloc();
 
     if (!f_read || !f_write) {
-        /* No vnode attached yet, so these just free the objects. */
+        // No vnode attached yet, so these just free the objects.
         vfs_file_put(f_read);
         vfs_file_put(f_write);
         slab_free(node);

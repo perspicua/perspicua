@@ -1,8 +1,5 @@
 /*
  * block.h - Public API for the generic block device layer.
- *
- * This header defines the interface for managing block-oriented storage
- * devices and integrating them into the system's VFS.
  */
 
 #ifndef PERSPICUA_DRIVER_BLOCK_H
@@ -30,19 +27,10 @@ struct block_device {
     void *private_data;
 };
 
-/*
- * block_device_register - Adds a new block device to the system registry.
- */
 void block_device_register(struct block_device *dev);
 
-/*
- * block_device_lookup - Locates a block device by its name.
- */
 struct block_device *block_device_lookup(const char *name);
 
-/*
- * block_cache_sync - Flushes all dirty cache entries to their backing devices.
- */
 int block_cache_sync(void);
 
-#endif /* PERSPICUA_DRIVER_BLOCK_H */
+#endif // PERSPICUA_DRIVER_BLOCK_H

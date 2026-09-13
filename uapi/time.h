@@ -1,7 +1,5 @@
 /*
- * time.h
- *
- * This header defines time related structures
+ * time.h - Time-related structures.
  */
 
 #ifndef PERSPICUA_UAPI_TIME_H
@@ -12,11 +10,11 @@
 struct timeval {
     time_t tv_sec;
     long tv_usec;
-}; /* micro seconds */
+}; // micro seconds
 struct timespec {
     time_t tv_sec;
     long tv_nsec;
-}; /* nano seconds  */
+}; // nano seconds
 
 typedef int clockid_t;
 

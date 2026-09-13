@@ -20,10 +20,10 @@
 #include "core/syscall.h"
 #include "sched/process.h"
 
-/* init is created first and is the process these tests target. */
+// init is created first and is the process these tests target.
 #define INIT_PID 1
 
-/* Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack. */
+// Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack.
 static struct exception_trap_frame kill_tf;
 
 static int64_t call_kill(int64_t target_pid, int sig)
@@ -47,21 +47,18 @@ void test_signals(void)
         TEST_ASSERT("signal SIGNAL_COUNT rejected", signal_send(INIT_PID, SIGNAL_COUNT) < 0);
         TEST_ASSERT("far out-of-range signal rejected", signal_send(INIT_PID, 9999) < 0);
     }
-    TEST_PASS("signal number validation");
 
     // pid 0 and out-of-table pids have no process to receive anything
     {
         TEST_ASSERT("pid 0 rejected", signal_send(0, SIGNAL_USR1) < 0);
         TEST_ASSERT("out-of-range pid rejected", signal_send(0xFFFFFFFFu, SIGNAL_USR1) < 0);
     }
-    TEST_PASS("target validation");
 
     // an empty process slot is not a valid target
     {
         int sent = signal_send(PROCESS_TABLE_SIZE - 1, SIGNAL_USR1);
         TEST_ASSERT("empty slot rejected", sent < 0);
     }
-    TEST_PASS("empty slot");
 
     /*
      * A zombie's task is freed as soon as it stops running, but its slot lives
@@ -87,12 +84,11 @@ void test_signals(void)
         TEST_ASSERT("zombie test slot claimed", slot > 0);
         TEST_ASSERT("zombie slot rejected", sent < 0);
     }
-    TEST_PASS("zombie slot");
 
     /*
      * kill() takes a signed pid straight from the user. Everything outside
      * 1..PROCESS_TABLE_SIZE-1 must be refused before it indexes the table:
-     * -1 used to clear the upper-bound check and read process_table[-1]->
+     * -1 clears an upper-bound check on its own and reads process_table[-1].
      */
     {
         TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
@@ -108,73 +104,57 @@ void test_signals(void)
         // pid 0 is the kernel and stays a permission error, not a lookup failure
         TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGNAL_TERM), -PERS_ERR_PERMISSION_DENIED);
     }
-    TEST_PASS("kill pid bounds");
 
     /*
-     * A valid signal to a live process must be accepted and recorded in the
-     * pending mask. The bit is (sig - 1) because signal numbering starts at 1.
+     * Pending-signal bookkeeping runs against a claimed slot, not init: init is
+     * scheduled while this suite runs and would drain its own pending bits
+     * between any two reads here. A claimed slot has no task, so nothing ever
+     * consumes what this queues. signal_send only reaches main_task behind a
+     * NULL check, so an empty slot is a valid target.
      */
     {
-        TEST_ASSERT_EQ("send SIGUSR1 to init", signal_send(INIT_PID, SIGNAL_USR1), 0);
+        int slot = process_test_claim_slot();
+        TEST_ASSERT("pending-signal test slot claimed", slot > 0);
 
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+        if (slot > 0) {
+            uint32_t target = (uint32_t)slot;
+
+            // recorded in the pending mask; the bit is (sig - 1)
+            TEST_ASSERT_EQ("send SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            uint32_t pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+
+            // a second distinct signal accumulates rather than replaces
+            TEST_ASSERT_EQ("send SIGUSR2", signal_send(target, SIGNAL_USR2), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
+            TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+
+            // re-sending an already-pending signal is idempotent, not a counter
+            uint32_t before = process_table[target]->pending_signals;
+            TEST_ASSERT_EQ("resend SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            uint32_t after = process_table[target]->pending_signals;
+            TEST_ASSERT("resend leaves mask unchanged", before == after);
+
+            // POSIX mutual discard: a stop signal clears pending SIGCONT, and
+            // SIGCONT clears pending stop signals
+            TEST_ASSERT_EQ("send SIGCONT", signal_send(target, SIGNAL_CONT), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+
+            TEST_ASSERT_EQ("send SIGSTOP", signal_send(target, SIGNAL_STOP), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
+            TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
+
+            TEST_ASSERT_EQ("send SIGCONT again", signal_send(target, SIGNAL_CONT), 0);
+            pending = process_table[target]->pending_signals;
+            TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+            TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
+
+            process_test_release_slot(target);
+        }
     }
-    TEST_PASS("pending bit set");
-
-    // a second distinct signal must accumulate rather than replace
-    {
-        TEST_ASSERT_EQ("send SIGUSR2 to init", signal_send(INIT_PID, SIGNAL_USR2), 0);
-
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
-        TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
-    }
-    TEST_PASS("pending signals accumulate");
-
-    // re-sending an already-pending signal is idempotent, not a counter
-    {
-        uint32_t before = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT_EQ("resend SIGUSR1", signal_send(INIT_PID, SIGNAL_USR1), 0);
-        uint32_t after = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("resend leaves mask unchanged", before == after);
-    }
-    TEST_PASS("delivery is idempotent");
-
-    // POSIX mutual discard: stop signals clear pending SIGCONT, and SIGCONT clears pending stop
-    // signals
-    {
-        TEST_ASSERT_EQ("send SIGCONT", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        uint32_t pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
-
-        TEST_ASSERT_EQ("send SIGSTOP", signal_send(INIT_PID, SIGNAL_STOP), 0);
-        pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
-        TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
-
-        TEST_ASSERT_EQ("send SIGCONT again", signal_send(INIT_PID, SIGNAL_CONT), 0);
-        pending = process_table[INIT_PID]->pending_signals;
-        TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
-        TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
-
-        /* Cleanup */
-        process_table[INIT_PID]->pending_signals &=
-            ~((1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_STOP - 1)));
-    }
-    TEST_PASS("POSIX mutual signal discard");
-
-    /*
-     * Clear what this suite queued so init is not left holding signals it
-     * never asked for once it runs.
-     */
-    process_table[INIT_PID]->pending_signals &=
-        ~((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)));
-    TEST_ASSERT_EQ("test signals cleared",
-                   (long)(process_table[INIT_PID]->pending_signals
-                          & ((1u << (SIGNAL_USR1 - 1)) | (1u << (SIGNAL_USR2 - 1)))),
-                   0);
-    TEST_PASS("cleanup");
 
     TEST_SUITE_END("Signals");
 }

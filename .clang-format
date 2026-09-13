@@ -16,6 +16,7 @@ IndentWrappedFunctionNames: false
 NamespaceIndentation: None
 
 # --- Braces ---
+InsertBraces: true
 BreakBeforeBraces: Custom
 BraceWrapping:
   AfterClass: true

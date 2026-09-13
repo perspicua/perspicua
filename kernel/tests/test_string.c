@@ -12,7 +12,6 @@ void test_string(void)
     TEST_ASSERT_EQ("strlen hello", strlen("hello"), 5);
     TEST_ASSERT_EQ("strlen spaces", strlen("a b c"), 5);
     TEST_ASSERT_EQ("strlen embedded", strlen("ab\0cd"), 2);
-    TEST_PASS("strlen");
 
     // strcmp
     TEST_ASSERT("strcmp equal", strcmp("abc", "abc") == 0);
@@ -24,7 +23,6 @@ void test_string(void)
     TEST_ASSERT("strcmp empty vs str", strcmp("", "a") < 0);
     TEST_ASSERT("strcmp str vs empty", strcmp("a", "") > 0);
     TEST_ASSERT("strcmp single eq", strcmp("z", "z") == 0);
-    TEST_PASS("strcmp");
 
     // strncmp
     TEST_ASSERT("strncmp equal n=3", strncmp("abcX", "abcY", 3) == 0);
@@ -34,7 +32,6 @@ void test_string(void)
     TEST_ASSERT("strncmp short str", strncmp("ab", "ab", 5) == 0);
     TEST_ASSERT("strncmp n=1 eq", strncmp("ax", "ay", 1) == 0);
     TEST_ASSERT("strncmp n=1 diff", strncmp("x", "y", 1) < 0);
-    TEST_PASS("strncmp");
 
     // strcpy
     {
@@ -47,7 +44,6 @@ void test_string(void)
         TEST_ASSERT("strcpy empty", strcmp(buf, "") == 0);
         TEST_ASSERT_EQ("strcpy empty len", strlen(buf), 0);
     }
-    TEST_PASS("strcpy");
 
     // strncpy
     {
@@ -65,7 +61,6 @@ void test_string(void)
         strncpy(buf, "abc", 3);
         TEST_ASSERT("strncpy exact", memcmp(buf, "abc", 3) == 0);
     }
-    TEST_PASS("strncpy");
 
     // strcat
     {
@@ -88,7 +83,6 @@ void test_string(void)
         strcat(buf, "c");
         TEST_ASSERT("strcat chained", strcmp(buf, "abc") == 0);
     }
-    TEST_PASS("strcat");
 
     // strncat
     {
@@ -105,7 +99,6 @@ void test_string(void)
         strncat(buf, "de", 10);
         TEST_ASSERT("strncat n > len", strcmp(buf, "abcde") == 0);
     }
-    TEST_PASS("strncat");
 
     // strchr
     {
@@ -116,7 +109,6 @@ void test_string(void)
         TEST_ASSERT("strchr not found", strchr(s, 'z') == NULL);
         TEST_ASSERT("strchr empty str", strchr("", 'a') == NULL);
     }
-    TEST_PASS("strchr");
 
     // strrchr
     {
@@ -126,7 +118,6 @@ void test_string(void)
         TEST_ASSERT("strrchr not found", strrchr(s, 'z') == NULL);
         TEST_ASSERT("strrchr single", strrchr("x", 'x') != NULL);
     }
-    TEST_PASS("strrchr");
 
     // strstr
     {
@@ -140,7 +131,6 @@ void test_string(void)
         TEST_ASSERT("strstr partial match", strstr("aab", "ab") != NULL);
         TEST_ASSERT("strstr longer needle", strstr("ab", "abc") == NULL);
     }
-    TEST_PASS("strstr");
 
     // strspn
     {
@@ -151,7 +141,6 @@ void test_string(void)
         TEST_ASSERT_EQ("strspn empty s", strspn("", "abc"), 0);
         TEST_ASSERT_EQ("strspn empty accept", strspn("abc", ""), 0);
     }
-    TEST_PASS("strspn");
 
     // strcspn
     {
@@ -162,7 +151,6 @@ void test_string(void)
         TEST_ASSERT_EQ("strcspn empty s", strcspn("", "abc"), 0);
         TEST_ASSERT_EQ("strcspn empty reject", strcspn("abc", ""), 3);
     }
-    TEST_PASS("strcspn");
 
     // strtok
     {
@@ -188,7 +176,6 @@ void test_string(void)
         token = strtok(buf3, ",");
         TEST_ASSERT("strtok only delims", token == NULL);
     }
-    TEST_PASS("strtok");
 
     // strtok_r
     {
@@ -205,27 +192,28 @@ void test_string(void)
         token = strtok_r(NULL, " ", &saveptr);
         TEST_ASSERT("strtok_r end", token == NULL);
     }
-    TEST_PASS("strtok_r");
 
     // memset
     {
         char buf[128];
         memset(buf, 0xAA, sizeof(buf));
         int ok = 1;
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 128; i++) {
             if ((unsigned char)buf[i] != 0xAA) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset 0xAA fill", ok);
 
         memset(buf, 0, sizeof(buf));
         ok = 1;
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 128; i++) {
             if (buf[i] != 0) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset zero fill", ok);
 
         char one = 'X';
@@ -235,18 +223,18 @@ void test_string(void)
         char odd[13];
         memset(odd, 0x55, 13);
         ok = 1;
-        for (int i = 0; i < 13; i++)
+        for (int i = 0; i < 13; i++) {
             if ((unsigned char)odd[i] != 0x55) {
                 ok = 0;
                 break;
             }
+        }
         TEST_ASSERT("memset odd size", ok);
 
         char rv[4];
         void *ret = memset(rv, 'Z', 4);
         TEST_ASSERT("memset returns dest", ret == rv);
     }
-    TEST_PASS("memset");
 
     // memcpy
     {
@@ -261,8 +249,9 @@ void test_string(void)
         TEST_ASSERT("memcpy single byte", b == 'A');
 
         char big_src[256], big_dst[256];
-        for (int i = 0; i < 256; i++)
+        for (int i = 0; i < 256; i++) {
             big_src[i] = (char)(i & 0xFF);
+        }
         memcpy(big_dst, big_src, 256);
         TEST_ASSERT("memcpy 256 bytes", memcmp(big_dst, big_src, 256) == 0);
 
@@ -271,7 +260,6 @@ void test_string(void)
         memcpy(od, os, 7);
         TEST_ASSERT("memcpy odd size", memcmp(od, os, 7) == 0);
     }
-    TEST_PASS("memcpy");
 
     // memcmp
     {
@@ -287,7 +275,6 @@ void test_string(void)
         TEST_ASSERT("memcmp single eq", memcmp(a, b, 1) == 0);
         TEST_ASSERT("memcmp single diff", memcmp("\x00", "\x01", 1) < 0);
     }
-    TEST_PASS("memcmp");
 
     // memmove
     {
@@ -313,7 +300,6 @@ void test_string(void)
         void *ret = memmove(rv_dst, rv_src, 4);
         TEST_ASSERT("memmove returns dst", ret == rv_dst);
     }
-    TEST_PASS("memmove");
 
     TEST_SUITE_END("String");
 }

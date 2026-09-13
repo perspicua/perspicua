@@ -1,10 +1,7 @@
 /*
  * kdb.h - Kernel Debugger (KDB) public API.
  *
- * KDB is a UART-based interactive debugger for inspecting kernel state:
- * CPU registers, system registers, the process table, physical memory,
- * and arbitrary memory. It is entered automatically on kernel panic and
- * can be invoked explicitly from kernel code during development.
+ * Entered automatically on kernel panic, or explicitly from kernel code.
  *
  * Commands available in the KDB prompt:
  *   help              List all commands
@@ -40,4 +37,4 @@ void kdb_enter(const char *reason);
  */
 void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf);
 
-#endif /* PERSPICUA_DEBUG_KDB_H */
+#endif // PERSPICUA_DEBUG_KDB_H

@@ -1,17 +1,19 @@
 /*
- * timer.c - Implementation of system time and interrupt control.
- *
- * This module handles the AArch64 generic physical timer and provides
- * delay primitives and low-level interrupt state management.
+ * timer.c - Driver for the ARM Generic Timer and system ticks.
  */
 
 #include "core/timer.h"
 
 #include "stdio.h"
 
-/*
- * read_cntfrq - Reads the system counter frequency register (CNTFRQ_EL0).
- */
+#include "arch/cpu.h"
+#include "arch/irq.h"
+#include "core/lock.h"
+#include "panic.h"
+#include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "driver/gic.h"
+
 static inline unsigned int read_cntfrq(void)
 {
     unsigned int val;
@@ -19,9 +21,6 @@ static inline unsigned int read_cntfrq(void)
     return val;
 }
 
-/*
- * read_cntpct - Reads the physical counter register (CNTPCT_EL0).
- */
 static inline unsigned long read_cntpct(void)
 {
     unsigned long val;
@@ -29,10 +28,7 @@ static inline unsigned long read_cntpct(void)
     return val;
 }
 
-/*
- * get_system_time - Converts raw counter ticks to milliseconds of uptime.
- */
-unsigned long get_system_time(void)
+unsigned long timer_get_system_time(void)
 {
     unsigned long freq = read_cntfrq();
     unsigned long count = read_cntpct();
@@ -44,10 +40,7 @@ unsigned long get_system_time(void)
     return count / (freq / 1000);
 }
 
-/*
- * sleep_ms - Blocks the current core for a specific duration.
- */
-void sleep_ms(unsigned long ms)
+void timer_sleep_ms(unsigned long ms)
 {
     unsigned long freq = read_cntfrq();
     if (freq == 0) {
@@ -64,72 +57,73 @@ void sleep_ms(unsigned long ms)
 }
 
 /*
- * enable_interrupts - Unmasks IRQs (DAIF bit 2).
+ * Offset of the "Core n timers interrupt control" registers within the QA7
+ * block, one 32-bit register per core.
  */
-void enable_interrupts(void)
+#define QA7_CORE_TIMER_IRQCNTL 0x40
+
+// Resolved once by the boot core; the secondaries only index into it.
+static volatile unsigned int *qa7_timer_irq_ctrl = NULL;
+
+static void qa7_timer_routing_init(void)
 {
-    asm volatile("msr daifclr, #2");
+    const uint32_t *node = fdt_find_node_by_compatible("brcm,bcm2836-l1-intc");
+    if (!node) {
+        PANIC("timer: no ARM-local interrupt controller in the devicetree");
+    }
+
+    struct device dev = {
+        .name = "arm-local-intc",
+        .fdt_node = node,
+        .priv = NULL,
+    };
+
+    uintptr_t vbase = devm_get_io_base(&dev, 0);
+    if (!vbase) {
+        PANIC("timer: ARM-local interrupt controller has no usable 'reg'");
+    }
+
+    qa7_timer_irq_ctrl = (volatile unsigned int *)(vbase + QA7_CORE_TIMER_IRQCNTL);
 }
 
-/*
- * disable_interrupts - Masks IRQs (DAIF bit 2).
- */
-void disable_interrupts(void)
+static irq_result_t timer_irq_handler(void *ctx)
 {
-    asm volatile("msr daifset, #2");
+    (void)ctx;
+    timer_interrupt_reset();
+
+    if (preempt_active()) {
+        return IRQ_HANDLED;
+    }
+    return IRQ_HANDLED_RESCHED;
 }
 
-/*
- * timer_interrupt_init - Configures the generic timer for 100Hz periodic ticks.
- */
 void timer_interrupt_init(void)
 {
-    unsigned long core_id;
-    asm volatile("mrs %0, mpidr_el1" : "=r"(core_id));
-    core_id &= 3;
+    int core = cpu_id();
 
-    /* Base address for RPi4 local interrupt routing (QA7) */
-    unsigned long base_addr = 0xFFFFFF80FF800040 + (core_id * 4);
-    volatile unsigned int *core_timer_irq_ctrl = (unsigned int *)base_addr;
+    if (core == 0) {
+        qa7_timer_routing_init();
+    }
 
-    /* Route physical timer interrupts to this core */
-    *core_timer_irq_ctrl = (1 << 1);
+    // Route physical timer interrupts to this core
+    qa7_timer_irq_ctrl[core] = (1 << 1);
 
     unsigned int freq = read_cntfrq();
 
-    /* Set TVAL to fire in 1/100th of a second (10ms) */
+    // Set TVAL to fire in 1/100th of a second (10ms)
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
-    if (core_id == 0) {
+    if (core == 0) {
+        if (request_irq(GIC_TIMER_IRQ, timer_irq_handler, NULL, "timer") != 0) {
+            PANIC("timer: the timer interrupt line is already claimed");
+        }
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }
 
-/*
- * timer_interrupt_reset - Reloads TVAL for the next periodic tick.
- */
 void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
-}
-
-/*
- * irq_save - Atomically reads and masks IRQs.
- */
-unsigned long irq_save(void)
-{
-    unsigned long flags;
-    asm volatile("mrs %0, daif" : "=r"(flags));
-    asm volatile("msr daifset, #2");
-    return flags;
-}
-
-/*
- * irq_restore - Restores DAIF to a previous state.
- */
-void irq_restore(unsigned long flags)
-{
-    asm volatile("msr daif, %0" : : "r"(flags));
 }

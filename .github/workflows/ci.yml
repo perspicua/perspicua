@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+  pull_request:
+    branches: [ "main", "dev" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:25.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: extractions/setup-just@v2
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git
+          pipx install clang-format==22.1.8
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check Format
+        run: just check-format
+
+      - name: Run Tests
+        run: just test

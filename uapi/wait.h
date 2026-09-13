@@ -14,4 +14,4 @@
 #define WIFSTOPPED(s) (((s) & PERS_STATUS_STOPPED) != 0)
 #define WSTOPSIG(s)   ((s) & 0xFF)
 
-#endif /* PERSPICUA_UAPI_WAIT_H */
+#endif // PERSPICUA_UAPI_WAIT_H

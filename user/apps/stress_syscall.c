@@ -10,7 +10,6 @@ int main(int argc, char *argv[])
 
     printf("[ STRESS ] Starting System Call Fuzzer...\n");
 
-    /* 1. Invalid File Descriptors */
     printf("[ STRESS ] Testing invalid file descriptors...\n");
     char buf[16];
     sys_read(-1, buf, sizeof(buf));
@@ -26,7 +25,6 @@ int main(int argc, char *argv[])
     sys_getdents(-1, buf, sizeof(buf));
     sys_getdents(9999, buf, sizeof(buf));
 
-    /* 2. Invalid Pointers */
     printf("[ STRESS ] Testing null/invalid pointers...\n");
     sys_read(0, NULL, 10);
     sys_pread(0, NULL, 10, 0);
@@ -40,24 +38,21 @@ int main(int argc, char *argv[])
     sys_getcwd(NULL, 100);
     sys_stat(NULL, NULL);
 
-    /* 3. Invalid exec arguments */
     printf("[ STRESS ] Testing invalid exec arguments...\n");
     sys_exec(NULL, NULL, NULL);
     char *bad_argv[] = {(char *)0xdeadbeef, NULL};
     sys_exec("/bin/ls", bad_argv, NULL);
 
-    /* 4. Invalid PIDs and Wait options */
     printf("[ STRESS ] Testing invalid PIDs...\n");
     int status;
     sys_waitpid(-999, &status, 0);
     sys_waitpid(999999, NULL, 0);
 
-    /* 5. Invalid memory operations */
+    // 5. Invalid memory operations
     printf("[ STRESS ] Testing invalid mmap arguments...\n");
     sys_mmap(NULL, 0, 0, 0, -1, 0);
     sys_mmap((void *)0x1000, 0xffffffff, 0, 0, -1, 0);
 
-    /* 6. Invalid signals */
     printf("[ STRESS ] Testing invalid signals...\n");
     sys_signal(-1, NULL);
     sys_signal(999, NULL);
@@ -67,13 +62,12 @@ int main(int argc, char *argv[])
     sys_sigaction(-1, NULL, NULL);
     sys_sigprocmask(-1, NULL, NULL);
 
-    /* 7. New syscalls fuzzing */
+    // 7. New syscalls fuzzing
     printf("[ STRESS ] Testing extreme offsets and getppid...\n");
     sys_pread(0, buf, 10, -1);
     sys_pwrite(1, "test", 4, -1);
     sys_getppid();
 
-    /* 8. Invalid Sleep/Yield */
     printf("[ STRESS ] Testing boundary sleep/yield...\n");
     sys_sleep(0xffffffff); /* Extremely long sleep, should ideally not overflow or block forever
                               unexpectedly if checked */

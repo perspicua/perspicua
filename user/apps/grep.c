@@ -4,7 +4,7 @@
 
 static int opt_n, opt_i;
 
-/* Buffered line reader over a file descriptor, so lines may span read chunks. */
+// Buffered line reader over a file descriptor, so lines may span read chunks.
 typedef struct {
     int fd;
     char buf[4096];
@@ -16,13 +16,14 @@ static int reader_getc(Reader *r)
     if (r->pos >= r->len) {
         r->len = sys_read(r->fd, r->buf, sizeof(r->buf));
         r->pos = 0;
-        if (r->len <= 0)
+        if (r->len <= 0) {
             return -1;
+        }
     }
     return (unsigned char)r->buf[r->pos++];
 }
 
-/* Reads one line (without the newline) into out. Returns 0 at end of input. */
+// Reads one line (without the newline) into out. Returns 0 at end of input.
 static int read_line(Reader *r, char *out, int max)
 {
     int i = 0, c;
@@ -31,8 +32,9 @@ static int read_line(Reader *r, char *out, int max)
             out[i] = '\0';
             return 1;
         }
-        if (i < max - 1)
+        if (i < max - 1) {
             out[i++] = (char)c;
+        }
     }
     out[i] = '\0';
     return i > 0;
@@ -41,8 +43,9 @@ static int read_line(Reader *r, char *out, int max)
 static void to_lower(char *s)
 {
     for (; *s; s++) {
-        if (*s >= 'A' && *s <= 'Z')
+        if (*s >= 'A' && *s <= 'Z') {
             *s += 32;
+        }
     }
 }
 
@@ -70,10 +73,12 @@ static int grep_fd(int fd, const char *pattern, const char *fname)
         lineno++;
         if (line_matches(line, pattern)) {
             any = 1;
-            if (fname)
+            if (fname) {
                 printf("%s:", fname);
-            if (opt_n)
+            }
+            if (opt_n) {
                 printf("%d:", lineno);
+            }
             printf("%s\n", line);
         }
     }
@@ -85,10 +90,11 @@ int main(int argc, char **argv)
     int start = 1;
     for (; start < argc && argv[start][0] == '-' && argv[start][1] != '\0'; start++) {
         for (int j = 1; argv[start][j]; j++) {
-            if (argv[start][j] == 'n')
+            if (argv[start][j] == 'n') {
                 opt_n = 1;
-            else if (argv[start][j] == 'i')
+            } else if (argv[start][j] == 'i') {
                 opt_i = 1;
+            }
         }
     }
 

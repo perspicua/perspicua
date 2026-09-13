@@ -5,12 +5,11 @@
 #include "signals.h"
 #include "errno.h"
 
-/* Signal number -> short name, indexed by signal number (0 unused). */
+// Signal number -> short name, indexed by signal number (0 unused).
 static const char *const signames[] = {
-    "0",    "HUP",  "INT",  "QUIT",   "ILL",  "TRAP", "ABRT", "BUS",
-    "FPE",  "KILL", "USR1", "SEGV",   "USR2", "PIPE", "ALRM", "TERM",
-    "STKFLT", "CHLD", "CONT", "STOP",  "TSTP", "TTIN", "TTOU", "URG",
-    "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO",
+    "0",    "HUP",  "INT",  "QUIT", "ILL",  "TRAP", "ABRT",   "BUS",  "FPE",   "KILL",
+    "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT",  "STOP",
+    "TSTP", "TTIN", "TTOU", "URG",  "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO",
 };
 #define NSIG ((int)(sizeof(signames) / sizeof(signames[0])))
 
@@ -18,11 +17,13 @@ static void list_signals(void)
 {
     for (int i = 1; i < NSIG; i++) {
         printf("%2d) SIG%-8s", i, signames[i]);
-        if (i % 4 == 0)
+        if (i % 4 == 0) {
             printf("\n");
+        }
     }
-    if ((NSIG - 1) % 4 != 0)
+    if ((NSIG - 1) % 4 != 0) {
         printf("\n");
+    }
 }
 
 int main(int argc, char **argv)
@@ -35,7 +36,7 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    /* Optional leading -SIGNUM selects the signal (e.g. kill -9 3). */
+    // Optional leading -SIGNUM selects the signal (e.g. kill -9 3).
     if (argc > 1 && argv[1][0] == '-' && argv[1][1] != '\0') {
         sig = atoi(argv[1] + 1);
         start = 2;

@@ -1,5 +1,5 @@
-#ifndef _FONT8X8_H_
-#define _FONT8X8_H_
+#ifndef PERSPICUA_DRIVER_FONT8X8_H
+#define PERSPICUA_DRIVER_FONT8X8_H
 
 static const unsigned char font8x8_basic[128][8] = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // U+0000 (nul)
@@ -132,4 +132,4 @@ static const unsigned char font8x8_basic[128][8] = {
     {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}  // U+007F
 };
 
-#endif // _FONT8X8_H_
+#endif // PERSPICUA_DRIVER_FONT8X8_H

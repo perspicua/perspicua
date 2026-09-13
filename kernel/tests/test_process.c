@@ -25,14 +25,14 @@
 
 #define MMAP_FILE "/tmmap.tmp"
 
-/* Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack. */
+// Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack.
 static struct exception_trap_frame mmap_tf;
 
 static int64_t call_mmap(size_t length, int flags, int fd)
 {
     memset(&mmap_tf, 0, sizeof(mmap_tf));
     mmap_tf.x[8] = SYS_MMAP;
-    mmap_tf.x[0] = 0; /* addr hint, unused */
+    mmap_tf.x[0] = 0; // addr hint, unused
     mmap_tf.x[1] = length;
     mmap_tf.x[2] = PROT_READ | PROT_WRITE;
     mmap_tf.x[3] = (uint64_t)flags;
@@ -98,7 +98,6 @@ void test_process(void)
         TEST_ASSERT("reclaimed slot was cleared", recl_cleared);
         TEST_ASSERT("reclaimed slot has no stale task", recl_no_task);
     }
-    TEST_PASS("a slot is free exactly when it is null");
 
     // two claims must never hand out the same slot
     {
@@ -112,7 +111,6 @@ void test_process(void)
         TEST_ASSERT("second claim succeeds", b > 0);
         TEST_ASSERT("claims are distinct", a != b);
     }
-    TEST_PASS("claims are exclusive");
 
     /*
      * process_exit clears user_pgd while its task is still runnable, so the
@@ -152,13 +150,12 @@ void test_process(void)
         TEST_ASSERT_EQ("zombie falls back to kernel ttbr0", zombie, mmu_kernel_ttbr0());
         TEST_ASSERT_EQ("dead falls back to kernel ttbr0", dead, mmu_kernel_ttbr0());
     }
-    TEST_PASS("ttbr0 never built from a null pgd");
 
     /*
      * mmap must never hand back a region with nothing behind it. Only the
      * framebuffer implements the vnode mmap operation, so a mapping of an
-     * ordinary file used to succeed and return an address that faulted on
-     * first touch.
+     * ordinary file has no pages to supply and must be refused rather than
+     * returning an address that faults on first touch.
      *
      * Driving this needs an address space, and the test task is pid 0, which
      * has none: lend it one for the duration and take it back before asserting.
@@ -201,7 +198,6 @@ void test_process(void)
                     no_backing == (int64_t)(uintptr_t)MAP_FAILED);
         TEST_ASSERT("anonymous mapping succeeds", anon != (int64_t)(uintptr_t)MAP_FAILED);
     }
-    TEST_PASS("mmap always has backing");
 
     /*
      * Address space released by one mapping must be available to the next. A
@@ -245,7 +241,6 @@ void test_process(void)
                        (long)process_va_alloc(&va, USER_VA_LIMIT / PAGE_SIZE), 0);
         TEST_ASSERT_EQ("zero pages is refused", (long)process_va_alloc(&va, 0), 0);
     }
-    TEST_PASS("released address space is reusable");
 
     TEST_SUITE_END("Process");
 }

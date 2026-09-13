@@ -1,9 +1,8 @@
 /*
  * kdb.c - UART-based Kernel Debugger (KDB).
  *
- * Provides an interactive console to inspect kernel state after a panic
- * or when triggered explicitly. All I/O goes directly to the PL011 UART
- * so the debugger works even when the TTY subsystem is broken.
+ * All I/O goes directly to the PL011 UART so the debugger works even when the
+ * TTY subsystem is broken.
  *
  * Entry points:
  *   kdb_enter(reason)       -- from arbitrary kernel code
@@ -14,10 +13,13 @@
 
 #include "debug/kdb.h"
 
+#include <stdarg.h>
+
 #include "stdio.h"
 #include "string.h"
 
 #include "arch/exception.h"
+#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/lock.h"
 #include "driver/uart.h"
@@ -31,24 +33,41 @@
 #define KDB_BT_FRAMES 24
 #define KDB_RD_MAX    256
 
-/* Trap frame saved on entry (NULL when entered without an exception frame). */
+// Trap frame saved on entry (NULL when entered without an exception frame).
 static struct exception_trap_frame *kdb_tf;
 
-/* ------------------------------------------------------------------ */
-/* Low-level I/O – bypass the TTY layer so KDB works in broken states  */
-/* ------------------------------------------------------------------ */
+// Low-level I/O – bypass the TTY layer so KDB works in broken states
 
 static void kdb_putc(char c)
 {
-    if (c == '\n')
+    if (c == '\n') {
         uart_send('\r');
+    }
     uart_send(c);
 }
 
 static void kdb_puts(const char *s)
 {
-    while (*s)
+    while (*s) {
         kdb_putc(*s++);
+    }
+}
+
+/*
+ * kdb_printf - Formatted output for the debugger.
+ *
+ * Not printk: these lines are a register dump or a backtrace, not log records,
+ * and a timestamp on every one of them only gets in the way. Not printf
+ * either, which takes printf_lock -- kdb runs with the other cores halted, and
+ * one of them holding that lock would wedge the debugger just when it is
+ * needed. vprintf does the formatting without either.
+ */
+__attribute__((format(printf, 1, 2))) static void kdb_printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
 }
 
 /*
@@ -70,16 +89,17 @@ static int kdb_readline(char *buf, int maxlen)
             return pos;
         }
 
-        /* Backspace (^H) or DEL */
+        // Backspace (^H) or DEL
         if ((c == '\b' || c == 0x7f) && pos > 0) {
             pos--;
             kdb_puts("\b \b");
             continue;
         }
 
-        /* Ignore control characters and overflow */
-        if (c < 0x20 || pos >= maxlen - 1)
+        // Ignore control characters and overflow
+        if (c < 0x20 || pos >= maxlen - 1) {
             continue;
+        }
 
         buf[pos++] = c;
         kdb_putc(c);
@@ -96,47 +116,48 @@ static int kdb_tokenize(char *buf, char **argv, int maxargs)
     char *p = buf;
 
     while (*p && argc < maxargs) {
-        while (*p == ' ')
+        while (*p == ' ') {
             p++;
-        if (!*p)
+        }
+        if (!*p) {
             break;
+        }
         argv[argc++] = p;
-        while (*p && *p != ' ')
+        while (*p && *p != ' ') {
             p++;
-        if (*p)
+        }
+        if (*p) {
             *p++ = '\0';
+        }
     }
     return argc;
 }
 
-/*
- * kdb_parse_hex - Parse a hex string (optional "0x" prefix).
- */
 static unsigned long kdb_parse_hex(const char *s)
 {
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
         s += 2;
+    }
 
     unsigned long val = 0;
     while (*s) {
         char c = *s++;
         unsigned long nibble;
-        if (c >= '0' && c <= '9')
+        if (c >= '0' && c <= '9') {
             nibble = (unsigned long)(c - '0');
-        else if (c >= 'a' && c <= 'f')
+        } else if (c >= 'a' && c <= 'f') {
             nibble = (unsigned long)(c - 'a') + 10;
-        else if (c >= 'A' && c <= 'F')
+        } else if (c >= 'A' && c <= 'F') {
             nibble = (unsigned long)(c - 'A') + 10;
-        else
+        } else {
             break;
+        }
         val = (val << 4) | nibble;
     }
     return val;
 }
 
-/* ------------------------------------------------------------------ */
-/* Command implementations                                              */
-/* ------------------------------------------------------------------ */
+// Command implementations
 
 static void cmd_help(void)
 {
@@ -162,14 +183,14 @@ static void cmd_regs(void)
 
         kdb_puts("\n  --- General Registers (from exception frame) ---\n");
         for (int i = 0; i < 28; i += 2) {
-            printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
+            kdb_printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
         }
-        printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
+        kdb_printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
 
         kdb_puts("\n  --- Exception Frame Registers ---\n");
-        printf("  ELR_EL1  : 0x%016lx  (PC at exception)\n", tf->elr_el1);
-        printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
-        printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
+        kdb_printf("  ELR_EL1  : 0x%016lx  (PC at exception)\n", tf->elr_el1);
+        kdb_printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
+        kdb_printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
     } else {
         unsigned long sp, lr, fp;
         asm volatile("mov %0, sp" : "=r"(sp));
@@ -177,9 +198,9 @@ static void cmd_regs(void)
         asm volatile("mov %0, x29" : "=r"(fp));
 
         kdb_puts("\n  --- Registers (live EL1 snapshot) ---\n");
-        printf("  SP  (x31): 0x%016lx\n", sp);
-        printf("  LR  (x30): 0x%016lx\n", lr);
-        printf("  FP  (x29): 0x%016lx\n", fp);
+        kdb_printf("  SP  (x31): 0x%016lx\n", sp);
+        kdb_printf("  LR  (x30): 0x%016lx\n", lr);
+        kdb_printf("  FP  (x29): 0x%016lx\n", fp);
         kdb_puts("  (x0-x28 not preserved in non-exception KDB entry)\n");
     }
 }
@@ -201,21 +222,20 @@ static void cmd_sysregs(void)
     asm volatile("mrs %0, tpidr_el1" : "=r"(tpidr));
 
     kdb_puts("\n  --- AArch64 System Registers ---\n");
-    printf("  ESR_EL1   : 0x%016lx  EC=0x%02lx ISS=0x%06lx\n", esr, (esr >> 26) & 0x3fUL,
-           esr & 0x1ffffffUL);
-    printf("  FAR_EL1   : 0x%016lx\n", far_reg);
-    printf("  SPSR_EL1  : 0x%016lx\n", spsr);
-    printf("  TTBR0_EL1 : 0x%016lx\n", ttbr0);
-    printf("  TTBR1_EL1 : 0x%016lx\n", ttbr1);
-    printf("  SCTLR_EL1 : 0x%016lx\n", sctlr);
-    printf("  MAIR_EL1  : 0x%016lx\n", mair);
-    printf("  TCR_EL1   : 0x%016lx\n", tcr);
-    printf("  MPIDR_EL1 : 0x%016lx  (core %lu)\n", mpidr, mpidr & 3UL);
-    printf("  MIDR_EL1  : 0x%016lx\n", midr);
-    printf("  TPIDR_EL1 : 0x%016lx  (current task)\n", tpidr);
+    kdb_printf("  ESR_EL1   : 0x%016lx  EC=0x%02lx ISS=0x%06lx\n", esr, (esr >> 26) & 0x3fUL,
+               esr & 0x1ffffffUL);
+    kdb_printf("  FAR_EL1   : 0x%016lx\n", far_reg);
+    kdb_printf("  SPSR_EL1  : 0x%016lx\n", spsr);
+    kdb_printf("  TTBR0_EL1 : 0x%016lx\n", ttbr0);
+    kdb_printf("  TTBR1_EL1 : 0x%016lx\n", ttbr1);
+    kdb_printf("  SCTLR_EL1 : 0x%016lx\n", sctlr);
+    kdb_printf("  MAIR_EL1  : 0x%016lx\n", mair);
+    kdb_printf("  TCR_EL1   : 0x%016lx\n", tcr);
+    kdb_printf("  MPIDR_EL1 : 0x%016lx  (core %lu)\n", mpidr, mpidr & 3UL);
+    kdb_printf("  MIDR_EL1  : 0x%016lx\n", midr);
+    kdb_printf("  TPIDR_EL1 : 0x%016lx  (current task)\n", tpidr);
 }
 
-/* Stringify task execution state. */
 static const char *task_state_str(enum sched_task_state s)
 {
     switch (s) {
@@ -234,7 +254,6 @@ static const char *task_state_str(enum sched_task_state s)
     }
 }
 
-/* Stringify process lifecycle state. */
 static const char *proc_state_str(process_state_t s)
 {
     switch (s) {
@@ -252,50 +271,52 @@ static const char *proc_state_str(process_state_t s)
 static void cmd_tasks(void)
 {
     kdb_puts("\n  --- Process Table ---\n");
-    printf("  %-5s %-8s %-5s %-18s %-18s  %s\n", "PID", "STATE", "PPID", "CODE_VA", "KSTACK_VA",
-           "NAME");
+    kdb_printf("  %-5s %-8s %-5s %-18s %-18s  %s\n", "PID", "STATE", "PPID", "CODE_VA", "KSTACK_VA",
+               "NAME");
 
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
     int shown = 0;
     for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
         struct process *p = process_table[i];
-        if (!p)
+        if (!p) {
             continue;
+        }
 
         shown++;
-        printf("  %-5u %-8s %-5u 0x%016lx 0x%016lx  %s\n", p->pid, proc_state_str(p->state),
-               p->parent_pid, (unsigned long)p->vaddr_code, (unsigned long)p->vaddr_kernel_stack,
-               p->name[0] ? p->name : "(unnamed)");
+        kdb_printf("  %-5u %-8s %-5u 0x%016lx 0x%016lx  %s\n", p->pid, proc_state_str(p->state),
+                   p->parent_pid, (unsigned long)p->vaddr_code,
+                   (unsigned long)p->vaddr_kernel_stack, p->name[0] ? p->name : "(unnamed)");
 
         if (p->main_task) {
             struct task *t = p->main_task;
-            printf("    -> task id=%-4lu state=%-7s on_core=%-2d stack=0x%016lx\n", t->id,
-                   task_state_str(t->state), t->on_core, (unsigned long)t->stack);
+            kdb_printf("    -> task id=%-4lu state=%-7s on_core=%-2d stack=0x%016lx\n", t->id,
+                       task_state_str(t->state), t->on_core, (unsigned long)t->stack);
         }
     }
 
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    if (!shown)
+    if (!shown) {
         kdb_puts("  (no user processes)\n");
+    }
 
-    /* Current kernel task */
-    struct task *cur = sched_get_current();
+    // Current kernel task
+    struct task *cur = sched_current_task();
     kdb_puts("\n  --- Current Kernel Task ---\n");
     if (cur) {
-        printf("  id=%-4lu pid=%-4u state=%-7s on_core=%-2d stack=0x%016lx\n", cur->id, cur->pid,
-               task_state_str(cur->state), cur->on_core, (unsigned long)cur->stack);
+        kdb_printf("  id=%-4lu pid=%-4u state=%-7s on_core=%-2d stack=0x%016lx\n", cur->id,
+                   cur->pid, task_state_str(cur->state), cur->on_core, (unsigned long)cur->stack);
     } else {
         kdb_puts("  (none)\n");
     }
 
-    /* Per-core scheduler statistics */
+    // Per-core scheduler statistics
     kdb_puts("\n  --- Scheduler Statistics ---\n");
-    for (int c = 0; c < SCHED_NUM_CORES; c++) {
-        printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
-               (unsigned long long)core_sched_stats[c].context_switches,
-               (unsigned long long)core_sched_stats[c].idle_count);
+    for (int c = 0; c < CPU_MAX_CORES; c++) {
+        kdb_printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
+                   (unsigned long long)core_sched_stats[c].context_switches,
+                   (unsigned long long)core_sched_stats[c].idle_count);
     }
 }
 
@@ -306,9 +327,9 @@ static void cmd_mem(void)
     unsigned long used_pages = total_pages - free_pages;
 
     kdb_puts("\n  --- Physical Memory ---\n");
-    printf("  Total  : %6lu pages  (%4lu MiB)\n", total_pages, (total_pages * 4UL) >> 10);
-    printf("  In use : %6lu pages  (%4lu MiB)\n", used_pages, (used_pages * 4UL) >> 10);
-    printf("  Free   : %6lu pages  (%4lu MiB)\n", free_pages, (free_pages * 4UL) >> 10);
+    kdb_printf("  Total  : %6lu pages  (%4lu MiB)\n", total_pages, (total_pages * 4UL) >> 10);
+    kdb_printf("  In use : %6lu pages  (%4lu MiB)\n", used_pages, (used_pages * 4UL) >> 10);
+    kdb_printf("  Free   : %6lu pages  (%4lu MiB)\n", free_pages, (free_pages * 4UL) >> 10);
 }
 
 /*
@@ -337,7 +358,7 @@ static void cmd_bt(void)
 
     for (int i = 0; i < KDB_BT_FRAMES; i++) {
         if (fp & 0x7UL) {
-            printf("  #%-2d [unaligned fp 0x%016lx]\n", i, fp);
+            kdb_printf("  #%-2d [unaligned fp 0x%016lx]\n", i, fp);
             break;
         }
 
@@ -349,13 +370,14 @@ static void cmd_bt(void)
         const char *sym = panic_resolve_symbol(ret_addr, &offset);
 
         if (sym) {
-            printf("  #%-2d 0x%016lx  <%s+0x%lx>\n", i, ret_addr, sym, offset);
+            kdb_printf("  #%-2d 0x%016lx  <%s+0x%lx>\n", i, ret_addr, sym, offset);
         } else {
-            printf("  #%-2d 0x%016lx\n", i, ret_addr);
+            kdb_printf("  #%-2d 0x%016lx\n", i, ret_addr);
         }
 
-        if (!prev_fp || prev_fp <= fp)
+        if (!prev_fp || prev_fp <= fp) {
             break;
+        }
         fp = prev_fp;
     }
 }
@@ -370,13 +392,14 @@ static void cmd_rd(int argc, char **argv)
     unsigned long addr = kdb_parse_hex(argv[1]);
     unsigned long count = (argc >= 3) ? kdb_parse_hex(argv[2]) : 8;
 
-    if (count > KDB_RD_MAX)
+    if (count > KDB_RD_MAX) {
         count = KDB_RD_MAX;
+    }
 
     kdb_puts("\n");
     for (unsigned long i = 0; i < count; i++) {
         volatile unsigned long *p = (volatile unsigned long *)(addr + i * 8);
-        printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, *p);
+        kdb_printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, *p);
     }
 }
 
@@ -393,12 +416,10 @@ static void cmd_wr(int argc, char **argv)
 
     *p = val;
     asm volatile("dsb sy" ::: "memory");
-    printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
+    kdb_printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
 }
 
-/* ------------------------------------------------------------------ */
-/* Main REPL                                                            */
-/* ------------------------------------------------------------------ */
+// Main REPL
 
 static void kdb_repl(void)
 {
@@ -409,12 +430,14 @@ static void kdb_repl(void)
         kdb_puts("kdb> ");
         kdb_readline(line, sizeof(line));
 
-        if (!line[0])
+        if (!line[0]) {
             continue;
+        }
 
         int argc = kdb_tokenize(line, argv, KDB_MAX_ARGS);
-        if (!argc)
+        if (!argc) {
             continue;
+        }
 
         if (!strcmp(argv[0], "help")) {
             cmd_help();
@@ -436,22 +459,20 @@ static void kdb_repl(void)
             kdb_puts("  Resuming...\n\n");
             return;
         } else {
-            printf("  Unknown command '%s' — type 'help'\n", argv[0]);
+            kdb_printf("  Unknown command '%s' — type 'help'\n", argv[0]);
         }
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Public entry points                                                  */
-/* ------------------------------------------------------------------ */
+// Public entry points
 
 void kdb_enter(const char *reason)
 {
     disable_interrupts();
     kdb_tf = NULL;
 
-    printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           get_core_id());
+    kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
+               timer_get_system_time(), cpu_id());
     cmd_help();
     kdb_repl();
 }
@@ -461,8 +482,8 @@ void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf)
     disable_interrupts();
     kdb_tf = tf;
 
-    printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           get_core_id());
+    kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
+               timer_get_system_time(), cpu_id());
     cmd_help();
     kdb_repl();
 }

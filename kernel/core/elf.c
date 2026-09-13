@@ -1,8 +1,5 @@
 /*
  * elf.c - Implementation of the ELF executable loader.
- *
- * This file handles parsing of the ELF header, program headers, and
- * loading segments into the user's virtual address space.
  */
 
 #include "core/elf.h"
@@ -23,7 +20,7 @@
 #define ELF_PROG_FLAG_W 0x2
 #define ELF_PROG_FLAG_R 0x4
 
-/* Upper bound on program headers we will load, to cap the header allocation. */
+// Upper bound on program headers we will load, to cap the header allocation.
 #define ELF_MAX_PHDRS 64
 
 /*
@@ -58,9 +55,6 @@ static int elf_check_header(struct elf64_header *hdr)
     return PERS_SUCCESS;
 }
 
-/*
- * elf_load - Parses and loads an ELF executable from the filesystem.
- */
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 {
     int fd = vfs_open(path, VFS_O_RDONLY);
@@ -175,7 +169,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 
             if (is_mapped) {
                 kernel_vaddr = (void *)P2V(current_paddr);
-                /* Upgrade permissions if we're loading data into an existing page */
+                // Upgrade permissions if we're loading data into an existing page
                 if ((mmu_flags & MMU_PAGE_USER_DATA) && !(current_flags & MMU_UXN)) {
                     pmm_hold_page((void *)P2V(current_paddr));
                     mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);

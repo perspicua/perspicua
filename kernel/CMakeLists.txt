@@ -21,6 +21,10 @@ file(GLOB_RECURSE KERNEL_ASMS CONFIGURE_DEPENDS
     "arch/*.S"
 )
 
+# The linker script needs CONFIG_NR_CPUS for the boot stacks, and -T does not
+# run it through the preprocessor.
+configure_file(kernel.ld.in ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld @ONLY)
+
 find_package(Python3 REQUIRED)
 
 # First pass: build kernel without symbol table
@@ -38,7 +42,7 @@ target_link_libraries(kernel8_pass1.elf PRIVATE libk)
 
 target_link_options(kernel8_pass1.elf PRIVATE
     -nostdlib
-    -T ${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld
+    -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
 )
 
 # Generate symbol table from pass 1
@@ -64,7 +68,7 @@ target_link_libraries(kernel8.elf PRIVATE libk)
 
 target_link_options(kernel8.elf PRIVATE
     -nostdlib
-    -T ${CMAKE_CURRENT_SOURCE_DIR}/kernel.ld
+    -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
 )
 
 # Post-build: Create binary image

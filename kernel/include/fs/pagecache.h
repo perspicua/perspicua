@@ -4,9 +4,6 @@
 #include "types.h"
 #include "fs/vfs.h"
 
-/*
- * pagecache_init - Initializes the unified page cache layer.
- */
 void pagecache_init(void);
 
 /*
@@ -17,24 +14,12 @@ void pagecache_init(void);
  */
 void *pagecache_get_page(struct vfs_vnode *node, size_t page_index);
 
-/*
- * pagecache_put_page - Releases a pin taken by pagecache_get_page/add_page.
- */
 void pagecache_put_page(struct vfs_vnode *node, size_t page_index);
 
-/*
- * pagecache_add_page - Registers a newly allocated and populated 4KB page in the cache.
- */
 int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data);
 
-/*
- * pagecache_mark_dirty - Marks a cached page as modified.
- */
 void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index);
 
-/*
- * pagecache_clear_dirty - Clears the dirty flag for a cached page after it has been written.
- */
 void pagecache_clear_dirty(struct vfs_vnode *node, size_t page_index);
 
 /*
@@ -58,4 +43,4 @@ int pagecache_sync(void);
  */
 void pagecache_invalidate(struct vfs_vnode *node);
 
-#endif /* PERSPICUA_FS_PAGECACHE_H */
+#endif // PERSPICUA_FS_PAGECACHE_H

@@ -1,8 +1,5 @@
 /*
  * printf.c - Implementation of the formatted output engine.
- *
- * Provides printf(), snprintf(), vprintf(), and vsnprintf() with a common
- * formatting core. All output is buffered locally to minimize UART overhead.
  */
 
 #include "stdio.h"
@@ -21,32 +18,54 @@ extern void __libc_write(const char *buf, size_t len);
 
 #define PRINTF_BUF_SIZE 256
 
-/* --- Internal Data Structures --- */
+// Internal Data Structures
 
-/* Output sink abstraction used by fmt_core. */
+// Output sink abstraction used by fmt_core.
 struct fmt_buf {
-    char *buf;   /* Destination buffer (NULL = use internal flush path) */
-    size_t size; /* Capacity including the NUL terminator */
-    size_t pos;  /* Bytes written so far (excluding NUL) */
-    int crlf;    /* 1 = translate \n to \r\n, 0 = pass through */
+    char *buf;    // Destination buffer (NULL = write each character out directly)
+    size_t size;  // Capacity including the NUL terminator
+    size_t pos;   // Bytes currently held in buf
+    size_t total; // Characters produced; this is what the printf family returns
+    int crlf;     // 1 = translate \n to \r\n, 0 = pass through
+    int sink;     // 1 = buf is a scratch sink: flush when full instead of truncating
 };
 
-/* --- Private Helper Functions --- */
+// Private Helper Functions
 
-/* Appends one character to a fmt_buf. */
-static inline void fb_putc(struct fmt_buf *fb, char c)
+// Writes out whatever a sink buffer currently holds and empties it.
+static inline void fb_flush(struct fmt_buf *fb)
 {
-    if (fb->buf) {
-        if (fb->pos < fb->size - 1) {
-            fb->buf[fb->pos] = c;
-        }
-        fb->pos++;
-    } else {
-        __libc_write(&c, 1);
+    if (fb->pos > 0) {
+        __libc_write(fb->buf, fb->pos);
+        fb->pos = 0;
     }
 }
 
-/* Renders an unsigned 64-bit integer into a temporary buffer. */
+// Appends one character to a fmt_buf.
+static inline void fb_putc(struct fmt_buf *fb, char c)
+{
+    fb->total++;
+
+    if (!fb->buf) {
+        __libc_write(&c, 1);
+        return;
+    }
+
+    if (fb->sink) {
+        if (fb->pos == fb->size) {
+            fb_flush(fb);
+        }
+        fb->buf[fb->pos++] = c;
+        return;
+    }
+
+    if (fb->pos < fb->size - 1) {
+        fb->buf[fb->pos] = c;
+    }
+    fb->pos++;
+}
+
+// Renders an unsigned 64-bit integer into a temporary buffer.
 static int fmt_uint(uint64_t val, int base, int uppercase, char *out)
 {
     if (val == 0) {
@@ -73,7 +92,7 @@ static int fmt_uint(uint64_t val, int base, int uppercase, char *out)
     return i;
 }
 
-/* Shared implementation called by all printf variants. */
+// Shared implementation called by all printf variants.
 static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
 {
     for (const char *p = fmt; *p != '\0'; p++) {
@@ -349,10 +368,10 @@ emit_number: {
         }
     }
 
-    return (int)fb->pos;
+    return (int)fb->total;
 }
 
-/* --- Public API Implementations --- */
+// Public API Implementations
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
@@ -390,12 +409,12 @@ int vprintf(const char *fmt, va_list args)
         .buf = stack_buf,
         .size = sizeof(stack_buf),
         .pos = 0,
+        .sink = 1,
 /*
  * The kernel writes straight to the UART and must inject CR itself. Userspace
- * output instead flows through the tty, which already translates \n to \r\n
- * (ONLCR); translating again here double-printed CR to the terminal and, worse,
- * wrote \r\n into redirected files and pipes — inflating byte counts and
- * leaving stray \r for tools like grep. So userspace emits plain \n.
+ * output flows through the tty, which already translates \n to \r\n (ONLCR), so
+ * it emits plain \n: translating here too would double the CR at the terminal
+ * and write \r\n into redirected files and pipes.
  */
 #ifdef __KERNEL__
         .crlf = 1,
@@ -405,15 +424,9 @@ int vprintf(const char *fmt, va_list args)
     };
 
     fmt_core(&fb, fmt, args);
+    fb_flush(&fb);
 
-    size_t write_len = fb.pos < sizeof(stack_buf) ? fb.pos : sizeof(stack_buf) - 1;
-    stack_buf[write_len] = '\0';
-
-    if (write_len > 0) {
-        __libc_write(stack_buf, write_len);
-    }
-
-    return (int)fb.pos;
+    return (int)fb.total;
 }
 
 int printf(const char *fmt, ...)
@@ -439,26 +452,36 @@ int printk(const char *fmt, ...)
 {
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
 
-    unsigned long ms = get_system_time();
+    unsigned long ms = timer_get_system_time();
     unsigned long sec = ms / 1000;
     unsigned long rem_ms = ms % 1000;
 
+    char stack_buf[PRINTF_BUF_SIZE];
+    struct fmt_buf fb = {
+        .buf = stack_buf,
+        .size = sizeof(stack_buf),
+        .pos = 0,
+        .sink = 1,
+        .crlf = 1,
+    };
+
+    // Shares the body's sink so the line reaches the UART as a single write.
     char ts_buf[32];
     snprintf(ts_buf, sizeof(ts_buf), "[%5lu.%06lu] ", sec, rem_ms * 1000);
-
-    size_t ts_len = 0;
-    while (ts_buf[ts_len]) {
-        ts_len++;
+    for (const char *t = ts_buf; *t; t++) {
+        fb_putc(&fb, *t);
     }
-    __libc_write(ts_buf, ts_len);
+    size_t ts_len = fb.total;
 
     va_list args;
     va_start(args, fmt);
-    int ret = vprintf(fmt, args);
+    fmt_core(&fb, fmt, args);
     va_end(args);
+
+    fb_flush(&fb);
 
     spin_unlock_irqrestore(&printf_lock, irqflags);
 
-    return ret;
+    return (int)(fb.total - ts_len);
 }
 #endif

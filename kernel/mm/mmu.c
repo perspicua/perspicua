@@ -1,8 +1,5 @@
 /*
  * mmu.c - AArch64 Memory Management Unit driver.
- *
- * Implements page table management for a 39-bit virtual address space
- * using 4 KB granules and a 3-level table structure.
  */
 
 #include "mm/mmu.h"
@@ -50,9 +47,6 @@ static unsigned long empty_pgd_phys;
 
 static spinlock_t mmu_lock = SPINLOCK_INIT;
 
-/*
- * tlbi_va_is - Invalidates TLB for a single page across all cores.
- */
 static inline void tlbi_va_is(unsigned long vaddr)
 {
     unsigned long va_op = (vaddr >> 12) & 0x00000FFFFFFFFFFFULL;
@@ -62,9 +56,6 @@ static inline void tlbi_va_is(unsigned long vaddr)
     asm volatile("isb" : : : "memory");
 }
 
-/*
- * tlbi_all_is - Invalidates the entire TLB for EL1/EL0.
- */
 static inline void tlbi_all_is(void)
 {
     asm volatile("dsb ishst" : : : "memory");
@@ -138,7 +129,7 @@ void mmu_init(void)
     pgd[2] = V2P((uintptr_t)pmd_2) | PTE_VALID | PTE_TABLE;
     pgd[3] = V2P((uintptr_t)pmd_3) | PTE_VALID | PTE_TABLE;
 
-    /* Identity map first GB with 4 KB pages for fine-grained kernel control */
+    // Identity map first GB with 4 KB pages for fine-grained kernel control
     for (unsigned long i = 0; i < PT_ENTRIES; i++) {
         unsigned long *l3 = alloc_table_page();
         pmd_0[i] = V2P((uintptr_t)l3) | PTE_VALID | PTE_TABLE;
@@ -150,14 +141,14 @@ void mmu_init(void)
         }
     }
 
-    /* Map remaining 3 GB of the 4 GB address space. Mark Peripheral range as Device */
+    // Map remaining 3 GB of the 4 GB address space. Mark Peripheral range as Device
     unsigned long *pmd_others[3] = {pmd_1, pmd_2, pmd_3};
     for (unsigned long p = 0; p < 3; p++) {
         for (unsigned long i = 0; i < PT_ENTRIES; i++) {
             unsigned long pa = ((p + 1) * (1024UL * 1024 * 1024)) + (i * (2UL * 1024 * 1024));
             unsigned long attr;
 
-            /* The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF */
+            // The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF
             if (pa >= 0xFC000000 && pa < 0x100000000ULL) {
                 attr = PTE_ATTR_D;
             } else {
@@ -172,7 +163,7 @@ void mmu_init(void)
     kernel_pgd_virt = pgd;
     kernel_pgd_phys = V2P((uintptr_t)pgd);
 
-    /* Enforce strict segment permissions */
+    // Enforce strict segment permissions
     unsigned long ks = (unsigned long)__text_start;
     unsigned long ke = (unsigned long)pmm_metadata_end;
 
@@ -654,7 +645,7 @@ int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end
             break;
         }
 
-        /* A 2 MB block is one permission for the whole span. */
+        // A 2 MB block is one permission for the whole span.
         if (!(l2e & PTE_TABLE)) {
             if (!pte_user_ok(l2e, writable)) {
                 ok = 0;
@@ -796,7 +787,7 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
     unsigned long old_pa = *pte & PTE_ADDR;
     void *old_va = (void *)P2V(old_pa);
 
-    /* Sole owner: promote in place, no allocation and no copy. */
+    // Sole owner: promote in place, no allocation and no copy.
     if (!pmm_is_managed(old_va) || pmm_page_refcount(old_va) <= 1) {
         *pte = (*pte & ~MMU_PTE_COW & ~MMU_AP_RO) | MMU_AP_RW;
         tlbi_va_is(vaddr);
@@ -804,7 +795,7 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
         return 0;
     }
 
-    pmm_hold_page(old_va); /* keep the source alive while the lock is dropped */
+    pmm_hold_page(old_va); // keep the source alive while the lock is dropped
     spin_unlock_irqrestore(&mmu_lock, irq);
 
     void *new_page = pmm_alloc_page();
@@ -817,7 +808,7 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
     irq = spin_lock_irqsave(&mmu_lock);
     pte = user_leaf_pte(pgd, vaddr);
     if (!pte || !(*pte & PTE_VALID) || !(*pte & MMU_PTE_COW) || (*pte & PTE_ADDR) != old_pa) {
-        /* Resolved or remapped while we copied; let the faulting access retry. */
+        // Resolved or remapped while we copied; let the faulting access retry.
         spin_unlock_irqrestore(&mmu_lock, irq);
         pmm_free_page(new_page);
         pmm_free_page(old_va);
@@ -829,8 +820,8 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
     tlbi_va_is(vaddr);
     spin_unlock_irqrestore(&mmu_lock, irq);
 
-    pmm_free_page(old_va); /* our reference */
-    pmm_free_page(old_va); /* the mapping's, now replaced */
+    pmm_free_page(old_va); // our reference
+    pmm_free_page(old_va); // the mapping's, now replaced
     return 0;
 }
 

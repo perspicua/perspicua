@@ -21,13 +21,3 @@ foreach(APP_SRC ${APP_SRCS})
 endforeach()
 
 set(USER_ELFS ${USER_ELFS} PARENT_SCOPE)
-
-# Create initrd.cpio
-add_custom_target(initrd
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/root/bin"
-    COMMAND ${CMAKE_COMMAND} -E copy ${USER_ELFS} "${CMAKE_BINARY_DIR}/root/bin/"
-    COMMAND sh -c "cd '${CMAKE_BINARY_DIR}/root' && find . -maxdepth 2 -not -path '.' | sed 's|^\\./||' | ${CPIO} -o -H newc > ../initrd.cpio 2>/dev/null"
-    DEPENDS ${USER_ELFS}
-    VERBATIM
-    COMMENT "Building initrd.cpio"
-)

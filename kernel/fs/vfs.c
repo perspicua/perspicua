@@ -1,9 +1,6 @@
 /*
  * vfs.c - Implementation of the Virtual Filesystem (VFS) layer.
  *
- * This module provides the infrastructure for mounting multiple filesystems
- * into a single unified hierarchy and dispatching calls to drivers.
- *
  * Lock Ordering:
  *   vfs_lock -> process_table_lock -> process.fd_lock
  *
@@ -70,110 +67,6 @@ static struct vfs_mount_entry *find_mount(const char *path, int *error)
     return &vfs_mount_table[longest_match_index];
 }
 
-/*
- * vfs_resolve_path_locked - Core traversal logic (internal, assumes lock held).
- */
-static struct vfs_vnode *vfs_resolve_path_locked(const char *path, struct vfs_vnode *cwd,
-                                                 int *error)
-{
-    struct vfs_vnode *curr = NULL;
-    char filepath[VFS_MAX_PATH_LEN];
-    const char *path_remainder = path;
-
-    if (path[0] == '/') {
-        struct vfs_mount_entry *best_match = find_mount(path, error);
-        if (!best_match) {
-            return NULL;
-        }
-
-        curr = best_match->root;
-        atomic_inc(&curr->refcount);
-        size_t len = strlen(best_match->path);
-
-        if (strcmp(path, best_match->path) == 0) {
-            *error = PERS_SUCCESS;
-            return curr;
-        }
-
-        path_remainder = path + len;
-        if (*path_remainder == '/') {
-            path_remainder++;
-        }
-    } else {
-        if (!cwd) {
-            struct vfs_mount_entry *root_match = find_mount("/", error);
-            if (!root_match) {
-                return NULL;
-            }
-            curr = root_match->root;
-        } else {
-            curr = cwd;
-        }
-        atomic_inc(&curr->refcount);
-    }
-
-    if (*path_remainder == '\0') {
-        *error = PERS_SUCCESS;
-        return curr;
-    }
-
-    strncpy(filepath, path_remainder, VFS_MAX_PATH_LEN - 1);
-    filepath[VFS_MAX_PATH_LEN - 1] = '\0';
-
-    char *saveptr = NULL;
-    char *token = strtok_r(filepath, "/", &saveptr);
-
-    while (token) {
-        struct vfs_vnode *next = NULL;
-        if (strcmp(token, ".") == 0) {
-            next = curr;
-            atomic_inc(&next->refcount);
-        } else if (strcmp(token, "..") == 0) {
-            next = curr->parent ? curr->parent : curr;
-            atomic_inc(&next->refcount);
-        } else {
-            struct vfs_vnode *mount_node = NULL;
-            for (size_t i = 1; i < (size_t)vfs_mount_count; i++) {
-                if (vfs_mount_table[i].root && vfs_mount_table[i].root->parent == curr
-                    && strcmp(vfs_mount_table[i].root->name, token) == 0) {
-                    mount_node = vfs_mount_table[i].root;
-                    break;
-                }
-            }
-
-            if (mount_node) {
-                next = mount_node;
-                atomic_inc(&next->refcount);
-            } else {
-                if (!curr->ops || !curr->ops->lookup) {
-                    vfs_vnode_put(curr);
-                    *error = -PERS_ERR_NOT_A_DIRECTORY;
-                    return NULL;
-                }
-
-                next = curr->ops->lookup(curr, token);
-                if (!next) {
-                    vfs_vnode_put(curr);
-                    *error = -PERS_ERR_NOT_FOUND;
-                    return NULL;
-                }
-                strncpy(next->name, token, sizeof(next->name) - 1);
-                next->name[sizeof(next->name) - 1] = '\0';
-            }
-        }
-
-        vfs_vnode_put(curr);
-        curr = next;
-        token = strtok_r(NULL, "/", &saveptr);
-    }
-
-    *error = PERS_SUCCESS;
-    return curr;
-}
-
-/*
- * vfs_vnode_stat - Helper to fill metadata from a generic vnode.
- */
 static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
 {
     if (!node || !buf) {
@@ -202,9 +95,6 @@ static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
     return PERS_SUCCESS;
 }
 
-/*
- * vfs_init - Initializes internal mount infrastructure.
- */
 void vfs_init(void)
 {
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
@@ -241,6 +131,95 @@ struct vfs_file *vfs_test_file_at(int fd)
 #endif
 
 /*
+ * vfs_split_parent - Splits a path into its directory and final component.
+ *
+ * Rewrites kpath in place -- the separator becomes a terminator -- so *parent
+ * and *name point into it. A path with no slash yields parent ".", which the
+ * caller resolves against its own cwd.
+ */
+static void vfs_split_parent(char *kpath, const char **parent, const char **name)
+{
+    char *slash = strrchr(kpath, '/');
+
+    if (!slash) {
+        *parent = ".";
+        *name = kpath;
+    } else if (slash == kpath) {
+        *parent = "/";
+        *name = slash + 1;
+    } else {
+        *slash = '\0';
+        *parent = kpath;
+        *name = slash + 1;
+    }
+}
+
+/*
+ * vfs_resolve_parent - Resolves the directory holding a path's last component.
+ *
+ * Rewrites kpath in place (see vfs_split_parent) and returns that directory
+ * with a reference taken, with *name pointing at the final component inside
+ * kpath. Release the directory with vfs_vnode_put().
+ */
+static struct vfs_vnode *vfs_resolve_parent(char *kpath, const char **name, int *error)
+{
+    const char *parent_path;
+    vfs_split_parent(kpath, &parent_path, name);
+
+    struct process *p = process_current();
+    if (!p) {
+        *error = -PERS_ERR_NO_SUCH_PROCESS;
+        return NULL;
+    }
+
+    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, error);
+    if (!parent) {
+        return NULL;
+    }
+
+    if (parent->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(parent);
+        *error = -PERS_ERR_NOT_A_DIRECTORY;
+        return NULL;
+    }
+
+    return parent;
+}
+
+/*
+ * vfs_file_get - The open file behind a descriptor, with a reference taken.
+ *
+ * The reference keeps the file, and the vnode it holds, alive for the whole
+ * operation even if the descriptor is closed meanwhile. Release it with
+ * vfs_file_put(). Returns NULL and sets *error on a bad descriptor.
+ */
+static struct vfs_file *vfs_file_get(int fd, int *error)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS) {
+        *error = -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return NULL;
+    }
+
+    struct process *p = process_current();
+    if (!p) {
+        *error = -PERS_ERR_NO_SUCH_PROCESS;
+        return NULL;
+    }
+
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
+    struct vfs_file *f = p->fd_table[fd];
+    if (f) {
+        atomic_inc(&f->refcount);
+    }
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
+    if (!f) {
+        *error = -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    }
+    return f;
+}
+
+/*
  * vfs_file_alloc - Allocates an open-file object holding one reference.
  */
 struct vfs_file *vfs_file_alloc(void)
@@ -251,7 +230,7 @@ struct vfs_file *vfs_file_alloc(void)
     }
 
     memset(f, 0, sizeof(*f));
-    f->refcount.counter = 1;
+    atomic_set(&f->refcount, 1);
 
 #ifdef CONFIG_TESTS
     atomic_inc(&vfs_live_files);
@@ -259,13 +238,6 @@ struct vfs_file *vfs_file_alloc(void)
     return f;
 }
 
-/*
- * vfs_file_put - Drops a reference, releasing the file with the last one.
- *
- * Every release goes through here. The I/O paths take a reference for the
- * duration of the call, so whichever of them and close() finishes last is the
- * one that must run the driver's close and free the object.
- */
 void vfs_file_put(struct vfs_file *f)
 {
     if (!f) {
@@ -289,9 +261,6 @@ void vfs_file_put(struct vfs_file *f)
     slab_free(f);
 }
 
-/*
- * vfs_vnode_put - Reference counting entry point for vnodes.
- */
 void vfs_vnode_put(struct vfs_vnode *node)
 {
     if (!node) {
@@ -308,9 +277,6 @@ void vfs_vnode_put(struct vfs_vnode *node)
     }
 }
 
-/*
- * vfs_mount - Registers a new filesystem root at a specific path.
- */
 int vfs_mount(const char *path, struct vfs_vnode *root)
 {
     if (!path || path[0] != '/' || !root) {
@@ -320,19 +286,13 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
         return -PERS_ERR_NAME_TOO_LONG;
     }
 
-    unsigned long flags = spin_lock_irqsave(&vfs_lock);
-
-    if (vfs_mount_count >= VFS_MAX_MOUNTS) {
-        spin_unlock_irqrestore(&vfs_lock, flags);
-        return -PERS_ERR_OUT_OF_RESOURCES;
-    }
-
-    for (int i = 0; i < vfs_mount_count; i++) {
-        if (strcmp(path, vfs_mount_table[i].path) == 0) {
-            spin_unlock_irqrestore(&vfs_lock, flags);
-            return -PERS_ERR_ALREADY_EXISTS;
-        }
-    }
+    /*
+     * Resolve the mount point's parent before taking vfs_lock: the resolver
+     * takes that lock itself, and calls into filesystem lookups that must not
+     * run under it. The reference it returns is handed to root->parent, or
+     * released if the mount is refused below.
+     */
+    struct vfs_vnode *parent = NULL;
 
     if (strcmp(path, "/") != 0) {
         char parent_path[VFS_MAX_PATH_LEN];
@@ -353,13 +313,30 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
         }
 
         int err;
-        struct vfs_vnode *parent = vfs_resolve_path_locked(parent_path, NULL, &err);
-        if (parent) {
-            root->parent = parent;
-        }
+        parent = vfs_resolve_path(parent_path, NULL, &err);
     } else {
         root->parent = NULL;
         root->name[0] = '\0';
+    }
+
+    unsigned long flags = spin_lock_irqsave(&vfs_lock);
+
+    if (vfs_mount_count >= VFS_MAX_MOUNTS) {
+        spin_unlock_irqrestore(&vfs_lock, flags);
+        vfs_vnode_put(parent);
+        return -PERS_ERR_OUT_OF_RESOURCES;
+    }
+
+    for (int i = 0; i < vfs_mount_count; i++) {
+        if (strcmp(path, vfs_mount_table[i].path) == 0) {
+            spin_unlock_irqrestore(&vfs_lock, flags);
+            vfs_vnode_put(parent);
+            return -PERS_ERR_ALREADY_EXISTS;
+        }
+    }
+
+    if (parent) {
+        root->parent = parent;
     }
 
     strncpy(vfs_mount_table[vfs_mount_count].path, path, VFS_MAX_MOUNT_PATH - 1);
@@ -372,9 +349,6 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
     return PERS_SUCCESS;
 }
 
-/*
- * vfs_unmount - Safely removes a mount entry.
- */
 int vfs_unmount(const char *path)
 {
     if (!path) {
@@ -405,9 +379,6 @@ int vfs_unmount(const char *path)
     return -PERS_ERR_NOT_FOUND;
 }
 
-/*
- * vfs_get_mount - Copies the path of mount #index into out under vfs_lock.
- */
 int vfs_get_mount(size_t index, char *out, size_t out_size)
 {
     if (!out || out_size == 0) {
@@ -428,10 +399,6 @@ int vfs_get_mount(size_t index, char *out, size_t out_size)
 
 /*
  * vfs_resolve_path - Thread-safe path resolution from a given CWD.
- *
- * This function only holds vfs_lock when accessing the mount table.
- * Path traversal and filesystem callbacks are done without holding vfs_lock
- * to allow them to acquire process locks if needed.
  */
 struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int *error)
 {
@@ -439,7 +406,7 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
     char filepath[VFS_MAX_PATH_LEN];
     const char *path_remainder = path;
 
-    /* Handle absolute paths - find mount point with vfs_lock */
+    // Handle absolute paths - find mount point with vfs_lock
     if (path[0] == '/') {
         unsigned long flags = spin_lock_irqsave(&vfs_lock);
         struct vfs_mount_entry *best_match = find_mount(path, error);
@@ -464,7 +431,7 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
         }
         spin_unlock_irqrestore(&vfs_lock, flags);
     } else {
-        /* Relative path - use cwd */
+        // Relative path - use cwd
         if (!cwd) {
             unsigned long flags = spin_lock_irqsave(&vfs_lock);
             struct vfs_mount_entry *root_match = find_mount("/", error);
@@ -543,9 +510,6 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 
 static int vfs_vnode_truncate(struct vfs_vnode *node, vfs_off_t length);
 
-/*
- * vfs_open_pid - Opens a file for a specific process ID.
- */
 int vfs_open_pid(const char *path, int flags, uint32_t pid)
 {
     int error = 0;
@@ -556,31 +520,22 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
     struct vfs_vnode *node = vfs_resolve_path(path, p->cwd, &error);
     if (!node) {
-        if (!(flags & VFS_O_CREAT)) /* not asking to create → just fail */
+        if (!(flags & VFS_O_CREAT)) { // not asking to create -> just fail
             return error;
+        }
 
-        /* Split path into parent + name, resolve parent, call create */
+        // Split path into parent + name, resolve parent, call create
         char kpath[VFS_MAX_PATH_LEN];
         strncpy(kpath, path, VFS_MAX_PATH_LEN - 1);
         kpath[VFS_MAX_PATH_LEN - 1] = '\0';
 
-        char *slash = strrchr(kpath, '/');
         const char *parent_path, *name;
-        if (!slash) {
-            parent_path = ".";
-            name = kpath;
-        } else if (slash == kpath) {
-            parent_path = "/";
-            name = slash + 1;
-        } else {
-            *slash = '\0';
-            parent_path = kpath;
-            name = slash + 1;
-        }
+        vfs_split_parent(kpath, &parent_path, &name);
 
         struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
-        if (!parent)
+        if (!parent) {
             return error;
+        }
 
         if (!parent->ops || !parent->ops->create) {
             vfs_vnode_put(parent);
@@ -589,27 +544,15 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
         int cres = parent->ops->create(parent, name);
         vfs_vnode_put(parent);
-        if (cres != PERS_SUCCESS)
+        if (cres != PERS_SUCCESS) {
             return cres;
+        }
 
-        /* Now resolve the newly-created file */
         node = vfs_resolve_path(path, p->cwd, &error);
-        if (!node)
+        if (!node) {
             return error;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    for (size_t i = 0; i < VFS_MAX_FDS; i++) {
-        struct vfs_file *f = p->fd_table[i];
-        if (f && f->node->internal_info == node->internal_info && f->node->ops == node->ops) {
-            if (node->type != VFS_VNODE_TYPE_DEVICE) {
-                spin_unlock_irqrestore(&p->fd_lock, fdflags);
-                vfs_vnode_put(node);
-                return -PERS_ERR_ALREADY_EXISTS;
-            }
         }
     }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if ((flags & VFS_O_TRUNC) && node->type == VFS_VNODE_TYPE_REGULAR
         && ((flags & VFS_O_ACCMODE) != VFS_O_RDONLY)) {
@@ -630,7 +573,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     new_file->flags = flags;
 
     int slot = -1;
-    fdflags = spin_lock_irqsave(&p->fd_lock);
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
             p->fd_table[i] = new_file;
@@ -642,28 +585,22 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (slot == -1) {
-        /* Releasing the file drops its vnode reference too. */
+        // Releasing the file drops its vnode reference too.
         vfs_file_put(new_file);
         return -PERS_ERR_OUT_OF_RESOURCES;
     }
     return slot;
 }
 
-/*
- * vfs_open - Standard process-relative file open.
- */
 int vfs_open(const char *path, int flags)
 {
-    int pid = process_find_current();
+    int pid = process_current_pid();
     if (pid < 0) {
         return pid;
     }
     return vfs_open_pid(path, flags, (uint32_t)pid);
 }
 
-/*
- * vfs_close - Decrements file object refcount and destroys if zero.
- */
 int vfs_close(int fd)
 {
     if (fd < 0 || fd >= VFS_MAX_FDS) {
@@ -690,25 +627,12 @@ int vfs_close(int fd)
     return PERS_SUCCESS;
 }
 
-/*
- * vfs_lseek - Updates the current read/write offset.
- */
 vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
     if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return err;
     }
 
     vfs_off_t new_offset;
@@ -723,42 +647,27 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
             new_offset = f->node->file_size + offset;
             break;
         default:
-            spin_unlock_irqrestore(&p->fd_lock, fdflags);
+            vfs_file_put(f);
             return -PERS_ERR_NOT_IMPLEMENTED;
     }
 
     if (new_offset < 0) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
+        vfs_file_put(f);
         return -PERS_ERR_INVALID_ARGUMENT;
     }
 
     f->offset = new_offset;
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+    vfs_file_put(f);
     return new_offset;
 }
 
-/*
- * vfs_read - Dispatches read request to the underlying vnode driver.
- */
 int vfs_read(int fd, void *buffer, size_t count)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
     if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return err;
     }
-    atomic_inc(&f->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
@@ -766,37 +675,23 @@ int vfs_read(int fd, void *buffer, size_t count)
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
-    int bytes = f->node->ops->read(f, buffer, count);
+    int bytes = f->node->ops->read(f, buffer, count, &f->offset);
     vfs_file_put(f);
     return bytes;
 }
 
-/*
- * vfs_pread - Dispatches pread request to the underlying vnode driver with an offset.
- */
 int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
     }
 
     if (offset < 0) {
+        vfs_file_put(f);
         return -PERS_ERR_INVALID_ARGUMENT;
     }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
-    if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-    atomic_inc(&f->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
@@ -804,44 +699,26 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
-    struct vfs_file temp_f;
-    temp_f.node = f->node;
-    temp_f.offset = offset;
-    temp_f.flags = f->flags;
-
-    int bytes = temp_f.node->ops->read(&temp_f, buffer, count);
+    vfs_off_t pos = offset;
+    int bytes = f->node->ops->read(f, buffer, count, &pos);
     vfs_file_put(f);
     return bytes;
 }
 
-/*
- * vfs_readdir - Reads raw driver entries and appends VFS mount points.
- */
 int vfs_readdir(int fd, void *buffer, size_t count)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
     }
 
     /* Entries are written whole; a partial buffer would also underflow the
      * remaining-space arithmetic below. */
     if (count < sizeof(struct vfs_dirent)) {
+        vfs_file_put(f);
         return -PERS_ERR_INVALID_ARGUMENT;
     }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
-    if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-    atomic_inc(&f->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir) {
         vfs_file_put(f);
@@ -864,7 +741,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
 
     int res = 0;
 
-    /* 1. Handle "." and ".." */
+    // 1. Handle "." and ".."
     if (dot_idx < 2) {
         if ((size_t)res < max_entries && dot_idx == 0) {
             strncpy(dirents[res].name, ".", 255);
@@ -887,7 +764,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
         }
     }
 
-    /* 2. Handle Filesystem-specific entries */
+    // 2. Handle Filesystem-specific entries
     if (mount_idx == 0) {
         int fs_res = f->node->ops->readdir(f, buffer + res * dirent_size,
                                            (max_entries - (size_t)res) * dirent_size);
@@ -904,7 +781,7 @@ int vfs_readdir(int fd, void *buffer, size_t count)
         mount_idx = 1;
     }
 
-    /* 3. Handle VFS Mount points */
+    // 3. Handle VFS Mount points
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
     while ((size_t)res < max_entries && (mount_idx - 1) < (uint32_t)vfs_mount_count) {
         int i = mount_idx - 1;
@@ -939,28 +816,13 @@ readdir_done:
     return res;
 }
 
-/*
- * vfs_write - Dispatches write request to the underlying vnode driver.
- */
 int vfs_write(int fd, const void *buffer, size_t count)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
     if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return err;
     }
-    atomic_inc(&f->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
@@ -972,37 +834,23 @@ int vfs_write(int fd, const void *buffer, size_t count)
         f->offset = f->node->file_size;
     }
 
-    int bytes = f->node->ops->write(f, buffer, count);
+    int bytes = f->node->ops->write(f, buffer, count, &f->offset);
     vfs_file_put(f);
     return bytes;
 }
 
-/*
- * vfs_pwrite - Dispatches write request to the underlying vnode driver with an offset.
- */
 int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
     }
 
     if (offset < 0) {
+        vfs_file_put(f);
         return -PERS_ERR_INVALID_ARGUMENT;
     }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
-    if (!f) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-    atomic_inc(&f->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     int mode = f->flags & VFS_O_ACCMODE;
     if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
@@ -1010,24 +858,14 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
         return -PERS_ERR_PERMISSION_DENIED;
     }
 
-    struct vfs_file temp_f;
-    temp_f.node = f->node;
-    temp_f.flags = f->flags;
+    // O_APPEND pins every write to the end, so it overrides the given offset.
+    vfs_off_t pos = (f->flags & VFS_O_APPEND) ? f->node->file_size : offset;
 
-    if (f->flags & VFS_O_APPEND) {
-        temp_f.offset = f->node->file_size;
-    } else {
-        temp_f.offset = offset;
-    }
-
-    int bytes = f->node->ops->write(&temp_f, buffer, count);
+    int bytes = f->node->ops->write(f, buffer, count, &pos);
     vfs_file_put(f);
     return bytes;
 }
 
-/*
- * vfs_stat - Path-based metadata retrieval entry point.
- */
 int vfs_stat(const char *path, struct stat *buf)
 {
     struct process *proc = process_current();
@@ -1046,29 +884,16 @@ int vfs_stat(const char *path, struct stat *buf)
     return res;
 }
 
-/*
- * vfs_fstat - FD-based metadata retrieval entry point.
- */
 int vfs_fstat(int fd, struct stat *buf)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS)
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-
-    struct process *proc = process_current();
-    if (!proc)
-        return -PERS_ERR_NO_SUCH_PROCESS;
-
-    unsigned long flags = spin_lock_irqsave(&proc->fd_lock);
-    struct vfs_file *f = proc->fd_table[fd];
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
     if (!f) {
-        spin_unlock_irqrestore(&proc->fd_lock, flags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return err;
     }
-    struct vfs_vnode *node = f->node;
-    atomic_inc(&node->refcount);
-    spin_unlock_irqrestore(&proc->fd_lock, flags);
-    int res = vfs_vnode_stat(node, buf);
-    vfs_vnode_put(node);
+
+    int res = vfs_vnode_stat(f->node, buf);
+    vfs_file_put(f);
     return res;
 }
 
@@ -1088,34 +913,20 @@ static int vfs_vnode_truncate(struct vfs_vnode *node, vfs_off_t length)
 
 int vfs_ftruncate(int fd, vfs_off_t length)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-
-    struct process *proc = process_current();
-    if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    unsigned long flags = spin_lock_irqsave(&proc->fd_lock);
-    struct vfs_file *f = proc->fd_table[fd];
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
     if (!f) {
-        spin_unlock_irqrestore(&proc->fd_lock, flags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return err;
     }
-    int file_flags = f->flags;
-    struct vfs_vnode *node = f->node;
-    atomic_inc(&node->refcount);
-    spin_unlock_irqrestore(&proc->fd_lock, flags);
 
-    int acc = file_flags & VFS_O_ACCMODE;
+    int acc = f->flags & VFS_O_ACCMODE;
     if (acc != VFS_O_WRONLY && acc != VFS_O_RDWR) {
-        vfs_vnode_put(node);
+        vfs_file_put(f);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    int res = vfs_vnode_truncate(node, length);
-    vfs_vnode_put(node);
+    int res = vfs_vnode_truncate(f->node, length);
+    vfs_file_put(f);
     return res;
 }
 
@@ -1137,9 +948,6 @@ int vfs_truncate(const char *path, vfs_off_t length)
     return res;
 }
 
-/*
- * vfs_dup2 - Replaces a descriptor slot with a copy of another.
- */
 int vfs_dup2(int oldfd, int newfd)
 {
     if (oldfd < 0 || oldfd >= VFS_MAX_FDS || newfd < 0 || newfd >= VFS_MAX_FDS) {
@@ -1175,9 +983,6 @@ int vfs_dup2(int oldfd, int newfd)
     return newfd;
 }
 
-/*
- * vfs_chdir - Migrates the current process working directory.
- */
 int vfs_chdir(const char *kpath)
 {
     struct process *p = process_current();
@@ -1207,9 +1012,6 @@ int vfs_chdir(const char *kpath)
     return PERS_SUCCESS;
 }
 
-/*
- * vfs_getcwd - Reconstructs the absolute path of the current CWD.
- */
 int vfs_getcwd(char *buf, size_t size)
 {
     if (!buf || size == 0) {
@@ -1274,46 +1076,18 @@ int vfs_getcwd(char *buf, size_t size)
     return PERS_SUCCESS;
 }
 
-/*
- * vfs_mkdir - Creates a new directory from a given path.
- */
 int vfs_mkdir(const char *path)
 {
     char kpath[VFS_MAX_PATH_LEN];
     strncpy(kpath, path, VFS_MAX_PATH_LEN);
     kpath[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char *slash = strrchr(kpath, '/');
-    const char *parent_path;
     const char *name;
-
-    if (!slash) {
-        parent_path = ".";
-        name = kpath;
-    } else if (slash == kpath) {
-        parent_path = "/";
-        name = slash + 1;
-    } else {
-        *slash = '\0';
-        parent_path = kpath;
-        name = slash + 1;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
     int error = 0;
 
-    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    struct vfs_vnode *parent = vfs_resolve_parent(kpath, &name, &error);
     if (!parent) {
         return error;
-    }
-
-    if (parent->type != VFS_VNODE_TYPE_DIR) {
-        vfs_vnode_put(parent);
-        return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
     if (!parent->ops || !parent->ops->mkdir) {
@@ -1326,46 +1100,18 @@ int vfs_mkdir(const char *path)
     return res;
 }
 
-/*
- * vfs_rmdir - Removes an existing directory from a given path.
- */
 int vfs_rmdir(const char *path)
 {
     char kpath[VFS_MAX_PATH_LEN];
     strncpy(kpath, path, VFS_MAX_PATH_LEN);
     kpath[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char *slash = strrchr(kpath, '/');
-    const char *parent_path;
     const char *name;
-
-    if (!slash) {
-        parent_path = ".";
-        name = kpath;
-    } else if (slash == kpath) {
-        parent_path = "/";
-        name = slash + 1;
-    } else {
-        *slash = '\0';
-        parent_path = kpath;
-        name = slash + 1;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
     int error = 0;
 
-    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    struct vfs_vnode *parent = vfs_resolve_parent(kpath, &name, &error);
     if (!parent) {
         return error;
-    }
-
-    if (parent->type != VFS_VNODE_TYPE_DIR) {
-        vfs_vnode_put(parent);
-        return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
     if (!parent->ops || !parent->ops->rmdir) {
@@ -1378,46 +1124,18 @@ int vfs_rmdir(const char *path)
     return res;
 }
 
-/*
- * vfs_unlink - Unlinks a file from a given path.
- */
 int vfs_unlink(const char *path)
 {
     char kpath[VFS_MAX_PATH_LEN];
     strncpy(kpath, path, VFS_MAX_PATH_LEN);
     kpath[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char *slash = strrchr(kpath, '/');
-    const char *parent_path;
     const char *name;
-
-    if (!slash) {
-        parent_path = ".";
-        name = kpath;
-    } else if (slash == kpath) {
-        parent_path = "/";
-        name = slash + 1;
-    } else {
-        *slash = '\0';
-        parent_path = kpath;
-        name = slash + 1;
-    }
-
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
     int error = 0;
 
-    struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
+    struct vfs_vnode *parent = vfs_resolve_parent(kpath, &name, &error);
     if (!parent) {
         return error;
-    }
-
-    if (parent->type != VFS_VNODE_TYPE_DIR) {
-        vfs_vnode_put(parent);
-        return -PERS_ERR_NOT_A_DIRECTORY;
     }
 
     if (!parent->ops || !parent->ops->unlink) {
@@ -1430,50 +1148,23 @@ int vfs_unlink(const char *path)
     return res;
 }
 
-/*
- * vfs_rename - Renames or moves a file or directory.
- */
 int vfs_rename(const char *oldpath, const char *newpath)
 {
     char kold[VFS_MAX_PATH_LEN];
     strncpy(kold, oldpath, VFS_MAX_PATH_LEN);
     kold[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char *slash_old = strrchr(kold, '/');
     const char *parent_old;
     const char *name_old;
-
-    if (!slash_old) {
-        parent_old = ".";
-        name_old = kold;
-    } else if (slash_old == kold) {
-        parent_old = "/";
-        name_old = slash_old + 1;
-    } else {
-        *slash_old = '\0';
-        parent_old = kold;
-        name_old = slash_old + 1;
-    }
+    vfs_split_parent(kold, &parent_old, &name_old);
 
     char knew[VFS_MAX_PATH_LEN];
     strncpy(knew, newpath, VFS_MAX_PATH_LEN);
     knew[VFS_MAX_PATH_LEN - 1] = '\0';
 
-    char *slash_new = strrchr(knew, '/');
     const char *parent_new;
     const char *name_new;
-
-    if (!slash_new) {
-        parent_new = ".";
-        name_new = knew;
-    } else if (slash_new == knew) {
-        parent_new = "/";
-        name_new = slash_new + 1;
-    } else {
-        *slash_new = '\0';
-        parent_new = knew;
-        name_new = slash_new + 1;
-    }
+    vfs_split_parent(knew, &parent_new, &name_new);
 
     struct process *p = process_current();
     if (!p) {
@@ -1518,32 +1209,21 @@ int vfs_rename(const char *oldpath, const char *newpath)
     return res;
 }
 
-/*
- * vfs_fsync - Flushes all dirty cached pages for a single file descriptor to disk.
- */
 int vfs_fsync(int fd)
 {
-    if (fd < 0 || fd >= VFS_MAX_FDS) {
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
+    }
+
+    if (!f->node) {
+        vfs_file_put(f);
         return -PERS_ERR_BAD_FILE_DESCRIPTOR;
     }
 
-    struct process *p = process_current();
-    if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
+    int result = pagecache_writeback(f->node);
 
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    struct vfs_file *f = p->fd_table[fd];
-    if (!f || !f->node) {
-        spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
-    }
-    struct vfs_vnode *node = f->node;
-    atomic_inc(&node->refcount);
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
-
-    int result = pagecache_writeback(node);
-
-    vfs_vnode_put(node);
+    vfs_file_put(f);
     return result >= 0 ? 0 : result;
 }

@@ -26,14 +26,18 @@ static void count_fd(int fd, unsigned long *lines, unsigned long *words, unsigne
 
 static void print_counts(unsigned long l, unsigned long w, unsigned long b, const char *name)
 {
-    if (want_l)
+    if (want_l) {
         printf("%8lu", l);
-    if (want_w)
+    }
+    if (want_w) {
         printf("%8lu", w);
-    if (want_c)
+    }
+    if (want_c) {
         printf("%8lu", b);
-    if (name)
+    }
+    if (name) {
         printf(" %s", name);
+    }
     printf("\n");
 }
 
@@ -41,14 +45,18 @@ static void print_counts(unsigned long l, unsigned long w, unsigned long b, cons
  * another program must stay clean, so we suppress it unless stdout is a tty. */
 static void print_header(int have_names)
 {
-    if (want_l)
+    if (want_l) {
         printf("%8s", "LINES");
-    if (want_w)
+    }
+    if (want_w) {
         printf("%8s", "WORDS");
-    if (want_c)
+    }
+    if (want_c) {
         printf("%8s", "BYTES");
-    if (have_names)
+    }
+    if (have_names) {
         printf(" FILE");
+    }
     printf("\n");
 }
 
@@ -66,12 +74,13 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] == '-' && argv[i][1] != '\0') {
             for (int j = 1; argv[i][j]; j++) {
-                if (argv[i][j] == 'l')
+                if (argv[i][j] == 'l') {
                     want_l = 1;
-                else if (argv[i][j] == 'w')
+                } else if (argv[i][j] == 'w') {
                     want_w = 1;
-                else if (argv[i][j] == 'c')
+                } else if (argv[i][j] == 'c') {
                     want_c = 1;
+                }
             }
             start++;
         } else {

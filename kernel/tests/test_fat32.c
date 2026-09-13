@@ -1,25 +1,23 @@
 /*
  * test_fat32.c - Tests for FAT32 behaviour beyond the generic VFS paths.
- *
- * test_vfs already covers single-cluster create/read/write through the VFS.
- * This suite targets the filesystem-specific machinery: cluster chains for
- * files larger than one cluster, nested directory traversal, and truncation
- * releasing a chain. Everything it creates is removed before it returns.
  */
 
 #include "test.h"
 
 #include "string.h"
 
+#include "uapi/errors.h"
+
 #include "fs/fat32.h"
 #include "fs/vfs.h"
+#include "mm/slab.h"
 
 #define BIG_FILE  "/tfatbig.tmp"
 #define NEST_DIR  "/tfatd"
 #define NEST_SUB  "/tfatd/sub"
 #define NEST_FILE "/tfatd/sub/deep.txt"
 
-/* Comfortably larger than any plausible cluster size for a 32 MB volume. */
+// Comfortably larger than any plausible cluster size for a 32 MB volume.
 #define BIG_SIZE 16384
 
 static uint8_t big_pattern[BIG_SIZE];
@@ -43,10 +41,10 @@ void test_fat32(void)
 
     /*
      * The LFN sequence number is an on-disk byte that indexes the write into
-     * the name buffer. Values outside 1..20 must be refused outright: before
-     * this was checked, sequence 0 wrote 13 bytes below the buffer and
-     * sequence 63 wrote roughly 550 bytes past the end of a 256-byte stack
-     * array, straight through the caller's saved registers.
+     * the name buffer. Values outside 1..20 must be refused outright: sequence
+     * 0 lands 13 bytes below the buffer and sequence 63 roughly 550 bytes past
+     * the end of a 256-byte stack array, straight through the caller's saved
+     * registers.
      */
     {
         struct fat32_lfn_entry lfn;
@@ -80,7 +78,6 @@ void test_fat32(void)
             TEST_ASSERT("no write past the name buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
         }
     }
-    TEST_PASS("LFN sequence bounds");
 
     // a well-formed fragment still lands where the chain expects it
     {
@@ -116,7 +113,6 @@ void test_fat32(void)
             TEST_ASSERT("clipped fragment stays in the buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
         }
     }
-    TEST_PASS("LFN fragment placement");
 
     /*
      * Every BPB field is attacker-controlled on a removable volume, and the
@@ -198,7 +194,6 @@ void test_fat32(void)
         TEST_ASSERT("data area past the device refused",
                     fat32_test_geometry_from_bpb(&bad, 0, blocks, &fs) != 0);
     }
-    TEST_PASS("BPB validation");
 
     // the root node the VFS was mounted on must be a directory
     {
@@ -207,7 +202,6 @@ void test_fat32(void)
         TEST_ASSERT_EQ("root node is a directory", root->type, VFS_VNODE_TYPE_DIR);
         TEST_ASSERT("root node has ops", root->ops != NULL);
     }
-    TEST_PASS("root node");
 
     /*
      * A file spanning many clusters exercises chain allocation on write and
@@ -229,7 +223,6 @@ void test_fat32(void)
         TEST_ASSERT_EQ("stat multi-cluster file", vfs_stat(BIG_FILE, &st), 0);
         TEST_ASSERT_EQ("size matches bytes written", (int)st.st_size, BIG_SIZE);
     }
-    TEST_PASS("multi-cluster write");
 
     // reading it back must walk the chain and return every byte in order
     {
@@ -243,7 +236,6 @@ void test_fat32(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("multi-cluster read");
 
     // seeking into a later cluster must land on the right bytes
     {
@@ -261,21 +253,24 @@ void test_fat32(void)
 
         vfs_close(fd);
     }
-    TEST_PASS("seek across clusters");
 
-    /*
-     * NOT COVERED: reopening with VFS_O_TRUNC should release the chain and
-     * report size 0, but O_TRUNC is defined in vfs.h and never acted on
-     * anywhere in the kernel, so the file keeps its old contents. Add the
-     * assertion here once truncation lands (Phase 1 item 2 in docs/order.txt).
-     */
+    // reopening with O_TRUNC must release the chain and report size 0
+    {
+        int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_TRUNC);
+        TEST_ASSERT("reopen with O_TRUNC", fd >= 0);
+        TEST_ASSERT_EQ("close after O_TRUNC", vfs_close(fd), 0);
+
+        struct stat st;
+        TEST_ASSERT_EQ("stat truncated file", vfs_stat(BIG_FILE, &st), 0);
+        TEST_ASSERT_EQ("O_TRUNC emptied the file", (int)st.st_size, 0);
+    }
+
     {
         TEST_ASSERT_EQ("unlink multi-cluster file", vfs_unlink(BIG_FILE), 0);
 
         struct stat st;
         TEST_ASSERT("unlinked file is gone", vfs_stat(BIG_FILE, &st) != 0);
     }
-    TEST_PASS("unlink releases file");
 
     // nested directories must resolve through multiple levels
     {
@@ -295,13 +290,97 @@ void test_fat32(void)
         TEST_ASSERT("nested contents correct", strcmp(buf, "nested") == 0);
         vfs_close(fd);
     }
-    TEST_PASS("nested directories");
 
     // a non-empty directory must not be removable
     {
         TEST_ASSERT("rmdir on non-empty dir fails", vfs_rmdir(NEST_SUB) != 0);
     }
-    TEST_PASS("rmdir refuses non-empty");
+
+    /*
+     * unlink and rmdir reject each other's target. Both resolve the name the
+     * same way and differ only in which kind they accept, so the two codes pin
+     * that the distinction survives.
+     */
+    {
+        TEST_ASSERT_EQ("unlink refuses a directory", vfs_unlink(NEST_SUB),
+                       -PERS_ERR_IS_A_DIRECTORY);
+        TEST_ASSERT_EQ("rmdir refuses a file", vfs_rmdir(NEST_FILE), -PERS_ERR_NOT_A_DIRECTORY);
+    }
+
+    /*
+     * mkdir on a name that already exists must release the vnode its lookup
+     * returned. That vnode holds a reference on its parent, so freeing it
+     * without going through vfs_vnode_put strands the parent: the directory
+     * vnode is never reclaimed, and slab use climbs once per failed call.
+     */
+    {
+        TEST_ASSERT("duplicate mkdir refused", vfs_mkdir(NEST_SUB) != 0);
+
+        unsigned long before = slab_get_used();
+        for (int i = 0; i < 16; i++) {
+            TEST_ASSERT("duplicate mkdir refused", vfs_mkdir(NEST_SUB) != 0);
+        }
+        TEST_ASSERT_EQ("failed mkdir reclaims every vnode", slab_get_used(), before);
+    }
+
+    /*
+     * Truncating to zero releases the start cluster, and the page cache is keyed
+     * on it. Rewriting afterwards must serve the new content, not whatever was
+     * cached against the old key -- and the allocator hands the same cluster
+     * straight back, so a stale page lands on exactly the file that freed it.
+     */
+    {
+        const int len = 2048;
+        int ok = 1;
+
+        for (int round = 0; round < 3 && ok; round++) {
+            uint8_t mark = (uint8_t)(0x10 + round);
+
+            int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+            if (fd < 0) {
+                ok = 0;
+                break;
+            }
+
+            for (int i = 0; i < len; i++) {
+                big_pattern[i] = mark;
+            }
+            if (vfs_write(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+
+            // Read back through the same descriptor, before any close.
+            memset(big_pattern, 0, len);
+            if (vfs_lseek(fd, 0, VFS_SEEK_SET) != 0 || vfs_read(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+            for (int i = 0; i < len && ok; i++) {
+                if (big_pattern[i] != mark) {
+                    ok = 0;
+                }
+            }
+            vfs_close(fd);
+
+            // And again after reopening, which must find the same bytes.
+            fd = vfs_open(BIG_FILE, VFS_O_RDONLY);
+            if (fd < 0) {
+                ok = 0;
+                break;
+            }
+            memset(big_pattern, 0, len);
+            if (vfs_read(fd, big_pattern, len) != len) {
+                ok = 0;
+            }
+            for (int i = 0; i < len && ok; i++) {
+                if (big_pattern[i] != mark) {
+                    ok = 0;
+                }
+            }
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT("rewrite after truncate reads back what was written", ok);
+    }
 
     // teardown, innermost first
     {
@@ -312,7 +391,49 @@ void test_fat32(void)
         struct stat st;
         TEST_ASSERT("nested tree removed", vfs_stat(NEST_DIR, &st) != 0);
     }
-    TEST_PASS("teardown");
+
+    /*
+     * The root vnode is handed out from raw slab memory, so every field it does
+     * not set explicitly must still read as zero. Dirty a same-sized slab object
+     * first: the allocator reuses it, so an unzeroed field shows up as 0xAB.
+     */
+    {
+        struct vfs_vnode *dirt = slab_alloc(sizeof(struct vfs_vnode));
+        TEST_ASSERT("slab object for root-node poison", dirt != NULL);
+        if (dirt) {
+            memset(dirt, 0xAB, sizeof(*dirt));
+            slab_free(dirt);
+        }
+
+        struct vfs_vnode *root = fat32_get_root_node();
+        TEST_ASSERT("root node allocated", root != NULL);
+        if (root) {
+            TEST_ASSERT_EQ("root node refcount is one", root->refcount.counter, 1);
+            TEST_ASSERT("root node has no parent", root->parent == NULL);
+            TEST_ASSERT("root node name is empty", root->name[0] == '\0');
+            slab_free(root);
+        }
+    }
+
+    /*
+     * A deleted entry keeps its old name with name[0] overwritten to 0xE5,
+     * and name_match only folds 'a'-'z' -- 0xE5 passes through untouched, so
+     * a live file can be named to collide with a ghost byte-for-byte. unlink
+     * must not treat that collision as a match: doing so frees the ghost's
+     * stale start cluster, which may by then belong to a live file.
+     */
+    {
+        const char *live = "/zzzzzzzz.txt";
+        const char *ghost = "/\345zzzzzzz.txt"; // \345 == 0xE5
+
+        int fd = vfs_open(live, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        TEST_ASSERT("create collision-name file", fd >= 0);
+        TEST_ASSERT_EQ("write collision-name file", vfs_write(fd, "hello", 5), 5);
+        vfs_close(fd);
+        TEST_ASSERT_EQ("unlink collision-name file", vfs_unlink(live), 0);
+
+        TEST_ASSERT("deleted entry is not unlinkable", vfs_unlink(ghost) != 0);
+    }
 
     TEST_SUITE_END("FAT32");
 }

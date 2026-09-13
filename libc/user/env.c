@@ -6,8 +6,9 @@ static int environ_is_malloced = 0;
 
 char *getenv(const char *name)
 {
-    if (!environ || !name)
+    if (!environ || !name) {
         return NULL;
+    }
     size_t len = strlen(name);
     for (int i = 0; environ[i]; i++) {
         if (strncmp(environ[i], name, len) == 0 && environ[i][len] == '=') {
@@ -19,18 +20,21 @@ char *getenv(const char *name)
 
 int setenv(const char *name, const char *value, int overwrite)
 {
-    if (!name || name[0] == '\0' || strchr(name, '='))
+    if (!name || name[0] == '\0' || strchr(name, '=')) {
         return -1;
+    }
 
     char *existing = getenv(name);
-    if (existing && !overwrite)
+    if (existing && !overwrite) {
         return 0;
+    }
 
     size_t name_len = strlen(name);
     size_t val_len = value ? strlen(value) : 0;
     char *new_entry = malloc(name_len + val_len + 2);
-    if (!new_entry)
+    if (!new_entry) {
         return -1;
+    }
 
     strcpy(new_entry, name);
     new_entry[name_len] = '=';
@@ -56,8 +60,9 @@ int setenv(const char *name, const char *value, int overwrite)
     // Add new entry
     int count = 0;
     if (environ) {
-        while (environ[count])
+        while (environ[count]) {
             count++;
+        }
     }
 
     char **new_environ;
@@ -66,8 +71,9 @@ int setenv(const char *name, const char *value, int overwrite)
     } else {
         new_environ = malloc((count + 2) * sizeof(char *));
         if (new_environ) {
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < count; i++) {
                 new_environ[i] = environ[i];
+            }
             environ_is_malloced = 1;
         }
     }
@@ -86,8 +92,9 @@ int setenv(const char *name, const char *value, int overwrite)
 
 int unsetenv(const char *name)
 {
-    if (!environ || !name || name[0] == '\0' || strchr(name, '='))
+    if (!environ || !name || name[0] == '\0' || strchr(name, '=')) {
         return -1;
+    }
 
     size_t len = strlen(name);
     for (int i = 0; environ[i]; i++) {
@@ -104,15 +111,17 @@ int unsetenv(const char *name)
 
 int putenv(char *string)
 {
-    if (!string || !strchr(string, '='))
+    if (!string || !strchr(string, '=')) {
         return -1;
+    }
 
     // Split string to name for getenv
     char *equals = strchr(string, '=');
     size_t name_len = equals - string;
     char name[128]; // Arbitrary limit for temporary check
-    if (name_len >= sizeof(name))
+    if (name_len >= sizeof(name)) {
         name_len = sizeof(name) - 1;
+    }
     strncpy(name, string, name_len);
     name[name_len] = '\0';
 
@@ -129,8 +138,9 @@ int putenv(char *string)
     // Add new entry
     int count = 0;
     if (environ) {
-        while (environ[count])
+        while (environ[count]) {
             count++;
+        }
     }
 
     char **new_environ;
@@ -139,14 +149,16 @@ int putenv(char *string)
     } else {
         new_environ = malloc((count + 2) * sizeof(char *));
         if (new_environ) {
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < count; i++) {
                 new_environ[i] = environ[i];
+            }
             environ_is_malloced = 1;
         }
     }
 
-    if (!new_environ)
+    if (!new_environ) {
         return -1;
+    }
 
     new_environ[count] = string;
     new_environ[count + 1] = NULL;
