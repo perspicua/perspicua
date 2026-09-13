@@ -623,8 +623,12 @@ static int sd_probe(struct device *dev)
      * the ISR rather than busy-polling during card initialization.
      */
     sd_irq_num = devm_get_irq(dev, 0);
+    if (sd_irq_num && request_irq(sd_irq_num, sd_irq_handler, NULL, "sd") != 0) {
+        pr_warn("sd: IRQ %u already claimed; falling back to polling\n", sd_irq_num);
+        sd_irq_num = 0;
+    }
+
     if (sd_irq_num) {
-        request_irq(sd_irq_num, sd_irq_handler, NULL, "sd");
         gic_enable_irq(sd_irq_num);
         pr_info("sd: interrupt-driven I/O enabled (IRQ %u)\n", sd_irq_num);
     } else {

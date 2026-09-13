@@ -115,7 +115,9 @@ void timer_interrupt_init(void)
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
     if (core == 0) {
-        request_irq(GIC_TIMER_IRQ, timer_irq_handler, NULL, "timer");
+        if (request_irq(GIC_TIMER_IRQ, timer_irq_handler, NULL, "timer") != 0) {
+            PANIC("timer: the timer interrupt line is already claimed");
+        }
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }

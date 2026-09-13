@@ -9,6 +9,7 @@
 #include "stdio.h"
 #include "panic.h"
 
+#include "arch/irq.h"
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 
@@ -59,6 +60,13 @@ static int gic_probe(struct device *dev)
     // CPU Interface: enable and allow all priority levels
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
+
+    for (unsigned int irq = 0; irq < IRQ_MAX; irq++) {
+        const struct irq_desc *desc = irq_get_desc(irq);
+        if (desc && desc->handler) {
+            gic_enable_irq(irq);
+        }
+    }
 
     return 0;
 }

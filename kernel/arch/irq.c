@@ -46,17 +46,6 @@ int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *
     return 0;
 }
 
-void free_irq(unsigned int irq)
-{
-    if (irq >= IRQ_MAX) {
-        return;
-    }
-
-    irq_table[irq].handler = NULL;
-    irq_table[irq].ctx = NULL;
-    irq_table[irq].name = NULL;
-}
-
 irq_result_t irq_dispatch(unsigned int irq)
 {
     if (irq >= IRQ_MAX || irq_table[irq].handler == NULL) {

@@ -60,8 +60,6 @@ void irq_restore(unsigned long flags);
  */
 int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *name);
 
-void free_irq(unsigned int irq);
-
 /*
  * irq_dispatch - Runs the handler that claimed irq, counting the hit.
  *

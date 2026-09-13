@@ -97,7 +97,11 @@ static int pl011_uart_probe(struct device *dev)
     if (!cached_uart_irq) {
         cached_uart_irq = 153; // Fallback for BCM2711
     }
-    request_irq(cached_uart_irq, uart_irq_handler, NULL, "uart");
+
+    int err = request_irq(cached_uart_irq, uart_irq_handler, NULL, "uart");
+    if (err != 0) {
+        pr_warn("uart: could not claim IRQ %u; input will not work\n", cached_uart_irq);
+    }
 
     return 0;
 }
@@ -106,19 +110,6 @@ CORE_DRIVER(pl011_uart) = {
     .name = "pl011-uart",
     .compatible = "arm,pl011-axi",
     .probe = pl011_uart_probe,
-};
-
-static int pl011_uart_irq_probe(struct device *dev)
-{
-    (void)dev;
-    gic_enable_irq(cached_uart_irq);
-    return 0;
-}
-
-IRQ_DRIVER(pl011_uart_irq) = {
-    .name = "pl011-uart-irq",
-    .compatible = "arm,pl011-axi",
-    .probe = pl011_uart_irq_probe,
 };
 
 void uart_send_raw(char c)
