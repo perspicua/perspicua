@@ -124,7 +124,6 @@ struct process {
     sigset_t pending_signals;
     sigset_t blocked_signals;
     struct sigaction signal_handlers[SIGNAL_COUNT];
-    uintptr_t default_sigrestorer;
 };
 
 /*
@@ -151,7 +150,7 @@ void process_init(void);
 int process_create_from_file(const char *path, uint32_t pid);
 int process_exec(const char *path, char *const argv[], char *const envp[]);
 int process_fork(struct exception_trap_frame *parent_tf);
-void process_exit(uint32_t pid, int status);
+__attribute__((noreturn)) void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 
 // Context and identity

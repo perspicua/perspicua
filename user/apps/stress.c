@@ -763,7 +763,6 @@ static void test_signal(void)
 {
     const int sends = 120;
 
-    sys_sigrestore((uintptr_t)sys_sigreturn);
     sys_signal(SIGNAL_USR1, count_handler);
     sys_signal(SIGNAL_USR2, count_handler);
 
@@ -826,7 +825,6 @@ static void test_signal(void)
  */
 static void test_signal_wake(void)
 {
-    sys_sigrestore((uintptr_t)sys_sigreturn);
     sys_signal(SIGNAL_USR1, count_handler);
     g_sig_hits = 0;
 
@@ -1255,7 +1253,6 @@ static int mix_file(uint32_t key)
 static int mix_signal(uint32_t key)
 {
     (void)key;
-    sys_sigrestore((uintptr_t)sys_sigreturn);
     sys_signal(SIGNAL_USR1, count_handler);
     g_sig_hits = 0;
 

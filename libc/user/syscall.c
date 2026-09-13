@@ -198,12 +198,8 @@ void sys_yield(void)
 
 void sys_sleep(unsigned long ms)
 {
-    asm volatile("mov x0, %0\n"
-                 "mov x8, %1\n"
-                 "svc #0"
-                 :
-                 : "r"(ms), "i"(SYS_SLEEP)
-                 : "x0", "x8", "memory");
+    struct timespec req = {.tv_nsec = (ms % 1000) * 1000000, .tv_sec = ms / 1000};
+    sys_nanosleep(&req, NULL);
 }
 
 int sys_open(const char *path, int flags)
@@ -348,18 +344,16 @@ int sys_dup2(int oldfd, int newfd)
     return __syscall_ret(res);
 }
 
-int sys_signal(int sig, signal_handler_t handler)
+signal_handler_t sys_signal(int sig, signal_handler_t handler)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)sig), "r"(handler), "i"(SYS_SIGNAL)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    struct sigaction act = {0}, oact = {0};
+    act.sa_handler = handler;
+
+    if (sys_sigaction(sig, &act, &oact) < 0) {
+        return SIGNAL_ERR;
+    }
+
+    return oact.sa_handler;
 }
 
 int sys_kill(int pid, int sig)
@@ -385,18 +379,22 @@ void sys_sigreturn(void)
                  : "x8", "memory");
 }
 
-void sys_sigrestore(uintptr_t restorer)
-{
-    asm volatile("mov x0, %0\n"
-                 "mov x8, %1\n"
-                 "svc #0"
-                 :
-                 : "r"(restorer), "i"(SYS_SIGRESTORE)
-                 : "x0", "x8", "memory");
-}
+extern void __sigrestorer(void);
 
 int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 {
+    struct sigaction kact;
+    const struct sigaction *pact = act;
+
+    if (act != NULL) {
+        kact = *act;
+        if (!(kact.sa_flags & SA_RESTORER) || kact.sa_restorer == NULL) {
+            kact.sa_flags |= SA_RESTORER;
+            kact.sa_restorer = __sigrestorer;
+        }
+        pact = &kact;
+    }
+
     long res;
     asm volatile("mov x0, %1\n"
                  "mov x1, %2\n"
@@ -405,7 +403,7 @@ int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
                  "svc #0\n"
                  "mov %0, x0"
                  : "=r"(res)
-                 : "r"((long)sig), "r"(act), "r"(oact), "i"(SYS_SIGACTION)
+                 : "r"((long)sig), "r"(pact), "r"(oact), "i"(SYS_SIGACTION)
                  : "x0", "x1", "x2", "x8", "memory");
     return __syscall_ret(res);
 }
