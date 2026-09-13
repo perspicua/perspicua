@@ -402,5 +402,25 @@ void test_fat32(void)
         }
     }
 
+    /*
+     * A deleted entry keeps its old name with name[0] overwritten to 0xE5,
+     * and name_match only folds 'a'-'z' -- 0xE5 passes through untouched, so
+     * a live file can be named to collide with a ghost byte-for-byte. unlink
+     * must not treat that collision as a match: doing so frees the ghost's
+     * stale start cluster, which may by then belong to a live file.
+     */
+    {
+        const char *live = "/zzzzzzzz.txt";
+        const char *ghost = "/\345zzzzzzz.txt"; // \345 == 0xE5
+
+        int fd = vfs_open(live, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        TEST_ASSERT("create collision-name file", fd >= 0);
+        TEST_ASSERT_EQ("write collision-name file", vfs_write(fd, "hello", 5), 5);
+        vfs_close(fd);
+        TEST_ASSERT_EQ("unlink collision-name file", vfs_unlink(live), 0);
+
+        TEST_ASSERT("deleted entry is not unlinkable", vfs_unlink(ghost) != 0);
+    }
+
     TEST_SUITE_END("FAT32");
 }
