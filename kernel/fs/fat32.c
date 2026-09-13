@@ -399,9 +399,7 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
         uint32_t remaining = to_read - bytes_read;
         uint32_t to_copy = (can_read < remaining) ? can_read : remaining;
 
-        for (uint32_t i = 0; i < to_copy; i++) {
-            ((uint8_t *)page_buffer)[bytes_read + i] = sector_buffer[offset_in_sector + i];
-        }
+        memcpy((uint8_t *)page_buffer + bytes_read, sector_buffer + offset_in_sector, to_copy);
 
         bytes_read += to_copy;
         current_offset += to_copy;
@@ -473,9 +471,7 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
         uint32_t remaining = valid_bytes - bytes_written;
         uint32_t to_copy = (can_write < remaining) ? can_write : remaining;
 
-        for (uint32_t i = 0; i < to_copy; i++) {
-            sector_buffer[offset_in_sector + i] = ((uint8_t *)page_buffer)[bytes_written + i];
-        }
+        memcpy(sector_buffer + offset_in_sector, (uint8_t *)page_buffer + bytes_written, to_copy);
 
         if (current_fs.dev->write_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
             return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_IO_ERROR;
@@ -546,9 +542,7 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
         }
 
         if (page_data) {
-            for (size_t i = 0; i < to_copy; i++) {
-                out_buf[bytes_read + i] = ((uint8_t *)page_data)[offset_in_page + i];
-            }
+            memcpy(out_buf + bytes_read, (uint8_t *)page_data + offset_in_page, to_copy);
             pagecache_put_page(file->node, page_index);
         } else {
             break;
@@ -630,9 +624,7 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
             }
         }
 
-        for (size_t i = 0; i < to_copy; i++) {
-            ((uint8_t *)page_data)[offset_in_page + i] = in_buf[bytes_written + i];
-        }
+        memcpy((uint8_t *)page_data + offset_in_page, in_buf + bytes_written, to_copy);
 
         pagecache_mark_dirty(file->node, page_index);
 

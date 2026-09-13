@@ -151,7 +151,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         so pread/pwrite stop building a temporary struct vfs_file on the stack.
       Done: no two functions in vfs.c share more than a few lines.
 
-   7. FAT32 directory iterator
+   7. FAT32 directory iterator [DONE]
       Effort: M | Unlocks: one place to add long-name writes and timestamps
       Scope: one fat32_dir_walk(dir, callback, ctx) (or an explicit iterator
         struct) that yields each short entry with its assembled long name,
