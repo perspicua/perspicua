@@ -81,7 +81,7 @@ static int pl011_uart_probe(struct device *dev)
     gpio_set_pull(14, GPIO_PUPDN_NONE);
     gpio_set_pull(15, GPIO_PUPDN_NONE);
 
-    sleep_ms(10);
+    timer_sleep_ms(10);
     mmio_write(uart_icr, 0x7FF);
 
     // Baud rate calculation for 115200 (based on 48MHz clock)

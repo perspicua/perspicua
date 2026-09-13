@@ -78,19 +78,19 @@ struct task {
     volatile int on_core;
 };
 
-void enqueue_ready(int cpu, struct task *t);
+void sched_enqueue(int cpu, struct task *t);
 void sched_init(void);
 void sched_secondary_init(void);
 void sched_create_task(void (*entry)(void));
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid);
 void sched_sleep_ms(unsigned long ms);
-void schedule(void);
+void sched_schedule(void);
 void sched_block(void);
 void sched_unblock(struct task *t);
 void sched_stop(void);
 void sched_continue(struct task *t);
-struct task *sched_get_current(void);
+struct task *sched_current_task(void);
 int sched_get_core_pid(int cpu);
 
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);

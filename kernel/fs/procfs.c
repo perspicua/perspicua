@@ -129,7 +129,7 @@ static int procfs_gen_version(char *buf, int size)
 
 static int procfs_gen_uptime(char *buf, int size)
 {
-    unsigned long uptime_ms = get_system_time();
+    unsigned long uptime_ms = timer_get_system_time();
 
     int pos = 0;
     procfs_append(buf, &pos, size, "%lu.%02lu\n", uptime_ms / 1000, (uptime_ms % 1000) / 10);
@@ -650,7 +650,7 @@ static struct vfs_vnode *procfs_root_lookup(struct vfs_vnode *dir, const char *f
         }
     }
     if (strcmp(filename, "self") == 0) {
-        int pid = process_find_current();
+        int pid = process_current_pid();
         if (pid < 0) {
             return NULL;
         }

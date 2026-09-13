@@ -259,14 +259,14 @@ void test_spinlock(void)
     // lock/unlock timing: doesn't hang
     {
         spinlock_t lock = SPINLOCK_INIT;
-        unsigned long t1 = get_system_time();
+        unsigned long t1 = timer_get_system_time();
 
         for (int i = 0; i < 5000; i++) {
             spin_lock(&lock);
             spin_unlock(&lock);
         }
 
-        unsigned long t2 = get_system_time();
+        unsigned long t2 = timer_get_system_time();
         unsigned long elapsed = t2 - t1;
         // 5000 uncontended lock/unlock cycles should complete in <1s
         TEST_ASSERT("timing: not hung", elapsed < 1000);

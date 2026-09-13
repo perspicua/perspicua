@@ -13,6 +13,8 @@
 
 #include "debug/kdb.h"
 
+#include <stdarg.h>
+
 #include "stdio.h"
 #include "string.h"
 
@@ -49,6 +51,23 @@ static void kdb_puts(const char *s)
     while (*s) {
         kdb_putc(*s++);
     }
+}
+
+/*
+ * kdb_printf - Formatted output for the debugger.
+ *
+ * Not printk: these lines are a register dump or a backtrace, not log records,
+ * and a timestamp on every one of them only gets in the way. Not printf
+ * either, which takes printf_lock -- kdb runs with the other cores halted, and
+ * one of them holding that lock would wedge the debugger just when it is
+ * needed. vprintf does the formatting without either.
+ */
+__attribute__((format(printf, 1, 2))) static void kdb_printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
 }
 
 /*
@@ -164,14 +183,14 @@ static void cmd_regs(void)
 
         kdb_puts("\n  --- General Registers (from exception frame) ---\n");
         for (int i = 0; i < 28; i += 2) {
-            printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
+            kdb_printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
         }
-        printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
+        kdb_printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
 
         kdb_puts("\n  --- Exception Frame Registers ---\n");
-        printf("  ELR_EL1  : 0x%016lx  (PC at exception)\n", tf->elr_el1);
-        printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
-        printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
+        kdb_printf("  ELR_EL1  : 0x%016lx  (PC at exception)\n", tf->elr_el1);
+        kdb_printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
+        kdb_printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
     } else {
         unsigned long sp, lr, fp;
         asm volatile("mov %0, sp" : "=r"(sp));
@@ -179,9 +198,9 @@ static void cmd_regs(void)
         asm volatile("mov %0, x29" : "=r"(fp));
 
         kdb_puts("\n  --- Registers (live EL1 snapshot) ---\n");
-        printf("  SP  (x31): 0x%016lx\n", sp);
-        printf("  LR  (x30): 0x%016lx\n", lr);
-        printf("  FP  (x29): 0x%016lx\n", fp);
+        kdb_printf("  SP  (x31): 0x%016lx\n", sp);
+        kdb_printf("  LR  (x30): 0x%016lx\n", lr);
+        kdb_printf("  FP  (x29): 0x%016lx\n", fp);
         kdb_puts("  (x0-x28 not preserved in non-exception KDB entry)\n");
     }
 }
@@ -203,18 +222,18 @@ static void cmd_sysregs(void)
     asm volatile("mrs %0, tpidr_el1" : "=r"(tpidr));
 
     kdb_puts("\n  --- AArch64 System Registers ---\n");
-    printf("  ESR_EL1   : 0x%016lx  EC=0x%02lx ISS=0x%06lx\n", esr, (esr >> 26) & 0x3fUL,
-           esr & 0x1ffffffUL);
-    printf("  FAR_EL1   : 0x%016lx\n", far_reg);
-    printf("  SPSR_EL1  : 0x%016lx\n", spsr);
-    printf("  TTBR0_EL1 : 0x%016lx\n", ttbr0);
-    printf("  TTBR1_EL1 : 0x%016lx\n", ttbr1);
-    printf("  SCTLR_EL1 : 0x%016lx\n", sctlr);
-    printf("  MAIR_EL1  : 0x%016lx\n", mair);
-    printf("  TCR_EL1   : 0x%016lx\n", tcr);
-    printf("  MPIDR_EL1 : 0x%016lx  (core %lu)\n", mpidr, mpidr & 3UL);
-    printf("  MIDR_EL1  : 0x%016lx\n", midr);
-    printf("  TPIDR_EL1 : 0x%016lx  (current task)\n", tpidr);
+    kdb_printf("  ESR_EL1   : 0x%016lx  EC=0x%02lx ISS=0x%06lx\n", esr, (esr >> 26) & 0x3fUL,
+               esr & 0x1ffffffUL);
+    kdb_printf("  FAR_EL1   : 0x%016lx\n", far_reg);
+    kdb_printf("  SPSR_EL1  : 0x%016lx\n", spsr);
+    kdb_printf("  TTBR0_EL1 : 0x%016lx\n", ttbr0);
+    kdb_printf("  TTBR1_EL1 : 0x%016lx\n", ttbr1);
+    kdb_printf("  SCTLR_EL1 : 0x%016lx\n", sctlr);
+    kdb_printf("  MAIR_EL1  : 0x%016lx\n", mair);
+    kdb_printf("  TCR_EL1   : 0x%016lx\n", tcr);
+    kdb_printf("  MPIDR_EL1 : 0x%016lx  (core %lu)\n", mpidr, mpidr & 3UL);
+    kdb_printf("  MIDR_EL1  : 0x%016lx\n", midr);
+    kdb_printf("  TPIDR_EL1 : 0x%016lx  (current task)\n", tpidr);
 }
 
 static const char *task_state_str(enum sched_task_state s)
@@ -252,8 +271,8 @@ static const char *proc_state_str(process_state_t s)
 static void cmd_tasks(void)
 {
     kdb_puts("\n  --- Process Table ---\n");
-    printf("  %-5s %-8s %-5s %-18s %-18s  %s\n", "PID", "STATE", "PPID", "CODE_VA", "KSTACK_VA",
-           "NAME");
+    kdb_printf("  %-5s %-8s %-5s %-18s %-18s  %s\n", "PID", "STATE", "PPID", "CODE_VA", "KSTACK_VA",
+               "NAME");
 
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
@@ -265,14 +284,14 @@ static void cmd_tasks(void)
         }
 
         shown++;
-        printf("  %-5u %-8s %-5u 0x%016lx 0x%016lx  %s\n", p->pid, proc_state_str(p->state),
-               p->parent_pid, (unsigned long)p->vaddr_code, (unsigned long)p->vaddr_kernel_stack,
-               p->name[0] ? p->name : "(unnamed)");
+        kdb_printf("  %-5u %-8s %-5u 0x%016lx 0x%016lx  %s\n", p->pid, proc_state_str(p->state),
+                   p->parent_pid, (unsigned long)p->vaddr_code,
+                   (unsigned long)p->vaddr_kernel_stack, p->name[0] ? p->name : "(unnamed)");
 
         if (p->main_task) {
             struct task *t = p->main_task;
-            printf("    -> task id=%-4lu state=%-7s on_core=%-2d stack=0x%016lx\n", t->id,
-                   task_state_str(t->state), t->on_core, (unsigned long)t->stack);
+            kdb_printf("    -> task id=%-4lu state=%-7s on_core=%-2d stack=0x%016lx\n", t->id,
+                       task_state_str(t->state), t->on_core, (unsigned long)t->stack);
         }
     }
 
@@ -283,11 +302,11 @@ static void cmd_tasks(void)
     }
 
     // Current kernel task
-    struct task *cur = sched_get_current();
+    struct task *cur = sched_current_task();
     kdb_puts("\n  --- Current Kernel Task ---\n");
     if (cur) {
-        printf("  id=%-4lu pid=%-4u state=%-7s on_core=%-2d stack=0x%016lx\n", cur->id, cur->pid,
-               task_state_str(cur->state), cur->on_core, (unsigned long)cur->stack);
+        kdb_printf("  id=%-4lu pid=%-4u state=%-7s on_core=%-2d stack=0x%016lx\n", cur->id,
+                   cur->pid, task_state_str(cur->state), cur->on_core, (unsigned long)cur->stack);
     } else {
         kdb_puts("  (none)\n");
     }
@@ -295,9 +314,9 @@ static void cmd_tasks(void)
     // Per-core scheduler statistics
     kdb_puts("\n  --- Scheduler Statistics ---\n");
     for (int c = 0; c < CPU_MAX_CORES; c++) {
-        printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
-               (unsigned long long)core_sched_stats[c].context_switches,
-               (unsigned long long)core_sched_stats[c].idle_count);
+        kdb_printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
+                   (unsigned long long)core_sched_stats[c].context_switches,
+                   (unsigned long long)core_sched_stats[c].idle_count);
     }
 }
 
@@ -308,9 +327,9 @@ static void cmd_mem(void)
     unsigned long used_pages = total_pages - free_pages;
 
     kdb_puts("\n  --- Physical Memory ---\n");
-    printf("  Total  : %6lu pages  (%4lu MiB)\n", total_pages, (total_pages * 4UL) >> 10);
-    printf("  In use : %6lu pages  (%4lu MiB)\n", used_pages, (used_pages * 4UL) >> 10);
-    printf("  Free   : %6lu pages  (%4lu MiB)\n", free_pages, (free_pages * 4UL) >> 10);
+    kdb_printf("  Total  : %6lu pages  (%4lu MiB)\n", total_pages, (total_pages * 4UL) >> 10);
+    kdb_printf("  In use : %6lu pages  (%4lu MiB)\n", used_pages, (used_pages * 4UL) >> 10);
+    kdb_printf("  Free   : %6lu pages  (%4lu MiB)\n", free_pages, (free_pages * 4UL) >> 10);
 }
 
 /*
@@ -339,7 +358,7 @@ static void cmd_bt(void)
 
     for (int i = 0; i < KDB_BT_FRAMES; i++) {
         if (fp & 0x7UL) {
-            printf("  #%-2d [unaligned fp 0x%016lx]\n", i, fp);
+            kdb_printf("  #%-2d [unaligned fp 0x%016lx]\n", i, fp);
             break;
         }
 
@@ -351,9 +370,9 @@ static void cmd_bt(void)
         const char *sym = panic_resolve_symbol(ret_addr, &offset);
 
         if (sym) {
-            printf("  #%-2d 0x%016lx  <%s+0x%lx>\n", i, ret_addr, sym, offset);
+            kdb_printf("  #%-2d 0x%016lx  <%s+0x%lx>\n", i, ret_addr, sym, offset);
         } else {
-            printf("  #%-2d 0x%016lx\n", i, ret_addr);
+            kdb_printf("  #%-2d 0x%016lx\n", i, ret_addr);
         }
 
         if (!prev_fp || prev_fp <= fp) {
@@ -380,7 +399,7 @@ static void cmd_rd(int argc, char **argv)
     kdb_puts("\n");
     for (unsigned long i = 0; i < count; i++) {
         volatile unsigned long *p = (volatile unsigned long *)(addr + i * 8);
-        printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, *p);
+        kdb_printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, *p);
     }
 }
 
@@ -397,7 +416,7 @@ static void cmd_wr(int argc, char **argv)
 
     *p = val;
     asm volatile("dsb sy" ::: "memory");
-    printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
+    kdb_printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
 }
 
 // Main REPL
@@ -440,7 +459,7 @@ static void kdb_repl(void)
             kdb_puts("  Resuming...\n\n");
             return;
         } else {
-            printf("  Unknown command '%s' — type 'help'\n", argv[0]);
+            kdb_printf("  Unknown command '%s' — type 'help'\n", argv[0]);
         }
     }
 }
@@ -452,8 +471,8 @@ void kdb_enter(const char *reason)
     disable_interrupts();
     kdb_tf = NULL;
 
-    printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           cpu_id());
+    kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
+               timer_get_system_time(), cpu_id());
     cmd_help();
     kdb_repl();
 }
@@ -463,8 +482,8 @@ void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf)
     disable_interrupts();
     kdb_tf = tf;
 
-    printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason, get_system_time(),
-           cpu_id());
+    kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
+               timer_get_system_time(), cpu_id());
     cmd_help();
     kdb_repl();
 }

@@ -21,7 +21,7 @@ unsigned int sd_get_irq(void);
  *
  * Reads and clears the hardware interrupt register, updates the pending-bits
  * word, and unblocks any task waiting for those bits.
- * Returns 1 if a blocked task was woken (caller should call schedule()), 0 otherwise.
+ * Returns 1 if a blocked task was woken (caller should call sched_schedule()), 0 otherwise.
  */
 int sd_handle_irq(void);
 

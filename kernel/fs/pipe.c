@@ -73,7 +73,7 @@ static int pipe_signal_pending(void)
  */
 static void pipe_wait(struct task **queue, spinlock_t *lock)
 {
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
 
     // Transition to BLOCKED before releasing lock to avoid lost wake-ups
     self->state = SCHED_TASK_BLOCKED;
@@ -81,7 +81,7 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
     *queue = self;
 
     spin_unlock(lock);
-    schedule();
+    sched_schedule();
 
     spin_lock(lock);
     // A signal wake (rather than pipe_wake) leaves us queued: unlink now.

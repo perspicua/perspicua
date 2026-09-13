@@ -142,12 +142,12 @@ static void sd_op_wq_remove(struct task *t)
  *
  * If another task is already running an SD operation the caller is queued and
  * blocked until that operation completes. No lock is held on return, so
- * schedule() calls inside the operation do not pollute lockdep's per-core
+ * sched_schedule() calls inside the operation do not pollute lockdep's per-core
  * held-lock tracking.
  */
 static void sd_op_acquire(void)
 {
-    struct task *cur = sched_get_current();
+    struct task *cur = sched_current_task();
 
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&sd_op_lock);
@@ -181,7 +181,7 @@ static void sd_op_acquire(void)
             sd_op_wq_head = sd_op_wq_tail = cur;
         }
         spin_unlock_irqrestore(&sd_op_lock, flags);
-        schedule(); // No lock held — lockdep stays clean.
+        sched_schedule(); // No lock held — lockdep stays clean.
     }
 }
 
@@ -213,7 +213,7 @@ static void sd_op_release(void)
  * sd_wait_status - Polls a hardware STATUS field, yielding between attempts.
  *
  * Called within an sd_op_acquire() / sd_op_release() region; no spinlock is
- * held, so sched_sleep_ms() can safely call schedule() without lockdep issues.
+ * held, so sched_sleep_ms() can safely call sched_schedule() without lockdep issues.
  */
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
@@ -230,7 +230,7 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
  * here — consume them and return without blocking.
  *
  * Slow path: mark the current task BLOCKED, release sd_irq_lock (re-enables
- * IRQs), and call schedule() with NO spinlock held so that lockdep sees a
+ * IRQs), and call sched_schedule() with NO spinlock held so that lockdep sees a
  * clean lock state on both the sleeping and the woken task.
  *
  * Fallback: if sd_irq_num is 0 (no GIC binding) or there is no current task,
@@ -248,14 +248,14 @@ static int sd_wait_interrupt(uint32_t mask)
         return (bits & INT_ERROR_MASK) ? -PERS_ERR_IO_ERROR : PERS_SUCCESS;
     }
 
-    struct task *cur = sched_get_current();
+    struct task *cur = sched_current_task();
     if (!cur || !sd_irq_num) {
         // No IRQ or no scheduler context: poll instead of sleeping forever.
         spin_unlock_irqrestore(&sd_irq_lock, flags);
 
         int t = 1000;
         while (!(regs->interrupt & (mask | INT_ERROR_MASK)) && t--) {
-            sleep_ms(1);
+            timer_sleep_ms(1);
         }
         uint32_t status = regs->interrupt;
         regs->interrupt = status & (mask | INT_ERROR_MASK);
@@ -275,7 +275,7 @@ static int sd_wait_interrupt(uint32_t mask)
     cur->state = SCHED_TASK_BLOCKED;
     spin_unlock_irqrestore(&sd_irq_lock, flags); // Re-enables IRQs.
 
-    schedule(); // Woken by sd_handle_irq() -> sched_unblock().
+    sched_schedule(); // Woken by sd_handle_irq() -> sched_unblock().
 
     // Collect result posted by the ISR.
     flags = spin_lock_irqsave(&sd_irq_lock);
@@ -357,7 +357,7 @@ static int sd_init_host(void)
 {
     // Reset the clock and wait for completion
     regs->clk_control |= (7 << 24);
-    sleep_ms(20);
+    timer_sleep_ms(20);
     while (regs->clk_control & (7 << 24))
         ;
 
@@ -366,7 +366,7 @@ static int sd_init_host(void)
 
     // Request 3.3V power
     regs->host_control = (regs->host_control & ~0xF00) | 0xE00;
-    sleep_ms(100);
+    timer_sleep_ms(100);
     regs->host_control |= 0x100;
 
     // Enable internal clock
@@ -374,7 +374,7 @@ static int sd_init_host(void)
     while (!(regs->clk_control & 0x02))
         ;
     regs->clk_control |= 0x04;
-    sleep_ms(20);
+    timer_sleep_ms(20);
 
     return PERS_SUCCESS;
 }
@@ -415,7 +415,7 @@ static int sd_init_card(void)
             sd_is_sdhc = (regs->resp[0] & 0x40000000) ? 1 : 0;
             break;
         }
-        sleep_ms(1);
+        timer_sleep_ms(1);
     }
     if (timeout <= 0) {
         return -PERS_ERR_TIMED_OUT;
@@ -489,7 +489,7 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
      * sd_op_acquire() blocks until we have exclusive access but releases all
      * locks before returning, so the entire read runs with no spinlock held.
      * This keeps lockdep's per-core held-lock tracking clean across the
-     * schedule() calls in sd_wait_interrupt() and sd_wait_status().
+     * sched_schedule() calls in sd_wait_interrupt() and sd_wait_status().
      */
     sd_op_acquire();
 

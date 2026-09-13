@@ -108,7 +108,7 @@ void fb_register_device(void)
     devfs_register_device("fb0", &fb_vfs_ops, NULL);
 }
 
-void remap_framebuffer_pages(void)
+void fb_remap_pages(void)
 {
     if (!fb_info.ptr || fb_info.size == 0) {
         return;

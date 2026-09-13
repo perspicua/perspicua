@@ -452,7 +452,7 @@ int printk(const char *fmt, ...)
 {
     unsigned long irqflags = spin_lock_irqsave(&printf_lock);
 
-    unsigned long ms = get_system_time();
+    unsigned long ms = timer_get_system_time();
     unsigned long sec = ms / 1000;
     unsigned long rem_ms = ms % 1000;
 

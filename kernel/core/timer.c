@@ -28,7 +28,7 @@ static inline unsigned long read_cntpct(void)
     return val;
 }
 
-unsigned long get_system_time(void)
+unsigned long timer_get_system_time(void)
 {
     unsigned long freq = read_cntfrq();
     unsigned long count = read_cntpct();
@@ -40,7 +40,7 @@ unsigned long get_system_time(void)
     return count / (freq / 1000);
 }
 
-void sleep_ms(unsigned long ms)
+void timer_sleep_ms(unsigned long ms)
 {
     unsigned long freq = read_cntfrq();
     if (freq == 0) {

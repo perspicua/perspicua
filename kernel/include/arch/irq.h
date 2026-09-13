@@ -19,8 +19,8 @@
 /*
  * What a handler reports back to the dispatcher.
  *
- * A handler must never call schedule() itself: the dispatcher still owes the
- * GIC its end-of-interrupt write, and schedule() does not return. Returning
+ * A handler must never call sched_schedule() itself: the dispatcher still owes the
+ * GIC its end-of-interrupt write, and sched_schedule() does not return. Returning
  * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed.
  */
 typedef enum {

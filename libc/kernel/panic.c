@@ -144,7 +144,7 @@ static void panic_dump_task(void)
 {
     printf("\n--- Current Task ---\n");
 
-    struct task *t = sched_get_current();
+    struct task *t = sched_current_task();
     if (!t) {
         printf("  (no current task)\n");
         return;
@@ -174,7 +174,7 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
 
     gic_send_panic_ipi();
 
-    unsigned long uptime_ms = get_system_time();
+    unsigned long uptime_ms = timer_get_system_time();
 
     printf("\n           *** KERNEL PANIC ***           \n\n");
     printf("  Message  : %s\n", msg);

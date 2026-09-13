@@ -176,7 +176,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     // Re-base DTB pointers to virtual addresses post-MMU
     fdt_rebase(P2V(global_dtb_ptr));
 
-    remap_framebuffer_pages();
+    fb_remap_pages();
     heap_init();
 
     // Stage 3: Interrupts and scheduling

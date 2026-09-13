@@ -31,7 +31,7 @@ static struct fat32_fs current_fs;
 
 /*
  * Coarse filesystem lock. FAT32 does blocking SD I/O, so this must be a
- * sleeping mutex (a spinlock can't be held across schedule()). It is recursive
+ * sleeping mutex (a spinlock can't be held across sched_schedule()). It is recursive
  * because a read/write already holding it can re-enter write_page via the page
  * cache eviction path.
  */

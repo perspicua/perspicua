@@ -33,18 +33,19 @@ void test_uaccess(void)
 
     // degenerate arguments are rejected rather than dereferenced
     {
-        TEST_ASSERT_EQ("NULL pointer rejected", validate_user_buffer(NULL, 8, 0), 0);
-        TEST_ASSERT_EQ("zero length rejected", validate_user_buffer((void *)UNMAPPED_USER_VA, 0, 0),
-                       0);
+        TEST_ASSERT_EQ("NULL pointer rejected", syscall_validate_user_buffer(NULL, 8, 0), 0);
+        TEST_ASSERT_EQ("zero length rejected",
+                       syscall_validate_user_buffer((void *)UNMAPPED_USER_VA, 0, 0), 0);
     }
 
     // a kernel address must never pass as a user buffer
     {
-        TEST_ASSERT_EQ("kernel address rejected", validate_user_buffer(kbuf, sizeof(kbuf), 0), 0);
+        TEST_ASSERT_EQ("kernel address rejected",
+                       syscall_validate_user_buffer(kbuf, sizeof(kbuf), 0), 0);
         TEST_ASSERT_EQ("kernel address rejected for write",
-                       validate_user_buffer(kbuf, sizeof(kbuf), 1), 0);
+                       syscall_validate_user_buffer(kbuf, sizeof(kbuf), 1), 0);
         TEST_ASSERT_EQ("KERNEL_VMA boundary rejected",
-                       validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
+                       syscall_validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
     }
 
     /*
@@ -54,15 +55,15 @@ void test_uaccess(void)
      */
     {
         TEST_ASSERT_EQ("wrap-around rejected",
-                       validate_user_buffer((void *)0xFFFFFFFFFFFFFFF0UL, 64, 0), 0);
+                       syscall_validate_user_buffer((void *)0xFFFFFFFFFFFFFFF0UL, 64, 0), 0);
         TEST_ASSERT_EQ("range crossing into kernel rejected",
-                       validate_user_buffer((void *)(KERNEL_VMA - 8), 64, 0), 0);
+                       syscall_validate_user_buffer((void *)(KERNEL_VMA - 8), 64, 0), 0);
     }
 
     // an unmapped user address is well-formed but has no translation
     {
         TEST_ASSERT_EQ("unmapped user VA rejected",
-                       validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
+                       syscall_validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
     }
 
     /*
@@ -103,7 +104,7 @@ void test_uaccess(void)
         mmu_user_map_page(pgd, MAPPED_USER_VA, V2P(page), MMU_PAGE_USER_DATA);
         strcpy((char *)page, "abcdefghij"); // 10 chars
 
-        /* schedule() reinstalls the running task's TTBR0, so a timer tick here
+        /* sched_schedule() reinstalls the running task's TTBR0, so a timer tick here
          * would swap the scratch space out mid-test. Keep IRQs masked. */
         unsigned long irqf = irq_save();
 

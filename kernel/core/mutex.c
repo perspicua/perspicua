@@ -1,9 +1,9 @@
 /*
  * mutex.c - Recursive sleeping mutex built on the scheduler wait queue.
  *
- * A task blocks (schedule) rather than spins when the lock is contended, so a
+ * A task blocks (sched_schedule()) rather than spins when the lock is contended, so a
  * kmutex may be held across blocking operations such as SD card I/O. The short
- * internal `guard` spinlock is never held across schedule(), keeping lockdep's
+ * internal `guard` spinlock is never held across sched_schedule(), keeping lockdep's
  * per-core tracking clean.
  */
 
@@ -45,7 +45,7 @@ void kmutex_init(struct kmutex *m)
 
 void kmutex_lock(struct kmutex *m)
 {
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
 
     for (;;) {
         unsigned long flags = spin_lock_irqsave(&m->guard);
@@ -85,7 +85,7 @@ void kmutex_lock(struct kmutex *m)
         }
 
         spin_unlock_irqrestore(&m->guard, flags);
-        schedule();
+        sched_schedule();
     }
 }
 
@@ -102,7 +102,7 @@ void kmutex_unlock(struct kmutex *m)
         spin_unlock_irqrestore(&m->guard, flags);
         PANIC("kmutex: unlock of a mutex that is not held");
     }
-    if (m->owner != sched_get_current()) {
+    if (m->owner != sched_current_task()) {
         spin_unlock_irqrestore(&m->guard, flags);
         PANIC("kmutex: unlock by a task that does not own the mutex");
     }

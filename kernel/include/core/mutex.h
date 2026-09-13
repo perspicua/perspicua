@@ -1,7 +1,7 @@
 /*
  * mutex.h - Sleeping mutual-exclusion lock.
  *
- * Unlike a spinlock, a task may sleep (call schedule) while holding a kmutex,
+ * Unlike a spinlock, a task may sleep (call sched_schedule()) while holding a kmutex,
  * so it is safe to hold across blocking I/O. Recursive: the owning task may
  * re-acquire it without deadlocking.
  */

@@ -88,7 +88,7 @@ static void process_clone_fds(struct process *child, struct process *parent)
 static void process_start_task(struct process *p, struct task *t)
 {
     p->main_task = t;
-    enqueue_ready(cpu_id(), t);
+    sched_enqueue(cpu_id(), t);
 }
 
 static void close_all_fds(struct process *p)
@@ -260,15 +260,15 @@ void process_va_free(struct va_allocator *va, uintptr_t base)
     }
 }
 
-int process_find_current(void)
+int process_current_pid(void)
 {
-    struct task *t = sched_get_current();
+    struct task *t = sched_current_task();
     return t ? (int)t->pid : -PERS_ERR_NO_SUCH_PROCESS;
 }
 
 struct process *process_current(void)
 {
-    struct task *t = sched_get_current();
+    struct task *t = sched_current_task();
     return t ? process_slot(t->pid) : NULL;
 }
 
@@ -489,7 +489,7 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
 
 int process_exec(const char *path, char *const argv[], char *const envp[])
 {
-    int pid = process_find_current();
+    int pid = process_current_pid();
     if (pid < 0) {
         return pid;
     }
@@ -652,7 +652,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->context.sp = (unsigned long)tf;
     p->context.lr = (unsigned long)ret_to_user;
 
-    struct task *curr = sched_get_current();
+    struct task *curr = sched_current_task();
     if (curr) {
         curr->context.sp = (unsigned long)tf;
         curr->context.lr = (unsigned long)ret_to_user;
@@ -675,12 +675,12 @@ void process_exit(uint32_t pid, int exit_status)
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
-        struct task *dying = sched_get_current();
+        struct task *dying = sched_current_task();
         if (dying) {
             dying->state = SCHED_TASK_DEAD;
         }
         for (;;) {
-            schedule();
+            sched_schedule();
         }
     }
 
@@ -756,13 +756,13 @@ void process_exit(uint32_t pid, int exit_status)
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    struct task *dying = sched_get_current();
+    struct task *dying = sched_current_task();
     if (dying) {
         dying->state = SCHED_TASK_DEAD;
     }
 
     for (;;) {
-        schedule();
+        sched_schedule();
     }
 }
 
@@ -811,7 +811,7 @@ void process_test_release_slot(uint32_t pid)
 
 int process_fork(struct exception_trap_frame *parent_tf)
 {
-    int parent_pid = process_find_current();
+    int parent_pid = process_current_pid();
     if (parent_pid < 0) {
         return parent_pid;
     }
@@ -893,7 +893,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
 
 int process_waitpid(int pid, int *status, int options)
 {
-    int parent_pid = process_find_current();
+    int parent_pid = process_current_pid();
     if (parent_pid < 0) {
         return -PERS_ERR_NO_SUCH_PROCESS;
     }
@@ -957,13 +957,13 @@ int process_waitpid(int pid, int *status, int options)
             return 0;
         }
 
-        struct task *curr = sched_get_current();
+        struct task *curr = sched_current_task();
         if (curr) {
             curr->state = SCHED_TASK_BLOCKED;
         }
 
         spin_unlock(&process_table_lock);
-        schedule();
+        sched_schedule();
         irq_restore(irqf);
     }
 }

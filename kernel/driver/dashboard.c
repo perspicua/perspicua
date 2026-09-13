@@ -42,7 +42,7 @@ void dashboard_update(void)
 {
     char buf[64];
     unsigned int x = 10;
-    unsigned long uptime = get_system_time() / 1000;
+    unsigned long uptime = timer_get_system_time() / 1000;
 
     // Background bar
     graphics_draw_rect(0, 0, fb_info.width, 20, 0x00333333, 1);

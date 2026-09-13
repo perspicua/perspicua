@@ -32,13 +32,13 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    struct task *curr = sched_get_current();
+    struct task *curr = sched_current_task();
     if (curr && curr->skip_signals) {
         curr->skip_signals = 0;
         return;
     }
 
-    int curr_pid = process_find_current();
+    int curr_pid = process_current_pid();
     if (curr_pid < 0) {
         return;
     }
@@ -90,7 +90,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
                 spin_unlock_irqrestore(&process_table_lock, flags);
                 return;
             }
-            sched_get_current()->state = SCHED_TASK_STOPPED;
+            sched_current_task()->state = SCHED_TASK_STOPPED;
             curr_process->stop_reported = 0;
 
             /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
@@ -101,8 +101,8 @@ void signal_handle_pending(struct exception_trap_frame *tf)
                 sched_unblock(parent->main_task);
             }
 
-            spin_unlock(&process_table_lock); // keep IRQs masked across schedule()
-            schedule();
+            spin_unlock(&process_table_lock); // keep IRQs masked across sched_schedule()
+            sched_schedule();
             irq_restore(flags);
             return;
         }
@@ -140,7 +140,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
         frame.saved_mask = old_mask;
 
-        if (!validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
+        if (!syscall_validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
             || copy_to_user((void *)new_sp, &frame, sizeof(struct signal_frame)) != 0) {
             curr_process->blocked_signals = old_mask;
             goto deliver_kill;

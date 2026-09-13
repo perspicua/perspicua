@@ -232,7 +232,7 @@ static void sleep_enqueue(struct task *t)
 // Returns expired tasks to ready queues.
 static void sleep_drain(int cpu)
 {
-    unsigned long now = get_system_time();
+    unsigned long now = timer_get_system_time();
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
 
     while (sched_sleep_head && (long)(now - sched_sleep_head->wake_time) >= 0) {
@@ -299,7 +299,7 @@ static void cleanup_dead_task(int cpu)
         return;
     }
 
-    if (dead == sched_get_current()) {
+    if (dead == sched_current_task()) {
         PANIC("sched: attempt to free the active task");
     }
 
@@ -325,7 +325,7 @@ static void cleanup_dead_task(int cpu)
     }
 }
 
-void enqueue_ready(int cpu, struct task *t)
+void sched_enqueue(int cpu, struct task *t)
 {
     if (t && t->stack && (unsigned long)t->stack < KERNEL_VMA) {
         PANIC("sched: corrupted t->stack at enqueue");
@@ -371,9 +371,9 @@ void sched_secondary_init(void)
     sched_core_pid[core_id] = 0;
 
     enable_interrupts();
-    schedule();
+    sched_schedule();
 
-    PANIC("sched_secondary_init: schedule() returned unexpectedly");
+    PANIC("sched_secondary_init: sched_schedule() returned unexpectedly");
 }
 
 void sched_create_task(void (*entry)(void))
@@ -424,7 +424,7 @@ void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
     int cpu = cpu_id();
-    struct task *curr = sched_get_current();
+    struct task *curr = sched_current_task();
 
     if (!curr || curr == sched_idle[cpu]) {
         irq_restore(flags);
@@ -432,10 +432,10 @@ void sched_sleep_ms(unsigned long ms)
     }
 
     curr->state = SCHED_TASK_BLOCKED;
-    curr->wake_time = get_system_time() + ms;
+    curr->wake_time = timer_get_system_time() + ms;
     sleep_enqueue(curr);
 
-    schedule();
+    sched_schedule();
     irq_restore(flags);
 }
 
@@ -443,7 +443,7 @@ void sched_block(void)
 {
     unsigned long flags = irq_save();
     int cpu = cpu_id();
-    struct task *curr = sched_get_current();
+    struct task *curr = sched_current_task();
 
     if (!curr || curr == sched_idle[cpu]) {
         irq_restore(flags);
@@ -451,7 +451,7 @@ void sched_block(void)
     }
 
     curr->state = SCHED_TASK_BLOCKED;
-    schedule();
+    sched_schedule();
     irq_restore(flags);
 }
 
@@ -480,7 +480,7 @@ void sched_stop(void)
 {
     unsigned long flags = irq_save();
     int cpu = cpu_id();
-    struct task *curr = sched_get_current();
+    struct task *curr = sched_current_task();
 
     if (!curr || curr == sched_idle[cpu]) {
         irq_restore(flags);
@@ -488,7 +488,7 @@ void sched_stop(void)
     }
 
     curr->state = SCHED_TASK_STOPPED;
-    schedule();
+    sched_schedule();
     irq_restore(flags);
 }
 
@@ -510,7 +510,7 @@ void sched_continue(struct task *t)
     }
 }
 
-struct task *sched_get_current(void)
+struct task *sched_current_task(void)
 {
     struct task *t;
     asm volatile("mrs %0, tpidr_el1" : "=r"(t));
@@ -576,7 +576,7 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 #endif
 
 // Core scheduling logic. Selects next task and context switches.
-void schedule(void)
+void sched_schedule(void)
 {
     unsigned long flags = irq_save();
     int cpu = cpu_id();
@@ -591,7 +591,7 @@ void schedule(void)
     sleep_drain(cpu);
     sched_check_bss_canaries();
 
-    struct task *prev = sched_get_current();
+    struct task *prev = sched_current_task();
     if (!prev) {
         irq_restore(flags);
         return;

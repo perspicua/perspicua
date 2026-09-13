@@ -10,7 +10,7 @@
 // Forward declaration for the exception_trap_frame struct
 struct exception_trap_frame;
 
-int validate_user_buffer(const void *ptr, size_t len, int writable);
+int syscall_validate_user_buffer(const void *ptr, size_t len, int writable);
 
 /*
  * Safely copies data from user-space to kernel-space.

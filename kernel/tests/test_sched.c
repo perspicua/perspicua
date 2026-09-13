@@ -87,7 +87,7 @@ static struct task *early_wake_task = NULL;
 static void task_publish_then_long_sleep(void)
 {
     unsigned long flags = spin_lock_irqsave(&test_lock);
-    early_wake_task = sched_get_current();
+    early_wake_task = sched_current_task();
     spin_unlock_irqrestore(&test_lock, flags);
 
     sched_sleep_ms(10000);
@@ -190,13 +190,13 @@ static volatile unsigned long ts_long_done = 0;
 static void task_short_sleep_ts(void)
 {
     sched_sleep_ms(20);
-    ts_short_done = get_system_time();
+    ts_short_done = timer_get_system_time();
 }
 
 static void task_long_sleep_ts(void)
 {
     sched_sleep_ms(40);
-    ts_long_done = get_system_time();
+    ts_long_done = timer_get_system_time();
 }
 
 // task that yields repeatedly
@@ -207,7 +207,7 @@ static void task_yield_loop(void)
         unsigned long flags = spin_lock_irqsave(&test_lock);
         yield_count++;
         spin_unlock_irqrestore(&test_lock, flags);
-        schedule(); // yield to other tasks
+        sched_schedule(); // yield to other tasks
     }
 }
 
@@ -217,7 +217,7 @@ static struct task *race_wait_queue = NULL;
 
 static void task_race_waiter(void)
 {
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
     unsigned long flags = irq_save();
 
     // 1. Pre-mark as BLOCKED (simulating pipe_wait)
@@ -228,10 +228,10 @@ static void task_race_waiter(void)
     race_wait_queue = self;
     spin_unlock_irqrestore(&test_lock, lock_flags);
 
-    /* 3. Call schedule(). If an interrupt or another core unblocks us BEFORE we
-     * reach here, we enter schedule() with state=READY, which must still be
+    /* 3. Call sched_schedule(). If an interrupt or another core unblocks us BEFORE we
+     * reach here, we enter sched_schedule() with state=READY, which must still be
      * handled rather than losing the wake. */
-    schedule();
+    sched_schedule();
 
     // 4. If we survived, mark success
     race_task_ran = 1;
@@ -345,9 +345,9 @@ void test_scheduler(void)
 
     // basic sleep timing
     {
-        unsigned long before = get_system_time();
+        unsigned long before = timer_get_system_time();
         sched_sleep_ms(50);
-        unsigned long after = get_system_time();
+        unsigned long after = timer_get_system_time();
         unsigned long elapsed = after - before;
         // Timer has 100Hz tick (10ms granularity), allow generous bounds
         TEST_ASSERT("sleep >= 30ms", elapsed >= 30);
@@ -356,19 +356,19 @@ void test_scheduler(void)
 
     // short sleep
     {
-        unsigned long before = get_system_time();
+        unsigned long before = timer_get_system_time();
         sched_sleep_ms(20);
-        unsigned long after = get_system_time();
+        unsigned long after = timer_get_system_time();
         TEST_ASSERT("short sleep elapsed", (after - before) >= 10);
     }
 
     // multiple sequential sleeps
     {
-        unsigned long before = get_system_time();
+        unsigned long before = timer_get_system_time();
         sched_sleep_ms(30);
         sched_sleep_ms(30);
         sched_sleep_ms(30);
-        unsigned long after = get_system_time();
+        unsigned long after = timer_get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("3x30ms >= 60", elapsed >= 60);
     }
@@ -548,13 +548,13 @@ void test_scheduler(void)
 
     // time always moves forward across sleeps
     {
-        unsigned long t0 = get_system_time();
+        unsigned long t0 = timer_get_system_time();
         sched_sleep_ms(20);
-        unsigned long t1 = get_system_time();
+        unsigned long t1 = timer_get_system_time();
         sched_sleep_ms(20);
-        unsigned long t2 = get_system_time();
+        unsigned long t2 = timer_get_system_time();
         sched_sleep_ms(20);
-        unsigned long t3 = get_system_time();
+        unsigned long t3 = timer_get_system_time();
         TEST_ASSERT("time monotonic t1>t0", t1 > t0);
         TEST_ASSERT("time monotonic t2>t1", t2 > t1);
         TEST_ASSERT("time monotonic t3>t2", t3 > t2);

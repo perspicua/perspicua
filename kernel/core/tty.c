@@ -331,7 +331,7 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
                 break;
             }
 
-            struct task *curr_task_inner = sched_get_current();
+            struct task *curr_task_inner = sched_current_task();
             struct process *proc = process_slot(curr_task_inner->pid);
 
             if (proc && (proc->pending_signals & ~proc->blocked_signals)) {
@@ -342,7 +342,7 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             curr_task_inner->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
-            schedule();
+            sched_schedule();
 
             // Cleanup after wake
             unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
@@ -386,11 +386,11 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
                 break;
             }
 
-            struct task *curr = sched_get_current();
+            struct task *curr = sched_current_task();
             curr->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
             spin_unlock_irqrestore(&tty->lock, flags);
-            schedule();
+            sched_schedule();
             flags = spin_lock_irqsave(&tty->lock);
 
             // Cleanup after wake

@@ -25,6 +25,6 @@ void fb_init(void);
 
 void fb_register_device(void);
 
-void remap_framebuffer_pages(void);
+void fb_remap_pages(void);
 
 #endif // PERSPICUA_DRIVER_FB_H

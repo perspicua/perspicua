@@ -154,7 +154,7 @@ __attribute__((noreturn)) void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 
 // Context and identity
-int process_find_current(void);
+int process_current_pid(void);
 
 /*
  * process_current - PCB of the calling task's process, or NULL if it has none.

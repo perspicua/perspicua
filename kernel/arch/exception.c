@@ -128,7 +128,7 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
     }
 
     if (is_user_fault) {
-        int pid = process_find_current();
+        int pid = process_current_pid();
 
         printk("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data",
                pid);
@@ -145,7 +145,7 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
 
         if (pid >= 0) {
             printk("  Action   : killing PID %d\n", pid);
-            struct task *curr = sched_get_current();
+            struct task *curr = sched_current_task();
             if (curr && curr->pid == (uint32_t)pid) {
                 process_exit(pid, 1);
             } else {
@@ -195,7 +195,7 @@ void exception_unhandled_vector(void)
  * Owns the GIC acknowledge/end-of-interrupt pair and the panic IPI; everything
  * else is a handler claimed through request_irq. A handler returning
  * IRQ_HANDLED_RESCHED is rescheduled here, after the line is closed, because
- * schedule() does not return.
+ * sched_schedule() does not return.
  */
 void exception_irq_handler(void)
 {
@@ -229,7 +229,7 @@ void exception_irq_handler(void)
     mmio_write(gic_c_eoir, iar);
 
     if (res == IRQ_HANDLED_RESCHED) {
-        schedule();
+        sched_schedule();
     }
 }
 

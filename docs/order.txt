@@ -178,7 +178,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: syscall.c is a table plus one short function per entry; the three
         redundant syscalls are gone and their libc wrappers still work.
 
-   9. Naming pass
+   9. Naming pass [DONE]
       Effort: S-M (mechanical) | Unlocks: the prefix rule in the style guide
         means something
       Scope: the style guide says public functions carry their subsystem

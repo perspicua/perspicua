@@ -14,7 +14,7 @@ void test_mutex(void)
 {
     TEST_SUITE_BEGIN("Mutex");
 
-    struct task *self = sched_get_current();
+    struct task *self = sched_current_task();
 
     // initialisation clears ownership
     {

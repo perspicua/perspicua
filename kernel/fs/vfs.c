@@ -594,7 +594,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
 int vfs_open(const char *path, int flags)
 {
-    int pid = process_find_current();
+    int pid = process_current_pid();
     if (pid < 0) {
         return pid;
     }
