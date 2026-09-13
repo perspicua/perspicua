@@ -6,6 +6,8 @@
 
 #include "string.h"
 
+#include "uapi/errors.h"
+
 #include "fs/fat32.h"
 #include "fs/vfs.h"
 #include "mm/slab.h"
@@ -295,6 +297,17 @@ void test_fat32(void)
     }
 
     /*
+     * unlink and rmdir reject each other's target. Both resolve the name the
+     * same way and differ only in which kind they accept, so the two codes pin
+     * that the distinction survives.
+     */
+    {
+        TEST_ASSERT_EQ("unlink refuses a directory", vfs_unlink(NEST_SUB),
+                       -PERS_ERR_IS_A_DIRECTORY);
+        TEST_ASSERT_EQ("rmdir refuses a file", vfs_rmdir(NEST_FILE), -PERS_ERR_NOT_A_DIRECTORY);
+    }
+
+    /*
      * mkdir on a name that already exists must release the vnode its lookup
      * returned. That vnode holds a reference on its parent, so freeing it
      * without going through vfs_vnode_put strands the parent: the directory
@@ -400,6 +413,26 @@ void test_fat32(void)
             TEST_ASSERT("root node name is empty", root->name[0] == '\0');
             slab_free(root);
         }
+    }
+
+    /*
+     * A deleted entry keeps its old name with name[0] overwritten to 0xE5,
+     * and name_match only folds 'a'-'z' -- 0xE5 passes through untouched, so
+     * a live file can be named to collide with a ghost byte-for-byte. unlink
+     * must not treat that collision as a match: doing so frees the ghost's
+     * stale start cluster, which may by then belong to a live file.
+     */
+    {
+        const char *live = "/zzzzzzzz.txt";
+        const char *ghost = "/\345zzzzzzz.txt"; // \345 == 0xE5
+
+        int fd = vfs_open(live, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        TEST_ASSERT("create collision-name file", fd >= 0);
+        TEST_ASSERT_EQ("write collision-name file", vfs_write(fd, "hello", 5), 5);
+        vfs_close(fd);
+        TEST_ASSERT_EQ("unlink collision-name file", vfs_unlink(live), 0);
+
+        TEST_ASSERT("deleted entry is not unlinkable", vfs_unlink(ghost) != 0);
     }
 
     TEST_SUITE_END("FAT32");
