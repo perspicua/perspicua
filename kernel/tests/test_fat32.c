@@ -6,6 +6,8 @@
 
 #include "string.h"
 
+#include "uapi/errors.h"
+
 #include "fs/fat32.h"
 #include "fs/vfs.h"
 #include "mm/slab.h"
@@ -292,6 +294,17 @@ void test_fat32(void)
     // a non-empty directory must not be removable
     {
         TEST_ASSERT("rmdir on non-empty dir fails", vfs_rmdir(NEST_SUB) != 0);
+    }
+
+    /*
+     * unlink and rmdir reject each other's target. Both resolve the name the
+     * same way and differ only in which kind they accept, so the two codes pin
+     * that the distinction survives.
+     */
+    {
+        TEST_ASSERT_EQ("unlink refuses a directory", vfs_unlink(NEST_SUB),
+                       -PERS_ERR_IS_A_DIRECTORY);
+        TEST_ASSERT_EQ("rmdir refuses a file", vfs_rmdir(NEST_FILE), -PERS_ERR_NOT_A_DIRECTORY);
     }
 
     /*

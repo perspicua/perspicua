@@ -998,44 +998,6 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
 
     return entries_read;
 }
-struct unlink_ctx {
-    const char *name;
-};
-static enum fat32_walk_action unlink_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                        int has_lfn, uint32_t lba, int s, int i, void *ctx_,
-                                        int *out_err, int *dirty)
-{
-    struct unlink_ctx *ctx = ctx_;
-    (void)lba;
-    (void)s;
-    (void)i;
-
-    if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
-        return FAT32_WALK_CONTINUE;
-    }
-
-    if ((has_lfn && strcmp(ctx->name, lfn_name) == 0) || name_match(ctx->name, entry)) {
-        if (entry->attributes & 0x10) {
-            *out_err = -PERS_ERR_IS_A_DIRECTORY;
-            return FAT32_WALK_ERROR;
-        }
-        uint32_t target_cluster = (entry->cluster_high << 16) | entry->cluster_low;
-        entry->name[0] = 0xE5;
-        *dirty = 1;
-        if (target_cluster >= 2) {
-            fat32_free_cluster_chain(target_cluster);
-        }
-        return FAT32_WALK_STOP;
-    }
-    return FAT32_WALK_CONTINUE;
-}
-
-static int fat32_unlink(struct vfs_vnode *parent, const char *name)
-{
-    uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
-    struct unlink_ctx ctx = {.name = name};
-    return fat32_dir_walk(cluster, 0, unlink_cb, &ctx);
-}
 
 // Stops as soon as it sees anything that isn't deleted, ".", or "..";
 // fat32_dir_is_empty turns that outcome (or the lack of one) into a bool.
@@ -1058,9 +1020,8 @@ static enum fat32_walk_action dir_empty_cb(struct fat32_dir_entry *entry, const 
     return FAT32_WALK_STOP; // found a real entry: not empty
 }
 
-// Empty-directory check used by rmdir_cb, as its own small walk over the
-// target directory's own contents. Returns 1 if empty, 0 if not, or a
-// negative error code.
+// Whether a directory holds anything but "." and "..", as its own small walk
+// over that directory. Returns 1 if empty, 0 if not, or a negative error.
 static int fat32_dir_is_empty(uint32_t cluster)
 {
     int ret = fat32_dir_walk(cluster, 0, dir_empty_cb, NULL);
@@ -1073,15 +1034,32 @@ static int fat32_dir_is_empty(uint32_t cluster)
     return ret;
 }
 
-struct rmdir_ctx {
+/*
+ * Removing a name and releasing its clusters are two separate on-disk writes,
+ * and the order between them is what decides how a crash in the middle lands.
+ *
+ * Entry first, then chain: an interrupted delete leaves clusters allocated with
+ * nothing referring to them -- space a scan can reclaim later.
+ *
+ * Chain first, then entry: an interrupted delete leaves a live-looking entry
+ * pointing at clusters the allocator has already handed to the next file. Two
+ * files then share data, and unlinking either frees the other's.
+ *
+ * So the callback never frees anything. It marks the entry and reports the
+ * chain through its context; fat32_remove_entry releases it only once the walk
+ * has written the entry back.
+ */
+struct remove_entry_ctx {
     const char *name;
+    int want_dir;           // rmdir refuses a file, unlink refuses a directory
+    uint32_t freed_cluster; // chain to release once the entry is on disk
 };
 
-static enum fat32_walk_action rmdir_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                       int has_lfn, uint32_t lba, int s, int i, void *ctx_,
-                                       int *out_err, int *dirty)
+static enum fat32_walk_action remove_entry_cb(struct fat32_dir_entry *entry, const char *lfn_name,
+                                              int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+                                              int *out_err, int *dirty)
 {
-    struct rmdir_ctx *ctx = ctx_;
+    struct remove_entry_ctx *ctx = ctx_;
     (void)lba;
     (void)s;
     (void)i;
@@ -1093,35 +1071,59 @@ static enum fat32_walk_action rmdir_cb(struct fat32_dir_entry *entry, const char
         return FAT32_WALK_CONTINUE;
     }
 
-    if (!(entry->attributes & 0x10)) {
+    int is_dir = (entry->attributes & 0x10) != 0;
+    if (ctx->want_dir && !is_dir) {
         *out_err = -PERS_ERR_NOT_A_DIRECTORY;
         return FAT32_WALK_ERROR;
     }
-
-    uint32_t target_cluster = (entry->cluster_high << 16) | entry->cluster_low;
-    int empty = fat32_dir_is_empty(target_cluster);
-    if (empty < 0) {
-        *out_err = empty;
+    if (!ctx->want_dir && is_dir) {
+        *out_err = -PERS_ERR_IS_A_DIRECTORY;
         return FAT32_WALK_ERROR;
     }
-    if (!empty) {
-        *out_err = -PERS_ERR_DIR_NOT_EMPTY;
-        return FAT32_WALK_ERROR;
+
+    uint32_t target_cluster = ((uint32_t)entry->cluster_high << 16) | entry->cluster_low;
+
+    if (ctx->want_dir) {
+        int empty = fat32_dir_is_empty(target_cluster);
+        if (empty < 0) {
+            *out_err = empty;
+            return FAT32_WALK_ERROR;
+        }
+        if (!empty) {
+            *out_err = -PERS_ERR_DIR_NOT_EMPTY;
+            return FAT32_WALK_ERROR;
+        }
     }
 
     entry->name[0] = 0xE5;
     *dirty = 1;
-    if (target_cluster >= 2) {
-        fat32_free_cluster_chain(target_cluster);
-    }
+    ctx->freed_cluster = target_cluster;
     return FAT32_WALK_STOP;
+}
+
+static int fat32_remove_entry(uint32_t parent_cluster, const char *name, int want_dir)
+{
+    struct remove_entry_ctx ctx = {.name = name, .want_dir = want_dir, .freed_cluster = 0};
+
+    int ret = fat32_dir_walk(parent_cluster, 0, remove_entry_cb, &ctx);
+    if (ret != PERS_SUCCESS) {
+        return ret;
+    }
+
+    if (ctx.freed_cluster >= 2) {
+        return fat32_free_cluster_chain(ctx.freed_cluster);
+    }
+    return PERS_SUCCESS;
+}
+
+static int fat32_unlink(struct vfs_vnode *parent, const char *name)
+{
+    return fat32_remove_entry((uint32_t)(uintptr_t)parent->internal_info, name, 0);
 }
 
 static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 {
-    uint32_t cluster = (uint32_t)(uintptr_t)parent->internal_info;
-    struct rmdir_ctx ctx = {.name = name};
-    return fat32_dir_walk(cluster, 0, rmdir_cb, &ctx);
+    return fat32_remove_entry((uint32_t)(uintptr_t)parent->internal_info, name, 1);
 }
 
 static int fat32_mkdir(struct vfs_vnode *parent, const char *name)
@@ -1388,11 +1390,17 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
 
     pagecache_invalidate(node);
 
+    /*
+     * Same ordering rule as fat32_remove_entry: shrink the entry before the
+     * chain, never the reverse.
+     */
     uint32_t start_cluster = (uint32_t)(uintptr_t)node->internal_info;
+    uint32_t new_tail = 0; // cluster to cap with an end-of-chain marker
+    uint32_t doomed = 0;   // first cluster of the chain to release
 
     if (length == 0) {
         if (cluster_valid(start_cluster)) {
-            fat32_free_cluster_chain(start_cluster);
+            doomed = start_cluster;
         }
         node->internal_info = (void *)(uintptr_t)0;
     } else {
@@ -1408,16 +1416,32 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
         }
 
         if (cluster_valid(last_keep)) {
+            new_tail = last_keep;
             uint32_t next = get_next_cluster(last_keep);
-            set_fat_entry(last_keep, FAT32_CLUSTER_EOC);
             if (cluster_valid(next)) {
-                fat32_free_cluster_chain(next);
+                doomed = next;
             }
         }
     }
 
     node->file_size = length;
-    fat32_update_dir_entry(node);
+
+    /*
+     * If the entry cannot be updated, the clusters stay where they are: the
+     * on-disk entry still describes the old length and must keep referring to
+     * a chain that covers it.
+     */
+    int err = fat32_update_dir_entry(node);
+    if (err != PERS_SUCCESS) {
+        return err;
+    }
+
+    if (new_tail) {
+        set_fat_entry(new_tail, FAT32_CLUSTER_EOC);
+    }
+    if (doomed) {
+        fat32_free_cluster_chain(doomed);
+    }
     return PERS_SUCCESS;
 }
 
