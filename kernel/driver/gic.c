@@ -11,7 +11,6 @@
 
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
-#include "driver/uart.h"
 
 volatile unsigned int *gic_d_ctlr = NULL;
 volatile unsigned int *gic_d_isenablern = NULL;
@@ -23,8 +22,6 @@ volatile unsigned int *gic_c_ctlr = NULL;
 volatile unsigned int *gic_c_pmr = NULL;
 volatile unsigned int *gic_c_iar = NULL;
 volatile unsigned int *gic_c_eoir = NULL;
-
-static unsigned int cached_uart_irq = 0;
 
 void gic_send_panic_ipi(void)
 {
@@ -59,12 +56,6 @@ static int gic_probe(struct device *dev)
     mmio_write(&gic_d_isenablern[GIC_TIMER_IRQ / 32], (1 << (GIC_TIMER_IRQ % 32)));
     mmio_write8(&gic_d_ipriorityr[GIC_TIMER_IRQ], 0);
 
-    // Enable UART (SPI) and route specifically to CPU0
-    cached_uart_irq = uart_get_irq();
-    mmio_write(&gic_d_isenablern[cached_uart_irq / 32], (1 << (cached_uart_irq % 32)));
-    mmio_write8(&gic_d_ipriorityr[cached_uart_irq], 0);
-    mmio_write8(&gic_d_itargetsr[cached_uart_irq], 0x01);
-
     // CPU Interface: enable and allow all priority levels
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
@@ -75,6 +66,7 @@ static int gic_probe(struct device *dev)
 void gic_enable_irq(unsigned int irq)
 {
     if (!gic_d_isenablern) {
+        pr_warn("gic: IRQ %u requested before the distributor was mapped\n", irq);
         return;
     }
     mmio_write(&gic_d_isenablern[irq / 32], (1u << (irq % 32)));

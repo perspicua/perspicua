@@ -15,6 +15,7 @@
 #include "panic.h"
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
+#include "driver/gic.h"
 #include "driver/gpio.h"
 #include "uapi/errors.h"
 
@@ -105,6 +106,19 @@ CORE_DRIVER(pl011_uart) = {
     .name = "pl011-uart",
     .compatible = "arm,pl011-axi",
     .probe = pl011_uart_probe,
+};
+
+static int pl011_uart_irq_probe(struct device *dev)
+{
+    (void)dev;
+    gic_enable_irq(cached_uart_irq);
+    return 0;
+}
+
+IRQ_DRIVER(pl011_uart_irq) = {
+    .name = "pl011-uart-irq",
+    .compatible = "arm,pl011-axi",
+    .probe = pl011_uart_irq_probe,
 };
 
 void uart_send_raw(char c)
