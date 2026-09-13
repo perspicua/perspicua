@@ -202,6 +202,8 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     // Root filesystem initialization (FAT32)
     if (fat32_init("sd0") == PERS_SUCCESS) {
         vfs_mount("/", fat32_get_root_node());
+    } else {
+        PANIC("fat32: failed to mount root filesystem from sd0 — cannot continue");
     }
 
     // Mount auxiliary filesystems

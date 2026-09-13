@@ -61,6 +61,17 @@ void irq_restore(unsigned long flags);
 int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *name);
 
 /*
+ * free_irq - Releases a previously claimed interrupt line.
+ *
+ * Clears the handler table entry so the line can be claimed again by another
+ * driver. The caller is responsible for masking the IRQ in the GIC first so
+ * no stray interrupt fires against a NULL handler after the table is cleared.
+ * Returns 0 on success, or a negative error if the IRQ is out of range or was
+ * not claimed.
+ */
+int free_irq(unsigned int irq);
+
+/*
  * irq_dispatch - Runs the handler that claimed irq, counting the hit.
  *
  * Reports IRQ_HANDLED for a line nobody claimed, so an unexpected interrupt is

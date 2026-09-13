@@ -15,6 +15,7 @@
 
 volatile unsigned int *gic_d_ctlr = NULL;
 volatile unsigned int *gic_d_isenablern = NULL;
+volatile unsigned int *gic_d_icenablern = NULL;
 volatile unsigned char *gic_d_ipriorityr = NULL;
 volatile unsigned char *gic_d_itargetsr = NULL;
 volatile unsigned int *gic_d_sgir = NULL;
@@ -41,6 +42,7 @@ static int gic_probe(struct device *dev)
 
     gic_d_ctlr = (volatile unsigned int *)(gicd_vbase + 0x000);
     gic_d_isenablern = (volatile unsigned int *)(gicd_vbase + 0x100);
+    gic_d_icenablern = (volatile unsigned int *)(gicd_vbase + 0x180);
     gic_d_ipriorityr = (volatile unsigned char *)(gicd_vbase + 0x400);
     gic_d_itargetsr = (volatile unsigned char *)(gicd_vbase + 0x800);
     gic_d_sgir = (volatile unsigned int *)(gicd_vbase + 0xF00);
@@ -80,6 +82,16 @@ void gic_enable_irq(unsigned int irq)
     mmio_write(&gic_d_isenablern[irq / 32], (1u << (irq % 32)));
     mmio_write8(&gic_d_ipriorityr[irq], 0);
     mmio_write8(&gic_d_itargetsr[irq], 0x01);
+}
+
+void gic_disable_irq(unsigned int irq)
+{
+    if (!gic_d_icenablern) {
+        pr_warn("gic: IRQ %u disable requested before the distributor was mapped\n", irq);
+        return;
+    }
+    /* Writing a 1 to ICENABLER clears the enable bit (write-1-to-clear). */
+    mmio_write(&gic_d_icenablern[irq / 32], (1u << (irq % 32)));
 }
 
 IRQ_DRIVER(gic_400) = {

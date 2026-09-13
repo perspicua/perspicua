@@ -46,6 +46,21 @@ int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *
     return 0;
 }
 
+int free_irq(unsigned int irq)
+{
+    if (irq >= IRQ_MAX) {
+        return -PERS_ERR_INVALID_ARGUMENT;
+    }
+    if (irq_table[irq].handler == NULL) {
+        return -PERS_ERR_NOT_FOUND;
+    }
+
+    irq_table[irq].handler = NULL;
+    irq_table[irq].ctx = NULL;
+    irq_table[irq].name = NULL;
+    return 0;
+}
+
 irq_result_t irq_dispatch(unsigned int irq)
 {
     if (irq >= IRQ_MAX || irq_table[irq].handler == NULL) {

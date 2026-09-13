@@ -588,7 +588,17 @@ static void sd_probe_abort(sdhci_regs_t *r)
     r->int_en = 0;
     r->interrupt = 0xFFFFFFFF;
     regs = NULL;
-    sd_irq_num = 0;
+
+    /*
+     * Release the IRQ so the next matching driver (bcm2711-emmc2) can claim
+     * it. gic_disable_irq() must come first to ensure no stray interrupt
+     * fires against the now-cleared handler table entry.
+     */
+    if (sd_irq_num) {
+        gic_disable_irq(sd_irq_num);
+        free_irq(sd_irq_num);
+        sd_irq_num = 0;
+    }
 }
 
 static irq_result_t sd_irq_handler(void *ctx)

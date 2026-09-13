@@ -9,6 +9,7 @@
 
 extern volatile unsigned int *gic_d_ctlr;
 extern volatile unsigned int *gic_d_isenablern;
+extern volatile unsigned int *gic_d_icenablern;
 extern volatile unsigned char *gic_d_ipriorityr;
 extern volatile unsigned char *gic_d_itargetsr;
 extern volatile unsigned int *gic_d_sgir;
@@ -25,6 +26,16 @@ extern volatile unsigned int *gic_c_eoir;
  * number via devm_get_irq(). Must be called after gic_probe() completes.
  */
 void gic_enable_irq(unsigned int irq);
+
+/*
+ * gic_disable_irq - Masks an SPI in the GIC distributor.
+ *
+ * Writes to the ICENABLER register (write-1-to-clear semantics) to stop the
+ * distributor from forwarding the interrupt to any CPU interface. Call this
+ * before free_irq() to ensure no stray interrupt fires against a cleared
+ * handler table entry.
+ */
+void gic_disable_irq(unsigned int irq);
 
 void gic_secondary_init(void);
 
