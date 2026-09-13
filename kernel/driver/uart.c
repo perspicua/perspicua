@@ -9,6 +9,7 @@
 #include "stdio.h"
 #include "types.h"
 
+#include "arch/irq.h"
 #include "core/lock.h"
 #include "core/timer.h"
 #include "panic.h"
@@ -39,6 +40,13 @@ static volatile uint32_t *uart_icr = NULL;
 // Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
+
+static irq_result_t uart_irq_handler(void *ctx)
+{
+    (void)ctx;
+    uart_handle_irq();
+    return IRQ_HANDLED;
+}
 
 static int pl011_uart_probe(struct device *dev)
 {
@@ -88,6 +96,7 @@ static int pl011_uart_probe(struct device *dev)
     if (!cached_uart_irq) {
         cached_uart_irq = 153; // Fallback for BCM2711
     }
+    request_irq(cached_uart_irq, uart_irq_handler, NULL, "uart");
 
     return 0;
 }

@@ -7,6 +7,9 @@
 #include "stdio.h"
 
 #include "arch/cpu.h"
+#include "arch/irq.h"
+#include "core/lock.h"
+#include "driver/gic.h"
 
 static inline unsigned int read_cntfrq(void)
 {
@@ -50,6 +53,17 @@ void sleep_ms(unsigned long ms)
     }
 }
 
+static irq_result_t timer_irq_handler(void *ctx)
+{
+    (void)ctx;
+    timer_interrupt_reset();
+
+    if (preempt_active()) {
+        return IRQ_HANDLED;
+    }
+    return IRQ_HANDLED_RESCHED;
+}
+
 void timer_interrupt_init(void)
 {
     int core = cpu_id();
@@ -68,6 +82,7 @@ void timer_interrupt_init(void)
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
     if (core == 0) {
+        request_irq(GIC_TIMER_IRQ, timer_irq_handler, NULL, "timer");
         pr_info("timer: generic timer: %u Hz, tick = 100 Hz (10ms)\n", freq);
     }
 }

@@ -12,6 +12,7 @@
 
 #include "uapi/errors.h"
 
+#include "arch/irq.h"
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 #include "core/timer.h"
@@ -590,6 +591,12 @@ static void sd_probe_abort(sdhci_regs_t *r)
     sd_irq_num = 0;
 }
 
+static irq_result_t sd_irq_handler(void *ctx)
+{
+    (void)ctx;
+    return sd_handle_irq() ? IRQ_HANDLED_RESCHED : IRQ_HANDLED;
+}
+
 static int sd_probe(struct device *dev)
 {
     /* We only support a single SD card. If one was already initialized, skip other matching
@@ -617,6 +624,7 @@ static int sd_probe(struct device *dev)
      */
     sd_irq_num = devm_get_irq(dev, 0);
     if (sd_irq_num) {
+        request_irq(sd_irq_num, sd_irq_handler, NULL, "sd");
         gic_enable_irq(sd_irq_num);
         pr_info("sd: interrupt-driven I/O enabled (IRQ %u)\n", sd_irq_num);
     } else {

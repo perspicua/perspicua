@@ -20,6 +20,7 @@
 #include "sched/process.h"
 #include "sched/sched.h"
 #include "arch/exception.h"
+#include "arch/irq.h"
 
 static struct vfs_vnode root_vnode_struct;
 static struct vfs_vnode *procfs_root_vnode = &root_vnode_struct;
@@ -155,15 +156,20 @@ static int procfs_gen_interrupts(char *buf, int size)
     for (int i = 0; i < CPU_MAX_CORES; i++) {
         procfs_append(buf, &pos, size, "CPU%-10d", i);
     }
-    procfs_append(buf, &pos, size, "\nTimer:     ");
-    for (int i = 0; i < CPU_MAX_CORES; i++) {
-        procfs_append(buf, &pos, size, "%-13lu", core_irq_stats[i].timer_count);
-    }
-    procfs_append(buf, &pos, size, "\nUART:      ");
-    for (int i = 0; i < CPU_MAX_CORES; i++) {
-        procfs_append(buf, &pos, size, "%-13lu", core_irq_stats[i].uart_count);
-    }
     procfs_append(buf, &pos, size, "\n");
+
+    for (unsigned int irq = 0; irq < IRQ_MAX; irq++) {
+        const struct irq_desc *desc = irq_get_desc(irq);
+        if (desc == NULL || desc->handler == NULL) {
+            continue;
+        }
+
+        procfs_append(buf, &pos, size, "%-4u%-7s", irq, desc->name);
+        for (int i = 0; i < CPU_MAX_CORES; i++) {
+            procfs_append(buf, &pos, size, "%-13lu", desc->count[i]);
+        }
+        procfs_append(buf, &pos, size, "\n");
+    }
     return pos;
 }
 

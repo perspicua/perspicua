@@ -54,14 +54,4 @@ void exception_irq_handler(void);
 
 void exception_sync_handler(struct exception_trap_frame *tf);
 
-/*
- * Interrupt statistics tracked per CPU core.
- */
-struct irq_stats {
-    uint64_t timer_count;
-    uint64_t uart_count;
-};
-
-extern struct irq_stats core_irq_stats[CPU_MAX_CORES];
-
 #endif // PERSPICUA_ARCH_EXCEPTION_H
