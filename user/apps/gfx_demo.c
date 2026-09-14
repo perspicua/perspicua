@@ -1,3 +1,6 @@
+#include <stddef.h>
+#include <stdint.h>
+
 #include "syscall.h"
 #include "uapi/mman.h"
 
@@ -8,19 +11,19 @@
 
 int main(void)
 {
-    int fd = sys_open("/dev/fb0", VFS_O_RDWR);
+    int fd = open("/dev/fb0", O_RDWR);
     if (fd < 0) {
         char err[] = "Error: could not open /dev/fb0\n";
-        sys_write(1, err, sizeof(err) - 1);
-        sys_exit(1);
+        write(1, err, sizeof(err) - 1);
+        _exit(1);
     }
 
-    uint32_t *fb = (uint32_t *)sys_mmap(NULL, FB_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    uint32_t *fb = (uint32_t *)mmap(NULL, FB_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (fb == MAP_FAILED) {
         char err[] = "Error: could not mmap framebuffer\n";
-        sys_write(1, err, sizeof(err) - 1);
-        sys_close(fd);
-        sys_exit(1);
+        write(1, err, sizeof(err) - 1);
+        close(fd);
+        _exit(1);
     }
 
     uint32_t color = 0xFFFF0000;
@@ -38,13 +41,13 @@ int main(void)
             fb[i] = color;
         }
 
-        sys_sleep(10); // Wait 10ms
+        usleep((10) * 1000); // Wait 10ms
     }
 
     char done[] = "GFX Demo finished.\n";
-    sys_write(1, done, sizeof(done) - 1);
+    write(1, done, sizeof(done) - 1);
 
-    sys_close(fd);
-    sys_exit(0);
+    close(fd);
+    _exit(0);
     return 0;
 }

@@ -2,6 +2,8 @@
  * malloc.c - Userspace heap allocator using mmap.
  */
 
+#include <stddef.h>
+
 #include "stdlib.h"
 #include "string.h"
 #include "syscall.h"
@@ -40,8 +42,7 @@ static struct block_header *request_space(size_t size)
     size_t total_needed = size + HEADER_SIZE;
     size_t mmap_size = (total_needed + CHUNK_SIZE - 1) & ~(CHUNK_SIZE - 1);
 
-    void *ptr =
-        sys_mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void *ptr = mmap(NULL, mmap_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
         return NULL;
     }
@@ -149,5 +150,5 @@ void *realloc(void *ptr, size_t size)
 
 void exit(int status)
 {
-    sys_exit(status);
+    _exit(status);
 }

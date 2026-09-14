@@ -39,5 +39,9 @@ target_include_directories(libk PUBLIC include ../kernel/include ..)
 target_compile_definitions(libk PRIVATE __KERNEL__)
 
 # libc (for user space)
+#
+# No ../kernel/include: userspace sees its own headers and the shared uapi/
+# (reached through ..), and nothing else. The path is PUBLIC, so anything that
+# had been added here would also have been handed to every app that links libc.
 add_library(libc STATIC ${LIBC_SRC_COMMON} ${LIBC_SRC_USER})
-target_include_directories(libc PUBLIC include ../kernel/include ..)
+target_include_directories(libc PUBLIC include ..)

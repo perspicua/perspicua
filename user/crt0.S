@@ -28,5 +28,5 @@ _start:
 
     bl main
     // If main returns, call exit(0)
-    bl sys_exit
+    bl _exit
 1:  b 1b

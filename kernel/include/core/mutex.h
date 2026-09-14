@@ -9,7 +9,7 @@
 #ifndef PERSPICUA_CORE_MUTEX_H
 #define PERSPICUA_CORE_MUTEX_H
 
-#include "types.h"
+#include <stddef.h>
 
 #include "core/lock.h"
 

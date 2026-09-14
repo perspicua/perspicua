@@ -7,11 +7,13 @@
  * were broken these would fault inside the kernel instead of failing cleanly.
  */
 
+#include <stddef.h>
+
 #include "test.h"
 
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "arch/uaccess.h"
 #include "arch/irq.h"
@@ -128,14 +130,14 @@ void test_uaccess(void)
         // one byte short: must report truncation, never a bare prefix
         memset(kbuf, 0xA5, sizeof(kbuf));
         res = strncpy_from_user(kbuf, usrc, 10);
-        TEST_ASSERT_EQ("truncation reported", res, -PERS_ERR_NAME_TOO_LONG);
+        TEST_ASSERT_EQ("truncation reported", res, -ENAMETOOLONG);
         TEST_ASSERT("truncated buffer is terminated", kbuf[9] == '\0');
         TEST_ASSERT("truncated buffer holds the prefix", strcmp(kbuf, "abcdefghi") == 0);
 
         // a single byte can only hold a terminator
         memset(kbuf, 0xA5, sizeof(kbuf));
         res = strncpy_from_user(kbuf, usrc, 1);
-        TEST_ASSERT_EQ("count 1 reports truncation", res, -PERS_ERR_NAME_TOO_LONG);
+        TEST_ASSERT_EQ("count 1 reports truncation", res, -ENAMETOOLONG);
         TEST_ASSERT("count 1 still terminates", kbuf[0] == '\0');
 
         // an empty source fits in one byte
@@ -146,10 +148,8 @@ void test_uaccess(void)
         TEST_ASSERT("empty string is terminated", kbuf[0] == '\0');
 
         // zero and negative counts have nowhere to put a terminator
-        TEST_ASSERT_EQ("count 0 rejected", strncpy_from_user(kbuf, usrc, 0),
-                       -PERS_ERR_NAME_TOO_LONG);
-        TEST_ASSERT_EQ("negative count rejected", strncpy_from_user(kbuf, usrc, -1),
-                       -PERS_ERR_NAME_TOO_LONG);
+        TEST_ASSERT_EQ("count 0 rejected", strncpy_from_user(kbuf, usrc, 0), -ENAMETOOLONG);
+        TEST_ASSERT_EQ("negative count rejected", strncpy_from_user(kbuf, usrc, -1), -ENAMETOOLONG);
 
         asm volatile("msr ttbr0_el1, %0" ::"r"(saved_ttbr0) : "memory");
         asm volatile("dsb ish\n tlbi vmalle1is\n dsb ish\n isb" ::: "memory");

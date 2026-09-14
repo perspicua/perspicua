@@ -4,7 +4,10 @@
 
 #include "core/elf.h"
 
-#include "uapi/errors.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "uapi/errno.h"
 
 #include "mm/addr.h"
 #include "mm/pmm.h"
@@ -33,31 +36,31 @@ static int elf_check_header(struct elf64_header *hdr)
 {
     if (hdr->identity[ELF_IDENT_MAG0] != ELF_MAG0 || hdr->identity[ELF_IDENT_MAG1] != ELF_MAG1
         || hdr->identity[ELF_IDENT_MAG2] != ELF_MAG2 || hdr->identity[ELF_IDENT_MAG3] != ELF_MAG3) {
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     if (hdr->identity[ELF_IDENT_CLASS] != ELF_CLASS_64) {
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     if (hdr->identity[ELF_IDENT_DATA] != ELF_DATA_2LSB) {
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     if (hdr->type != ELF_TYPE_EXEC) {
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     if (hdr->machine != ELF_MACHINE_AARCH64) {
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 {
-    int fd = vfs_open(path, VFS_O_RDONLY);
+    int fd = vfs_open(path, O_RDONLY);
     if (fd < 0) {
         pr_err("elf: could not open %s\n", path);
         return fd;
@@ -68,7 +71,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     if (rc != sizeof(struct elf64_header)) {
         pr_err("elf: could not read ELF header\n");
         vfs_close(fd);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     rc = elf_check_header(&ehdr);
@@ -81,7 +84,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     if (ehdr.ph_num == 0 || ehdr.ph_num > ELF_MAX_PHDRS) {
         pr_err("elf: bad program header count (%u)\n", ehdr.ph_num);
         vfs_close(fd);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     /* The table is read with this struct's stride; a file claiming another one
@@ -89,7 +92,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     if (ehdr.ph_entry_size != sizeof(struct elf64_program_header)) {
         pr_err("elf: unexpected program header size (%u)\n", ehdr.ph_entry_size);
         vfs_close(fd);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     /*
@@ -101,7 +104,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     if (ehdr.entry == 0 || ehdr.entry >= USER_VA_BASE) {
         pr_err("elf: entry point 0x%lx outside the image region\n", (unsigned long)ehdr.entry);
         vfs_close(fd);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     *entry_point = ehdr.entry;
@@ -111,15 +114,15 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     if (!phdrs) {
         pr_err("elf: could not allocate memory for program headers\n");
         vfs_close(fd);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
-    vfs_lseek(fd, ehdr.ph_offset, VFS_SEEK_SET);
+    vfs_lseek(fd, ehdr.ph_offset, SEEK_SET);
     if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size) {
         pr_err("elf: could not read program headers\n");
         heap_free(phdrs);
         vfs_close(fd);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     for (int i = 0; i < ehdr.ph_num; i++) {
@@ -137,7 +140,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
             pr_err("elf: segment filesz > memsz\n");
             heap_free(phdrs);
             vfs_close(fd);
-            return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+            return -ENOEXEC;
         }
         if (memsz == 0) {
             continue;
@@ -152,7 +155,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                    (unsigned long)(vaddr + memsz));
             heap_free(phdrs);
             vfs_close(fd);
-            return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+            return -ENOEXEC;
         }
 
         uint64_t start_vpage = vaddr & ~0xFFFULL;
@@ -200,14 +203,14 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 uint64_t bytes_to_read = copy_end_in_page - copy_start_in_page;
                 uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
 
-                vfs_lseek(fd, file_offset, VFS_SEEK_SET);
+                vfs_lseek(fd, file_offset, SEEK_SET);
                 if (vfs_read(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
                              bytes_to_read)
                     != (int)bytes_to_read) {
                     pr_err("elf: failed to read segment data\n");
                     heap_free(phdrs);
                     vfs_close(fd);
-                    return -PERS_ERR_IO_ERROR;
+                    return -EIO;
                 }
             }
 
@@ -219,5 +222,5 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 
     heap_free(phdrs);
     vfs_close(fd);
-    return PERS_SUCCESS;
+    return 0;
 }

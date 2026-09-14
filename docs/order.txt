@@ -194,7 +194,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: every public function in kernel/include carries its subsystem
         prefix; no printf call remains under kernel/.
 
-  10. POSIX names in the ABI, and a libc that userspace can port to
+  10. POSIX names in the ABI, and a libc that userspace can port to [DONE]
       Effort: M-L | Unlocks: any POSIX program compiles; Phase 7 item 6
         shrinks to "align numbers"
       Scope: uapi uses errno values (ENOENT…) directly, deleting PERS_ERR_*

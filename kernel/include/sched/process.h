@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_SCHED_PROCESS_H
 #define PERSPICUA_SCHED_PROCESS_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "uapi/wait.h"
 
@@ -123,7 +124,7 @@ struct process {
 
     sigset_t pending_signals;
     sigset_t blocked_signals;
-    struct sigaction signal_handlers[SIGNAL_COUNT];
+    struct sigaction signal_handlers[NSIG];
 };
 
 /*

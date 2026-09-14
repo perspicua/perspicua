@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_MM_MMU_H
 #define PERSPICUA_MM_MMU_H
 
-#include "types.h"
-
 #define MMU_PTE_VALID (1ULL << 0)
 #define MMU_PTE_TABLE (1ULL << 1) // L0-L2 only
 #define MMU_PTE_PAGE  (1ULL << 1) // L3 only

@@ -4,12 +4,17 @@
 
 #include "fs/procfs.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "uapi/types.h"
+
 #include <stdarg.h>
 
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "core/lock.h"
 #include "core/timer.h"
@@ -190,7 +195,7 @@ static int procfs_gen_mounts(char *buf, int size)
 
     int pos = 0;
     for (size_t i = 0;; i++) {
-        if (vfs_get_mount(i, path, sizeof(path)) != PERS_SUCCESS) {
+        if (vfs_get_mount(i, path, sizeof(path)) != 0) {
             break;
         }
         procfs_append(buf, &pos, size, "none %s procfs rw 0 0\n", path);
@@ -241,12 +246,12 @@ static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t siz
 {
     procfs_generate_fn generate = (procfs_generate_fn)(uintptr_t)file->node->internal_info;
     if (!generate) {
-        return -PERS_ERR_IO_ERROR;
+        return -EIO;
     }
 
     char *buf = heap_malloc(PROCFS_CONTENT_MAX);
     if (!buf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     int len = generate(buf, PROCFS_CONTENT_MAX);
@@ -261,7 +266,7 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
     uintptr_t pid = (uintptr_t)file->node->internal_info;
     char *buf = heap_malloc(2048);
     if (!buf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     int pos = 0;
@@ -393,7 +398,7 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
     uint32_t fd = info & 0xFFFF;
 
     if (pid >= PROCESS_TABLE_SIZE || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct process *p = process_slot(pid);
@@ -454,9 +459,9 @@ static struct vfs_vnode_ops procfs_pid_fd_entry_ops = {.read = procfs_pid_fd_ent
 
 static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_dirent *vfs_buffer = (struct vfs_dirent *)buffer;
+    struct dirent *vfs_buffer = (struct dirent *)buffer;
     uint32_t pid = (uint32_t)(uintptr_t)file->node->internal_info;
-    size_t max_entries = count / sizeof(struct vfs_dirent);
+    size_t max_entries = count / sizeof(struct dirent);
     int entries_written = 0;
 
     while (entries_written < (int)max_entries) {
@@ -471,9 +476,9 @@ static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t cou
         for (int i = fd_idx; i < VFS_MAX_FDS; i++) {
             unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
             if (p->fd_table[i]) {
-                vfs_buffer[entries_written].ino = (ino_t)(1000 + i);
-                snprintf(vfs_buffer[entries_written].name, sizeof(vfs_buffer[entries_written].name),
-                         "%d", i);
+                vfs_buffer[entries_written].d_ino = (ino_t)(1000 + i);
+                snprintf(vfs_buffer[entries_written].d_name,
+                         sizeof(vfs_buffer[entries_written].d_name), "%d", i);
                 spin_unlock_irqrestore(&p->fd_lock, fdflags);
                 file->offset = (vfs_off_t)(i + 1);
                 found = 1;
@@ -547,14 +552,14 @@ static struct vfs_vnode_ops procfs_pid_fd_dir_ops = {.lookup = procfs_pid_fd_loo
 
 static int procfs_pid_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_dirent *vfs_buffer = (struct vfs_dirent *)buffer;
+    struct dirent *vfs_buffer = (struct dirent *)buffer;
     const char *static_entries[] = {"status", "maps", "cmdline", "cwd", "fd"};
-    size_t max_entries = count / sizeof(struct vfs_dirent);
+    size_t max_entries = count / sizeof(struct dirent);
     int entries_written = 0;
 
     while ((size_t)entries_written < max_entries && file->offset < 5) {
-        vfs_buffer[entries_written].ino = file->offset + 10;
-        strcpy(vfs_buffer[entries_written].name, static_entries[file->offset]);
+        vfs_buffer[entries_written].d_ino = file->offset + 10;
+        strcpy(vfs_buffer[entries_written].d_name, static_entries[file->offset]);
         file->offset++;
         entries_written++;
     }
@@ -596,8 +601,8 @@ static struct vfs_vnode_ops procfs_pid_dir_ops = {.lookup = procfs_pid_lookup,
 
 static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_dirent *vfs_buffer = (struct vfs_dirent *)buffer;
-    size_t max_entries = count / sizeof(struct vfs_dirent);
+    struct dirent *vfs_buffer = (struct dirent *)buffer;
+    size_t max_entries = count / sizeof(struct dirent);
     int entries_written = 0;
 
     // The generated files, then "self", then one entry per live process.
@@ -608,9 +613,9 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
             const char *name = (file->offset < (vfs_off_t)PROCFS_STATIC_COUNT)
                                    ? procfs_static_files[file->offset].name
                                    : "self";
-            vfs_buffer[entries_written].ino = (ino_t)(file->offset + 1);
-            strncpy(vfs_buffer[entries_written].name, name, 255);
-            vfs_buffer[entries_written].name[255] = '\0';
+            vfs_buffer[entries_written].d_ino = (ino_t)(file->offset + 1);
+            strncpy(vfs_buffer[entries_written].d_name, name, 255);
+            vfs_buffer[entries_written].d_name[255] = '\0';
             file->offset++;
             entries_written++;
         } else {
@@ -620,9 +625,9 @@ static int procfs_root_readdir(struct vfs_file *file, void *buffer, size_t count
             for (int i = pid_idx; i < PROCESS_TABLE_SIZE; i++) {
                 unsigned long flags = spin_lock_irqsave(&process_table_lock);
                 if (process_table[i]) {
-                    vfs_buffer[entries_written].ino = (ino_t)(100 + i);
-                    snprintf(vfs_buffer[entries_written].name,
-                             sizeof(vfs_buffer[entries_written].name), "%d", i);
+                    vfs_buffer[entries_written].d_ino = (ino_t)(100 + i);
+                    snprintf(vfs_buffer[entries_written].d_name,
+                             sizeof(vfs_buffer[entries_written].d_name), "%d", i);
                     spin_unlock_irqrestore(&process_table_lock, flags);
                     file->offset = (vfs_off_t)(static_count + i + 1);
                     found = 1;

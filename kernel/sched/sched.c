@@ -5,12 +5,13 @@
 #include "sched/sched.h"
 
 #include "mm/asid.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "mm/mmu.h"
 #include "mm/pmm.h"
@@ -520,7 +521,7 @@ struct task *sched_current_task(void)
 int sched_get_core_pid(int cpu)
 {
     if (cpu < 0 || cpu >= CPU_MAX_CORES) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     return sched_core_pid[cpu];
 }

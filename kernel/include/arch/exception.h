@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_ARCH_EXCEPTION_H
 #define PERSPICUA_ARCH_EXCEPTION_H
 
-#include "types.h"
+#include <stdint.h>
 
 #include "sched/sched.h"
 

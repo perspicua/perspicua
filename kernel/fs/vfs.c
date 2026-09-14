@@ -11,10 +11,13 @@
 
 #include "fs/vfs.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "core/lock.h"
 #include "mm/heap.h"
@@ -59,18 +62,18 @@ static struct vfs_mount_entry *find_mount(const char *path, int *error)
     }
 
     if (longest_match_index == -1) {
-        *error = -PERS_ERR_NOT_FOUND;
+        *error = -ENOENT;
         return NULL;
     }
 
-    *error = PERS_SUCCESS;
+    *error = 0;
     return &vfs_mount_table[longest_match_index];
 }
 
 static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
 {
     if (!node || !buf) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     memset(buf, 0, sizeof(struct stat));
@@ -92,7 +95,7 @@ static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
         return node->ops->stat(node, buf);
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 void vfs_init(void)
@@ -168,7 +171,7 @@ static struct vfs_vnode *vfs_resolve_parent(char *kpath, const char **name, int 
 
     struct process *p = process_current();
     if (!p) {
-        *error = -PERS_ERR_NO_SUCH_PROCESS;
+        *error = -ESRCH;
         return NULL;
     }
 
@@ -179,7 +182,7 @@ static struct vfs_vnode *vfs_resolve_parent(char *kpath, const char **name, int 
 
     if (parent->type != VFS_VNODE_TYPE_DIR) {
         vfs_vnode_put(parent);
-        *error = -PERS_ERR_NOT_A_DIRECTORY;
+        *error = -ENOTDIR;
         return NULL;
     }
 
@@ -196,13 +199,13 @@ static struct vfs_vnode *vfs_resolve_parent(char *kpath, const char **name, int 
 static struct vfs_file *vfs_file_get(int fd, int *error)
 {
     if (fd < 0 || fd >= VFS_MAX_FDS) {
-        *error = -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        *error = -EBADF;
         return NULL;
     }
 
     struct process *p = process_current();
     if (!p) {
-        *error = -PERS_ERR_NO_SUCH_PROCESS;
+        *error = -ESRCH;
         return NULL;
     }
 
@@ -214,7 +217,7 @@ static struct vfs_file *vfs_file_get(int fd, int *error)
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (!f) {
-        *error = -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        *error = -EBADF;
     }
     return f;
 }
@@ -280,10 +283,10 @@ void vfs_vnode_put(struct vfs_vnode *node)
 int vfs_mount(const char *path, struct vfs_vnode *root)
 {
     if (!path || path[0] != '/' || !root) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (strlen(path) >= VFS_MAX_MOUNT_PATH) {
-        return -PERS_ERR_NAME_TOO_LONG;
+        return -ENAMETOOLONG;
     }
 
     /*
@@ -324,14 +327,14 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
     if (vfs_mount_count >= VFS_MAX_MOUNTS) {
         spin_unlock_irqrestore(&vfs_lock, flags);
         vfs_vnode_put(parent);
-        return -PERS_ERR_OUT_OF_RESOURCES;
+        return -ENFILE;
     }
 
     for (int i = 0; i < vfs_mount_count; i++) {
         if (strcmp(path, vfs_mount_table[i].path) == 0) {
             spin_unlock_irqrestore(&vfs_lock, flags);
             vfs_vnode_put(parent);
-            return -PERS_ERR_ALREADY_EXISTS;
+            return -EEXIST;
         }
     }
 
@@ -346,13 +349,13 @@ int vfs_mount(const char *path, struct vfs_vnode *root)
     vfs_mount_count++;
 
     spin_unlock_irqrestore(&vfs_lock, flags);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int vfs_unmount(const char *path)
 {
     if (!path) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
@@ -371,30 +374,30 @@ int vfs_unmount(const char *path)
             spin_unlock_irqrestore(&vfs_lock, flags);
 
             vfs_vnode_put(root);
-            return PERS_SUCCESS;
+            return 0;
         }
     }
 
     spin_unlock_irqrestore(&vfs_lock, flags);
-    return -PERS_ERR_NOT_FOUND;
+    return -ENOENT;
 }
 
 int vfs_get_mount(size_t index, char *out, size_t out_size)
 {
     if (!out || out_size == 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long flags = spin_lock_irqsave(&vfs_lock);
     if (index >= (size_t)vfs_mount_count) {
         spin_unlock_irqrestore(&vfs_lock, flags);
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     strncpy(out, vfs_mount_table[index].path, out_size - 1);
     out[out_size - 1] = '\0';
     spin_unlock_irqrestore(&vfs_lock, flags);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -421,7 +424,7 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 
         if (strcmp(path, best_match->path) == 0) {
             spin_unlock_irqrestore(&vfs_lock, flags);
-            *error = PERS_SUCCESS;
+            *error = 0;
             return curr;
         }
 
@@ -448,7 +451,7 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
     }
 
     if (*path_remainder == '\0') {
-        *error = PERS_SUCCESS;
+        *error = 0;
         return curr;
     }
 
@@ -484,14 +487,14 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
             } else {
                 if (!curr->ops || !curr->ops->lookup) {
                     vfs_vnode_put(curr);
-                    *error = -PERS_ERR_NOT_A_DIRECTORY;
+                    *error = -ENOTDIR;
                     return NULL;
                 }
 
                 next = curr->ops->lookup(curr, token);
                 if (!next) {
                     vfs_vnode_put(curr);
-                    *error = -PERS_ERR_NOT_FOUND;
+                    *error = -ENOENT;
                     return NULL;
                 }
                 strncpy(next->name, token, sizeof(next->name) - 1);
@@ -504,7 +507,7 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
         token = strtok_r(NULL, "/", &saveptr);
     }
 
-    *error = PERS_SUCCESS;
+    *error = 0;
     return curr;
 }
 
@@ -515,12 +518,12 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     int error = 0;
     struct process *p = process_slot(pid);
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     struct vfs_vnode *node = vfs_resolve_path(path, p->cwd, &error);
     if (!node) {
-        if (!(flags & VFS_O_CREAT)) { // not asking to create -> just fail
+        if (!(flags & O_CREAT)) { // not asking to create -> just fail
             return error;
         }
 
@@ -539,12 +542,12 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
         if (!parent->ops || !parent->ops->create) {
             vfs_vnode_put(parent);
-            return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+            return -ENOTSUP;
         }
 
         int cres = parent->ops->create(parent, name);
         vfs_vnode_put(parent);
-        if (cres != PERS_SUCCESS) {
+        if (cres != 0) {
             return cres;
         }
 
@@ -554,10 +557,10 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
         }
     }
 
-    if ((flags & VFS_O_TRUNC) && node->type == VFS_VNODE_TYPE_REGULAR
-        && ((flags & VFS_O_ACCMODE) != VFS_O_RDONLY)) {
+    if ((flags & O_TRUNC) && node->type == VFS_VNODE_TYPE_REGULAR
+        && ((flags & O_ACCMODE) != O_RDONLY)) {
         int tres = vfs_vnode_truncate(node, 0);
-        if (tres != PERS_SUCCESS && tres != -PERS_ERR_OPERATION_NOT_SUPPORTED) {
+        if (tres != 0 && tres != -ENOTSUP) {
             vfs_vnode_put(node);
             return tres;
         }
@@ -566,7 +569,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     struct vfs_file *new_file = vfs_file_alloc();
     if (!new_file) {
         vfs_vnode_put(node);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     new_file->node = node;
@@ -577,7 +580,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     for (size_t i = 0; i < VFS_MAX_FDS; i++) {
         if (!p->fd_table[i]) {
             p->fd_table[i] = new_file;
-            p->fd_flags[i] = (flags & VFS_O_CLOEXEC) ? VFS_FD_CLOEXEC : 0;
+            p->fd_flags[i] = (flags & O_CLOEXEC) ? FD_CLOEXEC : 0;
             slot = (int)i;
             break;
         }
@@ -587,7 +590,7 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
     if (slot == -1) {
         // Releasing the file drops its vnode reference too.
         vfs_file_put(new_file);
-        return -PERS_ERR_OUT_OF_RESOURCES;
+        return -ENFILE;
     }
     return slot;
 }
@@ -604,12 +607,12 @@ int vfs_open(const char *path, int flags)
 int vfs_close(int fd)
 {
     if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
@@ -617,14 +620,14 @@ int vfs_close(int fd)
 
     if (!f) {
         spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     p->fd_table[fd] = NULL;
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     vfs_file_put(f);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
@@ -637,23 +640,23 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
 
     vfs_off_t new_offset;
     switch (whence) {
-        case VFS_SEEK_SET:
+        case SEEK_SET:
             new_offset = offset;
             break;
-        case VFS_SEEK_CUR:
+        case SEEK_CUR:
             new_offset = f->offset + offset;
             break;
-        case VFS_SEEK_END:
+        case SEEK_END:
             new_offset = f->node->file_size + offset;
             break;
         default:
             vfs_file_put(f);
-            return -PERS_ERR_NOT_IMPLEMENTED;
+            return -ENOSYS;
     }
 
     if (new_offset < 0) {
         vfs_file_put(f);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     f->offset = new_offset;
@@ -669,10 +672,10 @@ int vfs_read(int fd, void *buffer, size_t count)
         return err;
     }
 
-    int mode = f->flags & VFS_O_ACCMODE;
-    if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
+    int mode = f->flags & O_ACCMODE;
+    if ((mode != O_RDONLY && mode != O_RDWR) || !f->node->ops->read) {
         vfs_file_put(f);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EACCES;
     }
 
     int bytes = f->node->ops->read(f, buffer, count, &f->offset);
@@ -690,13 +693,13 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
 
     if (offset < 0) {
         vfs_file_put(f);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
-    int mode = f->flags & VFS_O_ACCMODE;
-    if ((mode != VFS_O_RDONLY && mode != VFS_O_RDWR) || !f->node->ops->read) {
+    int mode = f->flags & O_ACCMODE;
+    if ((mode != O_RDONLY && mode != O_RDWR) || !f->node->ops->read) {
         vfs_file_put(f);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EACCES;
     }
 
     vfs_off_t pos = offset;
@@ -715,19 +718,19 @@ int vfs_readdir(int fd, void *buffer, size_t count)
 
     /* Entries are written whole; a partial buffer would also underflow the
      * remaining-space arithmetic below. */
-    if (count < sizeof(struct vfs_dirent)) {
+    if (count < sizeof(struct dirent)) {
         vfs_file_put(f);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir) {
         vfs_file_put(f);
-        return -PERS_ERR_NOT_A_DIRECTORY;
+        return -ENOTDIR;
     }
 
-    size_t dirent_size = sizeof(struct vfs_dirent);
+    size_t dirent_size = sizeof(struct dirent);
     size_t max_entries = count / dirent_size;
-    struct vfs_dirent *dirents = (struct vfs_dirent *)buffer;
+    struct dirent *dirents = (struct dirent *)buffer;
 
     vfs_off_t orig_offset = f->offset;
     /* Offset layout:
@@ -744,17 +747,17 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     // 1. Handle "." and ".."
     if (dot_idx < 2) {
         if ((size_t)res < max_entries && dot_idx == 0) {
-            strncpy(dirents[res].name, ".", 255);
-            dirents[res].name[255] = '\0';
-            dirents[res].ino = 1;
+            strncpy(dirents[res].d_name, ".", 255);
+            dirents[res].d_name[255] = '\0';
+            dirents[res].d_ino = 1;
             res++;
             dot_idx = 1;
         }
 
         if ((size_t)res < max_entries && dot_idx == 1) {
-            strncpy(dirents[res].name, "..", 255);
-            dirents[res].name[255] = '\0';
-            dirents[res].ino = 2;
+            strncpy(dirents[res].d_name, "..", 255);
+            dirents[res].d_name[255] = '\0';
+            dirents[res].d_ino = 2;
             res++;
             dot_idx = 2;
         }
@@ -798,9 +801,9 @@ int vfs_readdir(int fd, void *buffer, size_t count)
             }
 
             if (is_child) {
-                strncpy(dirents[res].name, vfs_mount_table[i].root->name, 255);
-                dirents[res].name[255] = '\0';
-                dirents[res].ino = 9000 + (uint32_t)i;
+                strncpy(dirents[res].d_name, vfs_mount_table[i].root->name, 255);
+                dirents[res].d_name[255] = '\0';
+                dirents[res].d_ino = 9000 + (uint32_t)i;
                 res++;
             }
         }
@@ -824,13 +827,13 @@ int vfs_write(int fd, const void *buffer, size_t count)
         return err;
     }
 
-    int mode = f->flags & VFS_O_ACCMODE;
-    if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
+    int mode = f->flags & O_ACCMODE;
+    if ((mode != O_WRONLY && mode != O_RDWR) || !f->node->ops->write) {
         vfs_file_put(f);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EACCES;
     }
 
-    if (f->flags & VFS_O_APPEND) {
+    if (f->flags & O_APPEND) {
         f->offset = f->node->file_size;
     }
 
@@ -849,17 +852,17 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
 
     if (offset < 0) {
         vfs_file_put(f);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
-    int mode = f->flags & VFS_O_ACCMODE;
-    if ((mode != VFS_O_WRONLY && mode != VFS_O_RDWR) || !f->node->ops->write) {
+    int mode = f->flags & O_ACCMODE;
+    if ((mode != O_WRONLY && mode != O_RDWR) || !f->node->ops->write) {
         vfs_file_put(f);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EACCES;
     }
 
     // O_APPEND pins every write to the end, so it overrides the given offset.
-    vfs_off_t pos = (f->flags & VFS_O_APPEND) ? f->node->file_size : offset;
+    vfs_off_t pos = (f->flags & O_APPEND) ? f->node->file_size : offset;
 
     int bytes = f->node->ops->write(f, buffer, count, &pos);
     vfs_file_put(f);
@@ -870,7 +873,7 @@ int vfs_stat(const char *path, struct stat *buf)
 {
     struct process *proc = process_current();
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int error = 0;
@@ -900,13 +903,13 @@ int vfs_fstat(int fd, struct stat *buf)
 static int vfs_vnode_truncate(struct vfs_vnode *node, vfs_off_t length)
 {
     if (length < 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (node->type == VFS_VNODE_TYPE_DIR) {
-        return -PERS_ERR_IS_A_DIRECTORY;
+        return -EISDIR;
     }
     if (!node->ops || !node->ops->truncate) {
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
     return node->ops->truncate(node, length);
 }
@@ -919,10 +922,10 @@ int vfs_ftruncate(int fd, vfs_off_t length)
         return err;
     }
 
-    int acc = f->flags & VFS_O_ACCMODE;
-    if (acc != VFS_O_WRONLY && acc != VFS_O_RDWR) {
+    int acc = f->flags & O_ACCMODE;
+    if (acc != O_WRONLY && acc != O_RDWR) {
         vfs_file_put(f);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     int res = vfs_vnode_truncate(f->node, length);
@@ -934,7 +937,7 @@ int vfs_truncate(const char *path, vfs_off_t length)
 {
     struct process *proc = process_current();
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int error = 0;
@@ -951,12 +954,12 @@ int vfs_truncate(const char *path, vfs_off_t length)
 int vfs_dup2(int oldfd, int newfd)
 {
     if (oldfd < 0 || oldfd >= VFS_MAX_FDS || newfd < 0 || newfd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     struct vfs_file *to_free = NULL;
@@ -965,7 +968,7 @@ int vfs_dup2(int oldfd, int newfd)
     struct vfs_file *old_f = p->fd_table[oldfd];
     if (!old_f) {
         spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     if (oldfd == newfd) {
@@ -987,7 +990,7 @@ int vfs_chdir(const char *kpath)
 {
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int error = 0;
@@ -999,7 +1002,7 @@ int vfs_chdir(const char *kpath)
 
     if (node->type != VFS_VNODE_TYPE_DIR) {
         vfs_vnode_put(node);
-        return -PERS_ERR_NOT_A_DIRECTORY;
+        return -ENOTDIR;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
@@ -1009,25 +1012,25 @@ int vfs_chdir(const char *kpath)
     p->cwd = node;
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int vfs_getcwd(char *buf, size_t size)
 {
     if (!buf || size == 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     struct vfs_vnode *curr_node = p->cwd;
     if (!curr_node) {
         spin_unlock_irqrestore(&p->fd_lock, fdflags);
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
     atomic_inc(&curr_node->refcount);
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
@@ -1041,7 +1044,7 @@ int vfs_getcwd(char *buf, size_t size)
     if (!node->parent) {
         if (size < 2) {
             vfs_vnode_put(curr_node);
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         buf[0] = '/';
         buf[1] = '\0';
@@ -1053,7 +1056,7 @@ int vfs_getcwd(char *buf, size_t size)
         size_t len = strlen(node->name);
         if (ptr - temp_path < (ptrdiff_t)len + 1) {
             vfs_vnode_put(curr_node);
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         ptr -= len;
         memcpy(ptr, node->name, len);
@@ -1067,13 +1070,13 @@ int vfs_getcwd(char *buf, size_t size)
     size_t result_len = (temp_path + VFS_MAX_PATH_LEN - 1) - ptr;
     if (result_len >= size) {
         vfs_vnode_put(curr_node);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     memcpy(buf, ptr, result_len + 1);
     vfs_vnode_put(curr_node);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int vfs_mkdir(const char *path)
@@ -1092,7 +1095,7 @@ int vfs_mkdir(const char *path)
 
     if (!parent->ops || !parent->ops->mkdir) {
         vfs_vnode_put(parent);
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
 
     int res = parent->ops->mkdir(parent, name);
@@ -1116,7 +1119,7 @@ int vfs_rmdir(const char *path)
 
     if (!parent->ops || !parent->ops->rmdir) {
         vfs_vnode_put(parent);
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
 
     int res = parent->ops->rmdir(parent, name);
@@ -1140,7 +1143,7 @@ int vfs_unlink(const char *path)
 
     if (!parent->ops || !parent->ops->unlink) {
         vfs_vnode_put(parent);
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
 
     int res = parent->ops->unlink(parent, name);
@@ -1168,7 +1171,7 @@ int vfs_rename(const char *oldpath, const char *newpath)
 
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int error = 0;
@@ -1180,7 +1183,7 @@ int vfs_rename(const char *oldpath, const char *newpath)
 
     if (old_parent_node->type != VFS_VNODE_TYPE_DIR) {
         vfs_vnode_put(old_parent_node);
-        return -PERS_ERR_NOT_A_DIRECTORY;
+        return -ENOTDIR;
     }
 
     struct vfs_vnode *new_parent_node = vfs_resolve_path(parent_new, p->cwd, &error);
@@ -1192,13 +1195,13 @@ int vfs_rename(const char *oldpath, const char *newpath)
     if (new_parent_node->type != VFS_VNODE_TYPE_DIR) {
         vfs_vnode_put(new_parent_node);
         vfs_vnode_put(old_parent_node);
-        return -PERS_ERR_NOT_A_DIRECTORY;
+        return -ENOTDIR;
     }
 
     if (!old_parent_node->ops || !old_parent_node->ops->rename) {
         vfs_vnode_put(new_parent_node);
         vfs_vnode_put(old_parent_node);
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
 
     int res = old_parent_node->ops->rename(old_parent_node, name_old, new_parent_node, name_new);
@@ -1219,7 +1222,7 @@ int vfs_fsync(int fd)
 
     if (!f->node) {
         vfs_file_put(f);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     int result = pagecache_writeback(f->node);

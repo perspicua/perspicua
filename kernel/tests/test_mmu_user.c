@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "test.h"
 #include "arch/irq.h"
 #include "mm/mmu.h"

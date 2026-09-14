@@ -1,7 +1,7 @@
 #ifndef PERSPICUA_FS_PAGECACHE_H
 #define PERSPICUA_FS_PAGECACHE_H
 
-#include "types.h"
+#include <stddef.h>
 #include "fs/vfs.h"
 
 void pagecache_init(void);

@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_FS_FAT32_H
 #define PERSPICUA_FS_FAT32_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "driver/block.h"
 #include "fs/vfs.h"

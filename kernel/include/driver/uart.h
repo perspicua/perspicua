@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_DRIVER_UART_H
 #define PERSPICUA_DRIVER_UART_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "core/lock.h"
 

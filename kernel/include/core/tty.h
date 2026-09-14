@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_CORE_TTY_H
 #define PERSPICUA_CORE_TTY_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "core/lock.h"
 #include "sched/sched.h"

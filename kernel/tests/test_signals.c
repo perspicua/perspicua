@@ -7,11 +7,14 @@
  * mode, which the test task never does.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
 #include "arch/exception.h"
@@ -40,23 +43,23 @@ void test_signals(void)
 {
     TEST_SUITE_BEGIN("Signals");
 
-    // signal numbers outside 1..SIGNAL_COUNT-1 are rejected
+    // signal numbers outside 1..NSIG-1 are rejected
     {
         TEST_ASSERT("signal 0 rejected", signal_send(INIT_PID, 0) < 0);
         TEST_ASSERT("negative signal rejected", signal_send(INIT_PID, -1) < 0);
-        TEST_ASSERT("signal SIGNAL_COUNT rejected", signal_send(INIT_PID, SIGNAL_COUNT) < 0);
+        TEST_ASSERT("signal NSIG rejected", signal_send(INIT_PID, NSIG) < 0);
         TEST_ASSERT("far out-of-range signal rejected", signal_send(INIT_PID, 9999) < 0);
     }
 
     // pid 0 and out-of-table pids have no process to receive anything
     {
-        TEST_ASSERT("pid 0 rejected", signal_send(0, SIGNAL_USR1) < 0);
-        TEST_ASSERT("out-of-range pid rejected", signal_send(0xFFFFFFFFu, SIGNAL_USR1) < 0);
+        TEST_ASSERT("pid 0 rejected", signal_send(0, SIGUSR1) < 0);
+        TEST_ASSERT("out-of-range pid rejected", signal_send(0xFFFFFFFFu, SIGUSR1) < 0);
     }
 
     // an empty process slot is not a valid target
     {
-        int sent = signal_send(PROCESS_TABLE_SIZE - 1, SIGNAL_USR1);
+        int sent = signal_send(PROCESS_TABLE_SIZE - 1, SIGUSR1);
         TEST_ASSERT("empty slot rejected", sent < 0);
     }
 
@@ -76,7 +79,7 @@ void test_signals(void)
             process_table[slot]->main_task = (struct task *)0xDEAD000000000000ULL;
             spin_unlock_irqrestore(&process_table_lock, flags);
 
-            sent = signal_send((uint32_t)slot, SIGNAL_KILL);
+            sent = signal_send((uint32_t)slot, SIGKILL);
 
             process_test_release_slot((uint32_t)slot);
         }
@@ -91,18 +94,16 @@ void test_signals(void)
      * -1 clears an upper-bound check on its own and reads process_table[-1].
      */
     {
-        TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
-        TEST_ASSERT_EQ("kill(-1000) refused", call_kill(-1000, SIGNAL_TERM),
-                       -PERS_ERR_NO_SUCH_PROCESS);
-        TEST_ASSERT_EQ("kill(INT_MIN) refused", call_kill(-2147483647 - 1, SIGNAL_TERM),
-                       -PERS_ERR_NO_SUCH_PROCESS);
-        TEST_ASSERT_EQ("kill past the table refused", call_kill(PROCESS_TABLE_SIZE, SIGNAL_TERM),
-                       -PERS_ERR_NO_SUCH_PROCESS);
-        TEST_ASSERT_EQ("kill on an empty slot refused",
-                       call_kill(PROCESS_TABLE_SIZE - 1, SIGNAL_TERM), -PERS_ERR_NO_SUCH_PROCESS);
+        TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGTERM), -ESRCH);
+        TEST_ASSERT_EQ("kill(-1000) refused", call_kill(-1000, SIGTERM), -ESRCH);
+        TEST_ASSERT_EQ("kill(INT_MIN) refused", call_kill(-2147483647 - 1, SIGTERM), -ESRCH);
+        TEST_ASSERT_EQ("kill past the table refused", call_kill(PROCESS_TABLE_SIZE, SIGTERM),
+                       -ESRCH);
+        TEST_ASSERT_EQ("kill on an empty slot refused", call_kill(PROCESS_TABLE_SIZE - 1, SIGTERM),
+                       -ESRCH);
 
         // pid 0 is the kernel and stays a permission error, not a lookup failure
-        TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGNAL_TERM), -PERS_ERR_PERMISSION_DENIED);
+        TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGTERM), -EACCES);
     }
 
     /*
@@ -120,37 +121,37 @@ void test_signals(void)
             uint32_t target = (uint32_t)slot;
 
             // recorded in the pending mask; the bit is (sig - 1)
-            TEST_ASSERT_EQ("send SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            TEST_ASSERT_EQ("send SIGUSR1", signal_send(target, SIGUSR1), 0);
             uint32_t pending = process_table[target]->pending_signals;
-            TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+            TEST_ASSERT("SIGUSR1 recorded as pending", (pending & (1u << (SIGUSR1 - 1))) != 0);
 
             // a second distinct signal accumulates rather than replaces
-            TEST_ASSERT_EQ("send SIGUSR2", signal_send(target, SIGNAL_USR2), 0);
+            TEST_ASSERT_EQ("send SIGUSR2", signal_send(target, SIGUSR2), 0);
             pending = process_table[target]->pending_signals;
-            TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGNAL_USR2 - 1))) != 0);
-            TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGNAL_USR1 - 1))) != 0);
+            TEST_ASSERT("SIGUSR2 recorded", (pending & (1u << (SIGUSR2 - 1))) != 0);
+            TEST_ASSERT("SIGUSR1 still pending", (pending & (1u << (SIGUSR1 - 1))) != 0);
 
             // re-sending an already-pending signal is idempotent, not a counter
             uint32_t before = process_table[target]->pending_signals;
-            TEST_ASSERT_EQ("resend SIGUSR1", signal_send(target, SIGNAL_USR1), 0);
+            TEST_ASSERT_EQ("resend SIGUSR1", signal_send(target, SIGUSR1), 0);
             uint32_t after = process_table[target]->pending_signals;
             TEST_ASSERT("resend leaves mask unchanged", before == after);
 
             // POSIX mutual discard: a stop signal clears pending SIGCONT, and
             // SIGCONT clears pending stop signals
-            TEST_ASSERT_EQ("send SIGCONT", signal_send(target, SIGNAL_CONT), 0);
+            TEST_ASSERT_EQ("send SIGCONT", signal_send(target, SIGCONT), 0);
             pending = process_table[target]->pending_signals;
-            TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
+            TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGCONT - 1))) != 0);
 
-            TEST_ASSERT_EQ("send SIGSTOP", signal_send(target, SIGNAL_STOP), 0);
+            TEST_ASSERT_EQ("send SIGSTOP", signal_send(target, SIGSTOP), 0);
             pending = process_table[target]->pending_signals;
-            TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGNAL_STOP - 1))) != 0);
-            TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGNAL_CONT - 1))) == 0);
+            TEST_ASSERT("SIGSTOP pending", (pending & (1u << (SIGSTOP - 1))) != 0);
+            TEST_ASSERT("SIGCONT cleared by SIGSTOP", (pending & (1u << (SIGCONT - 1))) == 0);
 
-            TEST_ASSERT_EQ("send SIGCONT again", signal_send(target, SIGNAL_CONT), 0);
+            TEST_ASSERT_EQ("send SIGCONT again", signal_send(target, SIGCONT), 0);
             pending = process_table[target]->pending_signals;
-            TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGNAL_CONT - 1))) != 0);
-            TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGNAL_STOP - 1))) == 0);
+            TEST_ASSERT("SIGCONT pending again", (pending & (1u << (SIGCONT - 1))) != 0);
+            TEST_ASSERT("SIGSTOP cleared by SIGCONT", (pending & (1u << (SIGSTOP - 1))) == 0);
 
             process_test_release_slot(target);
         }

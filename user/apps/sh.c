@@ -1,7 +1,8 @@
 #include "syscall.h"
 #include "string.h"
-#include "signals.h"
-#include "types.h"
+#include "signal.h"
+#include <stddef.h>
+#include <stdbool.h>
 #include "uapi/stat.h"
 #include "wait.h"
 #include "stdlib.h"
@@ -97,16 +98,16 @@ static void redraw_line(const char *cmd)
 static int read_key(void)
 {
     char c;
-    if (sys_read(0, &c, 1) <= 0) {
+    if (read(0, &c, 1) <= 0) {
         return -1;
     }
 
     if (c == 27) {
         char seq[2];
-        if (sys_read(0, &seq[0], 1) <= 0) {
+        if (read(0, &seq[0], 1) <= 0) {
             return 27;
         }
-        if (sys_read(0, &seq[1], 1) <= 0) {
+        if (read(0, &seq[1], 1) <= 0) {
             return 27;
         }
 
@@ -127,7 +128,7 @@ static void handle_sigchld(int sig)
 {
     (void)sig;
     // Reap any finished background children
-    while (sys_waitpid(-1, NULL, WNOHANG) > 0)
+    while (waitpid(-1, NULL, WNOHANG) > 0)
         ;
 }
 
@@ -204,7 +205,7 @@ static void expand_variables(const char *src, char *dst, size_t dst_size)
                 continue;
             }
             if (next == '$') {
-                snprintf(num, sizeof(num), "%d", sys_getpid());
+                snprintf(num, sizeof(num), "%d", getpid());
                 SH_PUTS(num);
                 i++;
                 continue;
@@ -377,13 +378,13 @@ static int stopped_pgid = 0;
  */
 static int wait_foreground(int pgid, const int *pids, int count)
 {
-    int shell_pgid = sys_getpgid(0);
+    int shell_pgid = getpgid(0);
     int last_status = 0;
 
-    sys_tcsetpgrp(0, pgid);
+    tcsetpgrp(0, pgid);
     for (int i = 0; i < count; i++) {
         int status = 0;
-        if (sys_waitpid(pids[i], &status, WUNTRACED) < 0) {
+        if (waitpid(pids[i], &status, WUNTRACED) < 0) {
             continue;
         }
         if (WIFSTOPPED(status)) {
@@ -397,7 +398,7 @@ static int wait_foreground(int pgid, const int *pids, int count)
             last_status = status & 0xFF;
         }
     }
-    sys_tcsetpgrp(0, shell_pgid);
+    tcsetpgrp(0, shell_pgid);
     return last_status;
 }
 
@@ -405,7 +406,7 @@ static void run_parent_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "exit") == 0) {
         // `exit` with no argument exits with the last command's status.
-        sys_exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : g_last_status);
+        _exit(cmd->argc > 1 ? atoi(cmd->argv[1]) : g_last_status);
     } else if (strcmp(cmd->argv[0], "true") == 0 || strcmp(cmd->argv[0], ":") == 0) {
         g_last_status = 0;
     } else if (strcmp(cmd->argv[0], "false") == 0) {
@@ -417,13 +418,13 @@ static void run_parent_builtin(Command *cmd)
         } else {
             int pgid = stopped_pgid;
             stopped_pgid = 0;
-            sys_kill(-pgid, SIGNAL_CONT);
+            kill(-pgid, SIGCONT);
             int pids[1] = {pgid};
             g_last_status = wait_foreground(pgid, pids, 1);
         }
     } else if (strcmp(cmd->argv[0], "cd") == 0) {
         const char *target = (cmd->argc > 1) ? cmd->argv[1] : "/";
-        if (sys_chdir(target) < 0) {
+        if (chdir(target) < 0) {
             printf("sh: cd: no such directory: %s\n", target);
             g_last_status = 1;
         } else {
@@ -474,7 +475,7 @@ static void run_output_builtin(Command *cmd)
         printf("\n");
     } else if (strcmp(cmd->argv[0], "pwd") == 0) {
         char cwd[256];
-        if (sys_getcwd(cwd, sizeof(cwd)) == 0) {
+        if (getcwd(cwd, sizeof(cwd)) != NULL) {
             printf("%s\n", cwd);
         }
     } else if (strcmp(cmd->argv[0], "help") == 0) {
@@ -499,13 +500,13 @@ static void run_exec(Command *cmd)
 
     /* The shell ignores SIGINT so Ctrl-C doesn't kill it, and exec preserves
      * SIG_IGN. Restore the default so a foreground command responds to Ctrl-C. */
-    sys_signal(SIGNAL_INT, SIGNAL_DFL);
+    signal(SIGINT, SIG_DFL);
 
     // A name containing a slash is a path: exec it directly, never via PATH.
     if (strchr(name, '/')) {
-        sys_exec(name, cmd->argv, environ);
+        execve(name, cmd->argv, environ);
         printf("sh: %s : no such file or directory\n", name);
-        sys_exit(127);
+        _exit(127);
     }
 
     char *path_env = getenv("PATH");
@@ -527,7 +528,7 @@ static void run_exec(Command *cmd)
         }
         strcat(path, name);
         strcat(path, ".elf");
-        sys_exec(path, cmd->argv, environ);
+        execve(path, cmd->argv, environ);
 
         // Try dir/name
         strcpy(path, dir);
@@ -536,35 +537,35 @@ static void run_exec(Command *cmd)
             strcat(path, "/");
         }
         strcat(path, name);
-        sys_exec(path, cmd->argv, environ);
+        execve(path, cmd->argv, environ);
 
         dir = strtok(NULL, ":");
     }
 
     printf("sh: command not found: %s\n", name);
-    sys_exit(127);
+    _exit(127);
 }
 
 static int apply_redirections(Command *cmd)
 {
     if (cmd->infile) {
-        int fd = sys_open(cmd->infile, VFS_O_RDONLY);
+        int fd = open(cmd->infile, O_RDONLY);
         if (fd < 0) {
             printf("sh: cannot open input file\n");
             return -1;
         }
-        sys_dup2(fd, 0);
-        sys_close(fd);
+        dup2(fd, 0);
+        close(fd);
     }
     if (cmd->outfile) {
-        int flags = VFS_O_WRONLY | VFS_O_CREAT | (cmd->append ? VFS_O_APPEND : VFS_O_TRUNC);
-        int fd = sys_open(cmd->outfile, flags);
+        int flags = O_WRONLY | O_CREAT | (cmd->append ? O_APPEND : O_TRUNC);
+        int fd = open(cmd->outfile, flags);
         if (fd < 0) {
             printf("sh: cannot open output file\n");
             return -1;
         }
-        sys_dup2(fd, 1);
-        sys_close(fd);
+        dup2(fd, 1);
+        close(fd);
     }
     return 0;
 }
@@ -596,21 +597,21 @@ static void execute_pipeline(char *pipe_string)
             return;
         }
 
-        int pid = sys_fork();
+        int pid = fork();
         if (pid == 0) {
-            sys_setpgid(0, 0);
+            setpgid(0, 0);
             if (apply_redirections(&cmd) < 0) {
-                sys_exit(1);
+                _exit(1);
             }
 
             if (is_output_builtin(cmd.argv[0])) {
                 run_output_builtin(&cmd);
-                sys_exit(0);
+                _exit(0);
             }
             run_exec(&cmd);
-            sys_exit(1);
+            _exit(1);
         } else {
-            sys_setpgid(pid, pid);
+            setpgid(pid, pid);
             if (!cmd.background) {
                 int pids[1] = {pid};
                 g_last_status = wait_foreground(pid, pids, 1);
@@ -639,52 +640,52 @@ static void execute_pipeline(char *pipe_string)
         }
 
         if (i < num_cmds - 1) {
-            if (sys_pipe(pipefd) < 0) {
+            if (pipe(pipefd) < 0) {
                 printf("sh: pipe failed\n");
                 return;
             }
         }
 
-        int pid = sys_fork();
+        int pid = fork();
         if (pid == 0) {
             if (i == 0) {
-                sys_setpgid(0, 0);
+                setpgid(0, 0);
             } else {
-                sys_setpgid(0, pipeline_pgid);
+                setpgid(0, pipeline_pgid);
             }
 
             if (prev_pipe != -1) {
-                sys_dup2(prev_pipe, 0);
-                sys_close(prev_pipe);
+                dup2(prev_pipe, 0);
+                close(prev_pipe);
             }
             if (i < num_cmds - 1) {
-                sys_dup2(pipefd[1], 1);
-                sys_close(pipefd[0]);
-                sys_close(pipefd[1]);
+                dup2(pipefd[1], 1);
+                close(pipefd[0]);
+                close(pipefd[1]);
             }
 
             if (apply_redirections(&cmd) < 0) {
-                sys_exit(1);
+                _exit(1);
             }
 
             if (is_output_builtin(cmd.argv[0])) {
                 run_output_builtin(&cmd);
-                sys_exit(0);
+                _exit(0);
             }
             run_exec(&cmd);
-            sys_exit(1);
+            _exit(1);
         } else {
             pids[i] = pid;
             if (i == 0) {
                 pipeline_pgid = pid;
             }
-            sys_setpgid(pid, pipeline_pgid);
+            setpgid(pid, pipeline_pgid);
 
             if (prev_pipe != -1) {
-                sys_close(prev_pipe);
+                close(prev_pipe);
             }
             if (i < num_cmds - 1) {
-                sys_close(pipefd[1]);
+                close(pipefd[1]);
                 prev_pipe = pipefd[0];
             }
         }
@@ -924,9 +925,9 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
             continue;
         }
 
-        struct vfs_dirent *entry;
+        struct dirent *entry;
         while ((entry = readdir(dir)) != NULL) {
-            char *entry_name = entry->name;
+            char *entry_name = entry->d_name;
 
             // skips "." and ".."
             if (entry_name[0] == '.') {
@@ -1037,9 +1038,9 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         return NULL;
     }
 
-    struct vfs_dirent *entry = NULL;
+    struct dirent *entry = NULL;
     while ((entry = readdir(d))) {
-        char *entry_name = entry->name;
+        char *entry_name = entry->d_name;
 
         // skip special entries
         if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) {
@@ -1071,7 +1072,7 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
 
         struct stat st;
         int is_dir = 0;
-        if (!sys_stat(full_path, &st)) {
+        if (!stat(full_path, &st)) {
             is_dir = S_ISDIR(st.st_mode);
         }
         free(full_path);
@@ -1289,7 +1290,7 @@ cleanup:
 static void print_prompt(void)
 {
     char cwd[256];
-    if (sys_getcwd(cwd, sizeof(cwd)) == 0) {
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
         printf("perspicua:%s$ ", cwd);
     } else {
         printf("perspicua:$ ");
@@ -1301,13 +1302,13 @@ int main(int argc, char *argv[], char *envp[])
     (void)argc;
     (void)argv;
     (void)envp;
-    sys_signal(SIGNAL_INT, SIGNAL_IGN);
-    sys_signal(SIGNAL_CHLD, handle_sigchld);
-    sys_signal(SIGNAL_TTOU, SIGNAL_IGN);
+    signal(SIGINT, SIG_IGN);
+    signal(SIGCHLD, handle_sigchld);
+    signal(SIGTTOU, SIG_IGN);
 
-    sys_setsid();
-    int shell_pgid = sys_getpid();
-    sys_tcsetpgrp(0, shell_pgid);
+    setsid();
+    int shell_pgid = getpid();
+    tcsetpgrp(0, shell_pgid);
 
     printf("Perspicua Shell\n");
     printf("Type help to see available commands.\n\n");
@@ -1315,7 +1316,7 @@ int main(int argc, char *argv[], char *envp[])
     char *cmd_buffer = malloc(CMD_MAX_LEN);
     if (!cmd_buffer) {
         printf("sh: memory allocation failed\n");
-        sys_exit(1);
+        _exit(1);
     }
     int cmd_length = 0;
 

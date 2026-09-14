@@ -2,6 +2,10 @@
  * file.c - Standard I/O FILE streams implementation.
  */
 
+#include <stddef.h>
+
+#include "uapi/types.h"
+
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -24,32 +28,32 @@ FILE *fopen(const char *pathname, const char *mode)
     }
 
     if (strchr(mode, 'r')) {
-        flags = VFS_O_RDONLY;
+        flags = O_RDONLY;
         if (strchr(mode, '+')) {
-            flags = VFS_O_RDWR;
+            flags = O_RDWR;
         }
     } else if (strchr(mode, 'w')) {
-        flags = VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC;
+        flags = O_WRONLY | O_CREAT | O_TRUNC;
         if (strchr(mode, '+')) {
-            flags = VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC;
+            flags = O_RDWR | O_CREAT | O_TRUNC;
         }
     } else if (strchr(mode, 'a')) {
-        flags = VFS_O_WRONLY | VFS_O_CREAT | VFS_O_APPEND;
+        flags = O_WRONLY | O_CREAT | O_APPEND;
         if (strchr(mode, '+')) {
-            flags = VFS_O_RDWR | VFS_O_CREAT | VFS_O_APPEND;
+            flags = O_RDWR | O_CREAT | O_APPEND;
         }
     } else {
         return NULL;
     }
 
-    int fd = sys_open(pathname, flags);
+    int fd = open(pathname, flags);
     if (fd < 0) {
         return NULL;
     }
 
     FILE *stream = malloc(sizeof(FILE));
     if (!stream) {
-        sys_close(fd);
+        close(fd);
         return NULL;
     }
 
@@ -70,7 +74,7 @@ int fclose(FILE *stream)
         return 0;
     }
 
-    int res = sys_close(stream->fd);
+    int res = close(stream->fd);
     free(stream);
 
     return res < 0 ? EOF : 0;
@@ -82,7 +86,7 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
         return 0;
     }
 
-    int bytes_read = sys_read(stream->fd, ptr, size * nmemb);
+    int bytes_read = read(stream->fd, ptr, size * nmemb);
     if (bytes_read < 0) {
         stream->error = 1;
         return 0;
@@ -100,7 +104,7 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
         return 0;
     }
 
-    int bytes_written = sys_write(stream->fd, ptr, size * nmemb);
+    int bytes_written = write(stream->fd, ptr, size * nmemb);
     if (bytes_written < 0) {
         stream->error = 1;
         return 0;
@@ -115,14 +119,14 @@ int fseek(FILE *stream, off_t offset, int whence)
         return -1;
     }
 
-    int vfs_whence = VFS_SEEK_SET;
+    int vfs_whence = SEEK_SET;
     if (whence == SEEK_CUR) {
-        vfs_whence = VFS_SEEK_CUR;
+        vfs_whence = SEEK_CUR;
     } else if (whence == SEEK_END) {
-        vfs_whence = VFS_SEEK_END;
+        vfs_whence = SEEK_END;
     }
 
-    off_t res = sys_lseek(stream->fd, offset, vfs_whence);
+    off_t res = lseek(stream->fd, offset, vfs_whence);
     if (res < 0) {
         stream->error = 1;
         return -1;
@@ -138,7 +142,7 @@ off_t ftell(FILE *stream)
         return -1;
     }
 
-    return sys_lseek(stream->fd, 0, VFS_SEEK_CUR);
+    return lseek(stream->fd, 0, SEEK_CUR);
 }
 
 int fgetc(FILE *stream)

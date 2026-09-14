@@ -2,6 +2,9 @@
  * test_vfs.c - Boot-phase tests for the virtual filesystem layer.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 
 #include "string.h"
@@ -63,7 +66,7 @@ void test_vfs(void)
 
     // opening a file that does not exist must fail rather than create one
     {
-        int fd = vfs_open("/definitely_not_here", VFS_O_RDONLY);
+        int fd = vfs_open("/definitely_not_here", O_RDONLY);
         TEST_ASSERT("open missing fails", fd < 0);
     }
 
@@ -76,13 +79,13 @@ void test_vfs(void)
         static const char payload[] = "perspicua vfs scratch payload";
         const size_t len = sizeof(payload) - 1;
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create scratch file", fd >= 0);
 
         int written = vfs_write(fd, payload, len);
         TEST_ASSERT_EQ("write returns full length", written, (int)len);
 
-        vfs_off_t pos = vfs_lseek(fd, 0, VFS_SEEK_SET);
+        vfs_off_t pos = vfs_lseek(fd, 0, SEEK_SET);
         TEST_ASSERT_EQ("lseek to start", (int)pos, 0);
 
         static char readbuf[64];
@@ -91,7 +94,7 @@ void test_vfs(void)
         TEST_ASSERT_EQ("read returns full length", got, (int)len);
         TEST_ASSERT("read matches written", memcmp(readbuf, payload, len) == 0);
 
-        vfs_off_t end = vfs_lseek(fd, 0, VFS_SEEK_END);
+        vfs_off_t end = vfs_lseek(fd, 0, SEEK_END);
         TEST_ASSERT_EQ("lseek to end reports size", (int)end, (int)len);
 
         TEST_ASSERT_EQ("close scratch file", vfs_close(fd), 0);
@@ -107,7 +110,7 @@ void test_vfs(void)
 
     // reopening must see the persisted contents, not a fresh file
     {
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDONLY);
+        int fd = vfs_open(SCRATCH_FILE, O_RDONLY);
         TEST_ASSERT("reopen scratch file", fd >= 0);
 
         static char buf[64];
@@ -149,9 +152,9 @@ void test_vfs(void)
     // readdir must consult max_entries before writing an entry, so a buffer
     // too small for one dirent receives nothing rather than a 260-byte write
     {
-        const size_t dirent_size = sizeof(struct vfs_dirent);
+        const size_t dirent_size = sizeof(struct dirent);
 
-        int fd = vfs_open("/", VFS_O_RDONLY);
+        int fd = vfs_open("/", O_RDONLY);
         TEST_ASSERT("open root directory", fd >= 0);
 
         void *buf = readdir_arena(1);
@@ -167,9 +170,9 @@ void test_vfs(void)
 
     // a buffer sized for exactly one entry must yield exactly one entry
     {
-        const size_t dirent_size = sizeof(struct vfs_dirent);
+        const size_t dirent_size = sizeof(struct dirent);
 
-        int fd = vfs_open("/", VFS_O_RDONLY);
+        int fd = vfs_open("/", O_RDONLY);
         TEST_ASSERT("reopen root directory", fd >= 0);
 
         void *buf = readdir_arena(dirent_size);
@@ -177,8 +180,8 @@ void test_vfs(void)
         TEST_ASSERT_EQ("single-entry buffer returns one entry", res, 1);
         TEST_ASSERT("single-entry buffer not overrun", readdir_arena_intact(dirent_size));
 
-        struct vfs_dirent *got = (struct vfs_dirent *)buf;
-        TEST_ASSERT("first entry is \".\"", strcmp(got->name, ".") == 0);
+        struct dirent *got = (struct dirent *)buf;
+        TEST_ASSERT("first entry is \".\"", strcmp(got->d_name, ".") == 0);
 
         vfs_close(fd);
     }
@@ -191,7 +194,7 @@ void test_vfs(void)
     {
         unsigned long before = vfs_test_live_files();
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT);
         TEST_ASSERT("open for refcount test", fd >= 0);
 
         struct vfs_file *f = vfs_test_file_at(fd);
@@ -216,7 +219,7 @@ void test_vfs(void)
     {
         unsigned long before = vfs_test_live_files();
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT);
         TEST_ASSERT("open for balance test", fd >= 0);
         TEST_ASSERT_EQ("close balances open", vfs_close(fd), 0);
         TEST_ASSERT_EQ("no file leaked", vfs_test_live_files(), before);

@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -21,9 +23,9 @@ static int remove_dir(const char *path)
     }
 
     int rc = 0;
-    struct vfs_dirent *ent;
+    struct dirent *ent;
     while ((ent = readdir(dirp)) != NULL) {
-        if (strcmp(ent->name, ".") == 0 || strcmp(ent->name, "..") == 0) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
             continue;
         }
         char child[512];
@@ -33,12 +35,12 @@ static int remove_dir(const char *path)
         if (n > 0 && path[n - 1] != '/') {
             strncat(child, "/", sizeof(child) - strlen(child) - 1);
         }
-        strncat(child, ent->name, sizeof(child) - strlen(child) - 1);
+        strncat(child, ent->d_name, sizeof(child) - strlen(child) - 1);
         rc |= remove_path(child);
     }
     closedir(dirp);
 
-    if (sys_rmdir(path) < 0) {
+    if (rmdir(path) < 0) {
         if (!g_force) {
             printf("rm: cannot remove directory '%s'\n", path);
         }
@@ -50,7 +52,7 @@ static int remove_dir(const char *path)
 static int remove_path(const char *path)
 {
     struct stat st;
-    if (sys_stat(path, &st) < 0) {
+    if (stat(path, &st) < 0) {
         if (!g_force) {
             printf("rm: cannot remove '%s': no such file\n", path);
         }
@@ -65,7 +67,7 @@ static int remove_path(const char *path)
         return remove_dir(path);
     }
 
-    if (sys_unlink(path) < 0) {
+    if (unlink(path) < 0) {
         if (!g_force) {
             printf("rm: cannot remove '%s'\n", path);
         }

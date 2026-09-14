@@ -6,7 +6,10 @@
 
 #include <stdarg.h>
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "uapi/types.h"
 
 #ifdef __KERNEL__
     #include "core/lock.h"

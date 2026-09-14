@@ -7,7 +7,8 @@
 
 #include "io.h"
 #include "stdio.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "arch/irq.h"
 #include "core/lock.h"
@@ -17,7 +18,7 @@
 #include "devicetree/fdt.h"
 #include "driver/gic.h"
 #include "driver/gpio.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
@@ -52,7 +53,7 @@ static irq_result_t uart_irq_handler(void *ctx)
 static int pl011_uart_probe(struct device *dev)
 {
     if (uart_ready) {
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
 
     uintptr_t vbase = devm_get_io_base(dev, 0);

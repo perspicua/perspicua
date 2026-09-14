@@ -8,7 +8,7 @@ static void make_parents(char *path)
     for (char *p = path + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';
-            sys_mkdir(path, 0755);
+            mkdir(path, 0755);
             *p = '/';
         }
     }
@@ -38,8 +38,8 @@ int main(int argc, char **argv)
         if (parents) {
             make_parents(argv[i]);
             // -p tolerates an already-existing final directory.
-            sys_mkdir(argv[i], 0755);
-        } else if (sys_mkdir(argv[i], 0755) < 0) {
+            mkdir(argv[i], 0755);
+        } else if (mkdir(argv[i], 0755) < 0) {
             printf("mkdir: cannot create directory '%s'\n", argv[i]);
             rc = 1;
         }

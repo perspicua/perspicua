@@ -4,7 +4,10 @@
 #include "mm/heap.h"
 #include "mm/addr.h"
 #include "panic.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
@@ -38,7 +41,7 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
             // Probe the driver
             int ret = drv->probe(&dev);
             if (ret != 0) {
-                if (ret != -PERS_ERR_NOT_FOUND) {
+                if (ret != -ENOENT) {
                     pr_err("driver: %s probe failed with error %d\n", drv->name, ret);
                 }
             } else {

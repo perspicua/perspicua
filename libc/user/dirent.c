@@ -6,25 +6,27 @@
 #include "stdlib.h"
 #include "syscall.h"
 
+#include <stddef.h>
+
 DIR *opendir(const char *name)
 {
-    int fd = sys_open(name, VFS_O_RDONLY);
+    int fd = open(name, O_RDONLY);
     if (fd < 0) {
         return NULL;
     }
 
     DIR *dirp = malloc(sizeof(DIR));
     if (!dirp) {
-        sys_close(fd);
+        close(fd);
         return NULL;
     }
 
     dirp->fd = fd;
     dirp->num_dirents = 32;
-    dirp->buffer = malloc(sizeof(struct vfs_dirent) * dirp->num_dirents);
+    dirp->buffer = malloc(sizeof(struct dirent) * dirp->num_dirents);
     if (!dirp->buffer) {
         free(dirp);
-        sys_close(fd);
+        close(fd);
         return NULL;
     }
 
@@ -34,15 +36,14 @@ DIR *opendir(const char *name)
     return dirp;
 }
 
-struct vfs_dirent *readdir(DIR *dirp)
+struct dirent *readdir(DIR *dirp)
 {
     if (!dirp) {
         return NULL;
     }
 
     if (dirp->buffer_pos >= dirp->buffer_end) {
-        int res =
-            sys_getdents(dirp->fd, dirp->buffer, sizeof(struct vfs_dirent) * dirp->num_dirents);
+        int res = getdents(dirp->fd, dirp->buffer, sizeof(struct dirent) * dirp->num_dirents);
         if (res <= 0) {
             return NULL;
         }
@@ -59,7 +60,7 @@ int closedir(DIR *dirp)
         return -1;
     }
 
-    int res = sys_close(dirp->fd);
+    int res = close(dirp->fd);
     free(dirp->buffer);
     free(dirp);
 

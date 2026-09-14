@@ -7,6 +7,8 @@
 
 #include "panic.h"
 
+#include <stddef.h>
+
 #include "stdio.h"
 
 #include "arch/exception.h"

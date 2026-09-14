@@ -1,7 +1,7 @@
 #ifndef PERSPICUA_DRIVER_DEVICE_H
 #define PERSPICUA_DRIVER_DEVICE_H
 
-#include "types.h"
+#include <stdint.h>
 #include "devicetree/fdt.h"
 
 /*

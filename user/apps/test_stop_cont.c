@@ -1,5 +1,5 @@
 #include <assert.h>
-#include <signals.h>
+#include <signal.h>
 #include <stdio.h>
 #include <syscall.h>
 #include <wait.h>
@@ -8,7 +8,7 @@ static void test_observable_stop_cont(void)
 {
     printf("--- Test: Observable SIGSTOP / SIGCONT ---\n");
 
-    int child_pid = sys_fork();
+    int child_pid = fork();
     assert(child_pid >= 0);
 
     if (child_pid == 0) {
@@ -16,30 +16,30 @@ static void test_observable_stop_cont(void)
         int i = 0;
         while (1) {
             printf("tick %d\n", i++);
-            sys_sleep(100);
+            usleep((100) * 1000);
         }
     } else {
         // Parent
-        sys_sleep(250);
+        usleep((250) * 1000);
 
         printf("[parent sends STOP]\n");
-        int res = sys_kill(child_pid, SIGNAL_STOP);
+        int res = kill(child_pid, SIGSTOP);
         assert(res == 0);
 
-        sys_sleep(600);
+        usleep((600) * 1000);
 
         printf("[parent sends CONT]\n");
-        res = sys_kill(child_pid, SIGNAL_CONT);
+        res = kill(child_pid, SIGCONT);
         assert(res == 0);
 
-        sys_sleep(250);
+        usleep((250) * 1000);
 
         printf("[parent sends KILL]\n");
-        res = sys_kill(child_pid, SIGNAL_KILL);
+        res = kill(child_pid, SIGKILL);
         assert(res == 0);
 
         int status = -1;
-        res = sys_waitpid(child_pid, &status, 0);
+        res = waitpid(child_pid, &status, 0);
         assert(res == child_pid);
         assert(status == 137);
 
@@ -51,28 +51,28 @@ static void test_kill_stopped_task(void)
 {
     printf("--- Test: Kill-a-stopped-task ---\n");
 
-    int child_pid = sys_fork();
+    int child_pid = fork();
     assert(child_pid >= 0);
 
     if (child_pid == 0) {
         while (1) {
-            sys_sleep(50);
+            usleep((50) * 1000);
         }
     } else {
-        sys_sleep(100);
+        usleep((100) * 1000);
 
         printf("[parent] sending STOP to child...\n");
-        int res = sys_kill(child_pid, SIGNAL_STOP);
+        int res = kill(child_pid, SIGSTOP);
         assert(res == 0);
 
-        sys_sleep(200);
+        usleep((200) * 1000);
 
         printf("[parent] sending KILL directly to stopped child (no CONT)...\n");
-        res = sys_kill(child_pid, SIGNAL_KILL);
+        res = kill(child_pid, SIGKILL);
         assert(res == 0);
 
         int status = -1;
-        res = sys_waitpid(child_pid, &status, 0);
+        res = waitpid(child_pid, &status, 0);
         assert(res == child_pid);
         assert(status == 137);
 
@@ -85,52 +85,52 @@ static void test_cont_racing_stop(void)
     printf("--- Test: CONT-racing-STOP ---\n");
 
     int fds[2];
-    int res = sys_pipe(fds);
+    int res = pipe(fds);
     assert(res == 0);
 
-    int child_pid = sys_fork();
+    int child_pid = fork();
     assert(child_pid >= 0);
 
     if (child_pid == 0) {
-        sys_close(fds[0]);
+        close(fds[0]);
         while (1) {
-            sys_write(fds[1], "x", 1);
-            sys_sleep(50);
+            write(fds[1], "x", 1);
+            usleep((50) * 1000);
         }
     } else {
-        sys_close(fds[1]);
-        sys_sleep(100);
+        close(fds[1]);
+        usleep((100) * 1000);
 
         // Set non-blocking on pipe read end and drain any initial ticks
-        int flags = sys_fcntl(fds[0], VFS_F_GETFL, 0);
-        sys_fcntl(fds[0], VFS_F_SETFL, flags | VFS_O_NONBLOCK);
+        int flags = fcntl(fds[0], F_GETFL, 0);
+        fcntl(fds[0], F_SETFL, flags | O_NONBLOCK);
         char dummy[64];
-        while (sys_read(fds[0], dummy, sizeof(dummy)) > 0) {}
+        while (read(fds[0], dummy, sizeof(dummy)) > 0) {}
 
         printf("[parent] sending STOP immediately followed by CONT (tight window)...\n");
-        res = sys_kill(child_pid, SIGNAL_STOP);
+        res = kill(child_pid, SIGSTOP);
         assert(res == 0);
-        res = sys_kill(child_pid, SIGNAL_CONT);
+        res = kill(child_pid, SIGCONT);
         assert(res == 0);
 
         // Wait a stretch to verify child continues ticking
-        sys_sleep(300);
+        usleep((300) * 1000);
 
         char buf[64];
-        int bytes = sys_read(fds[0], buf, sizeof(buf));
+        int bytes = read(fds[0], buf, sizeof(buf));
         assert(bytes > 0);
         printf("[parent] verified child is still ticking (%d bytes read from pipe)\n", bytes);
 
         // Clean up child
-        res = sys_kill(child_pid, SIGNAL_KILL);
+        res = kill(child_pid, SIGKILL);
         assert(res == 0);
 
         int status = -1;
-        res = sys_waitpid(child_pid, &status, 0);
+        res = waitpid(child_pid, &status, 0);
         assert(res == child_pid);
         assert(status == 137);
 
-        sys_close(fds[0]);
+        close(fds[0]);
         printf("CONT-racing-STOP regression test passed!\n\n");
     }
 }
@@ -140,53 +140,53 @@ static void test_session_daemon(void)
     printf("--- Test: Session Daemon & Setsid Immunity ---\n");
 
     // Child 1: calls setsid to detach into its own session (daemon)
-    int daemon_pid = sys_fork();
+    int daemon_pid = fork();
     assert(daemon_pid >= 0);
 
     if (daemon_pid == 0) {
-        int sid = sys_setsid();
+        int sid = setsid();
         assert(sid > 0);
-        assert(sid == sys_getpid());
+        assert(sid == getpid());
 
         // Verify setsid fails if already a session/group leader
-        int err = sys_setsid();
+        int err = setsid();
         assert(err < 0);
 
         while (1) {
-            sys_sleep(50);
+            usleep((50) * 1000);
         }
     }
 
     // Child 2: stays in parent's session/group
-    int fg_pid = sys_fork();
+    int fg_pid = fork();
     assert(fg_pid >= 0);
 
     if (fg_pid == 0) {
         while (1) {
-            sys_sleep(50);
+            usleep((50) * 1000);
         }
     }
 
-    sys_sleep(100);
+    usleep((100) * 1000);
 
     // Verify parent cannot setpgid daemon_pid into parent's group across sessions
-    int err = sys_setpgid(daemon_pid, sys_getpid());
+    int err = setpgid(daemon_pid, getpid());
     assert(err < 0);
 
     // Send SIGINT to fg_pid
-    int res = sys_kill(fg_pid, SIGNAL_INT);
+    int res = kill(fg_pid, SIGINT);
     assert(res == 0);
 
     int status = -1;
-    res = sys_waitpid(fg_pid, &status, 0);
+    res = waitpid(fg_pid, &status, 0);
     assert(res == fg_pid);
     assert(status == 130);
 
     // Daemon child must still be alive! Clean it up with KILL
-    res = sys_kill(daemon_pid, SIGNAL_KILL);
+    res = kill(daemon_pid, SIGKILL);
     assert(res == 0);
     status = -1;
-    res = sys_waitpid(daemon_pid, &status, 0);
+    res = waitpid(daemon_pid, &status, 0);
     assert(res == daemon_pid);
     assert(status == 137);
 
@@ -203,38 +203,38 @@ static void test_background_read(void)
     printf("--- Test: Background read raises SIGTTIN ---\n");
 
     // Child that ignores SIGTTIN must fail the read instead of stopping.
-    int ign_pid = sys_fork();
+    int ign_pid = fork();
     assert(ign_pid >= 0);
 
     if (ign_pid == 0) {
-        sys_setpgid(0, 0);
-        sys_signal(SIGNAL_TTIN, SIGNAL_IGN);
+        setpgid(0, 0);
+        signal(SIGTTIN, SIG_IGN);
         char c;
-        int r = sys_read(0, &c, 1);
-        sys_exit(r < 0 ? 42 : 43);
+        int r = read(0, &c, 1);
+        _exit(r < 0 ? 42 : 43);
     }
 
     int status = -1;
-    assert(sys_waitpid(ign_pid, &status, 0) == ign_pid);
+    assert(waitpid(ign_pid, &status, 0) == ign_pid);
     assert(status == 42);
 
     // Child that leaves SIGTTIN at default must stop, not exit.
-    int stop_pid = sys_fork();
+    int stop_pid = fork();
     assert(stop_pid >= 0);
 
     if (stop_pid == 0) {
-        sys_setpgid(0, 0);
+        setpgid(0, 0);
         char c;
-        sys_read(0, &c, 1);
-        sys_exit(44);
+        read(0, &c, 1);
+        _exit(44);
     }
 
-    sys_sleep(200);
-    assert(sys_waitpid(stop_pid, &status, WNOHANG) == 0);
+    usleep((200) * 1000);
+    assert(waitpid(stop_pid, &status, WNOHANG) == 0);
 
-    assert(sys_kill(stop_pid, SIGNAL_KILL) == 0);
+    assert(kill(stop_pid, SIGKILL) == 0);
     status = -1;
-    assert(sys_waitpid(stop_pid, &status, 0) == stop_pid);
+    assert(waitpid(stop_pid, &status, 0) == stop_pid);
     assert(status == 137);
 
     printf("Background read SIGTTIN test passed!\n\n");

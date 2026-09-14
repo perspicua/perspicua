@@ -5,6 +5,8 @@
  * path needs a second runnable task and belongs in the scheduler phase.
  */
 
+#include <stddef.h>
+
 #include "test.h"
 
 #include "core/mutex.h"

@@ -4,6 +4,9 @@
 
 #include "mm/mmu.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "mm/asid.h"
 #include "stdio.h"
 #include "string.h"

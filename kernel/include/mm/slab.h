@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_MM_SLAB_H
 #define PERSPICUA_MM_SLAB_H
 
-#include "types.h"
-
 void slab_init(void);
 
 /*

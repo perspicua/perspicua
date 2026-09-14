@@ -4,6 +4,8 @@
 
 #include "mm/heap.h"
 
+#include <stddef.h>
+
 #include "stdio.h"
 #include "panic.h"
 

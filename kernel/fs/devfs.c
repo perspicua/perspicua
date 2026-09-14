@@ -4,11 +4,14 @@
 
 #include "fs/devfs.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "core/tty.h"
 #include "core/lock.h"
@@ -58,8 +61,8 @@ static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *fi
 
 static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
-    struct vfs_dirent *dirent_buf = (struct vfs_dirent *)buffer;
-    size_t max_entries = count / sizeof(struct vfs_dirent);
+    struct dirent *dirent_buf = (struct dirent *)buffer;
+    size_t max_entries = count / sizeof(struct dirent);
     int entries_read = 0;
     uint32_t current_idx = 0;
 
@@ -73,10 +76,10 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     }
 
     while (curr && entries_read < (int)max_entries) {
-        struct vfs_dirent *dirent = &dirent_buf[entries_read];
-        strncpy(dirent->name, curr->name, 255);
-        dirent->name[255] = '\0';
-        dirent->ino = 0;
+        struct dirent *ent = &dirent_buf[entries_read];
+        strncpy(ent->d_name, curr->name, 255);
+        ent->d_name[255] = '\0';
+        ent->d_ino = 0;
         file->offset++;
         entries_read++;
         curr = curr->next;
@@ -113,7 +116,7 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
 {
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     if (!node) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     node->type = VFS_VNODE_TYPE_DEVICE;
@@ -126,7 +129,7 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
     struct devfs_node *dev_node = (struct devfs_node *)slab_alloc(sizeof(struct devfs_node));
     if (!dev_node) {
         slab_free(node);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     strncpy(dev_node->name, name, 31);
@@ -138,7 +141,7 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
     devfs_devices = dev_node;
     spin_unlock_irqrestore(&devfs_lock, fdflags);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 struct vfs_vnode *devfs_get_root(void)
