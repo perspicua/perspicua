@@ -27,25 +27,32 @@ configure_file(kernel.ld.in ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld @ONLY)
 
 find_package(Python3 REQUIRED)
 
-# First pass: build kernel without symbol table
-add_executable(kernel8_pass1.elf ${KERNEL_SRCS} ${KERNEL_ASMS} ${CMAKE_SOURCE_DIR}/scripts/dummy_symtab.c)
+# The kernel is linked twice: once to discover the symbol addresses, then again
+# with a table of them compiled in. Only that one generated file differs
+# between the passes, so the sources are compiled once here and both links
+# reuse the objects.
+add_library(kernel_objs OBJECT ${KERNEL_SRCS} ${KERNEL_ASMS})
 
-target_include_directories(kernel8_pass1.elf PRIVATE
+target_include_directories(kernel_objs PUBLIC
     include
     tests
     ../libc/include
     ..
+    ${KERNEL_CONFIG_INCLUDE}
 )
 
-target_compile_definitions(kernel8_pass1.elf PRIVATE __KERNEL__ ${KERNEL_CONFIG_DEFS})
-target_link_libraries(kernel8_pass1.elf PRIVATE libk)
+target_compile_definitions(kernel_objs PUBLIC __KERNEL__)
+target_compile_options(kernel_objs PUBLIC ${KERNEL_CONFIG_FORCE_INCLUDE})
+target_link_libraries(kernel_objs PUBLIC libk)
 
+# First pass: a stand-in table, because the real one needs these addresses.
+add_executable(kernel8_pass1.elf ${CMAKE_SOURCE_DIR}/scripts/dummy_symtab.c)
+target_link_libraries(kernel8_pass1.elf PRIVATE kernel_objs libk)
 target_link_options(kernel8_pass1.elf PRIVATE
     -nostdlib
     -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
 )
 
-# Generate symbol table from pass 1
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/gen_symtab.py ${CMAKE_CURRENT_BINARY_DIR}/kernel8_pass1.elf ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c
@@ -53,19 +60,9 @@ add_custom_command(
     COMMENT "Generating kernel symbol table"
 )
 
-# Second pass: build kernel with real symbol table
-add_executable(kernel8.elf ${KERNEL_SRCS} ${KERNEL_ASMS} ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c)
-
-target_include_directories(kernel8.elf PRIVATE
-    include
-    tests
-    ../libc/include
-    ..
-)
-
-target_compile_definitions(kernel8.elf PRIVATE __KERNEL__ ${KERNEL_CONFIG_DEFS})
-target_link_libraries(kernel8.elf PRIVATE libk)
-
+# Second pass: the same objects, now with the real table.
+add_executable(kernel8.elf ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c)
+target_link_libraries(kernel8.elf PRIVATE kernel_objs libk)
 target_link_options(kernel8.elf PRIVATE
     -nostdlib
     -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld

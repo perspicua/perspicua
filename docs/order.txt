@@ -243,7 +243,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         time, not only when the page's first word happens to differ from the
         slab magic.
 
-  13. Build and toolchain
+  13. Build and toolchain [DONE]
       Effort: S each | Unlocks: representative timing; a single source of
         config truth; faster builds
       Scope: default to -O2 -g (keep -O0 as an opt-in: a kernel at -O0 hides

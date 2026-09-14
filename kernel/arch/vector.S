@@ -48,7 +48,7 @@ fiq_discard:
     eret
 
 .macro save_all
-    sub sp, sp, #800
+    sub sp, sp, #288
     
     // Save x0-x29 (offset 32)
     stp x0, x1, [sp, #32 + 16 * 0]
@@ -70,30 +70,6 @@ fiq_discard:
     // Save x30 (offset 272)
     str x30, [sp, #272]
 
-    // Save fpsr, fpcr (offset 280)
-    mrs x0, fpsr
-    str w0, [sp, #280]
-    mrs x0, fpcr
-    str w0, [sp, #284]
-
-    // Save q0-q31 (offset 288)
-    stp q0, q1, [sp, #288 + 32 * 0]
-    stp q2, q3, [sp, #288 + 32 * 1]
-    stp q4, q5, [sp, #288 + 32 * 2]
-    stp q6, q7, [sp, #288 + 32 * 3]
-    stp q8, q9, [sp, #288 + 32 * 4]
-    stp q10, q11, [sp, #288 + 32 * 5]
-    stp q12, q13, [sp, #288 + 32 * 6]
-    stp q14, q15, [sp, #288 + 32 * 7]
-    stp q16, q17, [sp, #288 + 32 * 8]
-    stp q18, q19, [sp, #288 + 32 * 9]
-    stp q20, q21, [sp, #288 + 32 * 10]
-    stp q22, q23, [sp, #288 + 32 * 11]
-    stp q24, q25, [sp, #288 + 32 * 12]
-    stp q26, q27, [sp, #288 + 32 * 13]
-    stp q28, q29, [sp, #288 + 32 * 14]
-    stp q30, q31, [sp, #288 + 32 * 15]
-
     // Save ELR_EL1 and SPSR_EL1 (offset 16)
     mrs x0, elr_el1
     mrs x1, spsr_el1
@@ -113,30 +89,6 @@ fiq_discard:
     ldp x0, x1, [sp, #16]
     msr elr_el1, x0
     msr spsr_el1, x1
-
-    // Restore q0-q31
-    ldp q0, q1, [sp, #288 + 32 * 0]
-    ldp q2, q3, [sp, #288 + 32 * 1]
-    ldp q4, q5, [sp, #288 + 32 * 2]
-    ldp q6, q7, [sp, #288 + 32 * 3]
-    ldp q8, q9, [sp, #288 + 32 * 4]
-    ldp q10, q11, [sp, #288 + 32 * 5]
-    ldp q12, q13, [sp, #288 + 32 * 6]
-    ldp q14, q15, [sp, #288 + 32 * 7]
-    ldp q16, q17, [sp, #288 + 32 * 8]
-    ldp q18, q19, [sp, #288 + 32 * 9]
-    ldp q20, q21, [sp, #288 + 32 * 10]
-    ldp q22, q23, [sp, #288 + 32 * 11]
-    ldp q24, q25, [sp, #288 + 32 * 12]
-    ldp q26, q27, [sp, #288 + 32 * 13]
-    ldp q28, q29, [sp, #288 + 32 * 14]
-    ldp q30, q31, [sp, #288 + 32 * 15]
-
-    // Restore fpsr, fpcr
-    ldr w0, [sp, #280]
-    msr fpsr, x0
-    ldr w0, [sp, #284]
-    msr fpcr, x0
 
     // Restore x30
     ldr x30, [sp, #272]
@@ -158,7 +110,7 @@ fiq_discard:
     ldp x2, x3, [sp, #32 + 16 * 1]
     ldp x0, x1, [sp, #32 + 16 * 0]
 
-    add sp, sp, #800
+    add sp, sp, #288
     eret
 .endm
 

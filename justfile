@@ -15,12 +15,10 @@ nproc := `nproc 2>/dev/null || sysctl -n hw.ncpu || echo 1`
 # Default recipe
 default: build
 
-# Kernel configuration options (Kconfig-lite)
-config_smp     := "ON"
-config_lockdep := "ON"
-config_nr_cpus := "4"
-config_max_processes := "128"
-config_max_fds := "64"
+# Kernel configuration lives in CMakeLists.txt, which is the only list of it.
+# Override from here by passing cmake flags, e.g.
+#   just cmake_args="-DCONFIG_NR_CPUS=2 -DCONFIG_LOCKDEP=OFF" build
+cmake_args := ""
 
 # Configure and build into a given tree with a given CONFIG_TESTS setting
 @_cmake dir type tests:
@@ -28,29 +26,25 @@ config_max_fds := "64"
         -DCMAKE_TOOLCHAIN_FILE={{toolchain}} \
         -DCMAKE_BUILD_TYPE={{type}} \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-        -DCONFIG_SMP={{config_smp}} \
-        -DCONFIG_LOCKDEP={{config_lockdep}} \
-        -DCONFIG_NR_CPUS={{config_nr_cpus}} \
-        -DCONFIG_MAX_PROCESSES={{config_max_processes}} \
-        -DCONFIG_MAX_FDS={{config_max_fds}} \
-        -DCONFIG_TESTS={{tests}}
+        -DCONFIG_TESTS={{tests}} \
+        {{cmake_args}}
     cmake --build {{dir}} -j {{nproc}}
 
 # Setup and build the project (defaults to Debug)
-# Usage: just build [debug|release]
-@build type="Debug":
-    just _cmake {{build_dir}} {{type}} OFF
+# Usage: just build [RelWithDebInfo|Debug|Release]  (default -O2 -g)
+@build type="RelWithDebInfo":
+    just cmake_args="{{cmake_args}}" _cmake {{build_dir}} {{type}} OFF
     ln -sf {{build_dir}}/compile_commands.json compile_commands.json
     echo "Build ({{type}}) complete: pi4-boot/kernel8.img"
 
 # Build with the in-kernel test suites enabled
 # Usage: just build-tests [debug|release]
-@build-tests type="Debug":
-    just _cmake {{test_build_dir}} {{type}} ON
+@build-tests type="RelWithDebInfo":
+    just cmake_args="{{cmake_args}}" _cmake {{test_build_dir}} {{type}} ON
     echo "Test build ({{type}}) complete: {{test_build_dir}}/kernel/kernel8.img"
 
 # Build and run the in-kernel test suites headless; exits non-zero on failure
-@test type="Debug": (build-tests type)
+@test type="RelWithDebInfo": (build-tests type)
     cmake --build {{test_build_dir}} --target sdcard
     ./scripts/run_tests.sh \
         {{test_build_dir}}/kernel/kernel8.img \
@@ -58,20 +52,23 @@ config_max_fds := "64"
         {{test_build_dir}}/sdcard.img
 
 # Build and run the test kernel interactively in QEMU (drops to the shell)
-@test-shell type="Debug": (build-tests type)
+@test-shell type="RelWithDebInfo": (build-tests type)
     cmake --build {{test_build_dir}} --target run
 
-# Show current kernel configuration
+# Show the configuration the current build was generated with
 @config:
-    echo "Kernel Configuration:"
-    echo "  CONFIG_SMP      = {{config_smp}}"
-    echo "  CONFIG_LOCKDEP  = {{config_lockdep}}"
-    echo "  CONFIG_NR_CPUS  = {{config_nr_cpus}}"
-    echo "  CONFIG_MAX_PROCESSES = {{config_max_processes}}"
-    echo "  CONFIG_MAX_FDS       = {{config_max_fds}}"
-    echo "  CONFIG_TESTS    = OFF (ON for 'just test')"
+    if [ -f {{build_dir}}/include/config.h ]; then \
+        echo "Kernel configuration ({{build_dir}}):"; \
+        sed -n -e 's|^/\* #undef \(CONFIG_[A-Z_]*\) \*/|  \1 = off|p' \
+               -e 's|^#define \(CONFIG_[A-Z_]*\)  *\(.*[^ ]\) *$|  \1 = \2|p' \
+               -e 's|^#define \(CONFIG_[A-Z_]*\) *$|  \1 = on|p' \
+               {{build_dir}}/include/config.h; \
+    else \
+        echo "No build yet: run 'just build' first."; \
+    fi
     echo ""
-    echo "Override with: just config_smp=OFF config_lockdep=OFF build"
+    echo "Options are declared in CMakeLists.txt."
+    echo 'Override with: just cmake_args="-DCONFIG_NR_CPUS=2" build'
 
 # Run the kernel in QEMU
 @run: build
