@@ -9,6 +9,9 @@
  * Exit status: 0 if all checks pass, 1 if any fail.
  */
 
+#include <stddef.h>
+#include <stdbool.h>
+
 #include "assert.h"
 #include "ctype.h"
 #include "errno.h"
@@ -665,7 +668,7 @@ static void test_setjmp_independent(void)
 
 static void test_strerror_keying(void)
 {
-    /* Guards the numbering collision: the internal PERS_ERR_IO_ERROR is 9 and
+    /* Guards the numbering collision: the internal EIO is 9 and
      * so is EBADF, so a table keyed on the internal codes would return the
      * I/O-error text for value 9. These must stay distinct and correct. */
     CHECK(EBADF == 9);
@@ -673,7 +676,7 @@ static void test_strerror_keying(void)
     CHECK(strcmp(strerror(EIO), "I/O error") == 0);
     CHECK(strcmp(strerror(EIO), strerror(EBADF)) != 0);
 
-    /* PERS_ERR_NOT_FOUND is 1 while ENOENT is 2 — an off-by-one keying would
+    /* ENOENT is 1 while ENOENT is 2 — an off-by-one keying would
      * report "Operation not permitted" for a missing file. */
     CHECK(strcmp(strerror(1), "Operation not permitted") == 0);
     CHECK(strcmp(strerror(2), "No such file or directory") == 0);
@@ -685,12 +688,12 @@ static void test_strerror_end_to_end(void)
      * it. This is what proves the table is keyed on the same numbering that
      * __pers_to_errno() produces. */
     errno = 0;
-    int fd = sys_open("/no/such/file", VFS_O_RDONLY);
+    int fd = open("/no/such/file", O_RDONLY);
     CHECK(fd == -1);
     CHECK(strcmp(strerror(errno), "No such file or directory") == 0);
 
     errno = 0;
-    int ret = sys_close(9999);
+    int ret = close(9999);
     CHECK(ret == -1);
     CHECK(strcmp(strerror(errno), "Bad file descriptor") == 0);
 }
@@ -701,7 +704,7 @@ static void test_errno_open(void)
 {
     // Opening a non-existent file must set errno to ENOENT.
     errno = 0;
-    int fd = sys_open("/no/such/file", VFS_O_RDONLY);
+    int fd = open("/no/such/file", O_RDONLY);
     CHECK(fd == -1);
     CHECK(errno == ENOENT);
 }
@@ -710,7 +713,7 @@ static void test_errno_close(void)
 {
     // Closing an invalid descriptor must set errno to EBADF.
     errno = 0;
-    int ret = sys_close(9999);
+    int ret = close(9999);
     CHECK(ret == -1);
     CHECK(errno == EBADF);
 }
@@ -719,7 +722,7 @@ static void test_errno_preserved(void)
 {
     // A successful call must not disturb errno.
     errno = EINVAL;
-    int pid = sys_getpid();
+    int pid = getpid();
     CHECK(pid > 0);
     CHECK(errno == EINVAL); // Unchanged by the successful call.
 }

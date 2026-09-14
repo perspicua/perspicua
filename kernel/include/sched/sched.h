@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_SCHED_SCHED_H
 #define PERSPICUA_SCHED_SCHED_H
 
-#include "types.h"
+#include <stdint.h>
 #include "mm/pmm.h"
 
 #include "arch/cpu.h"

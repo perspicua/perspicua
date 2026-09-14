@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_MM_PMM_H
 #define PERSPICUA_MM_PMM_H
 
-#include "types.h"
-
 #define PMM_MAX_ORDER 10
 #define PAGE_SIZE     4096
 

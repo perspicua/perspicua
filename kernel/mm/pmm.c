@@ -4,6 +4,9 @@
 
 #include "mm/pmm.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"

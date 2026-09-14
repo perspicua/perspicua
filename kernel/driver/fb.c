@@ -5,9 +5,10 @@
 #include "driver/fb.h"
 
 #include "stdio.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "driver/mailbox.h"
 #include "fs/devfs.h"
@@ -35,7 +36,7 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
 
     struct process *p = process_current();
     if (!p || !p->user_pgd) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     unsigned long *pgd = p->user_pgd;
 

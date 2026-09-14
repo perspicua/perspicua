@@ -10,13 +10,13 @@ int main(int argc, char **argv)
 
     int rc = 0;
     for (int i = 1; i < argc; i++) {
-        int fd = sys_open(argv[i], VFS_O_WRONLY | VFS_O_CREAT);
+        int fd = open(argv[i], O_WRONLY | O_CREAT);
         if (fd < 0) {
             printf("touch: cannot create '%s'\n", argv[i]);
             rc = 1;
             continue;
         }
-        sys_close(fd);
+        close(fd);
     }
     return rc;
 }

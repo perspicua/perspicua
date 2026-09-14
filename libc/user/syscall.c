@@ -1,387 +1,352 @@
 /*
- * syscall.c - Userspace system call wrapper implementations.
+ * syscall.c - POSIX entry points, each one trap into the kernel.
  */
 
 #include "syscall.h"
 #include "errno.h"
 
 #include "uapi/syscalls.h"
-#include "uapi/errors.h"
 #include "uapi/mman.h"
 
-// Internal errno translation
-
 /*
- * Map a PERS_ERR_* code to the corresponding POSIX errno value.
- * Called with the positive error code extracted from a negative return.
+ * The syscall ABI: arguments in x0-x5, number in x8, result in x0. Naming the
+ * registers with register-asm variables lets the compiler place the arguments
+ * itself, so each wrapper below is a call rather than a copy of the same
+ * hand-written "mov x0, ...; svc #0" block.
+ *
+ * Six arguments is the ceiling because x5 is the last argument register; only
+ * mmap reaches it.
  */
-static int __pers_to_errno(int pers_err)
+#define SVC_CLOBBERS "memory", "cc"
+
+static inline long __syscall0(long n)
 {
-    switch (pers_err) {
-        case PERS_ERR_NOT_FOUND:
-            return ENOENT;
-        case PERS_ERR_NOT_A_DIRECTORY:
-            return ENOTDIR;
-        case PERS_ERR_IS_A_DIRECTORY:
-            return EISDIR;
-        case PERS_ERR_PERMISSION_DENIED:
-            return EACCES;
-        case PERS_ERR_ALREADY_EXISTS:
-            return EEXIST;
-        case PERS_ERR_OUT_OF_RESOURCES:
-            return ENFILE;
-        case PERS_ERR_INVALID_ARGUMENT:
-            return EINVAL;
-        case PERS_ERR_OUT_OF_MEMORY:
-            return ENOMEM;
-        case PERS_ERR_IO_ERROR:
-            return EIO;
-        case PERS_ERR_TRY_AGAIN:
-            return EAGAIN;
-        case PERS_ERR_NO_SUCH_PROCESS:
-            return ESRCH;
-        case PERS_ERR_NOT_IMPLEMENTED:
-            return ENOSYS;
-        case PERS_ERR_BUFFER_TOO_SMALL:
-            return ERANGE;
-        case PERS_ERR_NOT_A_DEVICE:
-            return ENODEV;
-        case PERS_ERR_READ_ONLY_FS:
-            return EROFS;
-        case PERS_ERR_FILE_TOO_LARGE:
-            return EFBIG;
-        case PERS_ERR_NO_SPACE_LEFT:
-            return ENOSPC;
-        case PERS_ERR_BAD_FILE_DESCRIPTOR:
-            return EBADF;
-        case PERS_ERR_EXECUTABLE_FORMAT_ERROR:
-            return ENOEXEC;
-        case PERS_ERR_INTERRUPTED:
-            return EINTR;
-        case PERS_ERR_RESOURCE_DEADLOCK:
-            return EDEADLK;
-        case PERS_ERR_BROKEN_PIPE:
-            return EPIPE;
-        case PERS_ERR_CONNECTION_REFUSED:
-            return ECONNREFUSED;
-        case PERS_ERR_TIMED_OUT:
-            return ETIMEDOUT;
-        case PERS_ERR_ILLEGAL_SEEK:
-            return ESPIPE;
-        case PERS_ERR_NAME_TOO_LONG:
-            return ENAMETOOLONG;
-        case PERS_ERR_DIR_NOT_EMPTY:
-            return ENOTEMPTY;
-        case PERS_ERR_TOO_MANY_SYMLINKS:
-            return ELOOP;
-        case PERS_ERR_CROSS_DEVICE_LINK:
-            return EXDEV;
-        case PERS_ERR_OPERATION_NOT_SUPPORTED:
-            return ENOTSUP;
-        default:
-            return EIO;
-    }
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0");
+    __asm__ volatile("svc #0" : "=r"(x0) : "r"(x8) : SVC_CLOBBERS);
+    return x0;
 }
 
-// Set errno from a raw kernel return value and return -1.
+static inline long __syscall1(long n, long a)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8) : SVC_CLOBBERS);
+    return x0;
+}
+
+static inline long __syscall2(long n, long a, long b)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x8) : SVC_CLOBBERS);
+    return x0;
+}
+
+static inline long __syscall3(long n, long a, long b, long c)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : SVC_CLOBBERS);
+    return x0;
+}
+
+static inline long __syscall4(long n, long a, long b, long c, long d)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : SVC_CLOBBERS);
+    return x0;
+}
+
+static inline long __syscall5(long n, long a, long b, long c, long d, long e)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x8)
+                     : SVC_CLOBBERS);
+    return x0;
+}
+
+static inline long __syscall6(long n, long a, long b, long c, long d, long e, long f)
+{
+    register long x8 __asm__("x8") = n;
+    register long x0 __asm__("x0") = a;
+    register long x1 __asm__("x1") = b;
+    register long x2 __asm__("x2") = c;
+    register long x3 __asm__("x3") = d;
+    register long x4 __asm__("x4") = e;
+    register long x5 __asm__("x5") = f;
+    __asm__ volatile("svc #0"
+                     : "+r"(x0)
+                     : "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x8)
+                     : SVC_CLOBBERS);
+    return x0;
+}
+
+/*
+ * The kernel returns -errno, so recovering the number is a negation. Nothing
+ * translates between two vocabularies any more: both sides name the same
+ * values out of uapi/errno.h.
+ */
 static inline int __set_errno_ret(long res)
 {
-    errno = __pers_to_errno((int)-res);
+    errno = (int)-res;
     return -1;
 }
 
-// Translate a raw kernel return to a POSIX int result.
 static inline int __syscall_ret(long res)
 {
-    if (res < 0) {
-        return __set_errno_ret(res);
-    }
-    return (int)res;
+    return res < 0 ? __set_errno_ret(res) : (int)res;
 }
 
-// Translate a raw kernel return to a POSIX off_t result.
 static inline off_t __syscall_off_ret(long res)
 {
     if (res < 0) {
-        errno = __pers_to_errno((int)-res);
+        errno = (int)-res;
         return (off_t)-1;
     }
     return (off_t)res;
 }
 
-// Translate a raw kernel return to a POSIX mmap result.
 static inline void *__syscall_mmap_ret(long res)
 {
     if (res < 0) {
-        errno = __pers_to_errno((int)-res);
+        errno = (int)-res;
         return MAP_FAILED;
     }
     return (void *)res;
 }
 
-// Public API Implementations
+// Process control
 
-void sys_exit(int status)
+__attribute__((noreturn)) void _exit(int status)
 {
-    asm volatile("mov x0, %0\n"
-                 "mov x8, %1\n"
-                 "svc #0"
-                 :
-                 : "r"((long)status), "i"(SYS_EXIT)
-                 : "x0", "x8", "memory");
+    __syscall1(SYS_EXIT, status);
     __builtin_unreachable();
 }
 
-int sys_write(int fd, const char *buf, size_t len)
+int fork(void)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_WRITE)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall0(SYS_FORK));
 }
 
-int sys_pwrite(int fd, const char *buf, size_t len, off_t offset)
+int execve(const char *path, char *const argv[], char *const envp[])
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x3, %4\n"
-                 "mov x8, %5\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"(buf), "r"((long)len), "r"((long)offset), "i"(SYS_PWRITE)
-                 : "x0", "x1", "x2", "x3", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall3(SYS_EXEC, (long)path, (long)argv, (long)envp));
 }
 
-int sys_getpid(void)
+int waitpid(int pid, int *status, int options)
 {
-    long pid;
-    asm volatile("mov x8, %1\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(pid)
-                 : "i"(SYS_GETPID)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(pid);
+    return __syscall_ret(__syscall3(SYS_WAITPID, pid, (long)status, options));
 }
 
-int sys_getppid(void)
+int getpid(void)
 {
-    long ppid;
-    asm volatile("mov x8, %1\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(ppid)
-                 : "i"(SYS_GETPPID)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(ppid);
+    return __syscall_ret(__syscall0(SYS_GETPID));
 }
 
-void sys_yield(void)
+int getppid(void)
 {
-    asm volatile("mov x8, %0\n"
-                 "svc #0"
-                 :
-                 : "i"(SYS_YIELD)
-                 : "x8", "memory");
+    return __syscall_ret(__syscall0(SYS_GETPPID));
 }
 
-void sys_sleep(unsigned long ms)
+int sched_yield(void)
 {
-    struct timespec req = {.tv_nsec = (ms % 1000) * 1000000, .tv_sec = ms / 1000};
-    sys_nanosleep(&req, NULL);
+    return __syscall_ret(__syscall0(SYS_YIELD));
 }
 
-int sys_open(const char *path, int flags)
+int setpgid(int pid, int pgid)
 {
-    long fd;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(fd)
-                 : "r"(path), "r"((long)flags), "i"(SYS_OPEN)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(fd);
+    return __syscall_ret(__syscall2(SYS_SETPGID, pid, pgid));
 }
 
-int sys_read(int fd, void *buf, size_t len)
+int getpgid(int pid)
 {
-    long bytes;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(bytes)
-                 : "r"((long)fd), "r"(buf), "r"((long)len), "i"(SYS_READ)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(bytes);
+    return __syscall_ret(__syscall1(SYS_GETPGID, pid));
 }
 
-int sys_pread(int fd, void *buf, size_t count, off_t offset)
+int setsid(void)
 {
-    long bytes;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x3, %4\n"
-                 "mov x8, %5\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(bytes)
-                 : "r"((long)fd), "r"(buf), "r"((long)count), "r"((long)offset), "i"(SYS_PREAD)
-                 : "x0", "x1", "x2", "x3", "x8", "memory");
-    return __syscall_ret(bytes);
+    return __syscall_ret(__syscall0(SYS_SETSID));
 }
 
-int sys_getdents(int fd, void *buf, size_t count)
+int getsid(int pid)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"(buf), "r"((long)count), "i"(SYS_GETDENTS)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall1(SYS_GETSID, pid));
 }
 
-int sys_close(int fd)
+int tcsetpgrp(int fd, int pgid)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "i"(SYS_CLOSE)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall2(SYS_TCSETPGRP, fd, pgid));
 }
 
-int sys_exec(const char *path, char *const argv[], char *const envp[])
+int tcgetpgrp(int fd)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "r"(argv), "r"(envp), "i"(SYS_EXEC)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall1(SYS_TCGETPGRP, fd));
 }
 
-int sys_fork(void)
+// Filesystem and I/O
+
+int open(const char *path, int flags)
 {
-    long res;
-    asm volatile("mov x8, %1\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "i"(SYS_FORK)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall2(SYS_OPEN, (long)path, flags));
 }
 
-int sys_waitpid(int pid, int *status, int options)
+int close(int fd)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)pid), "r"(status), "r"((long)options), "i"(SYS_WAITPID)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall1(SYS_CLOSE, fd));
 }
 
-int sys_pipe(int pipefd[2])
+int read(int fd, void *buf, size_t len)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(pipefd), "i"(SYS_PIPE)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall3(SYS_READ, fd, (long)buf, (long)len));
 }
 
-int sys_dup2(int oldfd, int newfd)
+int write(int fd, const char *buf, size_t len)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)oldfd), "r"((long)newfd), "i"(SYS_DUP2)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall3(SYS_WRITE, fd, (long)buf, (long)len));
 }
 
-signal_handler_t sys_signal(int sig, signal_handler_t handler)
+int pread(int fd, void *buf, size_t count, off_t offset)
 {
-    struct sigaction act = {0}, oact = {0};
-    act.sa_handler = handler;
+    return __syscall_ret(__syscall4(SYS_PREAD, fd, (long)buf, (long)count, (long)offset));
+}
 
-    if (sys_sigaction(sig, &act, &oact) < 0) {
-        return SIGNAL_ERR;
+int pwrite(int fd, const char *buf, size_t len, off_t offset)
+{
+    return __syscall_ret(__syscall4(SYS_PWRITE, fd, (long)buf, (long)len, (long)offset));
+}
+
+int getdents(int fd, void *buf, size_t count)
+{
+    return __syscall_ret(__syscall3(SYS_GETDENTS, fd, (long)buf, (long)count));
+}
+
+int pipe(int pipefd[2])
+{
+    return __syscall_ret(__syscall1(SYS_PIPE, (long)pipefd));
+}
+
+int dup2(int oldfd, int newfd)
+{
+    return __syscall_ret(__syscall2(SYS_DUP2, oldfd, newfd));
+}
+
+int chdir(const char *path)
+{
+    return __syscall_ret(__syscall1(SYS_CHDIR, (long)path));
+}
+
+/*
+ * POSIX reports success by handing back the buffer, not by returning 0, so a
+ * caller can write `if (getcwd(...))`.
+ */
+char *getcwd(char *buf, size_t size)
+{
+    long res = __syscall2(SYS_GETCWD, (long)buf, (long)size);
+    if (res < 0) {
+        errno = (int)-res;
+        return NULL;
     }
-
-    return oact.sa_handler;
+    return buf;
 }
 
-int sys_kill(int pid, int sig)
+int stat(const char *path, struct stat *buf)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)pid), "r"((long)sig), "i"(SYS_KILL)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall2(SYS_STAT, (long)path, (long)buf));
 }
 
-void sys_sigreturn(void)
+int fstat(int fd, struct stat *buf)
 {
-    asm volatile("mov x8, %0\n"
-                 "svc #0"
-                 :
-                 : "i"(SYS_SIGRETURN)
-                 : "x8", "memory");
+    return __syscall_ret(__syscall2(SYS_FSTAT, fd, (long)buf));
+}
+
+int truncate(const char *path, off_t length)
+{
+    return __syscall_ret(__syscall2(SYS_TRUNCATE, (long)path, (long)length));
+}
+
+int ftruncate(int fd, off_t length)
+{
+    return __syscall_ret(__syscall2(SYS_FTRUNCATE, fd, (long)length));
+}
+
+off_t lseek(int fd, off_t offset, int whence)
+{
+    return __syscall_off_ret(__syscall3(SYS_LSEEK, fd, (long)offset, whence));
+}
+
+int mkdir(const char *path, int mode)
+{
+    return __syscall_ret(__syscall2(SYS_MKDIR, (long)path, mode));
+}
+
+int rmdir(const char *path)
+{
+    return __syscall_ret(__syscall1(SYS_RMDIR, (long)path));
+}
+
+int unlink(const char *path)
+{
+    return __syscall_ret(__syscall1(SYS_UNLINK, (long)path));
+}
+
+int rename(const char *oldpath, const char *newpath)
+{
+    return __syscall_ret(__syscall2(SYS_RENAME, (long)oldpath, (long)newpath));
+}
+
+int fcntl(int fd, int cmd, int arg)
+{
+    return __syscall_ret(__syscall3(SYS_FCNTL, fd, cmd, arg));
+}
+
+int sync(void)
+{
+    return __syscall_ret(__syscall0(SYS_SYNC));
+}
+
+int fsync(int fd)
+{
+    return __syscall_ret(__syscall1(SYS_FSYNC, fd));
+}
+
+// Memory management
+
+void *mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+{
+    return __syscall_mmap_ret(
+        __syscall6(SYS_MMAP, (long)addr, (long)length, prot, flags, fd, (long)offset));
+}
+
+// Signal handling
+
+void __sigreturn(void)
+{
+    __syscall0(SYS_SIGRETURN);
 }
 
 extern void __sigrestorer(void);
 
-int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
+/*
+ * The kernel needs a return trampoline to resume through, and a caller that
+ * built its own sigaction by hand will not have supplied one; fill it in here
+ * rather than rejecting the call.
+ */
+int sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 {
     struct sigaction kact;
     const struct sigaction *pact = act;
@@ -395,388 +360,69 @@ int sys_sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
         pact = &kact;
     }
 
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)sig), "r"(pact), "r"(oact), "i"(SYS_SIGACTION)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall3(SYS_SIGACTION, sig, (long)pact, (long)oact));
 }
 
-int sys_sigprocmask(int how, const sigset_t *set, sigset_t *oset)
+sighandler_t signal(int sig, sighandler_t handler)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)how), "r"(set), "r"(oset), "i"(SYS_SIGPROCMASK)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
+    struct sigaction act = {0}, oact = {0};
+    act.sa_handler = handler;
+
+    if (sigaction(sig, &act, &oact) < 0) {
+        return SIG_ERR;
+    }
+    return oact.sa_handler;
 }
 
-int sys_sigpending(sigset_t *set)
+int kill(int pid, int sig)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(set), "i"(SYS_SIGPENDING)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall2(SYS_KILL, pid, sig));
 }
 
-int sys_sigsuspend(const sigset_t *mask)
+int sigprocmask(int how, const sigset_t *set, sigset_t *oset)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(mask), "i"(SYS_SIGSUSPEND)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall3(SYS_SIGPROCMASK, how, (long)set, (long)oset));
 }
 
-int sys_chdir(const char *path)
+int sigpending(sigset_t *set)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "i"(SYS_CHDIR)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall1(SYS_SIGPENDING, (long)set));
 }
 
-int sys_getcwd(char *buf, size_t size)
+int sigsuspend(const sigset_t *mask)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(buf), "r"((long)size), "i"(SYS_GETCWD)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall1(SYS_SIGSUSPEND, (long)mask));
 }
 
-int sys_stat(const char *path, struct stat *buf)
+// Time
+
+int gettimeofday(struct timeval *tv, void *tz)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "r"(buf), "i"(SYS_STAT)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    return __syscall_ret(__syscall2(SYS_GETTIMEOFDAY, (long)tv, (long)tz));
 }
 
-void *sys_mmap(void *addr, size_t length, int prot, int flags, int fd, off_t offset)
+int clock_gettime(clockid_t clk_id, struct timespec *tp)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x3, %4\n"
-                 "mov x4, %5\n"
-                 "mov x5, %6\n"
-                 "mov x8, %7\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(addr), "r"(length), "r"((long)prot), "r"((long)flags), "r"((long)fd),
-                   "r"(offset), "i"(SYS_MMAP)
-                 : "x0", "x1", "x2", "x3", "x4", "x5", "x8", "memory");
-    return __syscall_mmap_ret(res);
+    return __syscall_ret(__syscall2(SYS_CLOCK_GETTIME, (long)clk_id, (long)tp));
 }
 
-off_t sys_lseek(int fd, off_t offset, int whence)
+int nanosleep(const struct timespec *req, struct timespec *rem)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"((long)offset), "r"((long)whence), "i"(SYS_LSEEK)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_off_ret(res);
+    return __syscall_ret(__syscall2(SYS_NANOSLEEP, (long)req, (long)rem));
 }
 
-int sys_sync(void)
+int usleep(useconds_t usec)
 {
-    long res;
-    asm volatile("mov x8, %1\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "i"(SYS_SYNC)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
+    struct timespec req = {.tv_sec = (time_t)(usec / 1000000u),
+                           .tv_nsec = (long)(usec % 1000000u) * 1000};
+    return nanosleep(&req, NULL);
 }
 
-int sys_mkdir(const char *path, int mode)
+unsigned int sleep(unsigned int seconds)
 {
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "r"((long)mode), "i"(SYS_MKDIR)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_rmdir(const char *path)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "i"(SYS_RMDIR)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_unlink(const char *path)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(path), "i"(SYS_UNLINK)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_rename(const char *oldpath, const char *newpath)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"(oldpath), "r"(newpath), "i"(SYS_RENAME)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_fsync(int fd)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "i"(SYS_FSYNC)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_fcntl(int fd, int cmd, int arg)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x2, %3\n"
-                 "mov x8, %4\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"((long)cmd), "r"((long)arg), "i"(SYS_FCNTL)
-                 : "x0", "x1", "x2", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_setpgid(int pid, int pgid)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)pid), "r"((long)pgid), "i"(SYS_SETPGID)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_getpgid(int pid)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)pid), "i"(SYS_GETPGID)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_tcsetpgrp(int fd, int pgid)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"((long)pgid), "i"(SYS_TCSETPGRP)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_tcgetpgrp(int fd)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "i"(SYS_TCGETPGRP)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_setsid(void)
-{
-    long res;
-    asm volatile("mov x8, %1\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "i"(SYS_SETSID)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_getsid(int pid)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x8, %2\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)pid), "i"(SYS_GETSID)
-                 : "x0", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_gettimeofday(struct timeval *tv, void *tz)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)tv), "r"((long)tz), "i"(SYS_GETTIMEOFDAY)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_clock_gettime(clockid_t clk_id, struct timespec *tp)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)clk_id), "r"((long)tp), "i"(SYS_CLOCK_GETTIME)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_nanosleep(const struct timespec *req, struct timespec *rem)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)req), "r"((long)rem), "i"(SYS_NANOSLEEP)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_fstat(int fd, struct stat *buf)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"((long)buf), "i"(SYS_FSTAT)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_truncate(const char *path, off_t length)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)path), "r"((long)length), "i"(SYS_TRUNCATE)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
-}
-
-int sys_ftruncate(int fd, off_t length)
-{
-    long res;
-    asm volatile("mov x0, %1\n"
-                 "mov x1, %2\n"
-                 "mov x8, %3\n"
-                 "svc #0\n"
-                 "mov %0, x0"
-                 : "=r"(res)
-                 : "r"((long)fd), "r"((long)length), "i"(SYS_FTRUNCATE)
-                 : "x0", "x1", "x8", "memory");
-    return __syscall_ret(res);
+    struct timespec req = {.tv_sec = (time_t)seconds, .tv_nsec = 0}, rem = {0};
+    if (nanosleep(&req, &rem) == 0) {
+        return 0;
+    }
+    return (unsigned int)rem.tv_sec; // POSIX: the time left unslept
 }

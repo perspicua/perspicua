@@ -7,6 +7,8 @@
 
 #include "uapi/signals.h"
 
+#include <stdint.h>
+
 #include "arch/exception.h"
 
 /*

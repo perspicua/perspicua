@@ -5,8 +5,11 @@
 #ifndef PERSPICUA_FS_VFS_H
 #define PERSPICUA_FS_VFS_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
+#include "uapi/fcntl.h"
+#include "uapi/dirent.h"
 #include "uapi/stat.h"
 
 #include "core/lock.h"
@@ -25,32 +28,6 @@
 #endif
 #define VFS_MAX_MOUNTS 8
 
-// Standard file open flags
-#define VFS_O_RDONLY  0x0000
-#define VFS_O_WRONLY  0x0001
-#define VFS_O_RDWR    0x0002
-#define VFS_O_ACCMODE 0x0003
-
-#define VFS_O_CREAT    0x0100
-#define VFS_O_TRUNC    0x0200
-#define VFS_O_APPEND   0x0400
-#define VFS_O_CLOEXEC  0x0800
-#define VFS_O_NONBLOCK 0x1000
-
-// fcntl commands
-#define VFS_F_GETFD 1
-#define VFS_F_SETFD 2
-#define VFS_F_GETFL 3
-#define VFS_F_SETFL 4
-
-// fcntl file descriptor flags
-#define VFS_FD_CLOEXEC 1
-
-// Seek mode constants
-#define VFS_SEEK_SET 0
-#define VFS_SEEK_CUR 1
-#define VFS_SEEK_END 2
-
 typedef int64_t vfs_off_t;
 
 /*
@@ -64,14 +41,6 @@ enum vfs_vnode_type {
 
 struct vfs_vnode;
 struct vfs_file;
-
-/*
- * struct vfs_dirent - Directory entry format returned to userspace.
- */
-struct vfs_dirent {
-    uint32_t ino;
-    char name[256];
-};
 
 /*
  * struct vfs_vnode_ops - Functional interface for filesystem-specific operations.

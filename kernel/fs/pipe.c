@@ -4,11 +4,13 @@
 
 #include "fs/pipe.h"
 
+#include <stddef.h>
+
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "core/lock.h"
 #include "mm/slab.h"
@@ -110,7 +112,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
     size_t read = 0;
 
     if (!pipe) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
@@ -124,16 +126,16 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
             if (read > 0 || pipe->writers == 0) {
                 break;
             }
-            if (file->flags & VFS_O_NONBLOCK) {
+            if (file->flags & O_NONBLOCK) {
                 if (read == 0) {
                     spin_unlock_irqrestore(&pipe->lock, fdflags);
-                    return -PERS_ERR_TRY_AGAIN;
+                    return -EAGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return read > 0 ? (int)read : -PERS_ERR_INTERRUPTED;
+                return read > 0 ? (int)read : -EINTR;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
@@ -156,7 +158,7 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
     size_t written = 0;
 
     if (!pipe) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
@@ -164,7 +166,7 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
     while (written < count) {
         if (pipe->readers == 0) {
             spin_unlock_irqrestore(&pipe->lock, fdflags);
-            return -PERS_ERR_BROKEN_PIPE;
+            return -EPIPE;
         }
 
         if (pipe->count < PIPE_BUF_SIZE) {
@@ -172,16 +174,16 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
             pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
             pipe->count++;
         } else {
-            if (file->flags & VFS_O_NONBLOCK) {
+            if (file->flags & O_NONBLOCK) {
                 if (written == 0) {
                     spin_unlock_irqrestore(&pipe->lock, fdflags);
-                    return -PERS_ERR_TRY_AGAIN;
+                    return -EAGAIN;
                 }
                 break;
             }
             if (pipe_signal_pending()) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return written > 0 ? (int)written : -PERS_ERR_INTERRUPTED;
+                return written > 0 ? (int)written : -EINTR;
             }
             /*
              * Hand off what is buffered before sleeping. A reader that queued
@@ -209,10 +211,10 @@ static int pipe_close(struct vfs_file *file)
 {
     struct pipe *pipe = (struct pipe *)file->node->internal_info;
     if (!pipe) {
-        return PERS_SUCCESS;
+        return 0;
     }
 
-    int is_write = (file->flags & VFS_O_ACCMODE) != VFS_O_RDONLY;
+    int is_write = (file->flags & O_ACCMODE) != O_RDONLY;
 
     unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
     if (is_write) {
@@ -246,7 +248,7 @@ static int pipe_close(struct vfs_file *file)
         heap_free(pipe);
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 static struct vfs_vnode_ops pipe_ops = {
@@ -256,12 +258,12 @@ int pipe_create(int pipefd[2])
 {
     struct process *p = process_current();
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     struct pipe *pipe = (struct pipe *)heap_malloc(sizeof(struct pipe));
     if (!pipe) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     memset(pipe, 0, sizeof(struct pipe));
@@ -271,7 +273,7 @@ int pipe_create(int pipefd[2])
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     if (!node) {
         heap_free(pipe);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     memset(node, 0, sizeof(struct vfs_vnode));
@@ -289,14 +291,14 @@ int pipe_create(int pipefd[2])
         vfs_file_put(f_write);
         slab_free(node);
         heap_free(pipe);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     f_read->node = node;
-    f_read->flags = VFS_O_RDONLY;
+    f_read->flags = O_RDONLY;
 
     f_write->node = node;
-    f_write->flags = VFS_O_WRONLY;
+    f_write->flags = O_WRONLY;
 
     int fd_r = -1, fd_w = -1;
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
@@ -325,11 +327,11 @@ int pipe_create(int pipefd[2])
          * drops the last vnode reference, taking the pipe and node with it. */
         vfs_file_put(f_read);
         vfs_file_put(f_write);
-        return -PERS_ERR_OUT_OF_RESOURCES;
+        return -ENFILE;
     }
 
     pipefd[0] = fd_r;
     pipefd[1] = fd_w;
 
-    return PERS_SUCCESS;
+    return 0;
 }

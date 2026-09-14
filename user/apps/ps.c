@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -32,22 +34,22 @@ int main(void)
 
     printf("%5s %5s %-9s %9s  %s\n", "PID", "PPID", "STATE", "MEM", "CMD");
 
-    struct vfs_dirent *e;
+    struct dirent *e;
     while ((e = readdir(d)) != NULL) {
-        if (e->name[0] < '0' || e->name[0] > '9') {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') {
             continue; // only numeric process directories
         }
 
         char path[256];
-        snprintf(path, sizeof(path), "/proc/%s/status", e->name);
-        int fd = sys_open(path, VFS_O_RDONLY);
+        snprintf(path, sizeof(path), "/proc/%s/status", e->d_name);
+        int fd = open(path, O_RDONLY);
         if (fd < 0) {
             continue; // process may have exited between readdir and open
         }
 
         char blob[512];
-        int n = sys_read(fd, blob, sizeof(blob) - 1);
-        sys_close(fd);
+        int n = read(fd, blob, sizeof(blob) - 1);
+        close(fd);
         if (n <= 0) {
             continue;
         }

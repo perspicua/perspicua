@@ -3,9 +3,9 @@
  */
 
 #include "mm/asid.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
-#include "types.h"
+#include <stdint.h>
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -200,7 +200,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     driver_probe_devices();
 
     // Root filesystem initialization (FAT32)
-    if (fat32_init("sd0") == PERS_SUCCESS) {
+    if (fat32_init("sd0") == 0) {
         vfs_mount("/", fat32_get_root_node());
     } else {
         PANIC("fat32: failed to mount root filesystem from sd0 — cannot continue");

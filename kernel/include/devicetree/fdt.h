@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_DEVICETREE_FDT_H
 #define PERSPICUA_DEVICETREE_FDT_H
 
-#include "types.h"
+#include <stdint.h>
 
 #define FDT_MAGIC 0xd00dfeed
 

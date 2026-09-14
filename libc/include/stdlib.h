@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_LIBC_STDLIB_H
 #define PERSPICUA_LIBC_STDLIB_H
 
-#include "types.h"
+#include <stddef.h>
 
 // Memory management
 void *malloc(size_t size);

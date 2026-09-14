@@ -1,7 +1,8 @@
 #include "test.h"
 #include "mm/heap.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdbool.h>
 
 #define TEST_HEADER_SIZE 32   // sizeof(block_header)
 #define LARGE            2048 // > SLAB_MAX (1024), forces first-fit path

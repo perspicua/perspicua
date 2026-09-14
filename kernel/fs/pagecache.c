@@ -4,10 +4,13 @@
 
 #include "fs/pagecache.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "mm/pmm.h"
 #include "mm/slab.h"
@@ -130,7 +133,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         if (curr->fs_ops == node->ops && curr->file_id == node->internal_info
             && curr->page_index == page_index) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
-            return -PERS_ERR_ALREADY_EXISTS;
+            return -EEXIST;
         }
         curr = curr->next;
     }
@@ -174,7 +177,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         entry = slab_alloc(sizeof(struct page_cache_entry));
         if (!entry) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
         cache_count++;
     }
@@ -192,7 +195,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
     lru_add_head(entry);
 
     spin_unlock_irqrestore(&pagecache_lock, flags);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index)
@@ -234,7 +237,7 @@ void pagecache_clear_dirty(struct vfs_vnode *node, size_t page_index)
 int pagecache_writeback(struct vfs_vnode *node)
 {
     if (!node || !node->ops || !node->ops->write_page) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     int pages_written = 0;

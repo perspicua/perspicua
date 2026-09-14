@@ -1,59 +1,59 @@
 /*
- * signals.h - Public API for signal numbers and handling structures.
+ * signals.h - Signal numbers, dispositions, and sigaction, shared with userspace.
  */
 
 #ifndef PERSPICUA_UAPI_SIGNALS_H
 #define PERSPICUA_UAPI_SIGNALS_H
 
-#include "types.h"
+#include <stdint.h>
 
 // Signal Numbers
 
-#define SIGNAL_HUP    1
-#define SIGNAL_INT    2
-#define SIGNAL_QUIT   3
-#define SIGNAL_ILL    4
-#define SIGNAL_TRAP   5
-#define SIGNAL_ABRT   6
-#define SIGNAL_IOT    SIGNAL_ABRT
-#define SIGNAL_BUS    7
-#define SIGNAL_FPE    8
-#define SIGNAL_KILL   9
-#define SIGNAL_USR1   10
-#define SIGNAL_SEGV   11
-#define SIGNAL_USR2   12
-#define SIGNAL_PIPE   13
-#define SIGNAL_ALRM   14
-#define SIGNAL_TERM   15
-#define SIGNAL_STKFLT 16
-#define SIGNAL_CHLD   17
-#define SIGNAL_CONT   18
-#define SIGNAL_STOP   19
-#define SIGNAL_TSTP   20
-#define SIGNAL_TTIN   21
-#define SIGNAL_TTOU   22
-#define SIGNAL_URG    23
-#define SIGNAL_XCPU   24
-#define SIGNAL_XFSZ   25
-#define SIGNAL_VTALRM 26
-#define SIGNAL_PROF   27
-#define SIGNAL_WINCH  28
-#define SIGNAL_IO     29
-#define SIGNAL_PWR    30
-#define SIGNAL_SYS    31
+#define SIGHUP    1
+#define SIGINT    2
+#define SIGQUIT   3
+#define SIGILL    4
+#define SIGTRAP   5
+#define SIGABRT   6
+#define SIGIOT    SIGABRT
+#define SIGBUS    7
+#define SIGFPE    8
+#define SIGKILL   9
+#define SIGUSR1   10
+#define SIGSEGV   11
+#define SIGUSR2   12
+#define SIGPIPE   13
+#define SIGALRM   14
+#define SIGTERM   15
+#define SIGSTKFLT 16
+#define SIGCHLD   17
+#define SIGCONT   18
+#define SIGSTOP   19
+#define SIGTSTP   20
+#define SIGTTIN   21
+#define SIGTTOU   22
+#define SIGURG    23
+#define SIGXCPU   24
+#define SIGXFSZ   25
+#define SIGVTALRM 26
+#define SIGPROF   27
+#define SIGWINCH  28
+#define SIGIO     29
+#define SIGPWR    30
+#define SIGSYS    31
 
-#define SIGNAL_COUNT 32
+#define NSIG 32
 
 #ifndef __ASSEMBLY__
 
 // Types and Constants
 
 typedef uint32_t sigset_t;
-typedef void (*signal_handler_t)(int);
+typedef void (*sighandler_t)(int);
 
-    #define SIGNAL_DFL ((signal_handler_t)0)    // Default action
-    #define SIGNAL_IGN ((signal_handler_t)1)    // Ignore signal
-    #define SIGNAL_ERR ((signal_handler_t) - 1) // Error return
+    #define SIG_DFL ((sighandler_t)0)    // Default action
+    #define SIG_IGN ((sighandler_t)1)    // Ignore signal
+    #define SIG_ERR ((sighandler_t) - 1) // Error return
 
     // sigaction flags
     #define SA_NOCLDSTOP 0x00000001
@@ -76,7 +76,7 @@ typedef void (*signal_handler_t)(int);
  * struct sigaction - Defines the action to be taken upon signal delivery.
  */
 struct sigaction {
-    signal_handler_t sa_handler;
+    sighandler_t sa_handler;
     sigset_t sa_mask;
     int sa_flags;
     void (*sa_restorer)(void);

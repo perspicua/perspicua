@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_UAPI_TIME_H
 #define PERSPICUA_UAPI_TIME_H
 
-#include "types.h"
+#include "uapi/types.h"
 
 struct timeval {
     time_t tv_sec;

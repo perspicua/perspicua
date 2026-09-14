@@ -4,6 +4,9 @@
 
 #include "core/timer.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 
 #include "arch/cpu.h"

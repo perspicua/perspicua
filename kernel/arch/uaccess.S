@@ -1,4 +1,4 @@
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 .section ".text"
 
@@ -75,11 +75,11 @@ strncpy_from_user:
 
 .Lfault_str:
     strb wzr, [x4]      // Leave an empty string rather than a partial one
-    mov x0, #-PERS_ERR_INVALID_ARGUMENT
+    mov x0, #-EINVAL
     ret
 
 .Lstr_toolong:
-    mov x0, #-PERS_ERR_NAME_TOO_LONG
+    mov x0, #-ENAMETOOLONG
     ret
 
 .section "__ex_table", "a"

@@ -20,12 +20,17 @@
  * Each test prints its name before it runs, so a hang names the test that hung.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "uapi/types.h"
+
 #include "syscall.h"
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
 #include "uapi/mman.h"
-#include "signals.h"
+#include "signal.h"
 #include "wait.h"
 
 #define PAGE_SIZE 4096
@@ -173,7 +178,7 @@ static long byte_pattern_check(const unsigned char *buf, size_t len, uint32_t ke
 
 static void *map_anon(size_t len)
 {
-    void *p = sys_mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void *p = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     return p == MAP_FAILED ? NULL : p;
 }
 
@@ -182,7 +187,7 @@ static int write_full(int fd, const unsigned char *buf, size_t len)
 {
     size_t done = 0;
     while (done < len) {
-        int n = sys_write(fd, (const char *)buf + done, len - done);
+        int n = write(fd, (const char *)buf + done, len - done);
         if (n <= 0) {
             return n < 0 ? n : (int)done;
         }
@@ -195,7 +200,7 @@ static int read_full(int fd, unsigned char *buf, size_t len)
 {
     size_t done = 0;
     while (done < len) {
-        int n = sys_read(fd, buf + done, len - done);
+        int n = read(fd, buf + done, len - done);
         if (n <= 0) {
             return n < 0 ? n : (int)done;
         }
@@ -218,17 +223,17 @@ static int read_full(int fd, unsigned char *buf, size_t len)
 static int wait_deadline(int pid, int *status, const char *what)
 {
     for (int waited = 0; waited <= REAP_DEADLINE_MS; waited += 10) {
-        int got = sys_waitpid(pid, status, WNOHANG);
+        int got = waitpid(pid, status, WNOHANG);
 
         if (got != 0) {
             return got; // reaped, or no such child
         }
-        sys_sleep(10);
+        usleep((10) * 1000);
     }
 
     report_fail("%s: pid %d never exited (blocked); killing it", what, pid);
-    sys_kill(pid, SIGNAL_KILL);
-    sys_waitpid(pid, status, 0);
+    kill(pid, SIGKILL);
+    waitpid(pid, status, 0);
     return -1;
 }
 
@@ -302,7 +307,7 @@ static void test_cow(int max_kids)
 
     int n = 0;
     for (int i = 0; i < kids; i++) {
-        int pid = sys_fork();
+        int pid = fork();
         if (pid < 0) {
             break;
         }
@@ -310,23 +315,23 @@ static void test_cow(int max_kids)
             uint32_t own_key = snapshot_key ^ (0x9E3779B9u * (uint32_t)(i + 1));
 
             if (pattern_check(region, len, snapshot_key) >= 0) {
-                sys_exit(KID_PARENT_DATA);
+                _exit(KID_PARENT_DATA);
             }
             for (size_t p = 0; p < pages; p++) {
                 unsigned char *page = region + p * PAGE_SIZE;
                 pattern_fill(page, PAGE_SIZE, own_key + (uint32_t)p);
-                sys_yield();
+                sched_yield();
                 if (pattern_check(page, PAGE_SIZE, own_key + (uint32_t)p) >= 0) {
-                    sys_exit(KID_OWN_DATA);
+                    _exit(KID_OWN_DATA);
                 }
             }
             // A second pass catches a store that landed in a page later reclaimed.
             for (size_t p = 0; p < pages; p++) {
                 if (pattern_check(region + p * PAGE_SIZE, PAGE_SIZE, own_key + (uint32_t)p) >= 0) {
-                    sys_exit(KID_OWN_DATA);
+                    _exit(KID_OWN_DATA);
                 }
             }
-            sys_exit(KID_OK);
+            _exit(KID_OK);
         }
         pids[n++] = pid;
     }
@@ -341,7 +346,7 @@ static void test_cow(int max_kids)
     for (int round = 0; round < 4; round++) {
         uint32_t key = snapshot_key ^ (0xA5A5A5A5u * (uint32_t)(round + 1));
         pattern_fill(region, len, key);
-        sys_yield();
+        sched_yield();
         long bad = pattern_check(region, len, key);
         if (bad >= 0) {
             CHECK(0, "cow: parent lost its own write at word %ld of round %d", bad, round);
@@ -373,25 +378,25 @@ static void test_zero(int max_kids)
     for (int round = 0; round < 2; round++) {
         n = 0;
         for (int i = 0; i < kids; i++) {
-            int pid = sys_fork();
+            int pid = fork();
             if (pid < 0) {
                 break;
             }
             if (pid == 0) {
                 unsigned char *p = map_anon(len);
                 if (!p) {
-                    sys_exit(KID_SETUP);
+                    _exit(KID_SETUP);
                 }
                 if (round > 0) {
                     for (size_t j = 0; j < len; j++) {
                         if (p[j] != 0) {
-                            sys_exit(KID_ZERO_PAGE);
+                            _exit(KID_ZERO_PAGE);
                         }
                     }
                 }
                 // Leave it dirty for whoever gets these frames next.
                 memset(p, 0xA5 + i, len);
-                sys_exit(KID_OK);
+                _exit(KID_OK);
             }
             pids[n++] = pid;
         }
@@ -422,20 +427,20 @@ static int fork_wave(int cap, int *hit_limit)
     }
 
     for (int i = 0; i < cap; i++) {
-        int pid = sys_fork();
+        int pid = fork();
         if (pid < 0) {
             *hit_limit = 1;
             break;
         }
         if (pid == 0) {
-            sys_exit(i % 97);
+            _exit(i % 97);
         }
         pids[n++] = pid;
     }
 
     for (int i = 0; i < n; i++) {
         int status = -1;
-        int got = sys_waitpid(pids[i], &status, 0);
+        int got = waitpid(pids[i], &status, 0);
 
         g_checks++;
         if (got != pids[i]) {
@@ -469,7 +474,7 @@ static void test_fork(int max_kids)
           high[0]);
 
     // Nothing is left to reap once every wave has been collected.
-    CHECK(sys_waitpid(-1, NULL, 0) < 0, "fork: a child outlived its wave");
+    CHECK(waitpid(-1, NULL, 0) < 0, "fork: a child outlived its wave");
 }
 
 // reap - orphans, reparenting and zombie cleanup
@@ -487,21 +492,21 @@ static void test_reap(int max_kids)
     int n = 0;
 
     for (int i = 0; i < kids; i++) {
-        int pid = sys_fork();
+        int pid = fork();
         if (pid < 0) {
             break;
         }
         if (pid == 0) {
-            int grand = sys_fork();
+            int grand = fork();
             if (grand < 0) {
-                sys_exit(KID_FORK);
+                _exit(KID_FORK);
             }
             if (grand == 0) {
                 // Outlive the parent, then confirm init adopted us.
-                sys_sleep(40);
-                sys_exit(sys_getppid() == 1 ? KID_OK : KID_PPID);
+                usleep((40) * 1000);
+                _exit(getppid() == 1 ? KID_OK : KID_PPID);
             }
-            sys_exit(KID_OK); // orphan the grandchild deliberately
+            _exit(KID_OK); // orphan the grandchild deliberately
         }
         pids[n++] = pid;
     }
@@ -510,7 +515,7 @@ static void test_reap(int max_kids)
     reap_wave(pids, n, "reap");
 
     // The grandchildren belong to init now; give them time to finish.
-    sys_sleep(200);
+    usleep((200) * 1000);
 
     int limited = 0;
     int after = fork_wave(kids, &limited);
@@ -532,16 +537,16 @@ static void test_pipe(void)
     uint32_t key = rnd();
     int fds[2];
 
-    if (sys_pipe(fds) < 0) {
+    if (pipe(fds) < 0) {
         CHECK(0, "pipe: creation failed");
         return;
     }
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
         CHECK(0, "pipe: fork failed");
-        sys_close(fds[0]);
-        sys_close(fds[1]);
+        close(fds[0]);
+        close(fds[1]);
         return;
     }
 
@@ -550,12 +555,12 @@ static void test_pipe(void)
         size_t got = 0;
         int verdict = KID_OK;
 
-        sys_close(fds[1]);
+        close(fds[1]);
         if (!buf) {
-            sys_exit(KID_SETUP);
+            _exit(KID_SETUP);
         }
         for (;;) {
-            int n = sys_read(fds[0], buf, chunk);
+            int n = read(fds[0], buf, chunk);
             if (n <= 0) {
                 break;
             }
@@ -567,14 +572,14 @@ static void test_pipe(void)
             }
             got += (size_t)n;
         }
-        sys_close(fds[0]);
+        close(fds[0]);
         if (got != total) {
             verdict = KID_STREAM;
         }
-        sys_exit(verdict);
+        _exit(verdict);
     }
 
-    sys_close(fds[0]);
+    close(fds[0]);
     {
         unsigned char *buf = malloc(chunk);
         int short_write = 0;
@@ -597,10 +602,10 @@ static void test_pipe(void)
         }
         CHECK(!short_write, "pipe: writer could not deliver the whole stream");
     }
-    sys_close(fds[1]); // the reader's EOF
+    close(fds[1]); // the reader's EOF
 
     int status = -1;
-    CHECK(sys_waitpid(pid, &status, 0) == pid, "pipe: reader did not exit");
+    CHECK(waitpid(pid, &status, 0) == pid, "pipe: reader did not exit");
     CHECK(status == KID_OK, "pipe: reader reports %s", verdict_name(status));
     note("%zu bytes verified through a pipe", total);
 }
@@ -623,52 +628,52 @@ static int pipe_big_write(uint32_t key)
     if (!buf) {
         return KID_SETUP;
     }
-    if (sys_pipe(fds) < 0) {
+    if (pipe(fds) < 0) {
         free(buf);
         return KID_SETUP;
     }
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
-        sys_close(fds[0]);
-        sys_close(fds[1]);
+        close(fds[0]);
+        close(fds[1]);
         free(buf);
         return KID_FORK;
     }
     if (pid == 0) {
         unsigned char *rb = malloc(len);
-        sys_close(fds[1]);
+        close(fds[1]);
         if (!rb) {
-            sys_exit(KID_SETUP);
+            _exit(KID_SETUP);
         }
         int n = read_full(fds[0], rb, len);
-        sys_exit(n == (int)len && byte_pattern_check(rb, len, key) < 0 ? KID_OK : KID_STREAM);
+        _exit(n == (int)len && byte_pattern_check(rb, len, key) < 0 ? KID_OK : KID_STREAM);
     }
 
-    sys_close(fds[0]);
+    close(fds[0]);
     byte_pattern_fill(buf, len, key);
-    sys_sleep(80); // the reader is blocked on an empty pipe by now
+    usleep((80) * 1000); // the reader is blocked on an empty pipe by now
 
     int n = write_full(fds[1], buf, len);
-    sys_close(fds[1]);
+    close(fds[1]);
     free(buf);
 
     int status = -1;
-    sys_waitpid(pid, &status, 0);
+    waitpid(pid, &status, 0);
     return n == (int)len ? status : KID_STREAM;
 }
 
 static void test_pipe_big(void)
 {
     uint32_t key = rnd();
-    int pid = sys_fork();
+    int pid = fork();
 
     if (pid < 0) {
         CHECK(0, "pipe-big: fork failed");
         return;
     }
     if (pid == 0) {
-        sys_exit(pipe_big_write(key));
+        _exit(pipe_big_write(key));
     }
 
     /*
@@ -698,42 +703,42 @@ static void test_pipe_eof(void)
     int fds[2];
     unsigned char byte = 0;
 
-    if (sys_pipe(fds) < 0) {
+    if (pipe(fds) < 0) {
         CHECK(0, "pipe-eof: creation failed");
         return;
     }
 
     // Write end closed before any read: an immediate EOF.
-    sys_close(fds[1]);
-    CHECK(sys_read(fds[0], &byte, 1) == 0, "pipe-eof: closed pipe did not report EOF");
-    sys_close(fds[0]);
+    close(fds[1]);
+    CHECK(read(fds[0], &byte, 1) == 0, "pipe-eof: closed pipe did not report EOF");
+    close(fds[0]);
 
-    if (sys_pipe(fds) < 0) {
+    if (pipe(fds) < 0) {
         CHECK(0, "pipe-eof: second creation failed");
         return;
     }
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
         CHECK(0, "pipe-eof: fork failed");
-        sys_close(fds[0]);
-        sys_close(fds[1]);
+        close(fds[0]);
+        close(fds[1]);
         return;
     }
     if (pid == 0) {
         // Block in read first, so the parent's close has to wake us.
-        sys_close(fds[1]);
+        close(fds[1]);
         unsigned char b = 0;
-        int n = sys_read(fds[0], &b, 1);
-        sys_exit(n == 0 ? KID_OK : KID_STREAM);
+        int n = read(fds[0], &b, 1);
+        _exit(n == 0 ? KID_OK : KID_STREAM);
     }
 
-    sys_close(fds[0]);
-    sys_sleep(60); // let the child reach its blocking read
-    sys_close(fds[1]);
+    close(fds[0]);
+    usleep((60) * 1000); // let the child reach its blocking read
+    close(fds[1]);
 
     int status = -1;
-    CHECK(sys_waitpid(pid, &status, 0) == pid, "pipe-eof: blocked reader never returned");
+    CHECK(waitpid(pid, &status, 0) == pid, "pipe-eof: blocked reader never returned");
     CHECK(status == KID_OK, "pipe-eof: blocked reader reports %s", verdict_name(status));
 }
 
@@ -745,7 +750,7 @@ static volatile int g_sig_last;
 
 static void count_handler(int sig)
 {
-    if (sig == SIGNAL_USR2) {
+    if (sig == SIGUSR2) {
         g_sig_stop = 1;
         return;
     }
@@ -763,60 +768,60 @@ static void test_signal(void)
 {
     const int sends = 120;
 
-    sys_signal(SIGNAL_USR1, count_handler);
-    sys_signal(SIGNAL_USR2, count_handler);
+    signal(SIGUSR1, count_handler);
+    signal(SIGUSR2, count_handler);
 
     // Cleared before the fork, not after: the child inherits these counters.
     g_sig_hits = 0;
     g_sig_stop = 0;
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
         CHECK(0, "signal: fork failed");
         return;
     }
     if (pid == 0) {
         while (!g_sig_stop) {
-            sys_yield();
+            sched_yield();
         }
-        sys_exit(g_sig_hits > 0 && g_sig_hits <= sends ? KID_OK : KID_SIGNAL);
+        _exit(g_sig_hits > 0 && g_sig_hits <= sends ? KID_OK : KID_SIGNAL);
     }
 
     for (int i = 0; i < sends; i++) {
-        CHECK(sys_kill(pid, SIGNAL_USR1) == 0, "signal: kill %d rejected", i);
-        sys_yield();
+        CHECK(kill(pid, SIGUSR1) == 0, "signal: kill %d rejected", i);
+        sched_yield();
     }
-    sys_kill(pid, SIGNAL_USR2);
+    kill(pid, SIGUSR2);
 
     int status = -1;
-    CHECK(sys_waitpid(pid, &status, 0) == pid, "signal: child did not exit");
+    CHECK(waitpid(pid, &status, 0) == pid, "signal: child did not exit");
     CHECK(status == KID_OK, "signal: child reports %s", verdict_name(status));
 
     // Masking, checked on ourselves so the pending set is directly readable.
     {
-        sigset_t mask = 1u << (SIGNAL_USR1 - 1);
+        sigset_t mask = 1u << (SIGUSR1 - 1);
         sigset_t pending = 0;
 
         g_sig_hits = 0;
         g_sig_last = 0;
 
-        CHECK(sys_sigprocmask(SIG_BLOCK, &mask, NULL) == 0, "signal: SIG_BLOCK failed");
-        CHECK(sys_kill(sys_getpid(), SIGNAL_USR1) == 0, "signal: self-kill rejected");
-        sys_yield();
+        CHECK(sigprocmask(SIG_BLOCK, &mask, NULL) == 0, "signal: SIG_BLOCK failed");
+        CHECK(kill(getpid(), SIGUSR1) == 0, "signal: self-kill rejected");
+        sched_yield();
 
         CHECK(g_sig_hits == 0, "signal: blocked SIGUSR1 was delivered anyway");
-        CHECK(sys_sigpending(&pending) == 0, "signal: sigpending failed");
+        CHECK(sigpending(&pending) == 0, "signal: sigpending failed");
         CHECK((pending & mask) != 0, "signal: blocked SIGUSR1 is not pending");
 
-        CHECK(sys_sigprocmask(SIG_UNBLOCK, &mask, NULL) == 0, "signal: SIG_UNBLOCK failed");
-        sys_yield();
+        CHECK(sigprocmask(SIG_UNBLOCK, &mask, NULL) == 0, "signal: SIG_UNBLOCK failed");
+        sched_yield();
         CHECK(g_sig_hits == 1, "signal: unblocking delivered %d signals, expected 1", g_sig_hits);
-        CHECK(g_sig_last == SIGNAL_USR1, "signal: delivered signal %d, expected %d", g_sig_last,
-              SIGNAL_USR1);
+        CHECK(g_sig_last == SIGUSR1, "signal: delivered signal %d, expected %d", g_sig_last,
+              SIGUSR1);
     }
 
-    sys_signal(SIGNAL_USR1, SIGNAL_DFL);
-    sys_signal(SIGNAL_USR2, SIGNAL_DFL);
+    signal(SIGUSR1, SIG_DFL);
+    signal(SIGUSR2, SIG_DFL);
 }
 
 /*
@@ -825,28 +830,28 @@ static void test_signal(void)
  */
 static void test_signal_wake(void)
 {
-    sys_signal(SIGNAL_USR1, count_handler);
+    signal(SIGUSR1, count_handler);
     g_sig_hits = 0;
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
         CHECK(0, "signal-wake: fork failed");
         return;
     }
     if (pid == 0) {
         // Sleep long enough that a delivered signal is the only fast way out.
-        sys_sleep(400);
-        sys_exit(g_sig_hits > 0 ? KID_OK : KID_SIGNAL);
+        usleep((400) * 1000);
+        _exit(g_sig_hits > 0 ? KID_OK : KID_SIGNAL);
     }
 
-    sys_sleep(60);
-    CHECK(sys_kill(pid, SIGNAL_USR1) == 0, "signal-wake: kill rejected");
+    usleep((60) * 1000);
+    CHECK(kill(pid, SIGUSR1) == 0, "signal-wake: kill rejected");
 
     int status = -1;
-    CHECK(sys_waitpid(pid, &status, 0) == pid, "signal-wake: sleeper never returned");
+    CHECK(waitpid(pid, &status, 0) == pid, "signal-wake: sleeper never returned");
     CHECK(status == KID_OK, "signal-wake: sleeper reports %s", verdict_name(status));
 
-    sys_signal(SIGNAL_USR1, SIGNAL_DFL);
+    signal(SIGUSR1, SIG_DFL);
 }
 
 // fd - descriptor exhaustion, recovery and inheritance
@@ -880,11 +885,11 @@ static void test_fd(void)
 
     for (int i = 0; i < cap; i++) {
         fd_probe_path(path, sizeof(path), i);
-        int fd = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = open(path, O_RDWR | O_CREAT | O_TRUNC);
         if (fd < 0) {
             break;
         }
-        sys_close(fd);
+        close(fd);
         made++;
     }
     if (made == 0) {
@@ -896,16 +901,16 @@ static void test_fd(void)
     // One file may back several descriptors, each with its own cursor.
     {
         fd_probe_path(path, sizeof(path), 0);
-        int first = sys_open(path, VFS_O_RDONLY);
+        int first = open(path, O_RDONLY);
         CHECK(first >= 0, "fd: probe file would not open");
         if (first >= 0) {
-            int second = sys_open(path, VFS_O_RDONLY);
+            int second = open(path, O_RDONLY);
             CHECK(second >= 0, "fd: the same file could not be opened twice");
             CHECK(second != first, "fd: reopening returned the same descriptor");
             if (second >= 0) {
-                CHECK(sys_close(second) == 0, "fd: close of the second descriptor failed");
+                CHECK(close(second) == 0, "fd: close of the second descriptor failed");
             }
-            CHECK(sys_close(first) == 0, "fd: close of the probe failed");
+            CHECK(close(first) == 0, "fd: close of the probe failed");
         }
     }
 
@@ -913,7 +918,7 @@ static void test_fd(void)
         int n = 0;
         while (n < made) {
             fd_probe_path(path, sizeof(path), n);
-            int fd = sys_open(path, VFS_O_RDONLY);
+            int fd = open(path, O_RDONLY);
             if (fd < 0) {
                 break;
             }
@@ -934,21 +939,21 @@ static void test_fd(void)
         CHECK(!dup_seen, "fd: the same descriptor was handed out twice in round %d", round);
 
         for (int i = 0; i < n; i++) {
-            CHECK(sys_close(fds[i]) == 0, "fd: close of %d failed", fds[i]);
+            CHECK(close(fds[i]) == 0, "fd: close of %d failed", fds[i]);
         }
     }
 
     CHECK(high[0] > 1, "fd: only %d descriptor(s) could be held at once", high[0]);
     CHECK(high[1] >= high[0], "fd: round 1 reached %d after round 0 reached %d (leak)", high[1],
           high[0]);
-    CHECK(sys_close(-1) < 0, "fd: close(-1) was accepted");
-    CHECK(sys_close(cap * 8) < 0, "fd: close of an out-of-range descriptor was accepted");
+    CHECK(close(-1) < 0, "fd: close(-1) was accepted");
+    CHECK(close(cap * 8) < 0, "fd: close of an out-of-range descriptor was accepted");
 
     note("%d files, %d descriptors held, recovered to %d", made, high[0], high[1]);
 
     for (int i = 0; i < made; i++) {
         fd_probe_path(path, sizeof(path), i);
-        CHECK(sys_unlink(path) == 0, "fd: unlink of %s failed", path);
+        CHECK(unlink(path) == 0, "fd: unlink of %s failed", path);
     }
     free(fds);
 }
@@ -980,7 +985,7 @@ static void test_file(void)
         size_t len = sizes[s];
         uint32_t key = rnd();
 
-        int fd = sys_open(FILE_PATH, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = open(FILE_PATH, O_RDWR | O_CREAT | O_TRUNC);
         if (fd < 0) {
             CHECK(0, "file: open for %zu bytes failed", len);
             continue;
@@ -990,7 +995,7 @@ static void test_file(void)
         int wrote = write_full(fd, buf, len);
         CHECK(wrote == (int)len, "file: wrote %d of %zu bytes", wrote, len);
 
-        CHECK(sys_lseek(fd, 0, VFS_SEEK_SET) == 0, "file: rewind failed");
+        CHECK(lseek(fd, 0, SEEK_SET) == 0, "file: rewind failed");
         memset(back, 0, len);
         int read_back = read_full(fd, back, len);
         CHECK(read_back == (int)len, "file: read %d of %zu bytes", read_back, len);
@@ -998,12 +1003,12 @@ static void test_file(void)
         long bad = byte_pattern_check(back, len, key);
         CHECK(bad < 0, "file: content differs at byte %ld of %zu", bad, len);
 
-        CHECK(sys_lseek(fd, 0, VFS_SEEK_END) == (off_t)len, "file: size is not %zu", len);
+        CHECK(lseek(fd, 0, SEEK_END) == (off_t)len, "file: size is not %zu", len);
 
         // A read past the end returns nothing rather than stale bytes.
-        CHECK(sys_read(fd, back, 16) == 0, "file: read past the end returned data");
+        CHECK(read(fd, back, 16) == 0, "file: read past the end returned data");
 
-        sys_close(fd);
+        close(fd);
     }
 
     // Reopening must find the last content, not a cached earlier version.
@@ -1011,28 +1016,28 @@ static void test_file(void)
         uint32_t key = rnd();
         size_t len = 8000;
 
-        int fd = sys_open(FILE_PATH, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = open(FILE_PATH, O_RDWR | O_CREAT | O_TRUNC);
         if (fd >= 0) {
             byte_pattern_fill(buf, len, key);
             write_full(fd, buf, len);
-            sys_close(fd);
+            close(fd);
 
-            fd = sys_open(FILE_PATH, VFS_O_RDONLY);
+            fd = open(FILE_PATH, O_RDONLY);
             if (fd >= 0) {
                 memset(back, 0, len);
                 int n = read_full(fd, back, len);
                 CHECK(n == (int)len, "file: reopen read %d of %zu bytes", n, len);
                 CHECK(byte_pattern_check(back, len, key) < 0,
                       "file: content changed across reopen");
-                sys_close(fd);
+                close(fd);
             } else {
                 CHECK(0, "file: reopen failed");
             }
         }
     }
 
-    sys_unlink(FILE_PATH);
-    CHECK(sys_open(FILE_PATH, VFS_O_RDONLY) < 0, "file: unlinked file still opens");
+    unlink(FILE_PATH);
+    CHECK(open(FILE_PATH, O_RDONLY) < 0, "file: unlinked file still opens");
 
     /*
      * A name the filesystem shortens must still be findable under the name it
@@ -1042,21 +1047,21 @@ static void test_file(void)
      */
     {
         static const char *longname = "/stress_longname.tmp";
-        int fd = sys_open(longname, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = open(longname, O_RDWR | O_CREAT | O_TRUNC);
 
         if (fd < 0) {
             CHECK(0, "file: a long name could not be created");
         } else {
             CHECK(write_full(fd, buf, 64) == 64, "file: long-name write failed");
-            sys_close(fd);
+            close(fd);
 
-            fd = sys_open(longname, VFS_O_RDONLY);
+            fd = open(longname, O_RDONLY);
             CHECK(fd >= 0, "file: a created long name cannot be reopened");
             if (fd >= 0) {
-                sys_close(fd);
+                close(fd);
             }
-            CHECK(sys_unlink(longname) == 0, "file: long name could not be unlinked");
-            CHECK(sys_open(longname, VFS_O_RDONLY) < 0,
+            CHECK(unlink(longname) == 0, "file: long name could not be unlinked");
+            CHECK(open(longname, O_RDONLY) < 0,
                   "file: a second entry for the long name survived unlink");
         }
     }
@@ -1070,17 +1075,17 @@ static void test_file(void)
             for (int i = 0; i < 48; i++) {
                 // Names stay inside 8.3 so this measures leaks, not shortening.
                 snprintf(path, sizeof(path), "/sc%d.tmp", i);
-                int fd = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+                int fd = open(path, O_RDWR | O_CREAT | O_TRUNC);
                 if (fd < 0) {
                     break;
                 }
                 write_full(fd, buf, 600);
-                sys_close(fd);
+                close(fd);
                 made[round]++;
             }
             for (int i = 0; i < made[round]; i++) {
                 snprintf(path, sizeof(path), "/sc%d.tmp", i);
-                CHECK(sys_unlink(path) == 0, "file: unlink of %s failed", path);
+                CHECK(unlink(path) == 0, "file: unlink of %s failed", path);
             }
         }
         CHECK(made[0] > 0, "file: could not create anything");
@@ -1107,7 +1112,7 @@ static void test_exec(char **envp, int max_kids)
     int n = 0;
 
     for (int i = 0; i < kids; i++) {
-        int pid = sys_fork();
+        int pid = fork();
         if (pid < 0) {
             break;
         }
@@ -1119,9 +1124,9 @@ static void test_exec(char **envp, int max_kids)
             snprintf(b, sizeof(b), "%ld", v * 2 + 7);
 
             char *argv[] = {"stress", "--exec-child", a, b, NULL};
-            sys_exec("/bin/stress.elf", argv, envp);
-            sys_exec("stress.elf", argv, envp);
-            sys_exit(KID_SETUP); // exec must not return
+            execve("/bin/stress.elf", argv, envp);
+            execve("stress.elf", argv, envp);
+            _exit(KID_SETUP); // exec must not return
         }
         pids[n++] = pid;
     }
@@ -1144,7 +1149,7 @@ static int mix_memory(uint32_t key)
     }
     for (int round = 0; round < 8; round++) {
         pattern_fill(p, len, key + (uint32_t)round);
-        sys_yield();
+        sched_yield();
         if (pattern_check(p, len, key + (uint32_t)round) >= 0) {
             return KID_OWN_DATA;
         }
@@ -1155,17 +1160,17 @@ static int mix_memory(uint32_t key)
 static int mix_fork(uint32_t key)
 {
     for (int round = 0; round < 6; round++) {
-        int pid = sys_fork();
+        int pid = fork();
         if (pid < 0) {
             // The table being full is expected here, not a defect.
-            sys_sleep(10);
+            usleep((10) * 1000);
             continue;
         }
         if (pid == 0) {
-            sys_exit((int)(key % 61));
+            _exit((int)(key % 61));
         }
         int status = -1;
-        if (sys_waitpid(pid, &status, 0) != pid || status != (int)(key % 61)) {
+        if (waitpid(pid, &status, 0) != pid || status != (int)(key % 61)) {
             return KID_FORK;
         }
     }
@@ -1181,36 +1186,36 @@ static int mix_pipe(uint32_t key)
     if (!buf) {
         return KID_SETUP;
     }
-    if (sys_pipe(fds) < 0) {
+    if (pipe(fds) < 0) {
         free(buf);
         return KID_SETUP;
     }
 
-    int pid = sys_fork();
+    int pid = fork();
     if (pid < 0) {
-        sys_close(fds[0]);
-        sys_close(fds[1]);
+        close(fds[0]);
+        close(fds[1]);
         free(buf);
         return KID_FORK;
     }
     if (pid == 0) {
         unsigned char *rb = malloc(len);
-        sys_close(fds[1]);
+        close(fds[1]);
         if (!rb) {
-            sys_exit(KID_SETUP);
+            _exit(KID_SETUP);
         }
         int n = read_full(fds[0], rb, len);
-        sys_exit(n == (int)len && byte_pattern_check(rb, len, key) < 0 ? KID_OK : KID_STREAM);
+        _exit(n == (int)len && byte_pattern_check(rb, len, key) < 0 ? KID_OK : KID_STREAM);
     }
 
-    sys_close(fds[0]);
+    close(fds[0]);
     byte_pattern_fill(buf, len, key);
     write_full(fds[1], buf, len);
-    sys_close(fds[1]);
+    close(fds[1]);
     free(buf);
 
     int status = -1;
-    sys_waitpid(pid, &status, 0);
+    waitpid(pid, &status, 0);
     return status == KID_OK ? KID_OK : KID_STREAM;
 }
 
@@ -1230,21 +1235,21 @@ static int mix_file(uint32_t key)
 
     for (int round = 0; round < 5 && verdict == KID_OK; round++) {
         uint32_t k = key + (uint32_t)round;
-        int fd = sys_open(path, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = open(path, O_RDWR | O_CREAT | O_TRUNC);
 
         if (fd < 0) {
             verdict = KID_SETUP;
             break;
         }
         byte_pattern_fill(buf, 2048, k);
-        if (write_full(fd, buf, 2048) != 2048 || sys_lseek(fd, 0, VFS_SEEK_SET) != 0
+        if (write_full(fd, buf, 2048) != 2048 || lseek(fd, 0, SEEK_SET) != 0
             || read_full(fd, back, 2048) != 2048 || byte_pattern_check(back, 2048, k) >= 0) {
             verdict = KID_FILE;
         }
-        sys_close(fd);
+        close(fd);
     }
 
-    sys_unlink(path);
+    unlink(path);
     free(buf);
     free(back);
     return verdict;
@@ -1253,14 +1258,14 @@ static int mix_file(uint32_t key)
 static int mix_signal(uint32_t key)
 {
     (void)key;
-    sys_signal(SIGNAL_USR1, count_handler);
+    signal(SIGUSR1, count_handler);
     g_sig_hits = 0;
 
     for (int i = 0; i < 40; i++) {
-        if (sys_kill(sys_getpid(), SIGNAL_USR1) != 0) {
+        if (kill(getpid(), SIGUSR1) != 0) {
             return KID_SIGNAL;
         }
-        sys_yield();
+        sched_yield();
     }
     return g_sig_hits > 0 ? KID_OK : KID_SIGNAL;
 }
@@ -1276,13 +1281,13 @@ static void test_mix(int max_kids)
 
     for (int i = 0; i < kids; i++) {
         uint32_t key = rnd();
-        int pid = sys_fork();
+        int pid = fork();
 
         if (pid < 0) {
             break;
         }
         if (pid == 0) {
-            sys_exit(workers[i % nworkers](key));
+            _exit(workers[i % nworkers](key));
         }
         pids[n++] = pid;
     }
@@ -1320,18 +1325,18 @@ static int recurse(int depth, uint32_t key)
 static void test_stack(void)
 {
     uint32_t key = rnd();
-    int pid = sys_fork();
+    int pid = fork();
 
     if (pid < 0) {
         CHECK(0, "stack: fork failed");
         return;
     }
     if (pid == 0) {
-        sys_exit(recurse(120, key) == 0 ? KID_OK : KID_OWN_DATA);
+        _exit(recurse(120, key) == 0 ? KID_OK : KID_OWN_DATA);
     }
 
     int status = -1;
-    CHECK(sys_waitpid(pid, &status, 0) == pid, "stack: child did not exit");
+    CHECK(waitpid(pid, &status, 0) == pid, "stack: child did not exit");
     CHECK(status == KID_OK, "stack: frames were corrupted across recursion (%s)",
           verdict_name(status));
 }
@@ -1487,7 +1492,7 @@ int main(int argc, char **argv, char **envp)
     int nselected = 0;
 
     if (argc > 1 && strcmp(argv[1], "--exec-child") == 0) {
-        sys_exit(exec_child_main(argc, argv));
+        _exit(exec_child_main(argc, argv));
     }
 
     for (int i = 1; i < argc; i++) {
@@ -1541,7 +1546,7 @@ int main(int argc, char **argv, char **envp)
     }
     if (seed == 0) {
         // Nothing here is a clock, so mix in what does vary between runs.
-        seed = (uint32_t)sys_getpid() * 2654435761u + (uint32_t)(uintptr_t)&seed;
+        seed = (uint32_t)getpid() * 2654435761u + (uint32_t)(uintptr_t)&seed;
     }
 
     printf("[stress] seed %u, %d iteration(s), up to %d children per wave\n", seed, iters,

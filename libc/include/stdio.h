@@ -5,15 +5,16 @@
 #ifndef PERSPICUA_LIBC_STDIO_H
 #define PERSPICUA_LIBC_STDIO_H
 
-#include "types.h"
+#include <stddef.h>
 
+#include "uapi/types.h"
+
+#include "uapi/fcntl.h"
 #include <stdarg.h>
 
 #define EOF (-1)
 
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
+int rename(const char *oldpath, const char *newpath);
 
 typedef struct _FILE {
     int fd;

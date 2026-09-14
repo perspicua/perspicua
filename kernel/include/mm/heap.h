@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_MM_HEAP_H
 #define PERSPICUA_MM_HEAP_H
 
-#include "types.h"
-
 void heap_init(void);
 
 void *heap_malloc(unsigned long size);

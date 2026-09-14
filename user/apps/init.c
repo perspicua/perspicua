@@ -1,17 +1,19 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "wait.h"
 
 static void print_string(const char *s)
 {
-    sys_write(1, s, strlen(s));
+    write(1, s, strlen(s));
 }
 
 int main(int argc, char *argv[], char *envp[])
 {
     (void)argc;
     (void)argv;
-    if (sys_getpid() != 1) {
+    if (getpid() != 1) {
         print_string("[ INIT ] Error: Must run as PID 1\n");
         return 1;
     }
@@ -23,26 +25,26 @@ int main(int argc, char *argv[], char *envp[])
 
     while (1) {
         print_string("[ INIT ] Forking shell...\n");
-        int shell_pid = sys_fork();
+        int shell_pid = fork();
 
         if (shell_pid < 0) {
             print_string("[ INIT ] Error: fork failed\n");
-            sys_sleep(1000);
+            usleep((1000) * 1000);
             continue;
         }
 
         if (shell_pid == 0) {
             // Child process: execute the shell
             char *argv[] = {"/bin/sh.elf", NULL};
-            sys_exec("/bin/sh.elf", argv, current_env);
+            execve("/bin/sh.elf", argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
-            sys_exit(1);
+            _exit(1);
         } else {
             /* Parent process: wait for the shell to terminate,
                but also reap any orphaned zombies that get reparented to us. */
             while (1) {
                 int status = 0;
-                int reaped = sys_waitpid(-1, &status, 0);
+                int reaped = waitpid(-1, &status, 0);
                 if (reaped == shell_pid) {
                     // The shell itself exited
                     break;
@@ -55,7 +57,7 @@ int main(int argc, char *argv[], char *envp[])
                 }
             }
             print_string("[ INIT ] Shell exited, restarting...\n");
-            sys_sleep(500);
+            usleep((500) * 1000);
         }
     }
 

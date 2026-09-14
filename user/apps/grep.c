@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -14,7 +16,7 @@ typedef struct {
 static int reader_getc(Reader *r)
 {
     if (r->pos >= r->len) {
-        r->len = sys_read(r->fd, r->buf, sizeof(r->buf));
+        r->len = read(r->fd, r->buf, sizeof(r->buf));
         r->pos = 0;
         if (r->len <= 0) {
             return -1;
@@ -111,13 +113,13 @@ int main(int argc, char **argv)
         found |= grep_fd(0, pattern, NULL);
     } else {
         for (int i = start; i < argc; i++) {
-            int fd = sys_open(argv[i], VFS_O_RDONLY);
+            int fd = open(argv[i], O_RDONLY);
             if (fd < 0) {
                 printf("grep: %s: no such file\n", argv[i]);
                 continue;
             }
             found |= grep_fd(fd, pattern, nfiles > 1 ? argv[i] : NULL);
-            sys_close(fd);
+            close(fd);
         }
     }
 

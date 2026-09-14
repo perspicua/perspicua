@@ -8,9 +8,10 @@
 
 #include "stdio.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "arch/irq.h"
 #include "mm/addr.h"
@@ -220,7 +221,7 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
     while (((regs->status & mask) != expected) && timeout_ms--) {
         sched_sleep_ms(1);
     }
-    return (timeout_ms >= 0) ? PERS_SUCCESS : -PERS_ERR_TIMED_OUT;
+    return (timeout_ms >= 0) ? 0 : -ETIMEDOUT;
 }
 
 /*
@@ -245,7 +246,7 @@ static int sd_wait_interrupt(uint32_t mask)
         uint32_t bits = sd_irq_pending;
         sd_irq_pending &= ~(mask | INT_ERROR_MASK);
         spin_unlock_irqrestore(&sd_irq_lock, flags);
-        return (bits & INT_ERROR_MASK) ? -PERS_ERR_IO_ERROR : PERS_SUCCESS;
+        return (bits & INT_ERROR_MASK) ? -EIO : 0;
     }
 
     struct task *cur = sched_current_task();
@@ -260,12 +261,12 @@ static int sd_wait_interrupt(uint32_t mask)
         uint32_t status = regs->interrupt;
         regs->interrupt = status & (mask | INT_ERROR_MASK);
         if (t < 0) {
-            return -PERS_ERR_TIMED_OUT;
+            return -ETIMEDOUT;
         }
         if (status & INT_ERROR_MASK) {
-            return -PERS_ERR_IO_ERROR;
+            return -EIO;
         }
-        return PERS_SUCCESS;
+        return 0;
     }
 
     /* Slow path: block.  No other spinlock is held at this point (sd_op
@@ -284,7 +285,7 @@ static int sd_wait_interrupt(uint32_t mask)
     sd_waiting_task = NULL;
     spin_unlock_irqrestore(&sd_irq_lock, flags);
 
-    return (bits & INT_ERROR_MASK) ? -PERS_ERR_IO_ERROR : PERS_SUCCESS;
+    return (bits & INT_ERROR_MASK) ? -EIO : 0;
 }
 
 int sd_handle_irq(void)
@@ -318,13 +319,13 @@ unsigned int sd_get_irq(void)
 static int sd_send_cmd(uint32_t cmd, uint32_t arg)
 {
     int res = sd_wait_status(STATUS_CMD_INHIBIT, 0, 100);
-    if (res != PERS_SUCCESS) {
+    if (res != 0) {
         return res;
     }
 
     if (cmd & CMD_HAS_DATA) {
         res = sd_wait_status(STATUS_DAT_INHIBIT, 0, 100);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             return res;
         }
     }
@@ -350,7 +351,7 @@ static int sd_set_clock(uint32_t clock)
     mbox[9] = 0;
 
     mbox_call(mbox);
-    return (mbox[1] == 0x80000000) ? PERS_SUCCESS : -PERS_ERR_IO_ERROR;
+    return (mbox[1] == 0x80000000) ? 0 : -EIO;
 }
 
 static int sd_init_host(void)
@@ -376,7 +377,7 @@ static int sd_init_host(void)
     regs->clk_control |= 0x04;
     timer_sleep_ms(20);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -400,11 +401,11 @@ static uint32_t sd_csd_field(const uint32_t csd[4], int hi, int lo)
 
 static int sd_init_card(void)
 {
-    if (sd_send_cmd(CMD0, 0) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD0, 0) != 0) {
+        return -EIO;
     }
-    if (sd_send_cmd(CMD8, 0x1AA) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD8, 0x1AA) != 0) {
+        return -EIO;
     }
 
     int timeout = 1000;
@@ -418,18 +419,18 @@ static int sd_init_card(void)
         timer_sleep_ms(1);
     }
     if (timeout <= 0) {
-        return -PERS_ERR_TIMED_OUT;
+        return -ETIMEDOUT;
     }
 
-    if (sd_send_cmd(CMD2, 0) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD2, 0) != 0) {
+        return -EIO;
     }
-    if (sd_send_cmd(CMD3, 0) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD3, 0) != 0) {
+        return -EIO;
     }
     sd_rca = regs->resp[0] & 0xFFFF0000;
 
-    if (sd_send_cmd(CMD9, sd_rca) == PERS_SUCCESS) {
+    if (sd_send_cmd(CMD9, sd_rca) == 0) {
         uint32_t csd[4] = {regs->resp[0], regs->resp[1], regs->resp[2], regs->resp[3]};
 
         /*
@@ -453,24 +454,24 @@ static int sd_init_card(void)
         }
     }
 
-    if (sd_send_cmd(CMD7, sd_rca) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD7, sd_rca) != 0) {
+        return -EIO;
     }
-    if (sd_send_cmd(CMD16, 512) != PERS_SUCCESS) {
-        return -PERS_ERR_IO_ERROR;
+    if (sd_send_cmd(CMD16, 512) != 0) {
+        return -EIO;
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, size_t num_blocks)
 {
     if (!dev->present) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     if (!buffer) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     /*
@@ -480,7 +481,7 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
      * subsequent I/O.
      */
     if (start_block + num_blocks > dev->block_count || start_block + num_blocks < start_block) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     uint32_t *buf = (uint32_t *)buffer;
@@ -501,14 +502,14 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
 
         regs->blk_size_cnt = (1 << 16) | 512;
         int res = sd_send_cmd(CMD17, addr);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             pr_err("sd: read failed at block %lu\n", start_block + i);
             sd_op_release();
             return res;
         }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             sd_op_release();
             return res;
         }
@@ -518,30 +519,30 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
         }
 
         res = sd_wait_interrupt(INT_DATA_DONE);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             sd_op_release();
             return res;
         }
     }
 
     sd_op_release();
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_block,
                     size_t num_blocks)
 {
     if (!dev->present) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     if (!buffer) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     // See sd_read_blocks: an out-of-range command poisons the controller.
     if (start_block + num_blocks > dev->block_count || start_block + num_blocks < start_block) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     const uint32_t *buf = (const uint32_t *)buffer;
@@ -556,13 +557,13 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
         regs->blk_size_cnt = (1 << 16) | 512;
         int res = sd_send_cmd(CMD24, addr);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             sd_op_release();
             return res;
         }
 
         res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             sd_op_release();
             return res;
         }
@@ -572,14 +573,14 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
         }
 
         res = sd_wait_interrupt(INT_DATA_DONE);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             sd_op_release();
             return res;
         }
     }
 
     sd_op_release();
-    return PERS_SUCCESS;
+    return 0;
 }
 
 static void sd_probe_abort(sdhci_regs_t *r)
@@ -612,17 +613,17 @@ static int sd_probe(struct device *dev)
     /* We only support a single SD card. If one was already initialized, skip other matching
      * controllers. */
     if (sd_block_dev.present) {
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
 
     uintptr_t vbase = devm_get_io_base(dev, 0);
     if (!vbase) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     sdhci_regs_t *r = (sdhci_regs_t *)vbase;
     if (!(r->status & STATUS_CARD_INSERT)) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     regs = r;
@@ -648,13 +649,13 @@ static int sd_probe(struct device *dev)
     if (sd_set_clock(100000000) < 0) {
         pr_err("sd: clock init failed\n");
         sd_probe_abort(r);
-        return -PERS_ERR_IO_ERROR;
+        return -EIO;
     }
 
-    if (sd_init_host() != PERS_SUCCESS || sd_init_card() != PERS_SUCCESS) {
+    if (sd_init_host() != 0 || sd_init_card() != 0) {
         pr_err("sd: card init failed\n");
         sd_probe_abort(r);
-        return -PERS_ERR_IO_ERROR;
+        return -EIO;
     }
 
     sd_block_dev.block_size = 512;

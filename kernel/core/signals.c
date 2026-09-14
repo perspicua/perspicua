@@ -4,10 +4,13 @@
 
 #include "core/signals.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
 #include "arch/exception.h"
@@ -61,21 +64,21 @@ void signal_handle_pending(struct exception_trap_frame *tf)
     __atomic_fetch_and(&curr_process->pending_signals, ~(1u << trailing_zeros), __ATOMIC_SEQ_CST);
 
     struct sigaction *sa = &curr_process->signal_handlers[trailing_zeros];
-    signal_handler_t handler = sa->sa_handler;
+    sighandler_t handler = sa->sa_handler;
 
-    if (handler == SIGNAL_IGN) {
+    if (handler == SIG_IGN) {
         return;
     }
 
-    if (handler == SIGNAL_DFL) {
+    if (handler == SIG_DFL) {
         // Signals with default 'ignore' actions
-        if (sig == SIGNAL_CHLD || sig == SIGNAL_CONT || sig == SIGNAL_USR1 || sig == SIGNAL_USR2
-            || sig == SIGNAL_WINCH || sig == SIGNAL_URG) {
+        if (sig == SIGCHLD || sig == SIGCONT || sig == SIGUSR1 || sig == SIGUSR2 || sig == SIGWINCH
+            || sig == SIGURG) {
             return;
         }
 
         // Default 'stop' actions
-        if (sig == SIGNAL_STOP || sig == SIGNAL_TSTP || sig == SIGNAL_TTIN || sig == SIGNAL_TTOU) {
+        if (sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
             /*
              * Commit to the stop under process_table_lock so it is serialised
              * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
@@ -84,7 +87,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
              * after we popped the stop signal above, do not park a task that no
              * one will resume -- return so the pending signal is delivered next.
              */
-            const sigset_t stop_override = (1u << (SIGNAL_CONT - 1)) | (1u << (SIGNAL_KILL - 1));
+            const sigset_t stop_override = (1u << (SIGCONT - 1)) | (1u << (SIGKILL - 1));
             unsigned long flags = spin_lock_irqsave(&process_table_lock);
             if (curr_process->pending_signals & stop_override) {
                 spin_unlock_irqrestore(&process_table_lock, flags);
@@ -133,7 +136,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         if (!(sa->sa_flags & SA_NODEFER)) {
             new_mask |= (1u << (sig - 1));
         }
-        new_mask &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        new_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
         curr_process->blocked_signals = new_mask;
 
         struct signal_frame frame;
@@ -158,7 +161,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         tf->x30 = (uintptr_t)sa->sa_restorer;
 
         if (sa->sa_flags & SA_RESETHAND) {
-            sa->sa_handler = SIGNAL_DFL;
+            sa->sa_handler = SIG_DFL;
         }
     }
     return;
@@ -174,48 +177,48 @@ deliver_kill:
  * Checks that the process is non-NULL and in state PROCESS_STATE_RUNNING
  * before dereferencing main_task or modifying pending_signals.
  *
- * Returns PERS_SUCCESS (0) on success, or -PERS_ERR_NO_SUCH_PROCESS if p is invalid/not running.
+ * Returns 0 (0) on success, or -ESRCH if p is invalid/not running.
  */
 static int signal_send_target_locked(struct process *p, int sig)
 {
     if (!p || p->state != PROCESS_STATE_RUNNING) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
-    const sigset_t stop_mask = (1u << (SIGNAL_STOP - 1)) | (1u << (SIGNAL_TSTP - 1))
-                               | (1u << (SIGNAL_TTIN - 1)) | (1u << (SIGNAL_TTOU - 1));
+    const sigset_t stop_mask = (1u << (SIGSTOP - 1)) | (1u << (SIGTSTP - 1)) | (1u << (SIGTTIN - 1))
+                               | (1u << (SIGTTOU - 1));
 
-    if (sig == SIGNAL_STOP || sig == SIGNAL_TSTP || sig == SIGNAL_TTIN || sig == SIGNAL_TTOU) {
-        __atomic_fetch_and(&p->pending_signals, ~(1u << (SIGNAL_CONT - 1)), __ATOMIC_SEQ_CST);
-    } else if (sig == SIGNAL_CONT) {
+    if (sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+        __atomic_fetch_and(&p->pending_signals, ~(1u << (SIGCONT - 1)), __ATOMIC_SEQ_CST);
+    } else if (sig == SIGCONT) {
         __atomic_fetch_and(&p->pending_signals, ~stop_mask, __ATOMIC_SEQ_CST);
     }
 
     __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
 
-    if ((sig == SIGNAL_CONT || sig == SIGNAL_KILL) && p->main_task
+    if ((sig == SIGCONT || sig == SIGKILL) && p->main_task
         && p->main_task->state == SCHED_TASK_STOPPED) {
         p->stop_reported = 0;
         sched_continue(p->main_task);
     }
 
-    if (p->signal_handlers[sig - 1].sa_handler != SIGNAL_IGN) {
+    if (p->signal_handlers[sig - 1].sa_handler != SIG_IGN) {
         if (p->main_task && p->main_task->state == SCHED_TASK_BLOCKED) {
             sched_unblock(p->main_task);
         }
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int signal_send(uint32_t target_pid, int sig)
 {
-    if (sig < 1 || sig >= SIGNAL_COUNT) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+    if (sig < 1 || sig >= NSIG) {
+        return -EINVAL;
     }
 
     if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -228,17 +231,17 @@ int signal_send(uint32_t target_pid, int sig)
  * signal_send_group - Sends a signal to all processes in a process group.
  *
  * Walks process_table under process_table_lock (O(PROCESS_TABLE_SIZE)).
- * Returns PERS_SUCCESS if delivered to at least one process,
- * or -PERS_ERR_NO_SUCH_PROCESS if no matching running process was found.
+ * Returns 0 if delivered to at least one process,
+ * or -ESRCH if no matching running process was found.
  */
 int signal_send_group(uint32_t pgid, int sig)
 {
-    if (sig < 1 || sig >= SIGNAL_COUNT) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+    if (sig < 1 || sig >= NSIG) {
+        return -EINVAL;
     }
 
     if (pgid == 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int targets_reached = 0;
@@ -249,7 +252,7 @@ int signal_send_group(uint32_t pgid, int sig)
     for (uint32_t i = 1; i < PROCESS_TABLE_SIZE; i++) {
         struct process *p = process_table[i];
         if (p && p->state == PROCESS_STATE_RUNNING && p->pgid == pgid) {
-            if (signal_send_target_locked(p, sig) == PERS_SUCCESS) {
+            if (signal_send_target_locked(p, sig) == 0) {
                 targets_reached++;
             }
         }
@@ -257,5 +260,5 @@ int signal_send_group(uint32_t pgid, int sig)
 
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    return (targets_reached > 0) ? PERS_SUCCESS : -PERS_ERR_NO_SUCH_PROCESS;
+    return (targets_reached > 0) ? 0 : -ESRCH;
 }

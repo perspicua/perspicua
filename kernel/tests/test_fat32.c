@@ -2,11 +2,14 @@
  * test_fat32.c - Tests for FAT32 behaviour beyond the generic VFS paths.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "fs/fat32.h"
 #include "fs/vfs.h"
@@ -212,7 +215,7 @@ void test_fat32(void)
             big_pattern[i] = (uint8_t)((i * 31) & 0xFF);
         }
 
-        int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = vfs_open(BIG_FILE, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create multi-cluster file", fd >= 0);
 
         int written = vfs_write(fd, big_pattern, BIG_SIZE);
@@ -226,7 +229,7 @@ void test_fat32(void)
 
     // reading it back must walk the chain and return every byte in order
     {
-        int fd = vfs_open(BIG_FILE, VFS_O_RDONLY);
+        int fd = vfs_open(BIG_FILE, O_RDONLY);
         TEST_ASSERT("reopen multi-cluster file", fd >= 0);
 
         memset(big_readback, 0, BIG_SIZE);
@@ -239,11 +242,11 @@ void test_fat32(void)
 
     // seeking into a later cluster must land on the right bytes
     {
-        int fd = vfs_open(BIG_FILE, VFS_O_RDONLY);
+        int fd = vfs_open(BIG_FILE, O_RDONLY);
         TEST_ASSERT("open for seek", fd >= 0);
 
         const int offset = 8192;
-        vfs_off_t pos = vfs_lseek(fd, offset, VFS_SEEK_SET);
+        vfs_off_t pos = vfs_lseek(fd, offset, SEEK_SET);
         TEST_ASSERT_EQ("seek into later cluster", (int)pos, offset);
 
         static uint8_t chunk[64];
@@ -256,7 +259,7 @@ void test_fat32(void)
 
     // reopening with O_TRUNC must release the chain and report size 0
     {
-        int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_TRUNC);
+        int fd = vfs_open(BIG_FILE, O_RDWR | O_TRUNC);
         TEST_ASSERT("reopen with O_TRUNC", fd >= 0);
         TEST_ASSERT_EQ("close after O_TRUNC", vfs_close(fd), 0);
 
@@ -277,14 +280,14 @@ void test_fat32(void)
         TEST_ASSERT_EQ("mkdir level 1", vfs_mkdir(NEST_DIR), 0);
         TEST_ASSERT_EQ("mkdir level 2", vfs_mkdir(NEST_SUB), 0);
 
-        int fd = vfs_open(NEST_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = vfs_open(NEST_FILE, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create file two levels deep", fd >= 0);
         TEST_ASSERT_EQ("write nested file", vfs_write(fd, "nested", 6), 6);
         vfs_close(fd);
 
         static char buf[16];
         memset(buf, 0, sizeof(buf));
-        fd = vfs_open(NEST_FILE, VFS_O_RDONLY);
+        fd = vfs_open(NEST_FILE, O_RDONLY);
         TEST_ASSERT("reopen nested file", fd >= 0);
         TEST_ASSERT_EQ("read nested file", vfs_read(fd, buf, sizeof(buf) - 1), 6);
         TEST_ASSERT("nested contents correct", strcmp(buf, "nested") == 0);
@@ -302,9 +305,8 @@ void test_fat32(void)
      * that the distinction survives.
      */
     {
-        TEST_ASSERT_EQ("unlink refuses a directory", vfs_unlink(NEST_SUB),
-                       -PERS_ERR_IS_A_DIRECTORY);
-        TEST_ASSERT_EQ("rmdir refuses a file", vfs_rmdir(NEST_FILE), -PERS_ERR_NOT_A_DIRECTORY);
+        TEST_ASSERT_EQ("unlink refuses a directory", vfs_unlink(NEST_SUB), -EISDIR);
+        TEST_ASSERT_EQ("rmdir refuses a file", vfs_rmdir(NEST_FILE), -ENOTDIR);
     }
 
     /*
@@ -336,7 +338,7 @@ void test_fat32(void)
         for (int round = 0; round < 3 && ok; round++) {
             uint8_t mark = (uint8_t)(0x10 + round);
 
-            int fd = vfs_open(BIG_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+            int fd = vfs_open(BIG_FILE, O_RDWR | O_CREAT | O_TRUNC);
             if (fd < 0) {
                 ok = 0;
                 break;
@@ -351,7 +353,7 @@ void test_fat32(void)
 
             // Read back through the same descriptor, before any close.
             memset(big_pattern, 0, len);
-            if (vfs_lseek(fd, 0, VFS_SEEK_SET) != 0 || vfs_read(fd, big_pattern, len) != len) {
+            if (vfs_lseek(fd, 0, SEEK_SET) != 0 || vfs_read(fd, big_pattern, len) != len) {
                 ok = 0;
             }
             for (int i = 0; i < len && ok; i++) {
@@ -362,7 +364,7 @@ void test_fat32(void)
             vfs_close(fd);
 
             // And again after reopening, which must find the same bytes.
-            fd = vfs_open(BIG_FILE, VFS_O_RDONLY);
+            fd = vfs_open(BIG_FILE, O_RDONLY);
             if (fd < 0) {
                 ok = 0;
                 break;
@@ -426,7 +428,7 @@ void test_fat32(void)
         const char *live = "/zzzzzzzz.txt";
         const char *ghost = "/\345zzzzzzz.txt"; // \345 == 0xE5
 
-        int fd = vfs_open(live, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = vfs_open(live, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create collision-name file", fd >= 0);
         TEST_ASSERT_EQ("write collision-name file", vfs_write(fd, "hello", 5), 5);
         vfs_close(fd);

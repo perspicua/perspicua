@@ -4,10 +4,13 @@
 
 #include "core/tty.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "core/signals.h"
 #include "sched/process.h"
@@ -204,7 +207,7 @@ void tty_session_exit(uint32_t sid)
         spin_unlock_irqrestore(&console_tty.lock, flags);
 
         if (fg_pgid > 0) {
-            signal_send_group(fg_pgid, SIGNAL_HUP);
+            signal_send_group(fg_pgid, SIGHUP);
         }
     } else {
         spin_unlock_irqrestore(&console_tty.lock, flags);
@@ -227,7 +230,7 @@ int tty_access_check(struct tty *tty, int sig)
         return TTY_ACCESS_OK;
     }
 
-    if (p->signal_handlers[sig - 1].sa_handler == SIGNAL_IGN
+    if (p->signal_handlers[sig - 1].sa_handler == SIG_IGN
         || (p->blocked_signals & (1u << (sig - 1)))) {
         return TTY_ACCESS_BLOCKED;
     }
@@ -259,7 +262,7 @@ void tty_handle_rx(struct tty *tty, char c)
 
     // Ctrl-C and Ctrl-Z reach the foreground group as a whole.
     if (c == 3 || c == 26) {
-        int sig = (c == 3) ? SIGNAL_INT : SIGNAL_TSTP;
+        int sig = (c == 3) ? SIGINT : SIGTSTP;
         uint32_t fg_pgid = tty->foreground_pgid;
         spin_unlock_irqrestore(&tty->lock, flags);
         if (fg_pgid > 0) {
@@ -300,11 +303,11 @@ void tty_handle_rx(struct tty *tty, char c)
 
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 {
-    switch (tty_access_check(tty, SIGNAL_TTIN)) {
+    switch (tty_access_check(tty, SIGTTIN)) {
         case TTY_ACCESS_BLOCKED:
-            return -PERS_ERR_IO_ERROR;
+            return -EIO;
         case TTY_ACCESS_STOPPED:
-            return -PERS_ERR_INTERRUPTED;
+            return -EINTR;
         default:
             break;
     }
@@ -319,10 +322,10 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
         }
 
         if (!ready) {
-            if (file && (file->flags & VFS_O_NONBLOCK)) {
+            if (file && (file->flags & O_NONBLOCK)) {
                 spin_unlock_irqrestore(&tty->lock, flags);
                 if (n == 0) {
-                    return -PERS_ERR_TRY_AGAIN;
+                    return -EAGAIN;
                 }
                 break;
             }
@@ -336,7 +339,7 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 
             if (proc && (proc->pending_signals & ~proc->blocked_signals)) {
                 spin_unlock_irqrestore(&tty->lock, flags);
-                return -PERS_ERR_INTERRUPTED;
+                return -EINTR;
             }
 
             curr_task_inner->state = SCHED_TASK_BLOCKED;

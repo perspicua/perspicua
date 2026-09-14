@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_CORE_LOCK_H
 #define PERSPICUA_CORE_LOCK_H
 
-#include "types.h"
-
 #include "arch/cpu.h"
 
 #define SPINLOCK_INIT  {0}

@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_DRIVER_FB_H
 #define PERSPICUA_DRIVER_FB_H
 
-#include "types.h"
-
 /*
  * struct fb_info_struct - Hardware framebuffer state.
  */

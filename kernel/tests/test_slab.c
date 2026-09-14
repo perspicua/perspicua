@@ -2,7 +2,8 @@
 #include "mm/slab.h"
 #include "mm/heap.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 void test_slab(void)
 {

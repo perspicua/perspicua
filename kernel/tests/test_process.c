@@ -7,6 +7,9 @@
  * take PID 1 and stop init from loading later in the boot.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 
 #include "string.h"
@@ -162,7 +165,7 @@ void test_process(void)
      */
     {
         unsigned long *pgd = mmu_create_user_pgd();
-        int fd = vfs_open(MMAP_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        int fd = vfs_open(MMAP_FILE, O_RDWR | O_CREAT);
 
         int64_t file_backed = 0, anon = 0, anon_with_fd = 0, bad_fd = 0, no_backing = 0;
 

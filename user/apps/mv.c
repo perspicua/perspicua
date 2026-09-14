@@ -12,7 +12,7 @@ static const char *basename_of(const char *path)
 static int is_dir(const char *path)
 {
     struct stat st;
-    return sys_stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 int main(int argc, char **argv)
@@ -38,7 +38,7 @@ int main(int argc, char **argv)
         dst = target;
     }
 
-    if (sys_rename(src, dst) < 0) {
+    if (rename(src, dst) < 0) {
         printf("mv: cannot move '%s' to '%s'\n", src, dst);
         return 1;
     }

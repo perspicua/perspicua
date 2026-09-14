@@ -5,6 +5,9 @@
 #include "driver/gic.h"
 #include "driver/device.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "io.h"
 #include "stdio.h"
 #include "panic.h"

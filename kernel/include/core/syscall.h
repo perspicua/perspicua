@@ -5,6 +5,8 @@
 #ifndef PERSPICUA_CORE_SYSCALL_H
 #define PERSPICUA_CORE_SYSCALL_H
 
+#include <stddef.h>
+
 #include "arch/exception.h"
 
 #define SYSCALL_MAX_RW_SIZE   (4UL * 1024 * 1024)

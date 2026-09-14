@@ -9,6 +9,8 @@
 
 #include "core/mutex.h"
 
+#include <stddef.h>
+
 #include "panic.h"
 
 #include "core/lock.h"

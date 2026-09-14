@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_DRIVER_GRAPHICS_H
 #define PERSPICUA_DRIVER_GRAPHICS_H
 
-#include "types.h"
+#include <stdint.h>
 
 void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color);
 

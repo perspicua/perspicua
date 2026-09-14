@@ -2,7 +2,7 @@
 #define PERSPICUA_MM_ASID_H
 
 #include "core/lock.h"
-#include "types.h"
+#include <stdint.h>
 
 #define BITMAP_SIZE 4
 // Highest allocatable ASID. Derived so it cannot drift from the bitmap.
