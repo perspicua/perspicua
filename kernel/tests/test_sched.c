@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "test.h"
 #include "sched/sched.h"
 #include "mm/heap.h"
@@ -73,7 +75,7 @@ static void task_sleep_then_inc(void)
 
 static void task_long_sleep_then_inc(void)
 {
-    sched_sleep_ms(40);
+    sched_sleep_ms(200);
     unsigned long flags = spin_lock_irqsave(&test_lock);
     counter_b++;
     spin_unlock_irqrestore(&test_lock, flags);
@@ -445,11 +447,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
-        sched_sleep_ms(30);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 200ms, inc b
+        sched_sleep_ms(60);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
-        sched_sleep_ms(50);
+        sched_sleep_ms(200);
         TEST_ASSERT("long sleeper done", counter_b == 1);
     }
 
@@ -527,11 +529,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_inc_a);               // instant
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
-        sched_sleep_ms(30);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 200ms, inc b
+        sched_sleep_ms(60);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);
-        sched_sleep_ms(50);
+        sched_sleep_ms(200);
         TEST_ASSERT("slow done", counter_b == 1);
     }
 
