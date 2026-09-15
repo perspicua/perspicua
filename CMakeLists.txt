@@ -14,6 +14,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Kernel Configuration (Kconfig-lite)
 option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
 option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
+# OFF halts in a wfe loop instead: there is no watchdog driver yet to reboot
+# from, so this is "let an unattended board sit dark" rather than "recover" --
+# see order.txt Phase 0 item 14.
+option(CONFIG_KDB_ON_PANIC "Drop into the interactive debugger on a kernel panic (blocks on UART input)" ON)
 option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
 set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
 set(CONFIG_MAX_PROCESSES 128 CACHE STRING "Process table slots (one pointer each; PCBs allocated on demand)")

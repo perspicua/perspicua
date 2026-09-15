@@ -7,6 +7,7 @@
 
 #include "panic.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 
 #include "stdio.h"
@@ -24,64 +25,80 @@ volatile int kernel_panicked = 0;
 
 #define PANIC_MAX_FRAMES 16
 
+/*
+ * panic_printf - Formatted output for the panic report.
+ *
+ * Not printf: that takes printf_lock, and a panic triggered while this core
+ * already holds it (mid printk/printf elsewhere) would spin on a lock it
+ * owns itself. vprintf does the formatting without touching it -- same
+ * reasoning as kdb_printf, which this report hands off to once KDB starts.
+ */
+__attribute__((format(printf, 1, 2))) static void panic_printf(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+}
+
 // Decodes Exception Class (EC) for diagnostic output.
 static void print_ec(unsigned int ec)
 {
     switch (ec) {
         case 0x01:
-            printf("  [WFI/WFE]\n");
+            panic_printf("  [WFI/WFE]\n");
             break;
         case 0x15:
-            printf("  [SVC AArch64]\n");
+            panic_printf("  [SVC AArch64]\n");
             break;
         case 0x20:
-            printf("  [Inst Abort, lower EL]\n");
+            panic_printf("  [Inst Abort, lower EL]\n");
             break;
         case 0x21:
-            printf("  [Inst Abort, same EL]\n");
+            panic_printf("  [Inst Abort, same EL]\n");
             break;
         case 0x24:
-            printf("  [Data Abort, lower EL]\n");
+            panic_printf("  [Data Abort, lower EL]\n");
             break;
         case 0x25:
-            printf("  [Data Abort, same EL]\n");
+            panic_printf("  [Data Abort, same EL]\n");
             break;
         case 0x2C:
-            printf("  [SP Alignment Fault]\n");
+            panic_printf("  [SP Alignment Fault]\n");
             break;
         case 0x30:
-            printf("  [FP Exception]\n");
+            panic_printf("  [FP Exception]\n");
             break;
         case 0x3C:
-            printf("  [BRK instruction]\n");
+            panic_printf("  [BRK instruction]\n");
             break;
         default:
-            printf("  [EC=0x%02x]\n", ec);
+            panic_printf("  [EC=0x%02x]\n", ec);
             break;
     }
 }
 
 static void panic_dump_tf_registers(struct exception_trap_frame *tf)
 {
-    printf("\n--- Registers (from exception trap frame) ---\n");
+    panic_printf("\n--- Registers (from exception trap frame) ---\n");
 
     for (int i = 0; i < 28; i += 2) {
-        printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
+        panic_printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
     }
-    printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
+    panic_printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
 
-    printf("\n--- System Registers (from trap frame) ---\n");
-    printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
-    printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
-    printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
+    panic_printf("\n--- System Registers (from trap frame) ---\n");
+    panic_printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+    panic_printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
+    panic_printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
 
     unsigned long esr, far_reg;
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
     asm volatile("mrs %0, far_el1" : "=r"(far_reg));
 
-    printf("  ESR_EL1  : 0x%016lx", esr);
+    panic_printf("  ESR_EL1  : 0x%016lx", esr);
     print_ec((unsigned int)((esr >> 26) & 0x3F));
-    printf("  FAR_EL1  : 0x%016lx\n", far_reg);
+    panic_printf("  FAR_EL1  : 0x%016lx\n", far_reg);
 }
 
 // Captures and prints key AArch64 registers from EL1 context.
@@ -95,28 +112,28 @@ static void panic_dump_live_registers(void)
     asm volatile("mrs %0, esr_el1" : "=r"(esr));
     asm volatile("mrs %0, far_el1" : "=r"(far_reg));
 
-    printf("\n--- Registers (live EL1 snapshot) ---\n");
-    printf("  SP       : 0x%016lx\n", sp);
-    printf("  LR (x30) : 0x%016lx\n", lr);
-    printf("  SPSR_EL1 : 0x%016lx\n", spsr);
-    printf("  ESR_EL1  : 0x%016lx", esr);
+    panic_printf("\n--- Registers (live EL1 snapshot) ---\n");
+    panic_printf("  SP       : 0x%016lx\n", sp);
+    panic_printf("  LR (x30) : 0x%016lx\n", lr);
+    panic_printf("  SPSR_EL1 : 0x%016lx\n", spsr);
+    panic_printf("  ESR_EL1  : 0x%016lx", esr);
     print_ec((unsigned int)((esr >> 26) & 0x3F));
-    printf("  FAR_EL1  : 0x%016lx\n", far_reg);
+    panic_printf("  FAR_EL1  : 0x%016lx\n", far_reg);
 }
 
 // Walks the AArch64 frame pointer chain.
 static void panic_backtrace(unsigned long fp)
 {
-    printf("\n--- Stack Trace ---\n");
+    panic_printf("\n--- Stack Trace ---\n");
 
     if (!fp) {
-        printf("  (frame pointer is NULL)\n");
+        panic_printf("  (frame pointer is NULL)\n");
         return;
     }
 
     for (int i = 0; i < PANIC_MAX_FRAMES; i++) {
         if (fp & 0x7UL) {
-            printf("  #%-2d  [unaligned FP 0x%016lx]\n", i, fp);
+            panic_printf("  #%-2d  [unaligned FP 0x%016lx]\n", i, fp);
             break;
         }
 
@@ -128,9 +145,9 @@ static void panic_backtrace(unsigned long fp)
         const char *sym_name = panic_resolve_symbol(ret_addr, &offset);
 
         if (sym_name) {
-            printf("  #%-2d  0x%016lx <%s+0x%lx>\n", i, ret_addr, sym_name, offset);
+            panic_printf("  #%-2d  0x%016lx <%s+0x%lx>\n", i, ret_addr, sym_name, offset);
         } else {
-            printf("  #%-2d  0x%016lx\n", i, ret_addr);
+            panic_printf("  #%-2d  0x%016lx\n", i, ret_addr);
         }
 
         if (!prev_fp || prev_fp <= fp) {
@@ -144,19 +161,19 @@ static void panic_backtrace(unsigned long fp)
 // Prints the scheduler's view of the currently running task.
 static void panic_dump_task(void)
 {
-    printf("\n--- Current Task ---\n");
+    panic_printf("\n--- Current Task ---\n");
 
     struct task *t = sched_current_task();
     if (!t) {
-        printf("  (no current task)\n");
+        panic_printf("  (no current task)\n");
         return;
     }
 
-    printf("  Task ID  : %lu\n", t->id);
-    printf("  PID      : %u\n", t->pid);
-    printf("  State    : %d\n", (int)t->state);
-    printf("  Stack    : 0x%016lx\n", (unsigned long)t->stack);
-    printf("  TTBR0    : 0x%016lx\n", t->ttbr0);
+    panic_printf("  Task ID  : %lu\n", t->id);
+    panic_printf("  PID      : %u\n", t->pid);
+    panic_printf("  State    : %d\n", (int)t->state);
+    panic_printf("  Stack    : 0x%016lx\n", (unsigned long)t->stack);
+    panic_printf("  TTBR0    : 0x%016lx\n", t->ttbr0);
 }
 
 void panic_full(const char *msg, const char *file, int line, unsigned long fp,
@@ -178,10 +195,10 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
 
     unsigned long uptime_ms = timer_get_system_time();
 
-    printf("\n           *** KERNEL PANIC ***           \n\n");
-    printf("  Message  : %s\n", msg);
-    printf("  Location : %s:%d\n", file, line);
-    printf("  Uptime   : %lu ms\n", uptime_ms);
+    panic_printf("\n           *** KERNEL PANIC ***           \n\n");
+    panic_printf("  Message  : %s\n", msg);
+    panic_printf("  Location : %s:%d\n", file, line);
+    panic_printf("  Uptime   : %lu ms\n", uptime_ms);
 
     panic_dump_task();
 
@@ -193,15 +210,22 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
         panic_backtrace(fp);
     }
 
-    printf("\n--- Entering KDB (type 'continue' to halt) ---\n\n");
+#ifdef CONFIG_KDB_ON_PANIC
+    panic_printf("\n--- Entering KDB (type 'continue' to halt) ---\n\n");
 
     if (tf) {
         kdb_enter_tf("kernel panic", tf);
     } else {
         kdb_enter("kernel panic");
     }
+#else
+    // No watchdog driver exists yet to reboot from (order.txt Phase 0 item
+    // 14), so an unattended board halts here instead of hanging forever
+    // waiting for a keystroke that will never come.
+    panic_printf("\n--- CONFIG_KDB_ON_PANIC is off; halting ---\n\n");
+#endif
 
-    printf("\n--- All CPU cores halted ---\n\n");
+    panic_printf("\n--- All CPU cores halted ---\n\n");
 
     for (;;) {
         asm volatile("wfe");

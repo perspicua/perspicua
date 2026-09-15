@@ -12,6 +12,7 @@
 
 #cmakedefine CONFIG_SMP
 #cmakedefine CONFIG_LOCKDEP
+#cmakedefine CONFIG_KDB_ON_PANIC
 #cmakedefine CONFIG_TESTS
 
 #define CONFIG_NR_CPUS       @CONFIG_NR_CPUS@

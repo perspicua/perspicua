@@ -404,12 +404,25 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
             tty_put_tx_char(tty, '\r');
         }
         tty_put_tx_char(tty, c);
-
-        fb_console_putc(c);
     }
 
     tty_pump_tx(tty);
     spin_unlock_irqrestore(&tty->lock, flags);
+
+    /*
+     * Drawn outside tty->lock so a long write does not mask IRQs for
+     * thousands of glyphs into uncacheable framebuffer memory. The cost: two
+     * concurrent writers' bytes can now interleave on screen instead of one
+     * message rendering atomically -- fb_console_lock is per-character, not
+     * held across the whole loop, because it is also taken from IRQ context
+     * (the RX-echo path) and cannot be held that long either. Purely
+     * cosmetic (nothing written to the ring buffer or UART is affected).
+     */
+    for (size_t i = 0; i < count; i++) {
+        char c = buf[i];
+
+        fb_console_putc(c);
+    }
 
     return (int)count;
 }
