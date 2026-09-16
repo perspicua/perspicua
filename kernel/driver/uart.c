@@ -121,8 +121,28 @@ void uart_send_raw(char c)
     mmio_write(uart_dr, (unsigned int)c);
 }
 
+void uart_write_raw(const char *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        uart_send_raw(buf[i]);
+    }
+}
+
+/*
+ * A panicking core must not take uart_tx_lock.
+ */
+static inline int uart_tx_unserialized(void)
+{
+    return kernel_panicked;
+}
+
 void uart_send(char c)
 {
+    if (uart_tx_unserialized()) {
+        uart_send_raw(c);
+        return;
+    }
+
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
     uart_send_raw(c);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
@@ -132,10 +152,13 @@ void uart_send(char c)
 // bytes into it.
 void uart_write_locked(const char *buf, size_t len)
 {
-    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-    for (size_t i = 0; i < len; i++) {
-        uart_send_raw(buf[i]);
+    if (uart_tx_unserialized()) {
+        uart_write_raw(buf, len);
+        return;
     }
+
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    uart_write_raw(buf, len);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 

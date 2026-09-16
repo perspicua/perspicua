@@ -54,6 +54,8 @@ char uart_getc(void);
 
 void uart_write_locked(const char *buf, size_t len);
 
+void uart_write_raw(const char *buf, size_t len);
+
 int uart_data_ready(void);
 
 void uart_enable_interrupts(void);
