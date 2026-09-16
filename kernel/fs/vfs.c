@@ -142,6 +142,18 @@ struct vfs_file *vfs_test_file_at(int fd)
  */
 static void vfs_split_parent(char *kpath, const char **parent, const char **name)
 {
+    /*
+     * "dir/" names the same thing as "dir". Splitting on the last slash before
+     * dropping the trailing ones would make the final component empty, and the
+     * caller would go looking for a file with no name -- which is why
+     * `rm -rf dir/` failed while `rm -rf dir` worked. Root keeps its slash: it
+     * is the whole path, not a trailing separator.
+     */
+    size_t len = strlen(kpath);
+    while (len > 1 && kpath[len - 1] == '/') {
+        kpath[--len] = '\0';
+    }
+
     char *slash = strrchr(kpath, '/');
 
     if (!slash) {
@@ -1129,6 +1141,17 @@ int vfs_rmdir(const char *path)
 
 int vfs_unlink(const char *path)
 {
+    /*
+     * A trailing slash asserts the target is a directory, and unlink never
+     * removes one. Checked before the path is normalised, because stripping
+     * the slash first would turn `unlink("file/")` into a successful delete of
+     * a file the caller did not name.
+     */
+    size_t plen = strlen(path);
+    if (plen > 1 && path[plen - 1] == '/') {
+        return -ENOTDIR;
+    }
+
     char kpath[VFS_MAX_PATH_LEN];
     strncpy(kpath, path, VFS_MAX_PATH_LEN);
     kpath[VFS_MAX_PATH_LEN - 1] = '\0';
