@@ -259,7 +259,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Done: `just build` is -O2 by default and roughly half as long; there is
         one list of config options.
 
-  14. Console, panic and dashboard latency
+  14. Console, panic and dashboard latency [DONE]
       Effort: M | Unlocks: bounded IRQ-off time; a panic that cannot deadlock
         or hang a headless board
       Scope: tty_write holds tty->lock with IRQs masked while
