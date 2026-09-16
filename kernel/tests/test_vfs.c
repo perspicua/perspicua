@@ -9,6 +9,8 @@
 
 #include "string.h"
 
+#include "uapi/errno.h"
+
 #include "fs/vfs.h"
 
 // Scratch paths live at the root of the mounted image.
@@ -234,6 +236,41 @@ void test_vfs(void)
         TEST_ASSERT("read on unopened fd fails", vfs_read(VFS_MAX_FDS - 1, buf, sizeof(buf)) < 0);
         TEST_ASSERT("close on bad fd fails", vfs_close(-1) < 0);
         TEST_ASSERT("close on out-of-range fd fails", vfs_close(VFS_MAX_FDS + 100) < 0);
+    }
+
+    /*
+     * "dir/" and "dir" name the same directory. The path is split on its last
+     * slash to find the parent, so a trailing one used to leave an empty final
+     * component and every caller went looking for a nameless file -- rmdir and
+     * rename included.
+     */
+    {
+        const char *d = "/tslash";
+
+        TEST_ASSERT_EQ("mkdir for slash test", vfs_mkdir(d), 0);
+        TEST_ASSERT_EQ("rmdir with trailing slash", vfs_rmdir("/tslash/"), 0);
+        TEST_ASSERT("directory is gone", vfs_mkdir(d) == 0);
+
+        TEST_ASSERT_EQ("mkdir with trailing slash", vfs_mkdir("/tslash2/"), 0);
+        TEST_ASSERT_EQ("created without the slash", vfs_rmdir("/tslash2"), 0);
+        TEST_ASSERT_EQ("cleanup slash test", vfs_rmdir(d), 0);
+    }
+
+    /*
+     * A trailing slash asserts the target is a directory, so it must not
+     * delete a file -- stripping it blindly would make unlink("f/") remove f.
+     */
+    {
+        const char *f = "/tslashf.txt";
+
+        int fd = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create file for slash test", fd >= 0);
+        vfs_close(fd);
+
+        TEST_ASSERT_EQ("unlink file with trailing slash fails", vfs_unlink("/tslashf.txt/"),
+                       -ENOTDIR);
+        TEST_ASSERT("file survived", vfs_open(f, O_RDONLY) >= 0);
+        TEST_ASSERT_EQ("cleanup slash file", vfs_unlink(f), 0);
     }
 
     TEST_SUITE_END("VFS");
