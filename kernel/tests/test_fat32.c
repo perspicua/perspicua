@@ -437,5 +437,53 @@ void test_fat32(void)
         TEST_ASSERT("deleted entry is not unlinkable", vfs_unlink(ghost) != 0);
     }
 
+    /*
+     * A name that does not fit 8.3 is stored as LFN entries plus a generated
+     * alias. It has to survive the round trip through the directory, and the
+     * LFN entries have to go away with it -- left behind, they still spell the
+     * old name and a later scan will assemble it.
+     */
+    {
+        const char *lname = "/a_name_of_exactly_forty_characters_here";
+        const char *lname2 = "/renamed_to_a_different_long_name.txt";
+
+        TEST_ASSERT_EQ("long name is 40 chars", (int)strlen(lname) - 1, 39);
+
+        int fd = vfs_open(lname, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create long name", fd >= 0);
+        TEST_ASSERT_EQ("write long-name file", vfs_write(fd, "long", 4), 4);
+        vfs_close(fd);
+
+        // Reopening by the same long name is what proves the LFN entries
+        // round-tripped rather than the name being truncated to 8.3.
+        fd = vfs_open(lname, O_RDONLY);
+        TEST_ASSERT("reopen by long name", fd >= 0);
+        char buf[8] = {0};
+        TEST_ASSERT_EQ("read long-name file", vfs_read(fd, buf, sizeof(buf)), 4);
+        TEST_ASSERT("long-name contents", strncmp(buf, "long", 4) == 0);
+        vfs_close(fd);
+
+        struct stat st;
+        TEST_ASSERT_EQ("stat long name", vfs_stat(lname, &st), 0);
+        TEST_ASSERT_EQ("long-name size", (int)st.st_size, 4);
+        TEST_ASSERT("modified time was stamped", st.st_mtime != 0);
+
+        TEST_ASSERT_EQ("rename long to long", vfs_rename(lname, lname2), 0);
+        TEST_ASSERT("old long name is gone", vfs_open(lname, O_RDONLY) < 0);
+        fd = vfs_open(lname2, O_RDONLY);
+        TEST_ASSERT("new long name resolves", fd >= 0);
+        vfs_close(fd);
+
+        TEST_ASSERT_EQ("unlink long name", vfs_unlink(lname2), 0);
+        TEST_ASSERT("unlinked long name is gone", vfs_open(lname2, O_RDONLY) < 0);
+
+        // Recreating it must work: if the LFN entries had outlived the unlink,
+        // the stale fragments would still name a file that no longer exists.
+        fd = vfs_open(lname, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("recreate after unlink", fd >= 0);
+        vfs_close(fd);
+        TEST_ASSERT_EQ("cleanup long name", vfs_unlink(lname), 0);
+    }
+
     TEST_SUITE_END("FAT32");
 }

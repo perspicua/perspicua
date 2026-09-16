@@ -279,7 +279,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
         line's worth of rendering; a deliberate panic inside printk still
         prints its report.
 
-  15. FAT32 and block cache efficiency, and long names on write
+  15. FAT32 and block cache efficiency, and long names on write [DONE]
       Effort: M | Unlocks: files created on Perspicua keep their names;
         directory scans that do not re-read the FAT per hop
       Scope: the block cache allocates a 4 KB page per 512-byte block (256

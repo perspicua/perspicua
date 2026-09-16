@@ -125,6 +125,62 @@ void timer_interrupt_init(void)
     }
 }
 
+/*
+ * timer_get_wall_time - Seconds since the Unix epoch, approximately.
+ *
+ * A Pi 4 has no battery-backed clock, so there is nothing to read the real
+ * date from. This is the time the kernel was built plus how long it has been
+ * running: wrong by however long the image sat before booting, but in the
+ * right year and ordered correctly, which is what a file timestamp is for.
+ * When an RTC or a network time source exists, only this base changes.
+ */
+static int build_month(const char *m)
+{
+    static const char names[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    for (int i = 0; i < 12; i++) {
+        if (m[0] == names[i * 3] && m[1] == names[i * 3 + 1] && m[2] == names[i * 3 + 2]) {
+            return i + 1;
+        }
+    }
+    return 1;
+}
+
+static int digits2(const char *p)
+{
+    int hi = (p[0] == ' ') ? 0 : p[0] - '0';
+    return hi * 10 + (p[1] - '0');
+}
+
+// Days from 1970-01-01 to the first of the given month, proleptic Gregorian.
+static int64_t days_from_civil(int year, int month, int day)
+{
+    year -= month <= 2;
+    int64_t era = (year >= 0 ? year : year - 399) / 400;
+    int64_t yoe = year - era * 400;
+    int64_t doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+time_t timer_civil_to_epoch(int year, int month, int day, int hour, int min, int sec)
+{
+    return (time_t)(days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec);
+}
+
+time_t timer_get_wall_time(void)
+{
+    static const char date[] = __DATE__;  // "Mmm dd yyyy"
+    static const char clock[] = __TIME__; // "hh:mm:ss"
+
+    int year =
+        (date[7] - '0') * 1000 + (date[8] - '0') * 100 + (date[9] - '0') * 10 + (date[10] - '0');
+    int64_t days = days_from_civil(year, build_month(date), digits2(&date[4]));
+    int64_t base =
+        days * 86400 + digits2(&clock[0]) * 3600 + digits2(&clock[3]) * 60 + digits2(&clock[6]);
+
+    return (time_t)(base + (int64_t)(timer_get_system_time() / 1000));
+}
+
 void timer_interrupt_reset(void)
 {
     unsigned int freq = read_cntfrq();

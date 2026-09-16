@@ -38,10 +38,42 @@ static void print_mode(uint32_t mode)
     printf("%c", (mode & S_IXOTH) ? 'x' : '-');
 }
 
+/*
+ * format_time - "Mmm dd hh:mm", the column ls has always shown.
+ *
+ * Done here rather than with localtime/strftime because the libc has neither
+ * yet. Everything is UTC: nothing records a zone, on disk or anywhere else.
+ */
+static void format_time(uint32_t secs, char *out, size_t n)
+{
+    static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    if (secs == 0) {
+        snprintf(out, n, "%12s", "-");
+        return;
+    }
+
+    long days = (long)(secs / 86400);
+    long rem = (long)(secs % 86400);
+
+    // Civil date from a day count, proleptic Gregorian.
+    long z = days + 719468;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    long doe = z - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    long day = doy - (153 * mp + 2) / 5 + 1;
+    long month = mp + (mp < 10 ? 3 : -9);
+
+    snprintf(out, n, "%s %2ld %02ld:%02ld", months[month - 1], day, rem / 3600, (rem % 3600) / 60);
+}
+
 static void print_header(void)
 {
-    printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  NAME\n");
-    for (int i = 0; i < 62; i++) {
+    printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  MODIFIED      NAME\n");
+    for (int i = 0; i < 76; i++) {
         write(1, "─", 3);
     }
     printf("\n");
@@ -55,8 +87,11 @@ static void print_entry(const char *name, struct stat *st, int long_format)
         char og[32];
         snprintf(og, sizeof(og), "%u:%u", (uint32_t)st->st_uid, (uint32_t)st->st_gid);
 
-        printf("  %3u  %-12s  %8u  %s\n", (unsigned int)st->st_nlink, og, (unsigned int)st->st_size,
-               name);
+        char when[16];
+        format_time((uint32_t)st->st_mtime, when, sizeof(when));
+
+        printf("  %3u  %-12s  %8u  %-12s  %s\n", (unsigned int)st->st_nlink, og,
+               (unsigned int)st->st_size, when, name);
     } else {
         printf("%s\n", name);
     }
