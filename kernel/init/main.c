@@ -38,7 +38,6 @@
 #include "driver/mailbox.h"
 #include "driver/fb.h"
 #include "driver/fb_console.h"
-#include "driver/dashboard.h"
 #include "driver/sd.h"
 #include "driver/block.h"
 
@@ -49,7 +48,7 @@
 #endif
 
 // Kernel metadata and versioning
-#define KERNEL_VERSION "0.1"
+#define KERNEL_VERSION "0.1.1"
 
 // Defined in arch/boot.S
 extern void _entry(void);
@@ -140,14 +139,6 @@ static void print_banner(void)
     pr_info("perspicua kernel v%s (" __DATE__ " " __TIME__ ")\n", KERNEL_VERSION);
 }
 
-static void dashboard_task(void)
-{
-    while (1) {
-        dashboard_update();
-        sched_sleep_ms(100);
-    }
-}
-
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
     // Stage 0: Devicetree parser initialization
@@ -186,9 +177,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     timer_interrupt_init();
     sched_init();
 
-    // Start background maintenance tasks
-    sched_create_task(dashboard_task);
-
     // Stage 4: Multi-processing and Filesystems
     smp_init();
 
@@ -211,7 +199,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
-
 #ifdef CONFIG_TESTS
     run_all_tests();
     run_scheduler_tests();
