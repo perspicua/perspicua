@@ -401,9 +401,6 @@ int process_create_from_file(const char *path, uint32_t pid)
     uintptr_t user_sp_top = vaddr_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     struct exception_trap_frame *tf = build_trap_frame((uintptr_t)kstack, entry_point, user_sp_top);
 
-    p->context.sp = (unsigned long)tf;
-    p->context.lr = (unsigned long)ret_to_user;
-
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
@@ -414,8 +411,8 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     process_init_signals(p);
 
-    struct task *t =
-        sched_create_user_task(p->context.sp, p->context.lr, p->vaddr_kernel_stack, pid);
+    struct task *t = sched_create_user_task((unsigned long)tf, (unsigned long)ret_to_user,
+                                            p->vaddr_kernel_stack, pid);
     if (!t) {
         close_all_fds(p);
         if (p->cwd) {
@@ -650,9 +647,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     tf->x[1] = (uint64_t)argv_ptr;
     tf->x[2] = (uint64_t)envp_ptr;
 
-    p->context.sp = (unsigned long)tf;
-    p->context.lr = (unsigned long)ret_to_user;
-
     struct task *curr = sched_current_task();
     if (curr) {
         curr->context.sp = (unsigned long)tf;
@@ -870,11 +864,8 @@ int process_fork(struct exception_trap_frame *parent_tf)
     memcpy(child_tf, parent_tf, sizeof(*child_tf));
     child_tf->x[0] = 0; // Child returns 0 from fork
 
-    child->context.sp = (unsigned long)child_tf;
-    child->context.lr = (unsigned long)ret_to_user;
-
-    struct task *t = sched_create_user_task(child->context.sp, child->context.lr, (uintptr_t)kstack,
-                                            (uint32_t)child_pid);
+    struct task *t = sched_create_user_task((unsigned long)child_tf, (unsigned long)ret_to_user,
+                                            (uintptr_t)kstack, (uint32_t)child_pid);
     if (!t) {
         close_all_fds(child);
         if (child->cwd) {

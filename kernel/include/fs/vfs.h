@@ -83,11 +83,21 @@ struct vfs_vnode {
 };
 
 /*
+ * struct vfs_dir_pos - Where a directory listing has got to.
+ */
+struct vfs_dir_pos {
+    uint32_t fs_offset; // position the filesystem's readdir understands
+    uint32_t mount_idx; // how far through the mount table synthetic entries are
+    uint32_t dot_idx;   // 0 = "." next, 1 = ".." next, 2 = done
+};
+
+/*
  * struct vfs_file - An open instance of a vnode (file descriptor state).
  */
 struct vfs_file {
     struct vfs_vnode *node;
     vfs_off_t offset;
+    struct vfs_dir_pos dir_pos;
     int flags;
     atomic_t refcount;
 };

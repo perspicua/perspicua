@@ -671,6 +671,14 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
         return -EINVAL;
     }
 
+    if (f->node->type == VFS_VNODE_TYPE_DIR) {
+        if (new_offset != 0) {
+            vfs_file_put(f);
+            return -EINVAL;
+        }
+        f->dir_pos = (struct vfs_dir_pos){0};
+    }
+
     f->offset = new_offset;
     vfs_file_put(f);
     return new_offset;
@@ -744,15 +752,12 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     size_t max_entries = count / dirent_size;
     struct dirent *dirents = (struct dirent *)buffer;
 
-    vfs_off_t orig_offset = f->offset;
-    /* Offset layout:
-     * [63:34] - Mount index
-     * [33:32] - Dot/DotDot index (0: none, 1: ".", 2: "..")
-     * [31: 0] - FS-specific offset
-     */
-    uint32_t mount_idx = (uint32_t)((orig_offset >> 34) & 0x3FFFFFFF);
-    uint32_t dot_idx = (uint32_t)((orig_offset >> 32) & 0x03);
-    f->offset = orig_offset & 0xFFFFFFFF;
+    uint32_t mount_idx = f->dir_pos.mount_idx;
+    uint32_t dot_idx = f->dir_pos.dot_idx;
+
+    // The filesystem's readdir advances this through f->offset.
+    vfs_off_t entry_offset = (vfs_off_t)f->dir_pos.fs_offset;
+    f->offset = entry_offset;
 
     int res = 0;
 
@@ -784,7 +789,9 @@ int vfs_readdir(int fd, void *buffer, size_t count)
         int fs_res = f->node->ops->readdir(f, buffer + res * dirent_size,
                                            (max_entries - (size_t)res) * dirent_size);
         if (fs_res < 0) {
-            f->offset = orig_offset;
+            // dir_pos is only written at readdir_done, so the listing position
+            // is already intact; just undo what the filesystem moved.
+            f->offset = entry_offset;
             vfs_file_put(f);
             return fs_res;
         }
@@ -824,8 +831,9 @@ int vfs_readdir(int fd, void *buffer, size_t count)
     spin_unlock_irqrestore(&vfs_lock, flags);
 
 readdir_done:
-    f->offset =
-        (f->offset & 0xFFFFFFFF) | ((vfs_off_t)dot_idx << 32) | ((vfs_off_t)mount_idx << 34);
+    f->dir_pos.fs_offset = (uint32_t)f->offset;
+    f->dir_pos.dot_idx = dot_idx;
+    f->dir_pos.mount_idx = mount_idx;
 
     vfs_file_put(f);
     return res;

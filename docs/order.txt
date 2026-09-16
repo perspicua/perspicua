@@ -297,7 +297,7 @@ Ground rule for the whole phase: no behavior changes except where an item says
       Note: the buffer-cache unification (Phase 2 item 5) subsumes the first
         half; do only what is cheap here if that item is near.
 
-  16. Shape fixes that threads and lseek will trip on
+  16. Shape fixes that threads and lseek will trip on [DONE]
       Effort: S-M | Unlocks: Phase 5 item 1 without archaeology
       Scope: remove the cpu_context from struct process (it only seeds the
         task's own context); stop packing the mount index and dot state into
