@@ -363,7 +363,7 @@ void pmm_init(void)
             (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
-void *pmm_alloc_pages(unsigned long count)
+void *pmm_alloc_pages_nozero(unsigned long count)
 {
     if (count == 0) {
         return NULL;
@@ -412,9 +412,15 @@ void *pmm_alloc_pages(unsigned long count)
 
     spin_unlock_irqrestore(&pmm_lock, irq);
 
-    void *vaddr = (void *)P2V(pfn * PAGE_SIZE);
-    memset(vaddr, 0, (size_t)(1UL << target_order) * PAGE_SIZE);
+    return (void *)P2V(pfn * PAGE_SIZE);
+}
 
+void *pmm_alloc_pages(unsigned long count)
+{
+    void *vaddr = pmm_alloc_pages_nozero(count);
+    if (vaddr) {
+        memset(vaddr, 0, (size_t)(1UL << get_order(count)) * PAGE_SIZE);
+    }
     return vaddr;
 }
 

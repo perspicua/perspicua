@@ -623,7 +623,7 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            void *fresh = pmm_alloc_pages(1);
+            void *fresh = pmm_alloc_pages_nozero(1);
             if (!fresh) {
                 return bytes_read > 0 ? (int)bytes_read : -ENOMEM;
             }
@@ -700,15 +700,12 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            void *fresh = pmm_alloc_pages(1);
+            void *fresh = pmm_alloc_pages_nozero(1);
             if (!fresh) {
                 return bytes_written > 0 ? (int)bytes_written : -ENOMEM;
             }
-            memset(fresh, 0, PAGE_SIZE);
 
-            if (page_index * PAGE_SIZE < (size_t)file->node->file_size) {
-                fat32_read_page(file->node, page_index, fresh);
-            }
+            fat32_read_page(file->node, page_index, fresh);
 
             if (pagecache_add_page(file->node, page_index, fresh) == 0) {
                 page_data = fresh; // add_page pinned it

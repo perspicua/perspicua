@@ -23,7 +23,11 @@ void *pmm_alloc_page(void);
 void *pmm_alloc_pages(unsigned long count);
 
 /*
- * pmm_alloc_pages_nozero - Allocates a power-of-two block of pages without zeroing.
+ * pmm_alloc_pages_nozero - Allocates a power-of-two block of pages, as they
+ * came back from their last owner.
+ *
+ * The caller must overwrite every byte before the memory becomes reachable
+ * from userspace; whatever it leaves untouched is the previous owner's data.
  */
 void *pmm_alloc_pages_nozero(unsigned long count);
 

@@ -178,10 +178,12 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                     mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);
                 }
             } else {
-                kernel_vaddr = pmm_alloc_page();
+                kernel_vaddr = pmm_alloc_pages_nozero(1);
                 if (!kernel_vaddr) {
                     PANIC("ELF: Out of memory during loading");
                 }
+                /* Zeroed here rather than by the allocator: the bytes past
+                 * filesz are the segment's BSS and must read as zero. */
                 memset(kernel_vaddr, 0, PAGE_SIZE);
                 mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags);
             }

@@ -13,6 +13,7 @@
 
 #include "fs/fat32.h"
 #include "fs/vfs.h"
+#include "mm/pmm.h"
 #include "mm/slab.h"
 
 #define BIG_FILE  "/tfatbig.tmp"
@@ -273,6 +274,58 @@ void test_fat32(void)
 
         struct stat st;
         TEST_ASSERT("unlinked file is gone", vfs_stat(BIG_FILE, &st) != 0);
+    }
+
+    /*
+     * Page cache pages arrive without being zeroed, so a hole written past EOF
+     * reads back as whatever the page last held unless fat32_read_page clears
+     * it. Dirty a batch of pages, release them, then write past EOF and
+     * require the gap to be zero.
+     */
+    {
+#define HOLE_PAGES  16
+#define HOLE_BYTE   0x5A
+#define HOLE_OFFSET 3000
+#define HOLE_TAIL   10
+
+        void *dirty[HOLE_PAGES];
+        for (int i = 0; i < HOLE_PAGES; i++) {
+            dirty[i] = pmm_alloc_pages_nozero(1);
+            if (dirty[i]) {
+                memset(dirty[i], HOLE_BYTE, PAGE_SIZE);
+            }
+        }
+        for (int i = 0; i < HOLE_PAGES; i++) {
+            if (dirty[i]) {
+                pmm_free_page(dirty[i]);
+            }
+        }
+
+        int fd = vfs_open(BIG_FILE, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("open file for hole write", fd >= 0);
+        TEST_ASSERT_EQ("seek past EOF", (int)vfs_lseek(fd, HOLE_OFFSET, SEEK_SET), HOLE_OFFSET);
+        TEST_ASSERT_EQ("write past EOF", vfs_write(fd, "0123456789", HOLE_TAIL), HOLE_TAIL);
+        vfs_close(fd);
+
+        memset(big_readback, HOLE_BYTE, HOLE_OFFSET + HOLE_TAIL);
+        fd = vfs_open(BIG_FILE, O_RDONLY);
+        TEST_ASSERT("reopen file with hole", fd >= 0);
+        TEST_ASSERT_EQ("read whole file", vfs_read(fd, big_readback, HOLE_OFFSET + HOLE_TAIL),
+                       HOLE_OFFSET + HOLE_TAIL);
+        vfs_close(fd);
+
+        int hole_is_zero = 1;
+        for (int i = 0; i < HOLE_OFFSET; i++) {
+            if (big_readback[i] != 0) {
+                hole_is_zero = 0;
+                break;
+            }
+        }
+        TEST_ASSERT("hole reads as zero, not as stale page data", hole_is_zero);
+        TEST_ASSERT("data after the hole is intact",
+                    memcmp(big_readback + HOLE_OFFSET, "0123456789", HOLE_TAIL) == 0);
+
+        TEST_ASSERT_EQ("unlink file with hole", vfs_unlink(BIG_FILE), 0);
     }
 
     // nested directories must resolve through multiple levels
