@@ -19,6 +19,8 @@
 
 #define PMM_PFN_NULL 0xFFFFFFFFU
 
+#define PMM_PAGE_SLAB 0x01U
+
 /*
  * struct pmm_page - Metadata for a single physical 4 KB page.
  *
@@ -30,7 +32,8 @@ struct pmm_page {
     uint16_t refcount;
     uint8_t order;
     uint8_t is_free;
-    uint8_t _pad[4];
+    uint8_t flags;
+    uint8_t _pad[3];
 };
 
 _Static_assert(sizeof(struct pmm_page) == 16, "pmm_page must be 16 bytes");
@@ -388,6 +391,7 @@ void *pmm_alloc_pages(unsigned long count)
 
     pmm_list_del(current_order, pfn);
     p->is_free = 0;
+    p->flags = 0;
     pmm_free_pages_count -= (1UL << current_order);
 
     // Split larger blocks into buddies down to the target order
@@ -511,6 +515,49 @@ int pmm_is_managed(void *ptr)
     }
     unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
     return pfn < pmm_num_pages && !pfn_is_reserved(pfn);
+}
+
+/*
+ * pmm_is_slab - True if ptr falls in a page the slab allocator owns.
+ *
+ * Answers from the page's metadata, never from its contents: the bytes of a
+ * page belong to whoever allocated it and may hold any value, including one
+ * that looks like a header.
+ */
+int pmm_is_slab(void *ptr)
+{
+    if (!pmm_is_managed(ptr)) {
+        return 0;
+    }
+
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+    int is_slab = (pmm_page_array[pfn].flags & PMM_PAGE_SLAB) != 0;
+    spin_unlock_irqrestore(&pmm_lock, irq);
+    return is_slab;
+}
+
+void pmm_set_slab(void *ptr, int is_slab)
+{
+    if (!pmm_is_managed(ptr)) {
+        PANIC("pmm: slab flag set on a page the allocator does not own");
+    }
+
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+
+    if (pmm_page_array[pfn].is_free) {
+        spin_unlock_irqrestore(&pmm_lock, irq);
+        PANIC("pmm: slab flag set on a free page");
+    }
+
+    if (is_slab) {
+        pmm_page_array[pfn].flags |= PMM_PAGE_SLAB;
+    } else {
+        pmm_page_array[pfn].flags &= (uint8_t)~PMM_PAGE_SLAB;
+    }
+
+    spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
 void *pmm_alloc_page(void)

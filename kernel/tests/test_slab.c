@@ -1,6 +1,7 @@
 #include "test.h"
 #include "mm/slab.h"
 #include "mm/heap.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -81,6 +82,21 @@ void test_slab(void)
         TEST_ASSERT("slab_owns null", slab_owns(NULL) == 0);
         heap_free(slab_ptr);
         heap_free(heap_ptr);
+    }
+
+    /* A page the slab allocator never carved, holding the slab header magic
+     * in its first word. Ownership comes from the page's metadata, so the
+     * contents must not sway it. */
+    {
+        unsigned int *raw = (unsigned int *)pmm_alloc_page();
+        TEST_ASSERT("raw page allocated", raw != NULL);
+        if (raw) {
+            raw[0] = 0x534C4142U; // SLAB_MAGIC
+            TEST_ASSERT("slab_owns rejects a page that only looks like a slab",
+                        slab_owns(raw) == 0);
+            TEST_ASSERT("slab_owns rejects an offset into it", slab_owns(raw + 4) == 0);
+            pmm_free_page(raw);
+        }
     }
 
     // cross-class allocations don't interfere

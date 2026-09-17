@@ -220,9 +220,14 @@ void heap_free(void *ptr)
         return;
     }
 
-    unsigned long flags = spin_lock_irqsave(&heap_lock);
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
+
+    if (!pmm_is_managed((void *)block)) {
+        PANIC("heap: pointer was not returned by heap_malloc");
+    }
+
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
 
     // Confirm the header is ours before size is used to locate anything.
     if (block->magic == HEAP_MAGIC_FREE) {
