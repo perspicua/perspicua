@@ -454,6 +454,8 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
 
 static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page_buffer)
 {
+    memset(page_buffer, 0, PAGE_SIZE);
+
     uint32_t start_offset = page_index * PAGE_SIZE;
     if (start_offset >= node->file_size) {
         return 0;
@@ -475,8 +477,6 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
     if (start_offset + to_read > node->file_size) {
         to_read = node->file_size - start_offset;
     }
-
-    memset(page_buffer, 0, PAGE_SIZE);
 
     uint8_t sector_buffer[512];
     uint32_t current_offset = start_offset;
