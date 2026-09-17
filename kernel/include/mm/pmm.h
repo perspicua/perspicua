@@ -18,9 +18,14 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
 void *pmm_alloc_page(void);
 
 /*
- * pmm_alloc_pages - Allocates a power-of-two block of pages.
+ * pmm_alloc_pages - Allocates a power-of-two block of pages, zeroing them.
  */
 void *pmm_alloc_pages(unsigned long count);
+
+/*
+ * pmm_alloc_pages_nozero - Allocates a power-of-two block of pages without zeroing.
+ */
+void *pmm_alloc_pages_nozero(unsigned long count);
 
 void pmm_free_page(void *ptr);
 
@@ -31,6 +36,10 @@ void pmm_hold_page(void *ptr);
 void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 
 int pmm_is_managed(void *ptr);
+
+int pmm_is_slab(void *ptr);
+
+void pmm_set_slab(void *ptr, int is_slab);
 
 unsigned int pmm_page_refcount(void *ptr);
 
