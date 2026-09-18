@@ -23,7 +23,7 @@ release.
 ## Status
 
 This describes what exists today. For planned work see
-[`docs/order.txt`](docs/order.txt) and [`docs/ideas.txt`](docs/ideas.txt).
+[`docs/order.txt`](docs/order.txt).
 
 **Architecture and boot**
 - AArch64 (Cortex-A72), 4 cores via SMP
@@ -40,21 +40,20 @@ This describes what exists today. For planned work see
 - Per-core runqueues, round-robin selection; sleep and wait queues
 - `fork`, `exec` (ELF loader), `exit`, `waitpid`
 - Per-process address space, file-descriptor table, and signal state
-- POSIX-style signals; job-control stops are not fully wired yet
+- POSIX-style signals, including job-control stops (SIGTSTP/SIGTTIN/SIGTTOU)
 
 **Filesystems**
 - VFS core with an ops table per node and path resolution through mounts
-- FAT32 (on-disk root), devfs, procfs, ramfs, pipes
+- FAT32 (on-disk root, with long names), devfs, procfs, pipes
 - Page cache for file data; block cache in the sd/block drivers
-- Writeback daemon
 
 **Drivers**
 - UART, GIC, GPIO, mailbox, SD card and block layer
-- Framebuffer: `fb` -> `graphics` -> `fb_console` (8x8 font) -> `dashboard`
+- Framebuffer: `fb` -> `graphics` -> `fb_console` (8x8 font)
 - Devicetree-driven device and probe model
 
 **User/kernel interface**
-- 37 syscalls defined in [`uapi/syscalls.h`](uapi/syscalls.h)
+- 46 syscalls defined in [`uapi/syscalls.h`](uapi/syscalls.h)
 - `uaccess` helpers copy across the boundary with fault fixup, so a bad user
   pointer returns an error rather than faulting the kernel
 - In-tree freestanding libc shared by kernel and userspace
@@ -76,7 +75,7 @@ before it:
 | 1 | Console — probe core drivers, framebuffer and text console, tty |
 | 2 | Memory — reserve regions, pmm, enable MMU, ASID pool, page cache, rebase DTB, kernel heap |
 | 3 | Interrupts and scheduling — IRQ-driven drivers, UART IRQs, timer tick, scheduler |
-| 4 | SMP and filesystems — wake secondary cores, VFS, processes, devfs, mount FAT32 at `/`, writeback, procfs |
+| 4 | SMP and filesystems — wake secondary cores, VFS, processes, devfs, mount FAT32 at `/`, procfs |
 
 The kernel then enables interrupts, optionally runs the test suites under
 `CONFIG_TESTS`, and execs `/bin/init.elf`. The boot thread parks in a `wfe`
@@ -122,7 +121,7 @@ process, signals, pipe, vfs, fat32, sd, uaccess, timer, string, and types.
 kernel/     arch/ core/ mm/ sched/ fs/ driver/ devicetree/ init/ tests/ include/
 libc/       freestanding C library (kernel/, user/, src/, arch/, include/)
 uapi/       user/kernel ABI: syscall numbers, error codes, struct layouts
-user/       crt0.S and userspace applications
+user/       crt0.S and userspace applications (apps/, one file or one directory each)
 cmake/      cross-compilation toolchain file
 scripts/    symbol-table generation, GDB helpers, test harness
 pi4-boot/   firmware, devicetree blob, and the final kernel8.img

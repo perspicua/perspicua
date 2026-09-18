@@ -2,9 +2,9 @@ Perspicua Vision: The Kernel You Can See Through
 ================================================
 
 This file is the NORTH STAR (the "why" and the "where"). order.txt sequences
-the work, ideas.txt catalogs it; this file says what it is all FOR. When two
-designs are otherwise tied, the one that serves this vision wins. When a new
-feature is proposed, it is weighed against this file before it enters ideas.txt.
+the work; this file says what it is all FOR. When two designs are otherwise
+tied, the one that serves this vision wins. A new feature is weighed against
+this file before it enters order.txt.
 
 Adopted: August 2026. This is a direction, not a rewrite plan — read "WHAT THIS
 IS NOT" before drawing conclusions.

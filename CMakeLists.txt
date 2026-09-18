@@ -81,7 +81,7 @@ add_custom_command(
 
 add_custom_target(sdcard
     COMMAND ${MCOPY} -o -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
-    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.txt" ::/
+    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.md" ::/
     DEPENDS ${SD_IMAGE} ${USER_ELFS}
     VERBATIM
     COMMENT "Updating SD card image (incremental)"
