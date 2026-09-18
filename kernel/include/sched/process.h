@@ -114,7 +114,6 @@ struct process {
     unsigned long asid_generation;
     unsigned long ttbr0;
 
-    struct cpu_context context;
     struct va_allocator va;
 
     struct vfs_file *fd_table[VFS_MAX_FDS];

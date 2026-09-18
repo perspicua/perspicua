@@ -273,5 +273,32 @@ void test_vfs(void)
         TEST_ASSERT_EQ("cleanup slash file", vfs_unlink(f), 0);
     }
 
+    /*
+     * A directory's listing position used to live in the high bits of the byte
+     * offset, so any lseek on a directory fd silently rewrote it. It has its
+     * own field now, and lseek does the one thing that is defined: rewind.
+     */
+    {
+        int fd = vfs_open("/", O_RDONLY);
+        TEST_ASSERT("open root for seek test", fd >= 0);
+
+        struct dirent first[2];
+        int n = vfs_readdir(fd, first, sizeof(first));
+        TEST_ASSERT("first readdir returned entries", n > 0);
+
+        TEST_ASSERT_EQ("seek to a non-zero directory position fails", vfs_lseek(fd, 64, SEEK_SET),
+                       -EINVAL);
+
+        TEST_ASSERT_EQ("rewind a directory", vfs_lseek(fd, 0, SEEK_SET), 0);
+
+        struct dirent again[2];
+        int m = vfs_readdir(fd, again, sizeof(again));
+        TEST_ASSERT_EQ("rewound readdir returns the same count", m, n);
+        TEST_ASSERT("rewound readdir restarts the listing",
+                    strcmp(again[0].d_name, first[0].d_name) == 0);
+
+        vfs_close(fd);
+    }
+
     TEST_SUITE_END("VFS");
 }
