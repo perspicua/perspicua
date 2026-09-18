@@ -99,6 +99,31 @@ void test_slab(void)
         }
     }
 
+    {
+        const unsigned long pages = 4;
+        unsigned char *block = (unsigned char *)pmm_alloc_pages(pages);
+        TEST_ASSERT("multi-page block allocated", block != NULL);
+
+        if (block) {
+            unsigned char *tail = block + PAGE_SIZE;
+
+            pmm_set_slab(tail, 1);
+            TEST_ASSERT("stamped tail page reads back as slab-owned", slab_owns(tail));
+            pmm_free_pages(block);
+
+            unsigned char *again = (unsigned char *)pmm_alloc_pages(pages);
+            TEST_ASSERT("block re-allocated", again != NULL);
+
+            if (again == block) { // only the same block proves anything
+                TEST_ASSERT("a recycled tail page does not inherit the flag",
+                            !slab_owns(again + PAGE_SIZE));
+            }
+            if (again) {
+                pmm_free_pages(again);
+            }
+        }
+    }
+
     // cross-class allocations don't interfere
     {
         unsigned char *p16 = (unsigned char *)heap_malloc(16);

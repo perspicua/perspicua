@@ -391,7 +391,6 @@ void *pmm_alloc_pages_nozero(unsigned long count)
 
     pmm_list_del(current_order, pfn);
     p->is_free = 0;
-    p->flags = 0;
     pmm_free_pages_count -= (1UL << current_order);
 
     // Split larger blocks into buddies down to the target order
@@ -409,6 +408,12 @@ void *pmm_alloc_pages_nozero(unsigned long count)
 
     p->order = (uint8_t)target_order;
     p->refcount = 1;
+
+    // Every page, not just the head: slab_owns answers from whichever page
+    // holds the pointer, and heap_free asks about pointers inside the block.
+    for (unsigned long i = 0; i < (1UL << target_order); i++) {
+        pfn_to_page(pfn + i)->flags = 0;
+    }
 
     spin_unlock_irqrestore(&pmm_lock, irq);
 
