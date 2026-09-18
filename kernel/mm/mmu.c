@@ -801,7 +801,7 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
     pmm_hold_page(old_va); // keep the source alive while the lock is dropped
     spin_unlock_irqrestore(&mmu_lock, irq);
 
-    void *new_page = pmm_alloc_page();
+    void *new_page = pmm_alloc_pages_nozero(1);
     if (!new_page) {
         pmm_free_page(old_va);
         return -1;

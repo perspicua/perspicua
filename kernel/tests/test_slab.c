@@ -1,6 +1,7 @@
 #include "test.h"
 #include "mm/slab.h"
 #include "mm/heap.h"
+#include "mm/pmm.h"
 #include "string.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -81,6 +82,46 @@ void test_slab(void)
         TEST_ASSERT("slab_owns null", slab_owns(NULL) == 0);
         heap_free(slab_ptr);
         heap_free(heap_ptr);
+    }
+
+    /* A page the slab allocator never carved, holding the slab header magic
+     * in its first word. Ownership comes from the page's metadata, so the
+     * contents must not sway it. */
+    {
+        unsigned int *raw = (unsigned int *)pmm_alloc_page();
+        TEST_ASSERT("raw page allocated", raw != NULL);
+        if (raw) {
+            raw[0] = 0x534C4142U; // SLAB_MAGIC
+            TEST_ASSERT("slab_owns rejects a page that only looks like a slab",
+                        slab_owns(raw) == 0);
+            TEST_ASSERT("slab_owns rejects an offset into it", slab_owns(raw + 4) == 0);
+            pmm_free_page(raw);
+        }
+    }
+
+    {
+        const unsigned long pages = 4;
+        unsigned char *block = (unsigned char *)pmm_alloc_pages(pages);
+        TEST_ASSERT("multi-page block allocated", block != NULL);
+
+        if (block) {
+            unsigned char *tail = block + PAGE_SIZE;
+
+            pmm_set_slab(tail, 1);
+            TEST_ASSERT("stamped tail page reads back as slab-owned", slab_owns(tail));
+            pmm_free_pages(block);
+
+            unsigned char *again = (unsigned char *)pmm_alloc_pages(pages);
+            TEST_ASSERT("block re-allocated", again != NULL);
+
+            if (again == block) { // only the same block proves anything
+                TEST_ASSERT("a recycled tail page does not inherit the flag",
+                            !slab_owns(again + PAGE_SIZE));
+            }
+            if (again) {
+                pmm_free_pages(again);
+            }
+        }
     }
 
     // cross-class allocations don't interfere

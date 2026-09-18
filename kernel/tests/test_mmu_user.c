@@ -258,12 +258,17 @@ void test_mmu_user(void)
     // mmu_switch_user sets TTBR0 correctly
     {
         unsigned long *pgd = mmu_create_user_pgd();
-
-        // switch to user PGD
-        mmu_switch_user(pgd, 42);
-
         unsigned long ttbr0;
+
+        unsigned long irqf = irq_save();
+
+        mmu_switch_user(pgd, 42);
         asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
+
+        // restore kernel TTBR0
+        asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
+
+        irq_restore(irqf);
 
         unsigned long expected_phys = V2P(pgd);
         unsigned long actual_phys = ttbr0 & 0x0000FFFFFFFFFFFFULL;
@@ -271,9 +276,6 @@ void test_mmu_user(void)
 
         TEST_ASSERT("switch_user: phys match", actual_phys == expected_phys);
         TEST_ASSERT("switch_user: ASID=42", actual_asid == 42);
-
-        // restore kernel TTBR0
-        asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
 
         mmu_destroy_user_pgd(pgd);
     }
@@ -283,20 +285,25 @@ void test_mmu_user(void)
         unsigned long *pgd1 = mmu_create_user_pgd();
         unsigned long *pgd2 = mmu_create_user_pgd();
 
+        unsigned long ttbr0_1, ttbr0_2;
+
+        unsigned long irqf = irq_save();
+
         mmu_switch_user(pgd1, 1);
-        unsigned long ttbr0_1;
         asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0_1));
 
         mmu_switch_user(pgd2, 2);
-        unsigned long ttbr0_2;
         asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0_2));
+
+        asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
+
+        irq_restore(irqf);
 
         TEST_ASSERT("asid: pgd1 asid=1", (ttbr0_1 >> 48) == 1);
         TEST_ASSERT("asid: pgd2 asid=2", (ttbr0_2 >> 48) == 2);
         TEST_ASSERT("asid: different phys",
                     (ttbr0_1 & 0x0000FFFFFFFFFFFFULL) != (ttbr0_2 & 0x0000FFFFFFFFFFFFULL));
 
-        asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
         mmu_destroy_user_pgd(pgd1);
         mmu_destroy_user_pgd(pgd2);
     }

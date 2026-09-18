@@ -197,7 +197,7 @@ static void task_short_sleep_ts(void)
 
 static void task_long_sleep_ts(void)
 {
-    sched_sleep_ms(40);
+    sched_sleep_ms(200);
     ts_long_done = timer_get_system_time();
 }
 
@@ -379,9 +379,9 @@ void test_scheduler(void)
     {
         ts_short_done = 0;
         ts_long_done = 0;
-        sched_create_task(task_long_sleep_ts);  // sleeps 40ms
+        sched_create_task(task_long_sleep_ts);  // sleeps 200ms
         sched_create_task(task_short_sleep_ts); // sleeps 20ms
-        sched_sleep_ms(80);
+        sched_sleep_ms(300);
         TEST_ASSERT("short done", ts_short_done != 0);
         TEST_ASSERT("long done", ts_long_done != 0);
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);

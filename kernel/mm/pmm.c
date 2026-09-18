@@ -15,8 +15,11 @@
 #include "core/lock.h"
 #include "devicetree/fdt.h"
 
-#define PMM_MAX_FREE_LIST_SCAN  131072UL
 #define PMM_MAX_RESERVED_RANGES 64
+
+#define PMM_PFN_NULL 0xFFFFFFFFU
+
+#define PMM_PAGE_SLAB 0x01U
 
 /*
  * struct pmm_page - Metadata for a single physical 4 KB page.
@@ -24,11 +27,13 @@
  * Each page in RAM is represented by one of these in a global array.
  */
 struct pmm_page {
-    struct pmm_page *next;
+    uint32_t next;
+    uint32_t prev;
     uint16_t refcount;
     uint8_t order;
     uint8_t is_free;
-    uint8_t _pad[4];
+    uint8_t flags;
+    uint8_t _pad[3];
 };
 
 _Static_assert(sizeof(struct pmm_page) == 16, "pmm_page must be 16 bytes");
@@ -49,7 +54,7 @@ static unsigned long pmm_managed_pages = 0;
 static unsigned long pmm_free_pages_count = 0;
 
 static struct pmm_page *pmm_page_array = NULL;
-static struct pmm_page *pmm_free_lists[PMM_MAX_ORDER + 1];
+static uint32_t pmm_free_lists[PMM_MAX_ORDER + 1];
 static struct pmm_reserved_range pmm_reserved_ranges[PMM_MAX_RESERVED_RANGES];
 static unsigned int pmm_reserved_range_count = 0;
 
@@ -78,11 +83,6 @@ static inline unsigned int get_order(unsigned long count)
 static inline struct pmm_page *pfn_to_page(unsigned long pfn)
 {
     return &pmm_page_array[pfn];
-}
-
-static inline unsigned long page_to_pfn(const struct pmm_page *p)
-{
-    return (unsigned long)(p - pmm_page_array);
 }
 
 static int reserved_range_overlaps(unsigned long a_start, unsigned long a_end,
@@ -125,6 +125,39 @@ static inline int pfn_is_reserved(unsigned long pfn)
     return range_overlaps_reserved_pfns(pfn, pfn + 1);
 }
 
+static void pmm_list_add(unsigned int order, unsigned long pfn)
+{
+    struct pmm_page *p = pfn_to_page(pfn);
+
+    p->prev = PMM_PFN_NULL;
+    p->next = pmm_free_lists[order];
+    if (p->next != PMM_PFN_NULL) {
+        pfn_to_page(p->next)->prev = (uint32_t)pfn;
+    }
+    pmm_free_lists[order] = (uint32_t)pfn;
+}
+
+static void pmm_list_del(unsigned int order, unsigned long pfn)
+{
+    struct pmm_page *p = pfn_to_page(pfn);
+
+    if (p->prev == PMM_PFN_NULL) {
+        if (pmm_free_lists[order] != (uint32_t)pfn) {
+            PANIC("pmm: free page is not on the list it claims");
+        }
+        pmm_free_lists[order] = p->next;
+    } else {
+        pfn_to_page(p->prev)->next = p->next;
+    }
+
+    if (p->next != PMM_PFN_NULL) {
+        pfn_to_page(p->next)->prev = p->prev;
+    }
+
+    p->next = PMM_PFN_NULL;
+    p->prev = PMM_PFN_NULL;
+}
+
 static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
 {
     while (order < PMM_MAX_ORDER) {
@@ -138,22 +171,7 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
             break;
         }
 
-        // Unlink buddy from its current order list
-        struct pmm_page **curr = &pmm_free_lists[order];
-        unsigned long scan = 0;
-        while (*curr && *curr != buddy) {
-            curr = &(*curr)->next;
-            if (++scan > PMM_MAX_FREE_LIST_SCAN) {
-                PANIC("pmm: list corruption");
-            }
-        }
-
-        if (!*curr) {
-            PANIC("pmm: buddy state mismatch");
-        }
-
-        *curr = buddy->next;
-        buddy->next = NULL;
+        pmm_list_del(order, buddy_pfn);
         buddy->is_free = 0;
         buddy->order = 0;
 
@@ -164,8 +182,7 @@ static void pmm_free_buddy_internal(unsigned long pfn, unsigned int order)
     struct pmm_page *p = pfn_to_page(pfn);
     p->is_free = 1;
     p->order = (uint8_t)order;
-    p->next = pmm_free_lists[order];
-    pmm_free_lists[order] = p;
+    pmm_list_add(order, pfn);
 }
 
 void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag)
@@ -280,6 +297,9 @@ void pmm_init(void)
     if (pmm_num_pages == 0) {
         PANIC("pmm: RAM too small");
     }
+    if (pmm_num_pages >= PMM_PFN_NULL) {
+        PANIC("pmm: more pages than a free-list link can address");
+    }
 
     // Allocate metadata array immediately after the kernel binary
     unsigned long kernel_end = (unsigned long)__kernel_end;
@@ -301,10 +321,18 @@ void pmm_init(void)
     pmm_reserve_range(0, usable_start_phys, "kernel+metadata");
 
     for (int i = 0; i <= PMM_MAX_ORDER; i++) {
-        pmm_free_lists[i] = NULL;
+        pmm_free_lists[i] = PMM_PFN_NULL;
     }
 
     memset(pmm_page_array, 0, array_bytes);
+
+    /* Zeroed links would read as pfn 0, a real page, so a stray unlink would
+     * silently corrupt the head of a list instead of tripping the check in
+     * pmm_list_del. */
+    for (unsigned long i = 0; i < pmm_num_pages; i++) {
+        pmm_page_array[i].next = PMM_PFN_NULL;
+        pmm_page_array[i].prev = PMM_PFN_NULL;
+    }
 
     // Distribute non-reserved physical pages into the buddy lists
     unsigned long pfn = 0;
@@ -335,7 +363,7 @@ void pmm_init(void)
             (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
-void *pmm_alloc_pages(unsigned long count)
+void *pmm_alloc_pages_nozero(unsigned long count)
 {
     if (count == 0) {
         return NULL;
@@ -349,7 +377,7 @@ void *pmm_alloc_pages(unsigned long count)
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
 
     unsigned int current_order = target_order;
-    while (current_order <= PMM_MAX_ORDER && !pmm_free_lists[current_order]) {
+    while (current_order <= PMM_MAX_ORDER && pmm_free_lists[current_order] == PMM_PFN_NULL) {
         current_order++;
     }
 
@@ -358,13 +386,12 @@ void *pmm_alloc_pages(unsigned long count)
         return NULL;
     }
 
-    struct pmm_page *p = pmm_free_lists[current_order];
-    pmm_free_lists[current_order] = p->next;
-    p->is_free = 0;
-    p->next = NULL;
-    pmm_free_pages_count -= (1UL << current_order);
+    unsigned long pfn = pmm_free_lists[current_order];
+    struct pmm_page *p = pfn_to_page(pfn);
 
-    unsigned long pfn = page_to_pfn(p);
+    pmm_list_del(current_order, pfn);
+    p->is_free = 0;
+    pmm_free_pages_count -= (1UL << current_order);
 
     // Split larger blocks into buddies down to the target order
     while (current_order > target_order) {
@@ -375,19 +402,30 @@ void *pmm_alloc_pages(unsigned long count)
         buddy->is_free = 1;
         buddy->order = (uint8_t)current_order;
         buddy->refcount = 0;
-        buddy->next = pmm_free_lists[current_order];
-        pmm_free_lists[current_order] = buddy;
+        pmm_list_add(current_order, buddy_pfn);
         pmm_free_pages_count += (1UL << current_order);
     }
 
     p->order = (uint8_t)target_order;
     p->refcount = 1;
 
+    // Every page, not just the head: slab_owns answers from whichever page
+    // holds the pointer, and heap_free asks about pointers inside the block.
+    for (unsigned long i = 0; i < (1UL << target_order); i++) {
+        pfn_to_page(pfn + i)->flags = 0;
+    }
+
     spin_unlock_irqrestore(&pmm_lock, irq);
 
-    void *vaddr = (void *)P2V(pfn * PAGE_SIZE);
-    memset(vaddr, 0, (size_t)(1UL << target_order) * PAGE_SIZE);
+    return (void *)P2V(pfn * PAGE_SIZE);
+}
 
+void *pmm_alloc_pages(unsigned long count)
+{
+    void *vaddr = pmm_alloc_pages_nozero(count);
+    if (vaddr) {
+        memset(vaddr, 0, (size_t)(1UL << get_order(count)) * PAGE_SIZE);
+    }
     return vaddr;
 }
 
@@ -488,6 +526,49 @@ int pmm_is_managed(void *ptr)
     }
     unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
     return pfn < pmm_num_pages && !pfn_is_reserved(pfn);
+}
+
+/*
+ * pmm_is_slab - True if ptr falls in a page the slab allocator owns.
+ *
+ * Answers from the page's metadata, never from its contents: the bytes of a
+ * page belong to whoever allocated it and may hold any value, including one
+ * that looks like a header.
+ */
+int pmm_is_slab(void *ptr)
+{
+    if (!pmm_is_managed(ptr)) {
+        return 0;
+    }
+
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+    int is_slab = (pmm_page_array[pfn].flags & PMM_PAGE_SLAB) != 0;
+    spin_unlock_irqrestore(&pmm_lock, irq);
+    return is_slab;
+}
+
+void pmm_set_slab(void *ptr, int is_slab)
+{
+    if (!pmm_is_managed(ptr)) {
+        PANIC("pmm: slab flag set on a page the allocator does not own");
+    }
+
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+
+    if (pmm_page_array[pfn].is_free) {
+        spin_unlock_irqrestore(&pmm_lock, irq);
+        PANIC("pmm: slab flag set on a free page");
+    }
+
+    if (is_slab) {
+        pmm_page_array[pfn].flags |= PMM_PAGE_SLAB;
+    } else {
+        pmm_page_array[pfn].flags &= (uint8_t)~PMM_PAGE_SLAB;
+    }
+
+    spin_unlock_irqrestore(&pmm_lock, irq);
 }
 
 void *pmm_alloc_page(void)
