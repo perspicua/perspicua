@@ -334,6 +334,32 @@ static int signal_send_target_locked(struct process *p, int sig)
     return 0;
 }
 
+int signal_raise_fault(int sig)
+{
+    struct process *p = process_current();
+    if (!p || sig < 1 || sig >= NSIG) {
+        return 1;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct sigaction *sa = &p->signal_handlers[sig - 1];
+
+    /* The faulting instruction re-runs on return, so ignoring or blocking a
+     * synchronous fault would spin at EL0 forever. POSIX leaves that
+     * undefined; forcing the default is what makes it terminate. */
+    if (sa->sa_handler == SIG_IGN || (p->blocked_signals & (1u << (sig - 1)))) {
+        memset(sa, 0, sizeof(*sa));
+        sa->sa_handler = SIG_DFL;
+        p->blocked_signals &= ~(1u << (sig - 1));
+    }
+
+    int fatal = (sa->sa_handler == SIG_DFL);
+    __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+    spin_unlock_irqrestore(&process_table_lock, flags);
+
+    return fatal;
+}
+
 int signal_send(uint32_t target_pid, int sig)
 {
     if (sig < 1 || sig >= NSIG) {

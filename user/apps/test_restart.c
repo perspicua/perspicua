@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "errno.h"
+#include "setjmp.h"
 #include "signal.h"
 #include "stdio.h"
 #include "string.h"
@@ -241,6 +242,137 @@ static int run_altstack_reject_case(void)
     return bad;
 }
 
+// Volatile so the compiler cannot fold the address and warn about it.
+static volatile uintptr_t bad_addr = 0x10;
+static volatile int segv_runs;
+static jmp_buf segv_escape;
+
+static void on_segv(int sig)
+{
+    (void)sig;
+    segv_runs++;
+    longjmp(segv_escape, 1);
+}
+
+// 0 = handler ran and we escaped, 1 = never reached, 2 = setup failed.
+static int run_segv_case(int flags)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        stack_t ss = {.ss_sp = alt_area, .ss_flags = 0, .ss_size = sizeof(alt_area)};
+        if (sigaltstack(&ss, NULL) < 0) {
+            _exit(2);
+        }
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_segv;
+        sa.sa_flags = flags;
+        sigaction(SIGSEGV, &sa, NULL);
+
+        if (setjmp(segv_escape) == 0) {
+            *(volatile int *)bad_addr = 1;
+            _exit(1);
+        }
+        _exit(segv_runs ? 0 : 1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// Recurses until the user stack runs out. Only an alt stack can catch this.
+static int burn_stack(int depth)
+{
+    volatile char pad[512];
+    pad[0] = (char)depth;
+    pad[511] = (char)depth;
+    if (depth > 100000) {
+        return depth;
+    }
+    return burn_stack(depth + 1) + pad[0];
+}
+
+static int run_stack_exhaustion_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        stack_t ss = {.ss_sp = alt_area, .ss_flags = 0, .ss_size = sizeof(alt_area)};
+        if (sigaltstack(&ss, NULL) < 0) {
+            _exit(2);
+        }
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_segv;
+        sa.sa_flags = SA_ONSTACK;
+        sigaction(SIGSEGV, &sa, NULL);
+
+        if (setjmp(segv_escape) == 0) {
+            burn_stack(0);
+            _exit(1);
+        }
+        _exit(segv_runs ? 0 : 1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// An unhandled fault must still kill, with the shell's 128 + signo status.
+static int run_unhandled_segv_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        *(volatile int *)bad_addr = 1;
+        _exit(0);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// An undefined instruction used to panic the kernel from EL0.
+static int run_illegal_insn_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        asm volatile(".word 0x00000000"); // UDF #0
+        _exit(0);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
 static int check(const char *name, int got, int want)
 {
     if (got == want) {
@@ -262,11 +394,17 @@ int main(void)
     failures += check("SA_ONSTACK runs the handler on the alt stack", run_altstack_case(), 0);
     failures += check("without SA_ONSTACK it uses the normal stack", run_no_onstack_case(), 1);
     failures += check("sigaltstack rejects bad stacks", run_altstack_reject_case(), 0);
+    failures += check("SIGSEGV from a bad write is catchable", run_segv_case(0), 0);
+    failures +=
+        check("stack exhaustion is catchable on the alt stack", run_stack_exhaustion_case(), 0);
+    failures += check("an unhandled SIGSEGV still kills", run_unhandled_segv_case(), 128 + SIGSEGV);
+    failures += check("an illegal instruction kills the process, not the kernel",
+                      run_illegal_insn_case(), 128 + SIGILL);
 
     if (failures == 0) {
-        printf("test_restart: all 6 tests passed\n");
+        printf("test_restart: all 10 tests passed\n");
     } else {
-        printf("test_restart: %d of 6 tests failed\n", failures);
+        printf("test_restart: %d of 10 tests failed\n", failures);
     }
     return failures != 0;
 }
