@@ -22,11 +22,60 @@
 #include "core/lock.h"
 #include "arch/irq.h"
 
+enum signal_default {
+    SIGNAL_DEFAULT_TERM,
+    SIGNAL_DEFAULT_IGN,
+    SIGNAL_DEFAULT_STOP,
+    SIGNAL_DEFAULT_CONT,
+};
+
+static const enum signal_default signal_default_action[NSIG] = {
+    [SIGHUP] = SIGNAL_DEFAULT_TERM,  [SIGINT] = SIGNAL_DEFAULT_TERM,
+    [SIGQUIT] = SIGNAL_DEFAULT_TERM, [SIGILL] = SIGNAL_DEFAULT_TERM,
+    [SIGTRAP] = SIGNAL_DEFAULT_TERM, [SIGABRT] = SIGNAL_DEFAULT_TERM,
+    [SIGBUS] = SIGNAL_DEFAULT_TERM,  [SIGFPE] = SIGNAL_DEFAULT_TERM,
+    [SIGKILL] = SIGNAL_DEFAULT_TERM, [SIGUSR1] = SIGNAL_DEFAULT_TERM,
+    [SIGSEGV] = SIGNAL_DEFAULT_TERM, [SIGUSR2] = SIGNAL_DEFAULT_TERM,
+    [SIGPIPE] = SIGNAL_DEFAULT_TERM, [SIGALRM] = SIGNAL_DEFAULT_TERM,
+    [SIGTERM] = SIGNAL_DEFAULT_TERM, [SIGSTKFLT] = SIGNAL_DEFAULT_TERM,
+    [SIGCHLD] = SIGNAL_DEFAULT_IGN,  [SIGCONT] = SIGNAL_DEFAULT_CONT,
+    [SIGSTOP] = SIGNAL_DEFAULT_STOP, [SIGTSTP] = SIGNAL_DEFAULT_STOP,
+    [SIGTTIN] = SIGNAL_DEFAULT_STOP, [SIGTTOU] = SIGNAL_DEFAULT_STOP,
+    [SIGURG] = SIGNAL_DEFAULT_IGN,   [SIGXCPU] = SIGNAL_DEFAULT_TERM,
+    [SIGXFSZ] = SIGNAL_DEFAULT_TERM, [SIGVTALRM] = SIGNAL_DEFAULT_TERM,
+    [SIGPROF] = SIGNAL_DEFAULT_TERM, [SIGWINCH] = SIGNAL_DEFAULT_IGN,
+    [SIGIO] = SIGNAL_DEFAULT_TERM,   [SIGPWR] = SIGNAL_DEFAULT_TERM,
+    [SIGSYS] = SIGNAL_DEFAULT_TERM,
+};
+
+/*
+ * signal_discarded - True when posting sig to p would have no effect a
+ * handler or a default action could observe, so no pending bit is set.
+ */
+static int signal_discarded(const struct process *p, int sig)
+{
+    // Neither disposition can be changed, so neither can be dropped.
+    if (sig == SIGKILL || sig == SIGSTOP) {
+        return 0;
+    }
+
+    sighandler_t handler = p->signal_handlers[sig - 1].sa_handler;
+    if (handler == SIG_IGN) {
+        return 1;
+    }
+    return handler == SIG_DFL && signal_default_action[sig] == SIGNAL_DEFAULT_IGN;
+}
+
+int signal_pending(const struct process *p)
+{
+    return p && (p->pending_signals & ~p->blocked_signals) != 0;
+}
+
+// Headroom left below sp_el0 so a handler frame never abuts the live stack.
+#define SIGNAL_STACK_GUARD 128UL
+
 /*
  * signal_handle_pending - Dispatches signals before returning to user mode.
- *
- * Called from the exception return path. Sets up the user stack with a signal
- * frame if a handler is registered, or performs default actions.
  */
 void signal_handle_pending(struct exception_trap_frame *tf)
 {
@@ -51,19 +100,17 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    // Identify first unblocked pending signal
     sigset_t deliverable = curr_process->pending_signals & ~curr_process->blocked_signals;
     if (deliverable == 0) {
         return;
     }
 
-    int trailing_zeros = __builtin_ctz(deliverable);
-    int sig = trailing_zeros + 1;
+    int bit = __builtin_ctz(deliverable);
+    int sig = bit + 1;
 
-    // Pop signal from pending set atomically
-    __atomic_fetch_and(&curr_process->pending_signals, ~(1u << trailing_zeros), __ATOMIC_SEQ_CST);
+    __atomic_fetch_and(&curr_process->pending_signals, ~(1u << bit), __ATOMIC_SEQ_CST);
 
-    struct sigaction *sa = &curr_process->signal_handlers[trailing_zeros];
+    struct sigaction *sa = &curr_process->signal_handlers[bit];
     sighandler_t handler = sa->sa_handler;
 
     if (handler == SIG_IGN) {
@@ -71,14 +118,14 @@ void signal_handle_pending(struct exception_trap_frame *tf)
     }
 
     if (handler == SIG_DFL) {
-        // Signals with default 'ignore' actions
-        if (sig == SIGCHLD || sig == SIGCONT || sig == SIGUSR1 || sig == SIGUSR2 || sig == SIGWINCH
-            || sig == SIGURG) {
+        enum signal_default action = signal_default_action[sig];
+
+        // A continue already happened at send time; there is nothing left to do.
+        if (action == SIGNAL_DEFAULT_IGN || action == SIGNAL_DEFAULT_CONT) {
             return;
         }
 
-        // Default 'stop' actions
-        if (sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+        if (action == SIGNAL_DEFAULT_STOP) {
             /*
              * Commit to the stop under process_table_lock so it is serialised
              * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
@@ -110,13 +157,8 @@ void signal_handle_pending(struct exception_trap_frame *tf)
             return;
         }
 
-        // Terminate process for all other signals
         process_exit(curr_pid, 128 + sig);
-        return;
     }
-
-// Stack alignment and safety guard
-#define SIGNAL_STACK_GUARD 128UL
 
     // Verify user stack has enough space for the signal frame
     if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD)
@@ -134,7 +176,7 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         sigset_t old_mask = curr_process->blocked_signals;
         sigset_t new_mask = old_mask | sa->sa_mask;
         if (!(sa->sa_flags & SA_NODEFER)) {
-            new_mask |= (1u << (sig - 1));
+            new_mask |= (1u << bit);
         }
         new_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
         curr_process->blocked_signals = new_mask;
@@ -194,18 +236,21 @@ static int signal_send_target_locked(struct process *p, int sig)
         __atomic_fetch_and(&p->pending_signals, ~stop_mask, __ATOMIC_SEQ_CST);
     }
 
-    __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+    int discarded = signal_discarded(p, sig);
+    if (!discarded) {
+        __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+    }
 
+    /* Resuming a stopped task is an effect of SENDING SIGCONT, not of
+     * delivering it, so it happens even when the disposition is ignore. */
     if ((sig == SIGCONT || sig == SIGKILL) && p->main_task
         && p->main_task->state == SCHED_TASK_STOPPED) {
         p->stop_reported = 0;
         sched_continue(p->main_task);
     }
 
-    if (p->signal_handlers[sig - 1].sa_handler != SIG_IGN) {
-        if (p->main_task && p->main_task->state == SCHED_TASK_BLOCKED) {
-            sched_unblock(p->main_task);
-        }
+    if (!discarded && p->main_task && p->main_task->state == SCHED_TASK_BLOCKED) {
+        sched_unblock(p->main_task);
     }
 
     return 0;

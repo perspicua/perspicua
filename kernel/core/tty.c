@@ -335,9 +335,8 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             }
 
             struct task *curr_task_inner = sched_current_task();
-            struct process *proc = process_slot(curr_task_inner->pid);
 
-            if (proc && (proc->pending_signals & ~proc->blocked_signals)) {
+            if (signal_pending(process_slot(curr_task_inner->pid))) {
                 spin_unlock_irqrestore(&tty->lock, flags);
                 return -EINTR;
             }

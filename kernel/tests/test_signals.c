@@ -157,5 +157,48 @@ void test_signals(void)
         }
     }
 
+    {
+        int slot = process_test_claim_slot();
+        TEST_ASSERT("discard test slot claimed", slot > 0);
+
+        if (slot > 0) {
+            uint32_t target = (uint32_t)slot;
+            struct process *p = process_table[target];
+
+            // SIG_DFL on SIGCHLD is ignore, so nothing is queued
+            TEST_ASSERT_EQ("send default-ignored SIGCHLD", signal_send(target, SIGCHLD), 0);
+            TEST_ASSERT("SIGCHLD left no pending bit", p->pending_signals == 0);
+            TEST_ASSERT("no signal pending after SIGCHLD", !signal_pending(p));
+
+            // an explicitly ignored signal is dropped the same way
+            p->signal_handlers[SIGUSR1 - 1].sa_handler = SIG_IGN;
+            TEST_ASSERT_EQ("send ignored SIGUSR1", signal_send(target, SIGUSR1), 0);
+            TEST_ASSERT("ignored SIGUSR1 left no pending bit", p->pending_signals == 0);
+
+            // SIGKILL is undroppable whatever the disposition claims
+            p->signal_handlers[SIGKILL - 1].sa_handler = SIG_IGN;
+            TEST_ASSERT_EQ("send SIGKILL against SIG_IGN", signal_send(target, SIGKILL), 0);
+            TEST_ASSERT("SIGKILL pending anyway",
+                        (p->pending_signals & (1u << (SIGKILL - 1))) != 0);
+            p->pending_signals = 0;
+
+            // SIGUSR1 and SIGUSR2 terminate by default; they must not be dropped
+            p->signal_handlers[SIGUSR1 - 1].sa_handler = SIG_DFL;
+            TEST_ASSERT_EQ("send default SIGUSR1", signal_send(target, SIGUSR1), 0);
+            TEST_ASSERT("default SIGUSR1 is pending",
+                        (p->pending_signals & (1u << (SIGUSR1 - 1))) != 0);
+            TEST_ASSERT("signal_pending sees it", signal_pending(p));
+
+            // ...unless the process is blocking it
+            p->blocked_signals = 1u << (SIGUSR1 - 1);
+            TEST_ASSERT("blocked signal is not pending", !signal_pending(p));
+            p->blocked_signals = 0;
+
+            TEST_ASSERT("NULL process is never pending", !signal_pending(NULL));
+
+            process_test_release_slot(target);
+        }
+    }
+
     TEST_SUITE_END("Signals");
 }

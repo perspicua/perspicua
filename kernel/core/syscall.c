@@ -848,7 +848,7 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
      * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
     for (;;) {
         unsigned long irqf = irq_save();
-        if (proc->pending_signals & ~proc->blocked_signals) {
+        if (signal_pending(proc)) {
             irq_restore(irqf);
             break;
         }

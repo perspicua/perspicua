@@ -22,6 +22,13 @@ struct signal_frame {
     sigset_t saved_mask;
 };
 
+struct process;
+
+/*
+ * signal_pending - True when p has an undelivered signal it is not blocking.
+ */
+int signal_pending(const struct process *p);
+
 void signal_handle_pending(struct exception_trap_frame *tf);
 
 int signal_send(uint32_t target_pid, int sig);
