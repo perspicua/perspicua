@@ -80,10 +80,27 @@ enum signal_progress {
 };
 
 /*
+ * struct syscall_restart - A syscall that stopped short and can be re-issued.
+ */
+struct syscall_restart {
+    int active;
+    uint64_t arg0;
+};
+
+/*
+ * syscall_rewind - Points the frame back at the svc that made the call.
+ */
+static void syscall_rewind(struct exception_trap_frame *tf, uint64_t arg0)
+{
+    tf->elr_el1 -= 4;
+    tf->x[0] = arg0;
+}
+
+/*
  * signal_deliver_one - Pops the lowest deliverable signal and acts on it.
  */
 static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, struct process *p,
-                                               int pid)
+                                               int pid, struct syscall_restart *restart)
 {
     sigset_t deliverable = p->pending_signals & ~p->blocked_signals;
     if (deliverable == 0) {
@@ -166,6 +183,15 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
         process_exit(pid, -1);
     }
 
+    if (restart->active) {
+        if (sa->sa_flags & SA_RESTART) {
+            syscall_rewind(tf, restart->arg0);
+        } else {
+            tf->x[0] = (uint64_t)-EINTR;
+        }
+        restart->active = 0;
+    }
+
     // Update process mask; ensure KILL/STOP remain unblockable
     sigset_t old_mask = p->blocked_signals;
     sigset_t new_mask = old_mask | sa->sa_mask;
@@ -198,17 +224,9 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     return SIGNAL_PROGRESS_DONE;
 }
 
-/*
- * signal_handle_pending - Dispatches signals before returning to user mode.
- */
-void signal_handle_pending(struct exception_trap_frame *tf)
+static void signal_deliver_all(struct exception_trap_frame *tf, struct task *curr,
+                               struct syscall_restart *restart)
 {
-    // Signals are only deliverable when returning to user-space (EL0)
-    if ((tf->spsr_el1 & 0xF) != 0) {
-        return;
-    }
-
-    struct task *curr = sched_current_task();
     if (curr && curr->skip_signals) {
         curr->skip_signals = 0;
         return;
@@ -224,8 +242,33 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    while (signal_deliver_one(tf, curr_process, curr_pid) == SIGNAL_PROGRESS_MORE) {
+    while (signal_deliver_one(tf, curr_process, curr_pid, restart) == SIGNAL_PROGRESS_MORE) {
         ;
+    }
+}
+
+/*
+ * signal_handle_pending - Dispatches signals before returning to user mode.
+ */
+void signal_handle_pending(struct exception_trap_frame *tf)
+{
+    if ((tf->spsr_el1 & 0xF) != 0) {
+        return;
+    }
+
+    struct task *curr = sched_current_task();
+    struct syscall_restart restart = {0};
+
+    if (curr) {
+        restart.active = curr->in_syscall && tf->x[0] == (uint64_t)-ERESTARTSYS;
+        restart.arg0 = curr->syscall_arg0;
+        curr->in_syscall = 0;
+    }
+
+    signal_deliver_all(tf, curr, &restart);
+
+    if (restart.active) {
+        syscall_rewind(tf, restart.arg0);
     }
 }
 

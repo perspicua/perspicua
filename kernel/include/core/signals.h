@@ -22,6 +22,8 @@ struct signal_frame {
     sigset_t saved_mask;
 };
 
+#define ERESTARTSYS 512
+
 struct process;
 
 /*

@@ -125,9 +125,11 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
                 }
                 break;
             }
+            /* A partial read is a result the caller must see; only an empty
+             * one can be restarted. */
             if (signal_pending(process_current())) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return read > 0 ? (int)read : -EINTR;
+                return read > 0 ? (int)read : -ERESTARTSYS;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
@@ -175,7 +177,7 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
             }
             if (signal_pending(process_current())) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return written > 0 ? (int)written : -EINTR;
+                return written > 0 ? (int)written : -ERESTARTSYS;
             }
             /*
              * Hand off what is buffered before sleeping. A reader that queued

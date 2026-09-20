@@ -76,6 +76,9 @@ struct task {
     struct task *wait_next;
     int skip_signals;
     volatile int on_core;
+
+    int in_syscall;
+    uint64_t syscall_arg0;
 };
 
 void sched_enqueue(int cpu, struct task *t);

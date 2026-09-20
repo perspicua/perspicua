@@ -1458,6 +1458,9 @@ void syscall_handle(struct exception_trap_frame *tf)
         return;
     }
 
+    curr->in_syscall = 1;
+    curr->syscall_arg0 = tf->x[0];
+
     if (syscall_nr < sizeof(syscall_table) / sizeof(syscall_table[0])
         && syscall_table[syscall_nr] != NULL) {
         int64_t ret = syscall_table[syscall_nr](tf);
