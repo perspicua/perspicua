@@ -15,6 +15,7 @@
 
 #include "arch/irq.h"
 #include "core/timer.h"
+#include "core/signals.h"
 #include "core/syscall.h"
 #include "mm/mmu.h"
 #include "mm/addr.h"
@@ -38,6 +39,9 @@ extern unsigned long __ex_table_end[];
 #define FSC_TRANSLATION_L3 0x07
 #define FSC_PERMISSION_L1  0x0D
 #define FSC_PERMISSION_L3  0x0F
+#define FSC_EXT_ABORT      0x10
+#define FSC_EXT_ABORT_WALK 0x14
+#define FSC_ALIGNMENT      0x21
 
 /*
  * exception_fixup - Attempts to recover from a kernel-space fault using the
@@ -132,33 +136,31 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
 
     if (is_user_fault) {
         int pid = process_current_pid();
-
-        printk("\n[FAULT] %s abort in user process (PID %d)\n", is_inst ? "Instruction" : "Data",
-               pid);
-
-        if (far < 0x1000) {
-            printk("  Type     : Likely NULL pointer dereference (FAR < 4K)\n");
-        }
-
-        printk("  FAR_EL1  : 0x%016lx\n", far);
-        printk("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
-        printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
-        printk("  FSC      : %s\n", fsc_to_string(fsc));
-        printk("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
-
-        if (pid >= 0) {
-            printk("  Action   : killing PID %d\n", pid);
-            struct task *curr = sched_current_task();
-            if (curr && curr->pid == (uint32_t)pid) {
-                process_exit(pid, 1);
-            } else {
-                process_exit(pid, 1);
-            }
-        } else {
-            printk("  Action   : no owning process found — halting\n");
+        if (pid < 0) {
+            pr_err("\n[FAULT] user abort with no owning process — halting\n");
             while (1) {
                 asm volatile("wfe");
             }
+        }
+
+        int sig = (fsc == FSC_ALIGNMENT || fsc == FSC_EXT_ABORT || fsc == FSC_EXT_ABORT_WALK)
+                      ? SIGBUS
+                      : SIGSEGV;
+
+        /* A process that handles the fault gets no console output; the report
+         * is for one that is about to die of it. */
+        if (signal_raise_fault(sig)) {
+            printk("\n[FAULT] %s abort in user process (PID %d)\n",
+                   is_inst ? "Instruction" : "Data", pid);
+            if (far < 0x1000) {
+                printk("  Type     : Likely NULL pointer dereference (FAR < 4K)\n");
+            }
+            printk("  FAR_EL1  : 0x%016lx\n", far);
+            printk("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+            printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);
+            printk("  FSC      : %s\n", fsc_to_string(fsc));
+            printk("  Access   : %s\n", is_inst ? "execute" : (is_write ? "write" : "read"));
+            printk("  Action   : %s to PID %d\n", sig == SIGBUS ? "SIGBUS" : "SIGSEGV", pid);
         }
     } else {
         if (far < 0x1000) {
@@ -276,6 +278,16 @@ void exception_sync_handler(struct exception_trap_frame *tf)
             break;
 
         default: {
+            /* From EL0 this is a bad instruction, not a kernel bug: panicking
+             * would let any user program halt the machine. */
+            if ((tf->spsr_el1 & 0xF) == 0) {
+                if (signal_raise_fault(SIGILL)) {
+                    printk("\n[FAULT] illegal instruction in PID %d (EC 0x%02x, ELR 0x%016lx)\n",
+                           process_current_pid(), (unsigned int)ec, tf->elr_el1);
+                }
+                break;
+            }
+
             pr_err("\n[KERNEL FAULT] Unhandled synchronous exception\n");
             printk("  EC       : 0x%02x\n", (unsigned int)ec);
             printk("  ESR_EL1  : 0x%016lx\n", (unsigned long)esr);

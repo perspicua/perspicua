@@ -97,7 +97,7 @@ what makes the system usable enough to develop against.
       Scope: small programs over existing syscalls.
       Done: you can create/inspect/delete files from the shell without redirection.
 
-   6. Signal delivery completeness                                     (IMP-008)
+   6. Signal delivery completeness [DONE]
       Effort: M | Unlocks: interruptible I/O that libc callers don't hand-retry
       Scope: loop over deliverable signals in signal_handle_pending until none
         remain or a handler frame is pushed; record the syscall number and its

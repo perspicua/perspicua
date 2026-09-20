@@ -76,6 +76,9 @@ struct task {
     struct task *wait_next;
     int skip_signals;
     volatile int on_core;
+
+    int in_syscall;
+    uint64_t syscall_arg0;
 };
 
 void sched_enqueue(int cpu, struct task *t);
@@ -85,6 +88,7 @@ void sched_create_task(void (*entry)(void));
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid);
 void sched_sleep_ms(unsigned long ms);
+unsigned long sched_sleep_ms_interruptible(unsigned long ms);
 void sched_schedule(void);
 void sched_block(void);
 void sched_unblock(struct task *t);

@@ -41,7 +41,8 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
             // Probe the driver
             int ret = drv->probe(&dev);
             if (ret != 0) {
-                if (ret != -ENOENT) {
+                // ENOENT: not my hardware. EEXIST: another driver already took it.
+                if (ret != -ENOENT && ret != -EEXIST) {
                     pr_err("driver: %s probe failed with error %d\n", drv->name, ret);
                 }
             } else {

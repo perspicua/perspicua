@@ -13,6 +13,7 @@
 #include "uapi/errno.h"
 
 #include "core/lock.h"
+#include "core/signals.h"
 #include "mm/slab.h"
 #include "mm/heap.h"
 #include "fs/vfs.h"
@@ -55,15 +56,6 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
         }
         queue = &(*queue)->wait_next;
     }
-}
-
-static int pipe_signal_pending(void)
-{
-    struct process *p = process_current();
-    if (!p) {
-        return 0;
-    }
-    return (p->pending_signals & ~p->blocked_signals) != 0;
 }
 
 /*
@@ -133,9 +125,11 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
                 }
                 break;
             }
-            if (pipe_signal_pending()) {
+            /* A partial read is a result the caller must see; only an empty
+             * one can be restarted. */
+            if (signal_pending(process_current())) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return read > 0 ? (int)read : -EINTR;
+                return read > 0 ? (int)read : -ERESTARTSYS;
             }
             pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
@@ -181,9 +175,9 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
                 }
                 break;
             }
-            if (pipe_signal_pending()) {
+            if (signal_pending(process_current())) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return written > 0 ? (int)written : -EINTR;
+                return written > 0 ? (int)written : -ERESTARTSYS;
             }
             /*
              * Hand off what is buffered before sleeping. A reader that queued

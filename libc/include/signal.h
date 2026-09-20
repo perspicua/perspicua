@@ -12,6 +12,7 @@ int kill(int pid, int sig);
 int sigaction(int sig, const struct sigaction *act, struct sigaction *oact);
 int sigprocmask(int how, const sigset_t *set, sigset_t *oset);
 int sigpending(sigset_t *set);
+int sigaltstack(const stack_t *ss, stack_t *oss);
 int sigsuspend(const sigset_t *mask);
 
 // Returns from a handler through the kernel; the restorer calls it, not you.
