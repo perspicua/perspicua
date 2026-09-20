@@ -440,6 +440,31 @@ void sched_sleep_ms(unsigned long ms)
     irq_restore(flags);
 }
 
+// Returns the milliseconds still owed; 0 if the full time elapsed.
+unsigned long sched_sleep_ms_interruptible(unsigned long ms)
+{
+    unsigned long flags = irq_save();
+    int cpu = cpu_id();
+    struct task *curr = sched_current_task();
+
+    if (!curr || curr == sched_idle[cpu]) {
+        irq_restore(flags);
+        return 0;
+    }
+
+    unsigned long deadline = timer_get_system_time() + ms;
+    curr->state = SCHED_TASK_BLOCKED;
+    curr->wake_time = deadline;
+    sleep_enqueue(curr);
+
+    sched_schedule();
+    irq_restore(flags);
+
+    // Signed, so a wrap reads as "deadline passed".
+    long left = (long)(deadline - timer_get_system_time());
+    return left > 0 ? (unsigned long)left : 0;
+}
+
 void sched_block(void)
 {
     unsigned long flags = irq_save();

@@ -1,10 +1,8 @@
 /*
- * test_restart.c - Checks what a signal does to a blocking read.
+ * test_restart.c - What a signal does to a blocking call.
  *
- * The kernel suites cannot reach this: a handler only runs on the way back to
- * EL0, which a boot-phase test task never does. Each case forks a child that
- * blocks reading a pipe, signals it, and then feeds the pipe; the child
- * reports what its read() returned.
+ * Lives in userspace because a handler only runs on the way back to EL0,
+ * which a boot-phase kernel test task never reaches.
  */
 
 #include <stdint.h>
@@ -14,6 +12,7 @@
 #include "stdio.h"
 #include "string.h"
 #include "sys/wait.h"
+#include "time.h"
 #include "unistd.h"
 
 // What the child observed, reported through its exit status.
@@ -30,9 +29,6 @@ static void on_usr1(int sig)
     handler_runs++;
 }
 
-/*
- * child_body - Blocks on the pipe and classifies how the read ended.
- */
 static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
 {
     close(wfd);
@@ -56,13 +52,8 @@ static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
     _exit(CHILD_OTHER);
 }
 
-/*
- * run_case - Interrupts a blocked read and returns the child's verdict.
- *
- * The sleeps give the child time to reach the read before the signal, and to
- * run its handler before the byte arrives; without that gap the read could
- * succeed without ever being interrupted, which proves nothing.
- */
+// The sleeps are what guarantee the read is already blocked when the signal
+// lands, and still blocked when the byte arrives.
 static int run_case(int flags)
 {
     int fds[2];
@@ -95,6 +86,46 @@ static int run_case(int flags)
     return status & 0xFF;
 }
 
+static int run_sleep_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        printf("test_restart: fork failed\n");
+        return -1;
+    }
+
+    if (pid == 0) {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_usr1;
+        sa.sa_flags = SA_RESTART;
+        sigaction(SIGUSR1, &sa, NULL);
+
+        struct timespec req = {.tv_sec = 10, .tv_nsec = 0};
+        struct timespec rem = {0, 0};
+        errno = 0;
+        int n = nanosleep(&req, &rem);
+
+        if (n == 0) {
+            _exit(CHILD_OTHER); // slept the whole ten seconds: never interrupted
+        }
+        if (errno != EINTR || !handler_runs) {
+            _exit(CHILD_OTHER);
+        }
+        _exit(rem.tv_sec >= 8 ? CHILD_EINTR : CHILD_OTHER);
+    }
+
+    usleep(200000);
+    kill(pid, SIGUSR1);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        printf("test_restart: waitpid failed\n");
+        return -1;
+    }
+    return status & 0xFF;
+}
+
 static int check(const char *name, int got, int want)
 {
     if (got == want) {
@@ -112,11 +143,12 @@ int main(void)
     int failures = 0;
     failures += check("SA_RESTART resumes the read", run_case(SA_RESTART), CHILD_RESTARTED);
     failures += check("without SA_RESTART it fails with EINTR", run_case(0), CHILD_EINTR);
+    failures += check("nanosleep returns EINTR with time owed", run_sleep_case(), CHILD_EINTR);
 
     if (failures == 0) {
-        printf("test_restart: all 2 tests passed\n");
+        printf("test_restart: all 3 tests passed\n");
     } else {
-        printf("test_restart: %d of 2 tests failed\n", failures);
+        printf("test_restart: %d of 3 tests failed\n", failures);
     }
     return failures != 0;
 }

@@ -558,20 +558,24 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
     unsigned long ms =
         (unsigned long)kreq.tv_sec * 1000 + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
 
-    if (ms > 0) {
-        sched_sleep_ms(ms);
+    // Only a signal ends the sleep early; anything else re-sleeps the rest.
+    unsigned long left = ms;
+    while (left > 0) {
+        left = sched_sleep_ms_interruptible(left);
+        if (left == 0 || signal_pending(process_current())) {
+            break;
+        }
     }
 
-    /* TODO: sched_sleep_ms is not signal-interruptible yet; sleep always completes, so rem
-     * is always zero. Revisit when EINTR/signal-aware sleep lands. */
     if (rem) {
-        struct timespec krem = {0, 0};
+        struct timespec krem = {(time_t)(left / 1000), (long)(left % 1000) * 1000000};
         if (copy_to_user(rem, &krem, sizeof(struct timespec)) != 0) {
             return -EINVAL;
         }
     }
 
-    return 0;
+    // EINTR, not ERESTARTSYS: a restart would re-sleep the original duration.
+    return left > 0 ? -EINTR : 0;
 }
 
 static int64_t exit_handler(struct exception_trap_frame *tf)
