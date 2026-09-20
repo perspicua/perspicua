@@ -74,6 +74,130 @@ int signal_pending(const struct process *p)
 // Headroom left below sp_el0 so a handler frame never abuts the live stack.
 #define SIGNAL_STACK_GUARD 128UL
 
+enum signal_progress {
+    SIGNAL_PROGRESS_MORE,
+    SIGNAL_PROGRESS_DONE,
+};
+
+/*
+ * signal_deliver_one - Pops the lowest deliverable signal and acts on it.
+ */
+static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, struct process *p,
+                                               int pid)
+{
+    sigset_t deliverable = p->pending_signals & ~p->blocked_signals;
+    if (deliverable == 0) {
+        return SIGNAL_PROGRESS_DONE;
+    }
+
+    int bit = __builtin_ctz(deliverable);
+    int sig = bit + 1;
+
+    __atomic_fetch_and(&p->pending_signals, ~(1u << bit), __ATOMIC_SEQ_CST);
+
+    struct sigaction *sa = &p->signal_handlers[bit];
+    sighandler_t handler = sa->sa_handler;
+
+    if (handler == SIG_IGN) {
+        return SIGNAL_PROGRESS_MORE;
+    }
+
+    if (handler == SIG_DFL) {
+        enum signal_default action = signal_default_action[sig];
+
+        // A continue already happened at send time; there is nothing left to do.
+        if (action == SIGNAL_DEFAULT_IGN || action == SIGNAL_DEFAULT_CONT) {
+            return SIGNAL_PROGRESS_MORE;
+        }
+
+        if (action == SIGNAL_DEFAULT_STOP) {
+            /*
+             * Commit to the stop under process_table_lock so it is serialised
+             * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
+             * the pending bit and inspects our task state under the same lock.
+             * If a CONT (cancels the stop) or KILL (trumps everything) slipped in
+             * after we popped the stop signal above, do not park a task that no
+             * one will resume -- leave it for the next pass.
+             */
+            const sigset_t stop_override = (1u << (SIGCONT - 1)) | (1u << (SIGKILL - 1));
+            unsigned long flags = spin_lock_irqsave(&process_table_lock);
+            if (p->pending_signals & stop_override) {
+                spin_unlock_irqrestore(&process_table_lock, flags);
+                return SIGNAL_PROGRESS_MORE;
+            }
+            sched_current_task()->state = SCHED_TASK_STOPPED;
+            p->stop_reported = 0;
+
+            /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
+             * is invisible and the parent sleeps until we exit instead. */
+            struct process *parent = process_slot(p->parent_pid);
+            if (p->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
+                && parent->main_task) {
+                sched_unblock(parent->main_task);
+            }
+
+            spin_unlock(&process_table_lock); // keep IRQs masked across sched_schedule()
+            sched_schedule();
+            irq_restore(flags);
+
+            // Resumed. Whatever woke us is pending, so keep going.
+            return SIGNAL_PROGRESS_MORE;
+        }
+
+        process_exit(pid, 128 + sig);
+    }
+
+    // Verify user stack has enough space for the signal frame
+    if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD)
+        || tf->sp_el0 >= KERNEL_VMA) {
+        process_exit(pid, -1);
+    }
+
+    uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
+    if (new_sp == 0 || new_sp >= KERNEL_VMA) {
+        process_exit(pid, -1);
+    }
+
+    /* A handler with no way back cannot be entered: sigreturn is what restores
+     * the frame below, and without a restorer the handler would return into
+     * whatever x30 happened to hold. */
+    if (!(sa->sa_flags & SA_RESTORER) || (uintptr_t)sa->sa_restorer == 0
+        || (uintptr_t)sa->sa_restorer >= KERNEL_VMA) {
+        process_exit(pid, -1);
+    }
+
+    // Update process mask; ensure KILL/STOP remain unblockable
+    sigset_t old_mask = p->blocked_signals;
+    sigset_t new_mask = old_mask | sa->sa_mask;
+    if (!(sa->sa_flags & SA_NODEFER)) {
+        new_mask |= (1u << bit);
+    }
+    new_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
+    p->blocked_signals = new_mask;
+
+    struct signal_frame frame;
+    memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
+    frame.saved_mask = old_mask;
+
+    if (!syscall_validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
+        || copy_to_user((void *)new_sp, &frame, sizeof(struct signal_frame)) != 0) {
+        p->blocked_signals = old_mask;
+        process_exit(pid, -1);
+    }
+
+    // Redirect execution to user-space handler
+    tf->elr_el1 = (uintptr_t)handler;
+    tf->sp_el0 = new_sp;
+    tf->x[0] = (uint64_t)sig;
+    tf->x30 = (uintptr_t)sa->sa_restorer;
+
+    if (sa->sa_flags & SA_RESETHAND) {
+        sa->sa_handler = SIG_DFL;
+    }
+
+    return SIGNAL_PROGRESS_DONE;
+}
+
 /*
  * signal_handle_pending - Dispatches signals before returning to user mode.
  */
@@ -100,116 +224,9 @@ void signal_handle_pending(struct exception_trap_frame *tf)
         return;
     }
 
-    sigset_t deliverable = curr_process->pending_signals & ~curr_process->blocked_signals;
-    if (deliverable == 0) {
-        return;
+    while (signal_deliver_one(tf, curr_process, curr_pid) == SIGNAL_PROGRESS_MORE) {
+        ;
     }
-
-    int bit = __builtin_ctz(deliverable);
-    int sig = bit + 1;
-
-    __atomic_fetch_and(&curr_process->pending_signals, ~(1u << bit), __ATOMIC_SEQ_CST);
-
-    struct sigaction *sa = &curr_process->signal_handlers[bit];
-    sighandler_t handler = sa->sa_handler;
-
-    if (handler == SIG_IGN) {
-        return;
-    }
-
-    if (handler == SIG_DFL) {
-        enum signal_default action = signal_default_action[sig];
-
-        // A continue already happened at send time; there is nothing left to do.
-        if (action == SIGNAL_DEFAULT_IGN || action == SIGNAL_DEFAULT_CONT) {
-            return;
-        }
-
-        if (action == SIGNAL_DEFAULT_STOP) {
-            /*
-             * Commit to the stop under process_table_lock so it is serialised
-             * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
-             * the pending bit and inspects our task state under the same lock.
-             * If a CONT (cancels the stop) or KILL (trumps everything) slipped in
-             * after we popped the stop signal above, do not park a task that no
-             * one will resume -- return so the pending signal is delivered next.
-             */
-            const sigset_t stop_override = (1u << (SIGCONT - 1)) | (1u << (SIGKILL - 1));
-            unsigned long flags = spin_lock_irqsave(&process_table_lock);
-            if (curr_process->pending_signals & stop_override) {
-                spin_unlock_irqrestore(&process_table_lock, flags);
-                return;
-            }
-            sched_current_task()->state = SCHED_TASK_STOPPED;
-            curr_process->stop_reported = 0;
-
-            /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
-             * is invisible and the parent sleeps until we exit instead. */
-            struct process *parent = process_slot(curr_process->parent_pid);
-            if (curr_process->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
-                && parent->main_task) {
-                sched_unblock(parent->main_task);
-            }
-
-            spin_unlock(&process_table_lock); // keep IRQs masked across sched_schedule()
-            sched_schedule();
-            irq_restore(flags);
-            return;
-        }
-
-        process_exit(curr_pid, 128 + sig);
-    }
-
-    // Verify user stack has enough space for the signal frame
-    if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD)
-        || tf->sp_el0 >= KERNEL_VMA) {
-        goto deliver_kill;
-    }
-
-    {
-        uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
-        if (new_sp == 0 || new_sp >= KERNEL_VMA) {
-            goto deliver_kill;
-        }
-
-        // Update process mask; ensure KILL/STOP remain unblockable
-        sigset_t old_mask = curr_process->blocked_signals;
-        sigset_t new_mask = old_mask | sa->sa_mask;
-        if (!(sa->sa_flags & SA_NODEFER)) {
-            new_mask |= (1u << bit);
-        }
-        new_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
-        curr_process->blocked_signals = new_mask;
-
-        struct signal_frame frame;
-        memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
-        frame.saved_mask = old_mask;
-
-        if (!syscall_validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
-            || copy_to_user((void *)new_sp, &frame, sizeof(struct signal_frame)) != 0) {
-            curr_process->blocked_signals = old_mask;
-            goto deliver_kill;
-        }
-
-        // Redirect execution to user-space handler
-        tf->elr_el1 = (uintptr_t)handler;
-        tf->sp_el0 = new_sp;
-        tf->x[0] = (uint64_t)sig;
-
-        if (!(sa->sa_flags & SA_RESTORER) || (uintptr_t)sa->sa_restorer == 0
-            || (uintptr_t)sa->sa_restorer >= KERNEL_VMA) {
-            goto deliver_kill;
-        }
-        tf->x30 = (uintptr_t)sa->sa_restorer;
-
-        if (sa->sa_flags & SA_RESETHAND) {
-            sa->sa_handler = SIG_DFL;
-        }
-    }
-    return;
-
-deliver_kill:
-    process_exit(curr_pid, -1);
 }
 
 /*
