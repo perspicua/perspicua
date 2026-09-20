@@ -353,6 +353,37 @@ static int run_unhandled_segv_case(void)
     return status & 0xFF;
 }
 
+/*
+ * A fault signal the process ignores or blocks must still kill it: the
+ * faulting instruction re-runs on return, so honouring either would spin at
+ * EL0 forever and this case would time out rather than fail.
+ */
+static int run_forced_fault_case(int block_it)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        if (block_it) {
+            sigset_t mask = 1u << (SIGSEGV - 1);
+            sigprocmask(SIG_BLOCK, &mask, NULL);
+        } else {
+            signal(SIGSEGV, SIG_IGN);
+        }
+
+        *(volatile int *)bad_addr = 1;
+        _exit(0);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
 // An undefined instruction used to panic the kernel from EL0.
 static int run_illegal_insn_case(void)
 {
@@ -400,11 +431,13 @@ int main(void)
     failures += check("an unhandled SIGSEGV still kills", run_unhandled_segv_case(), 128 + SIGSEGV);
     failures += check("an illegal instruction kills the process, not the kernel",
                       run_illegal_insn_case(), 128 + SIGILL);
+    failures += check("an ignored SIGSEGV still kills", run_forced_fault_case(0), 128 + SIGSEGV);
+    failures += check("a blocked SIGSEGV still kills", run_forced_fault_case(1), 128 + SIGSEGV);
 
     if (failures == 0) {
-        printf("test_restart: all 10 tests passed\n");
+        printf("test_restart: all 12 tests passed\n");
     } else {
-        printf("test_restart: %d of 10 tests failed\n", failures);
+        printf("test_restart: %d of 12 tests failed\n", failures);
     }
     return failures != 0;
 }
