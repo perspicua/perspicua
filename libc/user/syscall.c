@@ -389,6 +389,11 @@ int sigpending(sigset_t *set)
     return __syscall_ret(__syscall1(SYS_SIGPENDING, (long)set));
 }
 
+int sigaltstack(const stack_t *ss, stack_t *oss)
+{
+    return __syscall_ret(__syscall2(SYS_SIGALTSTACK, (long)ss, (long)oss));
+}
+
 int sigsuspend(const sigset_t *mask)
 {
     return __syscall_ret(__syscall1(SYS_SIGSUSPEND, (long)mask));

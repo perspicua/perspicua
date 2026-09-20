@@ -23,6 +23,12 @@
 
 static volatile int handler_runs;
 
+// The handler runs on the way out of this kill(), before it returns.
+static void raise_self(int sig)
+{
+    kill(getpid(), sig);
+}
+
 static void on_usr1(int sig)
 {
     (void)sig;
@@ -126,6 +132,115 @@ static int run_sleep_case(void)
     return status & 0xFF;
 }
 
+static char alt_area[SIGSTKSZ];
+static volatile int handler_sp_on_alt;
+
+static void on_usr2(int sig)
+{
+    (void)sig;
+    char probe;
+    uintptr_t sp = (uintptr_t)&probe;
+    uintptr_t base = (uintptr_t)alt_area;
+    handler_sp_on_alt = (sp >= base && sp < base + sizeof(alt_area));
+}
+
+// 0 = ran on the alt stack, 1 = ran on the normal stack, 2 = setup failed.
+static int run_altstack_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        printf("test_restart: fork failed\n");
+        return -1;
+    }
+
+    if (pid == 0) {
+        stack_t ss = {.ss_sp = alt_area, .ss_flags = 0, .ss_size = sizeof(alt_area)};
+        if (sigaltstack(&ss, NULL) < 0) {
+            _exit(2);
+        }
+
+        stack_t got = {0};
+        if (sigaltstack(NULL, &got) < 0 || got.ss_sp != alt_area || got.ss_size != sizeof(alt_area)
+            || got.ss_flags != 0) {
+            _exit(2);
+        }
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_usr2;
+        sa.sa_flags = SA_ONSTACK;
+        sigaction(SIGUSR2, &sa, NULL);
+
+        raise_self(SIGUSR2);
+        _exit(handler_sp_on_alt ? 0 : 1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        printf("test_restart: waitpid failed\n");
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// Without SA_ONSTACK an installed alt stack must be left alone.
+static int run_no_onstack_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        stack_t ss = {.ss_sp = alt_area, .ss_flags = 0, .ss_size = sizeof(alt_area)};
+        sigaltstack(&ss, NULL);
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_usr2;
+        sa.sa_flags = 0;
+        sigaction(SIGUSR2, &sa, NULL);
+
+        raise_self(SIGUSR2);
+        _exit(handler_sp_on_alt ? 0 : 1);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// Returns the count of rejections that did not happen.
+static int run_altstack_reject_case(void)
+{
+    int bad = 0;
+
+    stack_t small = {.ss_sp = alt_area, .ss_flags = 0, .ss_size = MINSIGSTKSZ - 1};
+    if (sigaltstack(&small, NULL) == 0 || errno != ENOMEM) {
+        bad++;
+    }
+
+    stack_t flags = {.ss_sp = alt_area, .ss_flags = 0x40, .ss_size = sizeof(alt_area)};
+    if (sigaltstack(&flags, NULL) == 0 || errno != EINVAL) {
+        bad++;
+    }
+
+    stack_t kernel_side = {.ss_sp = (void *)-4096L, .ss_flags = 0, .ss_size = sizeof(alt_area)};
+    if (sigaltstack(&kernel_side, NULL) == 0) {
+        bad++;
+    }
+
+    stack_t off = {.ss_sp = NULL, .ss_flags = SS_DISABLE, .ss_size = 0};
+    stack_t got = {0};
+    if (sigaltstack(&off, NULL) < 0 || sigaltstack(NULL, &got) < 0 || got.ss_flags != SS_DISABLE) {
+        bad++;
+    }
+
+    return bad;
+}
+
 static int check(const char *name, int got, int want)
 {
     if (got == want) {
@@ -144,11 +259,14 @@ int main(void)
     failures += check("SA_RESTART resumes the read", run_case(SA_RESTART), CHILD_RESTARTED);
     failures += check("without SA_RESTART it fails with EINTR", run_case(0), CHILD_EINTR);
     failures += check("nanosleep returns EINTR with time owed", run_sleep_case(), CHILD_EINTR);
+    failures += check("SA_ONSTACK runs the handler on the alt stack", run_altstack_case(), 0);
+    failures += check("without SA_ONSTACK it uses the normal stack", run_no_onstack_case(), 1);
+    failures += check("sigaltstack rejects bad stacks", run_altstack_reject_case(), 0);
 
     if (failures == 0) {
-        printf("test_restart: all 3 tests passed\n");
+        printf("test_restart: all 6 tests passed\n");
     } else {
-        printf("test_restart: %d of 3 tests failed\n", failures);
+        printf("test_restart: %d of 6 tests failed\n", failures);
     }
     return failures != 0;
 }

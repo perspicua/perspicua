@@ -71,6 +71,19 @@ int signal_pending(const struct process *p)
     return p && (p->pending_signals & ~p->blocked_signals) != 0;
 }
 
+int signal_on_altstack(const struct process *p, uintptr_t sp)
+{
+    uintptr_t base = (uintptr_t)p->sigaltstack.ss_sp;
+    return base != 0 && sp >= base && sp < base + p->sigaltstack.ss_size;
+}
+
+// A nested handler keeps growing the alt stack it is already on.
+static int altstack_usable(const struct process *p, uintptr_t sp)
+{
+    return p->sigaltstack.ss_sp != NULL && !(p->sigaltstack.ss_flags & SS_DISABLE)
+           && !signal_on_altstack(p, sp);
+}
+
 // Headroom left below sp_el0 so a handler frame never abuts the live stack.
 #define SIGNAL_STACK_GUARD 128UL
 
@@ -164,13 +177,18 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
         process_exit(pid, 128 + sig);
     }
 
-    // Verify user stack has enough space for the signal frame
-    if (tf->sp_el0 < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD)
-        || tf->sp_el0 >= KERNEL_VMA) {
+    /* SA_ONSTACK is what makes a SIGSEGV from stack exhaustion catchable:
+     * the frame needs a stack the process still has. */
+    uintptr_t stack_top = tf->sp_el0;
+    if ((sa->sa_flags & SA_ONSTACK) && altstack_usable(p, tf->sp_el0)) {
+        stack_top = (uintptr_t)p->sigaltstack.ss_sp + p->sigaltstack.ss_size;
+    }
+
+    if (stack_top < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD) || stack_top >= KERNEL_VMA) {
         process_exit(pid, -1);
     }
 
-    uintptr_t new_sp = (tf->sp_el0 - sizeof(struct signal_frame)) & ~0xFUL;
+    uintptr_t new_sp = (stack_top - sizeof(struct signal_frame)) & ~0xFUL;
     if (new_sp == 0 || new_sp >= KERNEL_VMA) {
         process_exit(pid, -1);
     }

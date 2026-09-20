@@ -5,6 +5,7 @@
 #ifndef PERSPICUA_UAPI_SIGNALS_H
 #define PERSPICUA_UAPI_SIGNALS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 // Signal Numbers
@@ -81,6 +82,20 @@ struct sigaction {
     int sa_flags;
     void (*sa_restorer)(void);
 };
+
+    // sigaltstack ss_flags
+    #define SS_ONSTACK 1
+    #define SS_DISABLE 2
+
+    // A frame plus SIGNAL_STACK_GUARD rounded up; SIGSTKSZ leaves room to work.
+    #define MINSIGSTKSZ 2048
+    #define SIGSTKSZ    8192
+
+typedef struct {
+    void *ss_sp;
+    int ss_flags;
+    size_t ss_size;
+} stack_t;
 
 #endif // __ASSEMBLY__
 

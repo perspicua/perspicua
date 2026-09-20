@@ -761,6 +761,72 @@ static int64_t sigaction_handler(struct exception_trap_frame *tf)
     return 0;
 }
 
+static int64_t sigaltstack_handler(struct exception_trap_frame *tf)
+{
+    const stack_t *uss = (const stack_t *)tf->x[0];
+    stack_t *uoss = (stack_t *)tf->x[1];
+
+    struct process *proc = process_current();
+    if (!proc) {
+        return -ESRCH;
+    }
+
+    int on_stack = signal_on_altstack(proc, tf->sp_el0);
+
+    if (uoss) {
+        if (!syscall_validate_user_buffer(uoss, sizeof(stack_t), 1)) {
+            return -EFAULT;
+        }
+        stack_t old = proc->sigaltstack;
+        old.ss_flags = on_stack ? SS_ONSTACK : (old.ss_sp ? 0 : SS_DISABLE);
+        if (copy_to_user(uoss, &old, sizeof(stack_t)) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    if (!uss) {
+        return 0;
+    }
+
+    // Swapping it out underfoot would move the stack a handler is running on.
+    if (on_stack) {
+        return -EPERM;
+    }
+
+    if (!syscall_validate_user_buffer(uss, sizeof(stack_t), 0)) {
+        return -EFAULT;
+    }
+    stack_t kss;
+    if (copy_from_user(&kss, uss, sizeof(stack_t)) != 0) {
+        return -EFAULT;
+    }
+
+    if (kss.ss_flags & ~SS_DISABLE) {
+        return -EINVAL;
+    }
+
+    if (kss.ss_flags & SS_DISABLE) {
+        memset(&proc->sigaltstack, 0, sizeof(proc->sigaltstack));
+        return 0;
+    }
+
+    if (kss.ss_size < MINSIGSTKSZ) {
+        return -ENOMEM;
+    }
+
+    uintptr_t base = (uintptr_t)kss.ss_sp;
+    if (base == 0 || base + kss.ss_size < base || base + kss.ss_size > KERNEL_VMA) {
+        return -EINVAL;
+    }
+    if (!syscall_validate_user_buffer(kss.ss_sp, kss.ss_size, 1)) {
+        return -EFAULT;
+    }
+
+    kss.ss_flags = 0;
+    proc->sigaltstack = kss;
+    return 0;
+}
+
 static int64_t sigprocmask_handler(struct exception_trap_frame *tf)
 {
     int how = (int)tf->x[0];
@@ -1401,7 +1467,7 @@ mmap_fail:
     return (int64_t)(uintptr_t)MAP_FAILED;
 }
 
-static const syscall_fn syscall_table[SYS_FTRUNCATE + 1] = {
+static const syscall_fn syscall_table[SYS_SIGALTSTACK + 1] = {
     [SYS_OPEN] = open_handler,
     [SYS_WRITE] = write_handler,
     [SYS_EXIT] = exit_handler,
@@ -1448,6 +1514,7 @@ static const syscall_fn syscall_table[SYS_FTRUNCATE + 1] = {
     [SYS_FSTAT] = fstat_handler,
     [SYS_TRUNCATE] = truncate_handler,
     [SYS_FTRUNCATE] = ftruncate_handler,
+    [SYS_SIGALTSTACK] = sigaltstack_handler,
 };
 
 void syscall_handle(struct exception_trap_frame *tf)

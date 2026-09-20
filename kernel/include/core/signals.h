@@ -31,6 +31,9 @@ struct process;
  */
 int signal_pending(const struct process *p);
 
+// True when sp is inside p's alternate signal stack.
+int signal_on_altstack(const struct process *p, uintptr_t sp);
+
 void signal_handle_pending(struct exception_trap_frame *tf);
 
 int signal_send(uint32_t target_pid, int sig);

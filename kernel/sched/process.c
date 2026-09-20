@@ -622,6 +622,9 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
     p->pending_signals = 0;
 
+    // The new image does not own the old one's alt stack address.
+    memset(&p->sigaltstack, 0, sizeof(p->sigaltstack));
+
     unsigned long *old_pgd = p->user_pgd;
     p->user_pgd = new_pgd;
     p->vaddr_code = (uintptr_t)entry_point;
@@ -851,6 +854,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
     child->pending_signals = 0;
     child->blocked_signals = parent->blocked_signals;
+    child->sigaltstack = parent->sigaltstack;
 
     if (parent->cwd) {
         child->cwd = parent->cwd;
