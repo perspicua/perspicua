@@ -69,19 +69,26 @@ void fdt_parse_memory_reservations(void)
         (const struct fdt_reserve_entry *)(fdt_base_address + rsv_offset);
     int count = 0;
 
-    // Parse until the null termination entry
-    while (rsvmap->address != 0 || rsvmap->size != 0) {
+    /* Bounded by the blob, not by the terminator: an entry with a nonzero
+     * address and a zero size satisfies the loop condition without being
+     * reserved, so a truncated or malformed map would otherwise walk off the
+     * end of the DTB. */
+    uint32_t max_entries = (totalsize - rsv_offset) / sizeof(*rsvmap);
+    if (max_entries > 64) {
+        max_entries = 64;
+    }
+
+    for (uint32_t i = 0; i < max_entries; i++, rsvmap++) {
+        if (rsvmap->address == 0 && rsvmap->size == 0) {
+            break;
+        }
+
         uint64_t addr = fdt64_to_cpu(rsvmap->address);
         uint64_t size = fdt64_to_cpu(rsvmap->size);
 
         if (size > 0) {
             pr_info("dtb: rsvmap[%d]: base=0x%lx size=0x%lx\n", count++, addr, size);
             pmm_reserve_range((unsigned long)addr, (unsigned long)size, "dtb-reserved");
-        }
-        rsvmap++;
-
-        if (count > 64) {
-            break;
         }
     }
 }
@@ -278,8 +285,10 @@ const uint32_t *fdt_get_parent_node(const uint32_t *target_node)
         if (tag == FDT_BEGIN_NODE) {
             const uint32_t *current_node = p - 1;
 
+            // Nesting past the stack stops being recorded, so past it the
+            // answer is unknown rather than parent_stack[depth - 1].
             if (current_node == target_node) {
-                if (depth > 0) {
+                if (depth > 0 && depth <= 32) {
                     return parent_stack[depth - 1];
                 }
                 return NULL;

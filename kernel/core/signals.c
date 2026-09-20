@@ -219,7 +219,9 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     new_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     p->blocked_signals = new_mask;
 
+    // Zeroed first: the struct's trailing padding goes to the user stack too.
     struct signal_frame frame;
+    memset(&frame, 0, sizeof(frame));
     memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
     frame.saved_mask = old_mask;
 

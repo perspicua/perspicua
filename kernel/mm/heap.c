@@ -61,6 +61,18 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     unsigned long total = min_size + HEAP_HEADER_SIZE + HEAP_FOOTER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
+    /* pmm_alloc_pages hands back a power-of-two block and charges the heap for
+     * all of it. Rounding here too keeps the tail inside the block the heap
+     * hands out, instead of stranding it between the two allocators. */
+    unsigned long rounded = 1;
+    while (rounded < pages) {
+        rounded <<= 1;
+        if (rounded == 0) {
+            return NULL;
+        }
+    }
+    pages = rounded;
+
     void *region = pmm_alloc_pages(pages);
     if (!region) {
         return NULL;

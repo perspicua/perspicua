@@ -913,16 +913,26 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
     proc->blocked_signals = kmask;
     proc->blocked_signals &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
 
-    /* Block until a signal is pending. Mask IRQs across the pending
-     * check and the state transition so a signal delivered on this core
-     * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
+    /* Block until a signal is pending. BLOCKED is published BEFORE the check,
+     * with a fence between: the sender sets the pending bit and then reads this
+     * state, so ordering both stores ahead of both loads means at most one side
+     * can miss the other. Masking IRQs alone only closes the same-core window;
+     * a sender on another core would see RUNNING and skip the wakeup. */
     for (;;) {
         unsigned long irqf = irq_save();
+        __atomic_store_n(&curr->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
         if (signal_pending(proc)) {
+            /* A CAS, not a store: losing it means a waker already moved us to
+             * READY and queued us, and READY must stand. */
+            enum sched_task_state expected = SCHED_TASK_BLOCKED;
+            __atomic_compare_exchange_n(&curr->state, &expected, SCHED_TASK_RUNNING, 0,
+                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
             irq_restore(irqf);
             break;
         }
-        curr->state = SCHED_TASK_BLOCKED;
+
         irq_restore(irqf);
         sched_schedule();
     }
@@ -960,7 +970,9 @@ static int64_t sigreturn_handler(struct exception_trap_frame *tf)
     memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
     if (proc) {
-        proc->blocked_signals = frame.saved_mask;
+        // The mask comes off the user stack, so it gets the same scrubbing as
+        // one passed to sigprocmask.
+        proc->blocked_signals = frame.saved_mask & ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     }
     tf->spsr_el1 &= 0xF0000000ULL;
 
@@ -1335,6 +1347,10 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
     if (err != 0) {
         return err;
     }
+
+    // Whole struct dirents go back to the caller, but a filesystem only writes
+    // d_name up to its terminator; the tail would be recycled heap.
+    memset(kbuf, 0, count);
 
     int res = vfs_readdir(fd, kbuf, count);
     if (res > 0) {

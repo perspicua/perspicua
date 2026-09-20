@@ -375,12 +375,8 @@ int vfs_unmount(const char *path)
         if (strcmp(path, vfs_mount_table[i].path) == 0) {
             struct vfs_vnode *root = vfs_mount_table[i].root;
 
-            strncpy(vfs_mount_table[i].path, vfs_mount_table[vfs_mount_count - 1].path,
-                    VFS_MAX_PATH_LEN);
-            vfs_mount_table[i].root = vfs_mount_table[vfs_mount_count - 1].root;
-
-            memset(vfs_mount_table[vfs_mount_count - 1].path, 0, VFS_MAX_PATH_LEN);
-            vfs_mount_table[vfs_mount_count - 1].root = NULL;
+            vfs_mount_table[i] = vfs_mount_table[vfs_mount_count - 1];
+            memset(&vfs_mount_table[vfs_mount_count - 1], 0, sizeof(vfs_mount_table[0]));
 
             vfs_mount_count--;
             spin_unlock_irqrestore(&vfs_lock, flags);

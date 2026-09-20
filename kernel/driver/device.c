@@ -152,6 +152,10 @@ unsigned int devm_get_irq(struct device *dev, int index)
     const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
 
     // ARM GIC bindings typically have 3 cells: type, number, flags.
+    if ((uint32_t)(index * 3 + 2) * 4 > irq_prop.size) {
+        return 0;
+    }
+
     uint32_t type = fdt32_to_cpu(irq_data[index * 3]);
     uint32_t num = fdt32_to_cpu(irq_data[index * 3 + 1]);
 

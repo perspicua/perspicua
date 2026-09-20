@@ -729,10 +729,16 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
             valid_in_page = PAGE_SIZE;
         }
 
+        /* A short count means the volume filled or a sector failed part-way
+         * through the page. The page stays dirty so a later sync can retry it,
+         * and the caller must not be told those bytes reached the disk. */
         int write_result = fat32_write_page(file->node, page_index, page_data, valid_in_page);
-        if (write_result < 0) {
+        if (write_result < 0 || (size_t)write_result < valid_in_page) {
             pagecache_put_page(file->node, page_index);
-            return bytes_written > 0 ? (int)bytes_written : write_result;
+            if (bytes_written > 0) {
+                return (int)bytes_written;
+            }
+            return write_result < 0 ? write_result : -ENOSPC;
         }
 
         pagecache_clear_dirty(file->node, page_index);

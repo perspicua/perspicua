@@ -67,8 +67,9 @@ fiq_discard:
     stp x26, x27, [sp, #32 + 16 * 13]
     stp x28, x29, [sp, #32 + 16 * 14]
     
-    // Save x30 (offset 272)
-    str x30, [sp, #272]
+    // Save x30 (offset 272); xzr clears _pad_end, which signal delivery copies
+    // to the user stack along with the rest of the frame.
+    stp x30, xzr, [sp, #272]
 
     // Save ELR_EL1 and SPSR_EL1 (offset 16)
     mrs x0, elr_el1

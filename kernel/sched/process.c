@@ -497,21 +497,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return -ESRCH;
     }
 
-    int fds_to_close[VFS_MAX_FDS];
-    int close_count = 0;
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    for (int i = 0; i < VFS_MAX_FDS; i++) {
-        if (p->fd_table[i] && (p->fd_flags[i] & FD_CLOEXEC)) {
-            fds_to_close[close_count++] = i;
-        }
-    }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
-
-    for (int i = 0; i < close_count; i++) {
-        vfs_close(fds_to_close[i]);
-    }
-
     /*
      * Copy the vectors in before switching address space. A NULL entry ends the
      * vector, but an oversized or unreadable string is a hard failure: silently
@@ -536,12 +521,19 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     unsigned long *new_pgd = mmu_create_user_pgd();
+    if (!new_pgd) {
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
+        return -ENOMEM;
+    }
+
     uint64_t entry_point;
-    if (!new_pgd || elf_load(path, new_pgd, &entry_point) != 0) {
+    int load_err = elf_load(path, new_pgd, &entry_point);
+    if (load_err != 0) {
         mmu_destroy_user_pgd(new_pgd);
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
-        return -ENOEXEC;
+        return load_err;
     }
 
     struct va_allocator new_va;
@@ -552,6 +544,25 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
         return -ENOMEM;
+    }
+
+    /*
+     * Past the last failure point, so the caller of a failed exec keeps the
+     * descriptors it opened. POSIX requires a failed exec to change nothing.
+     */
+    int fds_to_close[VFS_MAX_FDS];
+    int close_count = 0;
+
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (p->fd_table[i] && (p->fd_flags[i] & FD_CLOEXEC)) {
+            fds_to_close[close_count++] = i;
+        }
+    }
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
+    for (int i = 0; i < close_count; i++) {
+        vfs_close(fds_to_close[i]);
     }
 
     // Set up user stack with argc/argv (top-down)
@@ -620,7 +631,8 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
             p->signal_handlers[i].sa_handler = SIG_DFL;
         }
     }
-    p->pending_signals = 0;
+    // pending_signals deliberately survives: POSIX keeps the pending set across
+    // exec, and clearing it here loses a SIGKILL sent while exec was running.
 
     // The new image does not own the old one's alt stack address.
     memset(&p->sigaltstack, 0, sizeof(p->sigaltstack));
@@ -831,6 +843,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
 
     if (!child_pgd || !kstack) {
         mmu_destroy_user_pgd(child_pgd);
+        kstack_free(kstack);
         process_release_slot((uint32_t)child_pid);
         return -ENOMEM;
     }

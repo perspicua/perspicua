@@ -187,8 +187,12 @@ jump_main:
     br x1               // Core 0 goes to main()
 
 jump_secondary_main:
+#ifdef CONFIG_SMP
     ldr x0, =secondary_main
     br x0               // Cores 1, 2, 3 go to secondary_main()
+#else
+    b _entry_loop       // No SMP: there is no secondary_main to jump to.
+#endif
 
 _entry_loop:
     wfe
