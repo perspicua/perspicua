@@ -84,7 +84,8 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     block->is_free = 1;
     block->magic = HEAP_MAGIC_FREE;
 
-    heap_total_size += pages * PAGE_SIZE;
+    // heap_expand runs outside heap_lock, so two cores can grow concurrently.
+    __atomic_fetch_add(&heap_total_size, pages * PAGE_SIZE, __ATOMIC_RELAXED);
 
     return block;
 }

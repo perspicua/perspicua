@@ -210,8 +210,10 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
         restart->active = 0;
     }
 
-    // Update process mask; ensure KILL/STOP remain unblockable
+    // new_mask builds on the current mask; the frame carries the one
+    // sigsuspend displaced, which is what sigreturn restores.
     sigset_t old_mask = p->blocked_signals;
+    sigset_t frame_mask = p->has_saved_sigmask ? p->saved_sigmask : old_mask;
     sigset_t new_mask = old_mask | sa->sa_mask;
     if (!(sa->sa_flags & SA_NODEFER)) {
         new_mask |= (1u << bit);
@@ -223,13 +225,16 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     struct signal_frame frame;
     memset(&frame, 0, sizeof(frame));
     memcpy(&frame.saved_tf, tf, sizeof(struct exception_trap_frame));
-    frame.saved_mask = old_mask;
+    frame.saved_mask = frame_mask;
 
     if (!syscall_validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
         || copy_to_user((void *)new_sp, &frame, sizeof(struct signal_frame)) != 0) {
         p->blocked_signals = old_mask;
         process_exit(pid, -1);
     }
+
+    // The frame owns it now; signal_handle_pending must not restore it again.
+    p->has_saved_sigmask = 0;
 
     // Redirect execution to user-space handler
     tf->elr_el1 = (uintptr_t)handler;
@@ -286,6 +291,12 @@ void signal_handle_pending(struct exception_trap_frame *tf)
     }
 
     signal_deliver_all(tf, curr, &restart);
+
+    struct process *p = process_current();
+    if (p && p->has_saved_sigmask) {
+        p->blocked_signals = p->saved_sigmask;
+        p->has_saved_sigmask = 0;
+    }
 
     if (restart.active) {
         syscall_rewind(tf, restart.arg0);

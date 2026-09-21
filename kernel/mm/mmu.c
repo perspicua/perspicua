@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "mm/asid.h"
+#include "uapi/errno.h"
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -487,8 +488,8 @@ oom:
     return NULL;
 }
 
-void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
-                       unsigned long flags)
+int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
+                      unsigned long flags)
 {
     if (!pgd) {
         PANIC("mmu: NULL user pgd");
@@ -508,7 +509,7 @@ void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pa
         l2t = alloc_user_table_page();
         if (!l2t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
-            return;
+            return -ENOMEM;
         }
         pgd[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
@@ -525,7 +526,7 @@ void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pa
         l3t = alloc_user_table_page();
         if (!l3t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
-            return;
+            return -ENOMEM;
         }
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
     }
@@ -544,6 +545,7 @@ void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pa
     tlbi_va_is(vaddr);
 
     spin_unlock_irqrestore(&mmu_lock, irq);
+    return 0;
 }
 
 void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)

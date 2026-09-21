@@ -37,6 +37,16 @@ PANIC_MARKER="KERNEL PANIC"
 # "<name>: all N tests passed"; add a program here to have it gated.
 USER_SUITES=(test_restart)
 
+# Lines typed at the shell WITHOUT waiting for each echo, so they overlap in
+# the UART FIFO -- a drained FIFO is exactly when a late interrupt acknowledge
+# cannot drop a byte, so waiting for each echo detects nothing at all.
+#
+# Against a kernel with that bug put back this caught it in 6 of 18 runs, and
+# in 0 of 8 against the fixed one. A failure here is real; a pass is not proof.
+CONSOLE_BURST_LINES=20
+CONSOLE_BURST_GAP=0.05
+CONSOLE_BURST_PAD=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
+
 LOG="$(mktemp -t perspicua-tests.XXXXXX)"
 FIFO="$(mktemp -u -t perspicua-stdin.XXXXXX)"
 mkfifo "$FIFO"
@@ -60,6 +70,9 @@ started=$(date +%s)
 wait_for()
 {
     local pattern="$1"
+    # Poll interval. The default suits waits measured in seconds; the console
+    # burst does dozens of round trips and would otherwise pay a second each.
+    local interval="${2:-1}"
     while true; do
         if grep -qE "$pattern" "$LOG" 2>/dev/null; then
             return 0
@@ -74,7 +87,7 @@ wait_for()
             timed_out=1
             return 1
         fi
-        sleep 1
+        sleep "$interval"
     done
 }
 
@@ -96,12 +109,30 @@ for marker in "${KERNEL_MARKERS[@]}"; do
     wait_for "$marker" || break
 done
 
+console_burst_ran=0
+
 if wait_for "$SHELL_MARKER"; then
     for suite in "${USER_SUITES[@]}"; do
         printf '%s\n' "$suite" >&3
         # Matches a pass or a failure, so a failing suite reports at once
         # instead of waiting out the budget.
         wait_for "^$suite: (all [0-9]+ tests passed|[0-9]+ of [0-9]+ tests failed)" || break
+    done
+
+    # Each line goes out as a single write and must come back before the next
+    # one is sent: a dropped byte shows up as the echo that never arrives.
+    console_burst_ran=1
+    for i in $(seq 1 "$CONSOLE_BURST_LINES"); do
+        printf 'echo B%d-%s-END\n' "$i" "$CONSOLE_BURST_PAD" >&3
+        sleep "$CONSOLE_BURST_GAP"
+    done
+
+    # Bounded on its own rather than through wait_for, so a wedged console
+    # fails in seconds instead of eating the whole run's budget.
+    burst_deadline=$(( $(date +%s) + 20 ))
+    until grep -qF "B$CONSOLE_BURST_LINES-$CONSOLE_BURST_PAD-END" "$LOG"; do
+        [ "$(date +%s)" -ge "$burst_deadline" ] && break
+        sleep 0.2
     done
 fi
 
@@ -147,6 +178,17 @@ for suite in "${USER_SUITES[@]}"; do
         status=1
     fi
 done
+
+if [ "$console_burst_ran" -eq 1 ]; then
+    burst_missing=0
+    for i in $(seq 1 "$CONSOLE_BURST_LINES"); do
+        grep -qF "B$i-$CONSOLE_BURST_PAD-END" "$LOG" || burst_missing=$((burst_missing + 1))
+    done
+    if [ "$burst_missing" -gt 0 ]; then
+        echo "FAIL: $burst_missing of $CONSOLE_BURST_LINES console lines came back garbled or not at all"
+        status=1
+    fi
+fi
 
 if [ "$status" -eq 0 ]; then
     grep -E "all [0-9]+ tests passed" "$LOG" | sed 's/^/  /'

@@ -61,16 +61,29 @@ static void pipe_queue_remove(struct task **queue, struct task *t)
 /*
  * pipe_wait - Blocks the current task on a pipe's specific wait queue.
  *
+ * Returns 1 without blocking when a signal is pending, lock still held. The
+ * check lives here because it must follow the transition to BLOCKED.
+ *
  * Called with the pipe lock held and interrupts already masked by the caller's
  * irqsave. Both stay that way across the switch, so nothing can split the
  * transition to BLOCKED from the unlock that publishes it.
  */
-static void pipe_wait(struct task **queue, spinlock_t *lock)
+static int pipe_wait(struct task **queue, spinlock_t *lock)
 {
     struct task *self = sched_current_task();
 
-    // Transition to BLOCKED before releasing lock to avoid lost wake-ups
-    self->state = SCHED_TASK_BLOCKED;
+    // The sender holds process_table_lock, not this one, and reads the state
+    // after setting the bit -- so both stores go before both loads.
+    __atomic_store_n(&self->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+    if (signal_pending(process_current())) {
+        enum sched_task_state expected = SCHED_TASK_BLOCKED;
+        __atomic_compare_exchange_n(&self->state, &expected, SCHED_TASK_RUNNING, 0,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+        return 1;
+    }
+
     self->wait_next = *queue;
     *queue = self;
 
@@ -80,6 +93,7 @@ static void pipe_wait(struct task **queue, spinlock_t *lock)
     spin_lock(lock);
     // A signal wake (rather than pipe_wake) leaves us queued: unlink now.
     pipe_queue_remove(queue, self);
+    return 0;
 }
 
 static void pipe_wake(struct task **queue)
@@ -127,11 +141,10 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
             }
             /* A partial read is a result the caller must see; only an empty
              * one can be restarted. */
-            if (signal_pending(process_current())) {
+            if (pipe_wait(&pipe->read_wait_queue, &pipe->lock)) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
                 return read > 0 ? (int)read : -ERESTARTSYS;
             }
-            pipe_wait(&pipe->read_wait_queue, &pipe->lock);
         }
     }
 
@@ -175,10 +188,6 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
                 }
                 break;
             }
-            if (signal_pending(process_current())) {
-                spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return written > 0 ? (int)written : -ERESTARTSYS;
-            }
             /*
              * Hand off what is buffered before sleeping. A reader that queued
              * while the pipe was empty is woken only by the wake below, which a
@@ -189,7 +198,10 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
             if (pipe->read_wait_queue) {
                 pipe_wake(&pipe->read_wait_queue);
             }
-            pipe_wait(&pipe->write_wait_queue, &pipe->lock);
+            if (pipe_wait(&pipe->write_wait_queue, &pipe->lock)) {
+                spin_unlock_irqrestore(&pipe->lock, fdflags);
+                return written > 0 ? (int)written : -ERESTARTSYS;
+            }
         }
     }
 

@@ -73,9 +73,14 @@ static void task_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
+/*
+ * Two blocks below assert "not yet" partway through this, so changing the
+ * duration means changing both their waits. One that outlives its block leaks
+ * its counter_b++ into the next.
+ */
 static void task_long_sleep_then_inc(void)
 {
-    sched_sleep_ms(200);
+    sched_sleep_ms(600);
     unsigned long flags = spin_lock_irqsave(&test_lock);
     counter_b++;
     spin_unlock_irqrestore(&test_lock, flags);
@@ -418,9 +423,11 @@ void test_scheduler(void)
 
     // task sleeps then increments
     {
+        // A sleeper wakes on the first tick at or after its deadline, so each
+        // sched_sleep_ms(n) can cost n + 10 and a loaded host adds more.
         counter_a = 0;
         sched_create_task(task_sleep_then_inc);
-        sched_sleep_ms(50);
+        sched_sleep_ms(150);
         TEST_ASSERT("sleep-then-inc", counter_a == 1);
     }
 
@@ -428,7 +435,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_multi_sleep);
-        sched_sleep_ms(80);
+        sched_sleep_ms(250);
         TEST_ASSERT("multi-sleep task", counter_a == 3);
     }
 
@@ -436,7 +443,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_inc_a_with_delay);
-        sched_sleep_ms(100);
+        sched_sleep_ms(300);
         TEST_ASSERT("work+sleep task", counter_a == 5);
     }
 
@@ -447,11 +454,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
-        sched_create_task(task_long_sleep_then_inc); // sleeps 200ms, inc b
-        sched_sleep_ms(60);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
+        sched_sleep_ms(150);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
-        sched_sleep_ms(200);
+        sched_sleep_ms(700);
         TEST_ASSERT("long sleeper done", counter_b == 1);
     }
 
@@ -529,11 +536,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_inc_a);               // instant
-        sched_create_task(task_long_sleep_then_inc); // sleeps 200ms, inc b
-        sched_sleep_ms(60);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
+        sched_sleep_ms(150);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);
-        sched_sleep_ms(200);
+        sched_sleep_ms(700);
         TEST_ASSERT("slow done", counter_b == 1);
     }
 

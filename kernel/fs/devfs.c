@@ -119,10 +119,11 @@ int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *int
         return -ENOMEM;
     }
 
+    // slab_alloc does not zero, and name[] is 256 bytes of recycled heap.
+    memset(node, 0, sizeof(*node));
     node->type = VFS_VNODE_TYPE_DEVICE;
     node->ops = ops;
     node->internal_info = internal_info;
-    node->file_size = 0;
     node->parent = devfs_root_vnode;
     atomic_set(&node->refcount, 1);
 
@@ -156,11 +157,9 @@ void devfs_init(void)
         PANIC("devfs: root allocation failed");
     }
 
+    memset(devfs_root_vnode, 0, sizeof(*devfs_root_vnode));
     devfs_root_vnode->type = VFS_VNODE_TYPE_DIR;
     devfs_root_vnode->ops = &devfs_root_ops;
-    devfs_root_vnode->internal_info = NULL;
-    devfs_root_vnode->parent = NULL;
-    devfs_root_vnode->file_size = 0;
     atomic_set(&devfs_root_vnode->refcount, 1);
 
     if (devfs_register_device("console", &devfs_tty_ops, &console_tty) != 0) {

@@ -336,12 +336,19 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
 
             struct task *curr_task_inner = sched_current_task();
 
+            // The sender holds process_table_lock, not this one, and reads
+            // the state after setting the bit -- stores before loads.
+            __atomic_store_n(&curr_task_inner->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
             if (signal_pending(process_slot(curr_task_inner->pid))) {
+                enum sched_task_state expected = SCHED_TASK_BLOCKED;
+                __atomic_compare_exchange_n(&curr_task_inner->state, &expected, SCHED_TASK_RUNNING,
+                                            0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
                 spin_unlock_irqrestore(&tty->lock, flags);
                 return -ERESTARTSYS;
             }
 
-            curr_task_inner->state = SCHED_TASK_BLOCKED;
             wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
             spin_unlock_irqrestore(&tty->lock, flags);
             sched_schedule();

@@ -123,6 +123,11 @@ struct process {
 
     sigset_t pending_signals;
     sigset_t blocked_signals;
+
+    // The mask sigsuspend displaced, parked until a handler frame carries it.
+    sigset_t saved_sigmask;
+    int has_saved_sigmask;
+
     struct sigaction signal_handlers[NSIG];
     stack_t sigaltstack;
 };

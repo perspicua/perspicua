@@ -219,6 +219,13 @@ void *slab_alloc(unsigned long size)
         PANIC("slab: partial page with an empty free list");
     }
 
+    // Bounds before the canary read below dereferences obj: an overflow into
+    // a free object corrupts its in-band next pointer, not its canary.
+    int slot = slab_slot_of(sp, obj);
+    if (slot < 0) {
+        PANIC("slab: free list holds a misaligned object");
+    }
+
     /*
      * Nothing may write to an object while it sits on the free list, so a
      * disturbed marker here means a use-after-free. Checked on the way out
@@ -226,11 +233,6 @@ void *slab_alloc(unsigned long size)
      */
     if (obj->free_canary != SLAB_FREE_POISON) {
         PANIC("slab: free object was written after being freed");
-    }
-
-    int slot = slab_slot_of(sp, obj);
-    if (slot < 0) {
-        PANIC("slab: free list holds a misaligned object");
     }
 
     sp->free_list = obj->next;

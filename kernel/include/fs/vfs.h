@@ -54,6 +54,10 @@ struct vfs_vnode_ops {
      */
     int (*read)(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset);
     int (*write)(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *offset);
+
+    // Refreshes size and location from the filesystem's own record. Optional:
+    // needed only where one file can have more than one vnode.
+    int (*revalidate)(struct vfs_vnode *node);
     int (*truncate)(struct vfs_vnode *node, vfs_off_t length);
     struct vfs_vnode *(*lookup)(struct vfs_vnode *dir, const char *filename);
     int (*readdir)(struct vfs_file *file, void *buffer, size_t count);

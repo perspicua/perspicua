@@ -46,8 +46,8 @@ int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
 
-    // Prevent wrap-around or kernel-space intrusion
-    if (end < start || end > KERNEL_VMA) {
+    // Past USER_VA_LIMIT, L1_IDX wraps onto another entry of the same pgd.
+    if (end < start || end > KERNEL_VMA || end > USER_VA_LIMIT) {
         return 0;
     }
 
@@ -110,7 +110,7 @@ static int copy_path_from_user(const char *upath, char **out)
     long copied = strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN);
     if (copied < 0) {
         heap_free(kpath);
-        return -EINVAL;
+        return (int)copied;
     }
 
     *out = kpath;
@@ -211,7 +211,7 @@ static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
  *
  * Why INT64_MAX is collision-free across all other syscalls:
  *   - mmap returns user virtual addresses below USER_VA_LIMIT (0x8000000000)
- *     or MAP_FAILED (-1).
+ *     or a negative errno.
  *   - lseek returns file offsets (vfs_off_t, positive values up to file size).
  *   - All other handlers return small non-negative integers (byte counts, PIDs,
  *     file descriptors, 0 for success) or negative error codes (-ENOENT and friends).
@@ -937,8 +937,10 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
         sched_schedule();
     }
 
-    // POSIX: sigsuspend restores the caller's original mask on return.
-    proc->blocked_signals = saved_mask;
+    // The handler runs after this returns, so restoring the mask here would
+    // re-block the signal that woke us and the handler would never run.
+    proc->saved_sigmask = saved_mask;
+    proc->has_saved_sigmask = 1;
     return -EINTR;
 }
 
@@ -1262,6 +1264,11 @@ static int64_t write_handler(struct exception_trap_frame *tf)
     const char *buf = (const char *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
 
+    // Through the VFS, not short-circuited: the fd still has to be checked.
+    if (len == 0) {
+        return vfs_write(fd, "", 0);
+    }
+
     void *kbuf;
     int err = copy_buf_from_user(buf, len, &kbuf);
     if (err != 0) {
@@ -1280,6 +1287,10 @@ static int64_t pwrite_handler(struct exception_trap_frame *tf)
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (len == 0) {
+        return vfs_pwrite(fd, "", 0, offset);
+    }
+
     void *kbuf;
     int err = copy_buf_from_user(buf, len, &kbuf);
     if (err != 0) {
@@ -1296,6 +1307,11 @@ static int64_t read_handler(struct exception_trap_frame *tf)
     int fd = (int)(tf->x[0]);
     void *buf = (void *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
+
+    if (len == 0) {
+        char none;
+        return vfs_read(fd, &none, 0);
+    }
 
     void *kbuf;
     int err = alloc_user_out_buf(buf, len, &kbuf);
@@ -1320,6 +1336,11 @@ static int64_t pread_handler(struct exception_trap_frame *tf)
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (len == 0) {
+        char none;
+        return vfs_pread(fd, &none, 0, offset);
+    }
+
     void *kbuf;
     int err = alloc_user_out_buf(buf, len, &kbuf);
     if (err != 0) {
@@ -1341,6 +1362,10 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
     int fd = (int)(tf->x[0]);
     void *buf = (void *)(tf->x[1]);
     size_t count = (size_t)(tf->x[2]);
+
+    if (count == 0) {
+        return 0;
+    }
 
     void *kbuf;
     int err = alloc_user_out_buf(buf, count, &kbuf);
@@ -1402,13 +1427,13 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
     int fd = (int)tf->x[4];
 
     if (length == 0 || length > SYSCALL_MAX_MMAP_SIZE) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -EINVAL;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -ESRCH;
     }
 
     /*
@@ -1419,7 +1444,7 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
      */
     int anonymous = (flags & MAP_ANONYMOUS) != 0;
     if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -EBADF;
     }
 
     /* Hold a reference so a concurrent close cannot free the file out
@@ -1435,7 +1460,7 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
 
         if (!file || !file->node || !file->node->ops || !file->node->ops->mmap) {
             vfs_file_put(file);
-            return (int64_t)(uintptr_t)MAP_FAILED;
+            return -ENODEV;
         }
     }
 
@@ -1443,13 +1468,16 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
     uintptr_t new_region = process_va_alloc(&proc->va, pages_needed);
     if (new_region == 0) {
         vfs_file_put(file);
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -ENOMEM;
     }
+
+    int fail_err = -ENOMEM;
 
     if (!anonymous) {
         int mres = file->node->ops->mmap(file, new_region, length, prot, flags);
         vfs_file_put(file);
         if (mres < 0) {
+            fail_err = mres;
             goto mmap_fail;
         }
     }
@@ -1467,8 +1495,12 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
                 goto mmap_fail;
             }
             memset(kaddr, 0, PAGE_SIZE);
-            mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE, V2P((uintptr_t)kaddr),
-                              mmu_flags);
+            if (mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE, V2P((uintptr_t)kaddr),
+                                  mmu_flags)
+                != 0) {
+                pmm_free_page(kaddr);
+                goto mmap_fail;
+            }
         }
     }
     return (int64_t)new_region;
@@ -1480,7 +1512,7 @@ mmap_fail:
         mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
     }
     process_va_free(&proc->va, new_region);
-    return (int64_t)(uintptr_t)MAP_FAILED;
+    return fail_err;
 }
 
 static const syscall_fn syscall_table[SYS_SIGALTSTACK + 1] = {

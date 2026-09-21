@@ -70,12 +70,15 @@ static struct vfs_mount_entry *find_mount(const char *path, int *error)
     return &vfs_mount_table[longest_match_index];
 }
 
+static void vnode_revalidate(struct vfs_vnode *node);
+
 static int vfs_vnode_stat(struct vfs_vnode *node, struct stat *buf)
 {
     if (!node || !buf) {
         return -EINVAL;
     }
 
+    vnode_revalidate(node);
     memset(buf, 0, sizeof(struct stat));
 
     if (node->type == VFS_VNODE_TYPE_DIR) {
@@ -680,6 +683,19 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
     return new_offset;
 }
 
+/*
+ * vnode_revalidate - Re-reads size and location from the filesystem.
+ *
+ * Called before anything that decides where in a file bytes belong: a
+ * filesystem handing out one vnode per open lets two descriptors drift apart.
+ */
+static void vnode_revalidate(struct vfs_vnode *node)
+{
+    if (node && node->ops && node->ops->revalidate) {
+        node->ops->revalidate(node);
+    }
+}
+
 int vfs_read(int fd, void *buffer, size_t count)
 {
     int err;
@@ -693,6 +709,8 @@ int vfs_read(int fd, void *buffer, size_t count)
         vfs_file_put(f);
         return -EACCES;
     }
+
+    vnode_revalidate(f->node);
 
     int bytes = f->node->ops->read(f, buffer, count, &f->offset);
     vfs_file_put(f);
@@ -717,6 +735,8 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
         vfs_file_put(f);
         return -EACCES;
     }
+
+    vnode_revalidate(f->node);
 
     vfs_off_t pos = offset;
     int bytes = f->node->ops->read(f, buffer, count, &pos);
@@ -849,6 +869,8 @@ int vfs_write(int fd, const void *buffer, size_t count)
         return -EACCES;
     }
 
+    vnode_revalidate(f->node);
+
     if (f->flags & O_APPEND) {
         f->offset = f->node->file_size;
     }
@@ -876,6 +898,8 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
         vfs_file_put(f);
         return -EACCES;
     }
+
+    vnode_revalidate(f->node);
 
     // O_APPEND pins every write to the end, so it overrides the given offset.
     vfs_off_t pos = (f->flags & O_APPEND) ? f->node->file_size : offset;

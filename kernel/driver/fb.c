@@ -58,7 +58,10 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
     }
 
     for (size_t i = 0; i < pages; i++) {
-        mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE, attrs);
+        int err = mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE, attrs);
+        if (err != 0) {
+            return err;
+        }
     }
 
     return 0;

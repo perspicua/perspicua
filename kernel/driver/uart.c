@@ -204,6 +204,11 @@ void uart_handle_irq(void)
 {
     uint32_t mis = mmio_read(uart_mis);
 
+    /* Acknowledge before draining: a byte landing between the drain loop
+     * seeing RXFE and this write has already raised its own interrupt, and
+     * clearing afterwards strands it in the FIFO with nothing to read it. */
+    uart_clear_interrupt(mis);
+
     if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
         while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
             char c = (char)(mmio_read(uart_dr) & 0xFF);
@@ -217,6 +222,4 @@ void uart_handle_irq(void)
             uart_tx_callback();
         }
     }
-
-    uart_clear_interrupt(mis);
 }

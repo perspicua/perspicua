@@ -175,7 +175,13 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 // Upgrade permissions if we're loading data into an existing page
                 if ((mmu_flags & MMU_PAGE_USER_DATA) && !(current_flags & MMU_UXN)) {
                     pmm_hold_page((void *)P2V(current_paddr));
-                    mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags);
+                    if (mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags)
+                        != 0) {
+                        pmm_free_page((void *)P2V(current_paddr));
+                        heap_free(phdrs);
+                        vfs_close(fd);
+                        return -ENOMEM;
+                    }
                 }
             } else {
                 kernel_vaddr = pmm_alloc_pages_nozero(1);
@@ -185,7 +191,12 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 /* Zeroed here rather than by the allocator: the bytes past
                  * filesz are the segment's BSS and must read as zero. */
                 memset(kernel_vaddr, 0, PAGE_SIZE);
-                mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags);
+                if (mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags) != 0) {
+                    pmm_free_page(kernel_vaddr);
+                    heap_free(phdrs);
+                    vfs_close(fd);
+                    return -ENOMEM;
+                }
             }
 
             uint64_t page_end = page + PAGE_SIZE;

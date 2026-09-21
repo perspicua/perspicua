@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "test.h"
+#include "uapi/errno.h"
 
 #include "string.h"
 
@@ -191,15 +192,13 @@ void test_process(void)
             mmu_destroy_user_pgd(pgd);
         }
 
+        // The errno is the assertion: -1 reaches the caller as EPERM.
         TEST_ASSERT("mmap test setup", pgd != NULL && fd >= 0);
-        TEST_ASSERT("file with no mmap op is refused",
-                    file_backed == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("anonymous with a descriptor is refused",
-                    anon_with_fd == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("out-of-range descriptor is refused", bad_fd == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("neither file nor anonymous is refused",
-                    no_backing == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("anonymous mapping succeeds", anon != (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("file with no mmap op is refused", file_backed == -ENODEV);
+        TEST_ASSERT("anonymous with a descriptor is refused", anon_with_fd == -EBADF);
+        TEST_ASSERT("out-of-range descriptor is refused", bad_fd == -EBADF);
+        TEST_ASSERT("neither file nor anonymous is refused", no_backing == -EBADF);
+        TEST_ASSERT("anonymous mapping succeeds", anon > 0);
     }
 
     /*

@@ -141,8 +141,10 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         if (cache_count >= BLOCK_CACHE_SIZE) {
             struct block_cache_entry *evict = lru_tail;
 
-            // Flush dirty block to disk before eviction
-            if (evict->dirty) {
+            /* Re-tested after every unlock: the tail can be a different entry
+             * by then, and evicting that one unflushed would lose its write.
+             * Nothing sets dirty while the cache is write-through. */
+            while (evict && evict->dirty) {
                 // Must release lock during I/O
                 void *evict_data = evict->data;
                 size_t evict_block_nr = evict->block_nr;
@@ -151,16 +153,25 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
 
                 struct block_ops_wrapper *evict_ops =
                     (struct block_ops_wrapper *)evict_dev->private_data;
-                evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
+                int wres = evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
 
                 flags = spin_lock_irqsave(&cache_lock);
-                // Re-lookup evict entry as it might have changed
-                evict = lru_tail;
-                if (!evict) {
+
+                if (wres != 0) {
                     pmm_free_pages(temp_buf);
                     spin_unlock_irqrestore(&cache_lock, flags);
-                    return -EIO;
+                    return wres;
                 }
+
+                // Entries are recycled, never freed, so this stays valid.
+                evict->dirty = 0;
+                evict = lru_tail;
+            }
+
+            if (!evict) {
+                pmm_free_pages(temp_buf);
+                spin_unlock_irqrestore(&cache_lock, flags);
+                return -EIO;
             }
 
             lru_remove(evict);

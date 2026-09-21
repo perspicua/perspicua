@@ -43,4 +43,12 @@ int pagecache_sync(void);
  */
 void pagecache_invalidate(struct vfs_vnode *node);
 
+/*
+ * pagecache_discard - Drops every cached page of a file without writing back.
+ *
+ * Keyed rather than vnode-based: a delete has no vnode left to name them by,
+ * and the next file given that key would be served whatever stayed cached.
+ */
+void pagecache_discard(void *fs_ops, void *file_id);
+
 #endif // PERSPICUA_FS_PAGECACHE_H

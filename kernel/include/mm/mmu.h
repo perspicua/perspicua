@@ -71,8 +71,9 @@ unsigned long *mmu_create_user_pgd(void);
 void mmu_destroy_user_pgd(unsigned long *pgd);
 unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd);
 
-void mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
-                       unsigned long flags);
+// -ENOMEM leaves the mapping absent; the caller still owns the page it passed.
+int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
+                      unsigned long flags);
 void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
 int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
                    unsigned long *out_flags);

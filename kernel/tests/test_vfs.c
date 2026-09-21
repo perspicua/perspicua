@@ -300,5 +300,83 @@ void test_vfs(void)
         vfs_close(fd);
     }
 
+    // Two descriptors, two vnodes, one file: without revalidate the second
+    // writer records its own end-of-file over the first's.
+    {
+        const char *f = "/tcoh.tmp";
+        vfs_unlink(f);
+
+        int fd1 = vfs_open(f, O_WRONLY | O_CREAT);
+        int fd2 = vfs_open(f, O_WRONLY);
+        int wrote1 = -1, wrote2 = -1;
+        struct stat st;
+        int statted = -1;
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            wrote1 = vfs_write(fd1, "aaaa", 4);
+            wrote2 = vfs_write(fd2, "bb", 2);
+            statted = vfs_stat(f, &st);
+        }
+
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+
+        TEST_ASSERT("two descriptors opened", fd1 >= 0 && fd2 >= 0);
+        TEST_ASSERT_EQ("first descriptor wrote", wrote1, 4);
+        TEST_ASSERT_EQ("second descriptor wrote", wrote2, 2);
+        TEST_ASSERT_EQ("stat succeeded", statted, 0);
+        TEST_ASSERT_EQ("a shorter second write does not shrink the file", st.st_size, 4);
+
+        vfs_unlink(f);
+    }
+
+    // The same divergence on the offset side.
+    {
+        const char *f = "/tcoha.tmp";
+        vfs_unlink(f);
+
+        int fd1 = vfs_open(f, O_WRONLY | O_CREAT | O_APPEND);
+        int fd2 = vfs_open(f, O_WRONLY | O_APPEND);
+        char buf[8];
+        int got = -1;
+        struct stat st;
+        int statted = -1;
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            vfs_write(fd1, "aaaa", 4);
+            vfs_write(fd2, "bb", 2);
+            statted = vfs_stat(f, &st);
+
+            vfs_close(fd1);
+            vfs_close(fd2);
+            fd1 = fd2 = -1;
+
+            int rfd = vfs_open(f, O_RDONLY);
+            if (rfd >= 0) {
+                memset(buf, 0, sizeof(buf));
+                got = vfs_read(rfd, buf, sizeof(buf));
+                vfs_close(rfd);
+            }
+        }
+
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+
+        TEST_ASSERT_EQ("append stat succeeded", statted, 0);
+        TEST_ASSERT_EQ("appends from both descriptors accumulate", st.st_size, 6);
+        TEST_ASSERT_EQ("read back the whole file", got, 6);
+        TEST_ASSERT("second append went after the first", memcmp(buf, "aaaabb", 6) == 0);
+
+        vfs_unlink(f);
+    }
+
     TEST_SUITE_END("VFS");
 }

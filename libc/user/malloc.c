@@ -73,6 +73,10 @@ void *malloc(size_t size)
     if (size == 0) {
         return NULL;
     }
+    // A wrapped HEAP_ALIGN matches the first free block, however big the ask.
+    if (size > SIZE_MAX - 15) {
+        return NULL;
+    }
     size = HEAP_ALIGN(size);
 
     struct block_header *curr = block_list;

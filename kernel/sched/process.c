@@ -148,7 +148,11 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
         if (!page) {
             PANIC("process: user stack OOM");
         }
-        mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA);
+        if (mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA) != 0) {
+            pmm_free_page(page);
+            process_va_free(va, vbase);
+            return 0;
+        }
     }
     return vbase;
 }
@@ -381,6 +385,7 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     if (!vaddr_stack || !kstack) {
         mmu_destroy_user_pgd(user_pgd);
+        kstack_free(kstack);
         process_release_slot(pid);
         return -ENOMEM;
     }
@@ -642,6 +647,10 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = new_stack_base;
     p->va = new_va;
+
+    // p->asid alone may be from a retired generation, which after a rollover
+    // puts two live address spaces on one ASID.
+    asid_get_active(&p->asid, &p->asid_generation);
     p->ttbr0 = V2P(new_pgd) | asid_ttbr_field(p->asid);
 
     process_set_name(p, path);
@@ -702,6 +711,7 @@ void process_exit(uint32_t pid, int exit_status)
 
     // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    int orphaned_zombie = 0;
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
         if (i == (int)pid) {
             continue;
@@ -711,6 +721,9 @@ void process_exit(uint32_t pid, int exit_status)
         }
         if (process_table[i]->parent_pid == pid) {
             process_table[i]->parent_pid = 1;
+            if (process_table[i]->state == PROCESS_STATE_ZOMBIE) {
+                orphaned_zombie = 1;
+            }
         }
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
@@ -762,6 +775,19 @@ void process_exit(uint32_t pid, int exit_status)
         parent = process_table[ppid];
         if (parent && parent->state == PROCESS_STATE_RUNNING && parent->main_task != NULL) {
             sched_unblock(parent->main_task);
+        }
+        spin_unlock_irqrestore(&process_table_lock, flags);
+    }
+
+    // Init was never told about these deaths, and they are past announcing
+    // themselves, so it would sleep in waitpid holding their slots.
+    if (orphaned_zombie && pid != 1) {
+        signal_send(1, SIGCHLD);
+
+        flags = spin_lock_irqsave(&process_table_lock);
+        struct process *initp = process_slot(1);
+        if (initp && initp->state == PROCESS_STATE_RUNNING && initp->main_task != NULL) {
+            sched_unblock(initp->main_task);
         }
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
@@ -957,13 +983,21 @@ int process_waitpid(int pid, int *status, int options)
         if (!has_children) {
             spin_unlock(&process_table_lock);
             irq_restore(irqf);
-            return -ESRCH;
+            return -ECHILD;
         }
 
         if (options & WNOHANG) {
             spin_unlock(&process_table_lock);
             irq_restore(irqf);
             return 0;
+        }
+
+        // Under the table lock the sender also holds, so nothing slips in
+        // between this and the transition below.
+        if (signal_pending(process_slot((uint32_t)parent_pid))) {
+            spin_unlock(&process_table_lock);
+            irq_restore(irqf);
+            return -ERESTARTSYS;
         }
 
         struct task *curr = sched_current_task();
