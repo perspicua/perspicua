@@ -67,6 +67,7 @@ void test_spinlock(void);
 void test_pmm(void);
 void test_slab(void);
 void test_heap(void);
+void test_heap_props(void);
 void test_timer(void);
 void test_sd(void);
 void test_mmu(void);

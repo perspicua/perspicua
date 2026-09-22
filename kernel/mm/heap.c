@@ -302,4 +302,28 @@ unsigned long heap_test_usable_size(const void *ptr)
         (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
     return block->size;
 }
+
+int heap_test_redzone_ok(const void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    // Slab objects carry no footer; their counterpart is the free canary,
+    // which slab_alloc checks when the object is handed out again.
+    if (slab_owns((void *)ptr)) {
+        return 1;
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        return 0;
+    }
+
+    const struct heap_block_footer *footer =
+        (const struct heap_block_footer *)((const unsigned char *)block + HEAP_HEADER_SIZE
+                                           + block->size);
+    return footer->magic == HEAP_REDZONE_MAGIC;
+}
 #endif
