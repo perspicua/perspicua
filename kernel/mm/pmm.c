@@ -363,11 +363,36 @@ void pmm_init(void)
             (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
+#ifdef CONFIG_TESTS
+static unsigned long pmm_fail_countdown = 0;
+
+void pmm_test_fail_nth(unsigned long n)
+{
+    __atomic_store_n(&pmm_fail_countdown, n, __ATOMIC_RELAXED);
+}
+
+// True once, on the nth call after arming. Two cores racing means one of them
+// takes the refusal, which is a refusal the caller did not schedule either.
+static int pmm_fail_injected(void)
+{
+    if (__atomic_load_n(&pmm_fail_countdown, __ATOMIC_RELAXED) == 0) {
+        return 0;
+    }
+    return __atomic_sub_fetch(&pmm_fail_countdown, 1, __ATOMIC_RELAXED) == 0;
+}
+#endif
+
 void *pmm_alloc_pages_nozero(unsigned long count)
 {
     if (count == 0) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (pmm_fail_injected()) {
+        return NULL;
+    }
+#endif
 
     unsigned int target_order = get_order(count);
     if (target_order > PMM_MAX_ORDER) {

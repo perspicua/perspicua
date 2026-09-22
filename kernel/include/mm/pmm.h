@@ -51,4 +51,12 @@ unsigned long pmm_get_free_pages(void);
 
 unsigned long pmm_get_total_pages(void);
 
+#ifdef CONFIG_TESTS
+/*
+ * Arms a one-shot refusal: the nth page allocation from now returns NULL as
+ * though the machine were out of memory. n == 0 disarms.
+ */
+void pmm_test_fail_nth(unsigned long n);
+#endif
+
 #endif // PERSPICUA_MM_PMM_H

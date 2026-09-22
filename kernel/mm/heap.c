@@ -149,11 +149,36 @@ void heap_init(void)
 /*
  * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
  */
+#ifdef CONFIG_TESTS
+static unsigned long heap_fail_countdown = 0;
+
+void heap_test_fail_nth(unsigned long n)
+{
+    __atomic_store_n(&heap_fail_countdown, n, __ATOMIC_RELAXED);
+}
+
+// Counts requests that would otherwise have been served, so a rejected size
+// does not consume the arming.
+static int heap_fail_injected(void)
+{
+    if (__atomic_load_n(&heap_fail_countdown, __ATOMIC_RELAXED) == 0) {
+        return 0;
+    }
+    return __atomic_sub_fetch(&heap_fail_countdown, 1, __ATOMIC_RELAXED) == 0;
+}
+#endif
+
 void *heap_malloc(unsigned long size)
 {
     if (size == 0 || size > HEAP_MAX_ALLOC) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (heap_fail_injected()) {
+        return NULL;
+    }
+#endif
 
     if (size <= HEAP_SLAB_MAX) {
         return slab_alloc(size);
