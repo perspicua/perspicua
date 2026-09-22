@@ -32,6 +32,8 @@ void run_all_tests(void)
     test_mutex();
     test_uaccess();
     test_process();
+    test_syscall_bounds();
+    test_faultinject();
 
     printk("\n");
 
