@@ -33,12 +33,4 @@ struct block_device *block_device_lookup(const char *name);
 
 int block_cache_sync(void);
 
-#ifdef CONFIG_TESTS
-/*
- * Drops every cached block belonging to a device without writing any of them
- * back, so a test that rewrites its media is read again rather than remembered.
- */
-void block_test_invalidate(struct block_device *dev);
-#endif
-
 #endif // PERSPICUA_DRIVER_BLOCK_H

@@ -1,11 +1,11 @@
 /*
  * test_syscall_bounds.c - Syscall dispatch driven with arguments no caller sends.
  *
- * Slot 0 is the kernel PCB and has no address space, so the suite lends it a
- * scratch one: without that, a pointer is refused for want of a pgd rather
- * than on its own merits. A pointer is refused twice over even so, by the
- * range checks and by the unprivileged loads the copy helpers use, so this is
- * a backstop there. Only the dispatcher itself is reached here alone.
+ * A bad pointer is refused twice over, by the range checks and by the
+ * unprivileged loads and stores the copy helpers use, so one layer regressing
+ * alone does not fail a probe. What does is the kernel acting on a pointer it
+ * should have refused, which the kernel-address probe makes visible by
+ * pointing at the path of a file that exists.
  */
 
 #include <stddef.h>
@@ -20,12 +20,10 @@
 #include "uapi/signals.h"
 #include "uapi/syscalls.h"
 
-#include "arch/exception.h"
-
 #include "core/syscall.h"
+#include "fs/vfs.h"
 #include "mm/addr.h"
 #include "mm/mmu.h"
-#include "mm/pmm.h"
 #include "sched/process.h"
 
 // Scratch user addresses, mapped into the borrowed pgd below.
@@ -37,8 +35,7 @@
 // Highest number the dispatcher has a slot for.
 #define SYSCALL_MAX_NR SYS_SIGALTSTACK
 
-// 288 bytes per frame, so the probes share one rather than nesting them.
-static struct exception_trap_frame probe_tf;
+#define SCRATCH_PATH "/sbounds.tmp"
 
 // A kernel address a syscall must never accept as a user buffer.
 static char kernel_target[64];
@@ -118,9 +115,20 @@ static const uint64_t bad_ptrs[] = {
     0xFFFFFFFFFFFFFFF0ULL, // wraps once a length is added
 };
 
-// Lengths a caller may legitimately pass: a zero-length read returns 0, so
-// the property is only that the call comes back.
-static const uint64_t legal_lens[] = {0, 1, SYSCALL_MAX_RW_SIZE};
+struct len_probe {
+    const char *name;
+    uint64_t nr;
+    int on_dir;
+    uint64_t unit; // smallest non-zero length the call serves
+};
+
+static const struct len_probe len_probes[] = {
+    {"read", SYS_READ, 0, 1},
+    {"write", SYS_WRITE, 0, 1},
+    {"getdents", SYS_GETDENTS, 1, sizeof(struct dirent)},
+    {"pread", SYS_PREAD, 0, 1},
+    {"pwrite", SYS_PWRITE, 0, 1},
+};
 
 // Past the cap the dispatcher enforces, or wrapped: these must be refused.
 static const uint64_t illegal_lens[] = {
@@ -128,17 +136,6 @@ static const uint64_t illegal_lens[] = {
     (uint64_t)-1,
     0x8000000000000000ULL,
 };
-
-static int64_t call_syscall(uint64_t nr, const uint64_t *args)
-{
-    memset(&probe_tf, 0, sizeof(probe_tf));
-    probe_tf.x[8] = nr;
-    for (int i = 0; i < 6; i++) {
-        probe_tf.x[i] = args[i];
-    }
-    syscall_handle(&probe_tf);
-    return (int64_t)probe_tf.x[0];
-}
 
 static int is_skipped(uint64_t nr)
 {
@@ -150,44 +147,19 @@ static int is_skipped(uint64_t nr)
     return 0;
 }
 
-/*
- * The caller owns the returned pgd and must pass it to release_user_pgd.
- * TTBR0 is left alone: the validation helpers walk the tables by pointer, and
- * a syscall that gets past them faults on the copy and takes the fixup path,
- * which is an error return either way.
- */
-static unsigned long *borrow_user_pgd(void)
+// Slot 0 starts with no cwd, and getcwd fails on that before its pointer.
+static void drop_cwd(void)
 {
-    unsigned long *pgd = mmu_create_user_pgd();
-    if (!pgd) {
-        return NULL;
+    struct process *kernel = process_table[0];
+
+    unsigned long flags = spin_lock_irqsave(&kernel->fd_lock);
+    struct vfs_vnode *cwd = kernel->cwd;
+    kernel->cwd = NULL;
+    spin_unlock_irqrestore(&kernel->fd_lock, flags);
+
+    if (cwd) {
+        vfs_vnode_put(cwd);
     }
-
-    void *rw = pmm_alloc_page();
-    void *ro = pmm_alloc_page();
-    if (!rw || !ro) {
-        mmu_destroy_user_pgd(pgd);
-        return NULL;
-    }
-
-    mmu_user_map_page(pgd, USER_RW_VA, V2P(rw), MMU_PAGE_USER_DATA);
-    mmu_user_map_page(pgd, USER_RO_VA, V2P(ro), MMU_PAGE_USER_RODATA);
-
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    process_table[0]->user_pgd = pgd;
-    spin_unlock_irqrestore(&process_table_lock, flags);
-
-    return pgd;
-}
-
-static void release_user_pgd(unsigned long *pgd)
-{
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    process_table[0]->user_pgd = NULL;
-    spin_unlock_irqrestore(&process_table_lock, flags);
-
-    // Frees the mapped pages along with the tables.
-    mmu_destroy_user_pgd(pgd);
 }
 
 void test_syscall_bounds(void)
@@ -198,12 +170,12 @@ void test_syscall_bounds(void)
     {
         uint64_t args[6] = {0};
 
-        TEST_ASSERT_EQ("syscall 0 refused", call_syscall(0, args), -ENOSYS);
-        TEST_ASSERT_EQ("gap in the table refused", call_syscall(5, args), -ENOSYS);
-        TEST_ASSERT_EQ("one past the table refused", call_syscall(SYSCALL_MAX_NR + 1, args),
+        TEST_ASSERT_EQ("syscall 0 refused", test_syscall(0, args), -ENOSYS);
+        TEST_ASSERT_EQ("gap in the table refused", test_syscall(5, args), -ENOSYS);
+        TEST_ASSERT_EQ("one past the table refused", test_syscall(SYSCALL_MAX_NR + 1, args),
                        -ENOSYS);
-        TEST_ASSERT_EQ("far out of range refused", call_syscall(4096, args), -ENOSYS);
-        TEST_ASSERT_EQ("a number that indexes nothing refused", call_syscall((uint64_t)-1, args),
+        TEST_ASSERT_EQ("far out of range refused", test_syscall(4096, args), -ENOSYS);
+        TEST_ASSERT_EQ("a number that indexes nothing refused", test_syscall((uint64_t)-1, args),
                        -ENOSYS);
     }
 
@@ -221,13 +193,30 @@ void test_syscall_bounds(void)
         TEST_ASSERT("no probe drives a syscall the skip list excludes", !conflict);
     }
 
-    unsigned long *pgd = borrow_user_pgd();
-    TEST_ASSERT("scratch address space borrowed", pgd != NULL);
+    unsigned long *pgd = test_borrow_user_pgd();
+    char *rw = pgd ? test_map_user_page(pgd, USER_RW_VA, MMU_PAGE_USER_DATA) : NULL;
+    void *ro = rw ? test_map_user_page(pgd, USER_RO_VA, MMU_PAGE_USER_RODATA) : NULL;
+    int scratch_fd = vfs_open(SCRATCH_PATH, O_RDWR | O_CREAT);
+    int cwd_set = vfs_chdir("/") == 0;
 
-    if (!pgd) {
+    TEST_ASSERT("scratch address space borrowed", ro != NULL);
+    TEST_ASSERT("scratch file created", scratch_fd >= 0);
+    TEST_ASSERT("scratch cwd set", cwd_set);
+
+    if (!ro || scratch_fd < 0 || !cwd_set) {
+        drop_cwd();
+        if (scratch_fd >= 0) {
+            vfs_close(scratch_fd);
+            vfs_unlink(SCRATCH_PATH);
+        }
+        if (pgd) {
+            test_release_user_pgd(pgd);
+        }
         TEST_SUITE_END("Syscall Bounds");
         return;
     }
+
+    strcpy(rw, SCRATCH_PATH);
 
     // a bad pointer is refused whichever syscall is handed it
     {
@@ -245,7 +234,7 @@ void test_syscall_bounds(void)
                 memcpy(args, probe->args, sizeof(args));
                 args[probe->ptr_arg] = bad_ptrs[b];
 
-                if (call_syscall(probe->nr, args) >= 0) {
+                if (test_syscall(probe->nr, args) >= 0) {
                     pr_err("test: %s accepted pointer %lx [FAILED]\n", probe->name, bad_ptrs[b]);
                     ptr_ok = 0;
                 }
@@ -266,7 +255,7 @@ void test_syscall_bounds(void)
             memcpy(args, probe->args, sizeof(args));
             args[probe->ptr_arg] = USER_RO_VA;
 
-            if (call_syscall(probe->nr, args) >= 0) {
+            if (test_syscall(probe->nr, args) >= 0) {
                 pr_err("test: %s wrote to a read-only mapping [FAILED]\n", probe->name);
                 rodata_ok = 0;
             }
@@ -275,27 +264,47 @@ void test_syscall_bounds(void)
         TEST_ASSERT("a read-only mapping is refused for output", rodata_ok);
     }
 
-    // a length at either extreme is refused rather than trusted
+    // the same calls with a writable pointer succeed, so the refusals above
+    // were about the pointer and not the call
     {
-        static const struct ptr_probe len_probes[] = {
-            {"read", SYS_READ, 2, 0, {0, USER_RW_VA, 0, 0, 0, 0}},
-            {"write", SYS_WRITE, 2, 0, {0, USER_RW_VA, 0, 0, 0, 0}},
-            {"getdents", SYS_GETDENTS, 2, 0, {0, USER_RW_VA, 0, 0, 0, 0}},
-            {"pread", SYS_PREAD, 2, 0, {0, USER_RW_VA, 0, 0, 0, 0}},
-            {"pwrite", SYS_PWRITE, 2, 0, {0, USER_RW_VA, 0, 0, 0, 0}},
-            {"getcwd", SYS_GETCWD, 1, 0, {USER_RW_VA, 0, 0, 0, 0, 0}},
-        };
-        int len_ok = 1;
+        int rw_ok = 1;
 
-        for (size_t p = 0; p < sizeof(len_probes) / sizeof(len_probes[0]); p++) {
-            const struct ptr_probe *probe = &len_probes[p];
+        for (size_t p = 0; p < sizeof(write_probes) / sizeof(write_probes[0]); p++) {
+            const struct ptr_probe *probe = &write_probes[p];
+
+            uint64_t args[6];
+            memcpy(args, probe->args, sizeof(args));
+            args[probe->ptr_arg] = USER_RW_VA;
+
+            if (test_syscall(probe->nr, args) < 0) {
+                pr_err("test: %s refused a writable pointer [FAILED]\n", probe->name);
+                rw_ok = 0;
+            }
+        }
+
+        TEST_ASSERT("a writable mapping is accepted for output", rw_ok);
+
+        uint64_t args[6] = {USER_RW_VA, 64, 0, 0, 0, 0};
+        TEST_ASSERT("getcwd writes the cwd",
+                    test_syscall(SYS_GETCWD, args) >= 0 && strcmp(rw, "/") == 0);
+    }
+
+    // a length past the cap is refused, and one inside the buffer is served
+    {
+        int dir_fd = vfs_open("/", O_RDONLY);
+        int len_ok = 1;
+        int legal_ok = 1;
+
+        TEST_ASSERT("directory opened for getdents", dir_fd >= 0);
+
+        for (size_t p = 0; dir_fd >= 0 && p < sizeof(len_probes) / sizeof(len_probes[0]); p++) {
+            const struct len_probe *probe = &len_probes[p];
+            uint64_t fd = (uint64_t)(probe->on_dir ? dir_fd : scratch_fd);
 
             for (size_t l = 0; l < sizeof(illegal_lens) / sizeof(illegal_lens[0]); l++) {
-                uint64_t args[6];
-                memcpy(args, probe->args, sizeof(args));
-                args[probe->ptr_arg] = illegal_lens[l];
+                uint64_t args[6] = {fd, USER_RW_VA, illegal_lens[l], 0, 0, 0};
 
-                int64_t ret = call_syscall(probe->nr, args);
+                int64_t ret = test_syscall(probe->nr, args);
                 if (ret >= 0) {
                     pr_err("test: %s accepted length %lu, returned %ld [FAILED]\n", probe->name,
                            illegal_lens[l], (long)ret);
@@ -303,18 +312,31 @@ void test_syscall_bounds(void)
                 }
             }
 
-            // Reaching the next probe is the result: a legal length may return
-            // anything, but it may not fault.
+            // Each fits the one mapped page.
+            const uint64_t legal_lens[] = {0, probe->unit, PAGE_SIZE};
+
             for (size_t l = 0; l < sizeof(legal_lens) / sizeof(legal_lens[0]); l++) {
-                uint64_t args[6];
-                memcpy(args, probe->args, sizeof(args));
-                args[probe->ptr_arg] = legal_lens[l];
-                call_syscall(probe->nr, args);
+                uint64_t args[6] = {fd, USER_RW_VA, legal_lens[l], 0, 0, 0};
+
+                int64_t ret = test_syscall(probe->nr, args);
+                if (ret < 0) {
+                    pr_err("test: %s refused length %lu, returned %ld [FAILED]\n", probe->name,
+                           legal_lens[l], (long)ret);
+                    legal_ok = 0;
+                }
             }
         }
 
         TEST_ASSERT("no length past the cap is accepted", len_ok);
+        TEST_ASSERT("a length inside the buffer is served", legal_ok);
+
+        if (dir_fd >= 0) {
+            vfs_close(dir_fd);
+        }
     }
+
+    // The sweep below closes fd 0 and truncates whatever it names.
+    vfs_close(scratch_fd);
 
     // an fd is an index into a table, and every number outside it is an error
     {
@@ -331,11 +353,11 @@ void test_syscall_bounds(void)
             uint64_t dup2_args[6] = {fd, fd, 0, 0, 0, 0};
             uint64_t ftruncate_args[6] = {fd, 0, 0, 0, 0, 0};
 
-            if (call_syscall(SYS_READ, read_args) >= 0 || call_syscall(SYS_CLOSE, close_args) >= 0
-                || call_syscall(SYS_LSEEK, lseek_args) >= 0
-                || call_syscall(SYS_FSTAT, fstat_args) >= 0
-                || call_syscall(SYS_DUP2, dup2_args) >= 0
-                || call_syscall(SYS_FTRUNCATE, ftruncate_args) >= 0) {
+            if (test_syscall(SYS_READ, read_args) >= 0 || test_syscall(SYS_CLOSE, close_args) >= 0
+                || test_syscall(SYS_LSEEK, lseek_args) >= 0
+                || test_syscall(SYS_FSTAT, fstat_args) >= 0
+                || test_syscall(SYS_DUP2, dup2_args) >= 0
+                || test_syscall(SYS_FTRUNCATE, ftruncate_args) >= 0) {
                 fd_ok = 0;
             }
         }
@@ -346,25 +368,27 @@ void test_syscall_bounds(void)
     // a kernel address is never a user buffer, whichever argument carries it
     {
         uint64_t addr = (uint64_t)(uintptr_t)kernel_target;
+        char seed[sizeof(kernel_target)];
         int kaddr_ok = 1;
 
-        memset(kernel_target, 0xA5, sizeof(kernel_target));
+        memset(kernel_target, 0, sizeof(kernel_target));
+        strcpy(kernel_target, SCRATCH_PATH);
+        memcpy(seed, kernel_target, sizeof(seed));
+        strcpy(rw, SCRATCH_PATH);
 
         for (size_t p = 0; p < sizeof(ptr_probes) / sizeof(ptr_probes[0]); p++) {
             uint64_t args[6];
             memcpy(args, ptr_probes[p].args, sizeof(args));
             args[ptr_probes[p].ptr_arg] = addr;
 
-            if (call_syscall(ptr_probes[p].nr, args) >= 0) {
+            if (test_syscall(ptr_probes[p].nr, args) >= 0) {
+                pr_err("test: %s accepted a kernel address [FAILED]\n", ptr_probes[p].name);
                 kaddr_ok = 0;
             }
         }
 
-        for (size_t i = 0; i < sizeof(kernel_target); i++) {
-            if ((unsigned char)kernel_target[i] != 0xA5) {
-                kaddr_ok = 0;
-                break;
-            }
+        if (memcmp(kernel_target, seed, sizeof(seed)) != 0) {
+            kaddr_ok = 0;
         }
 
         TEST_ASSERT("a kernel address is refused and left untouched", kaddr_ok);
@@ -381,14 +405,16 @@ void test_syscall_bounds(void)
             }
 
             uint64_t args[6] = {0};
-            call_syscall(nr, args);
+            test_syscall(nr, args);
             swept++;
         }
 
         TEST_ASSERT("every unskipped syscall survives zeroed arguments", swept > 0);
     }
 
-    release_user_pgd(pgd);
+    drop_cwd();
+    vfs_unlink(SCRATCH_PATH);
+    test_release_user_pgd(pgd);
 
     TEST_SUITE_END("Syscall Bounds");
 }

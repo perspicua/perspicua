@@ -33,9 +33,9 @@ int heap_test_is_tagged_allocated(const void *ptr);
 int heap_test_redzone_ok(const void *ptr);
 
 /*
- * Arms a one-shot refusal: the nth allocation from now returns NULL as though
- * the heap were exhausted. n == 0 disarms. Sizes the allocator would have
- * refused anyway are not counted.
+ * Arms a one-shot refusal: the calling task's nth allocation from now returns
+ * NULL as though the heap were exhausted. n == 0 disarms. Sizes the allocator
+ * would have refused anyway are not counted.
  */
 void heap_test_fail_nth(unsigned long n);
 #endif

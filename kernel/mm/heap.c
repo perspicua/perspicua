@@ -10,6 +10,7 @@
 #include "panic.h"
 
 #include "core/lock.h"
+#include "mm/failinject.h"
 #include "mm/slab.h"
 #include "mm/pmm.h"
 
@@ -146,28 +147,18 @@ void heap_init(void)
     pr_info("heap: %lu bytes aligned to 16 bytes\n", heap_free_list->size);
 }
 
-/*
- * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
- */
 #ifdef CONFIG_TESTS
-static unsigned long heap_fail_countdown = 0;
+static struct fail_arming heap_fail;
 
 void heap_test_fail_nth(unsigned long n)
 {
-    __atomic_store_n(&heap_fail_countdown, n, __ATOMIC_RELAXED);
-}
-
-// Counts requests that would otherwise have been served, so a rejected size
-// does not consume the arming.
-static int heap_fail_injected(void)
-{
-    if (__atomic_load_n(&heap_fail_countdown, __ATOMIC_RELAXED) == 0) {
-        return 0;
-    }
-    return __atomic_sub_fetch(&heap_fail_countdown, 1, __ATOMIC_RELAXED) == 0;
+    fail_arm(&heap_fail, n);
 }
 #endif
 
+/*
+ * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
+ */
 void *heap_malloc(unsigned long size)
 {
     if (size == 0 || size > HEAP_MAX_ALLOC) {
@@ -175,7 +166,7 @@ void *heap_malloc(unsigned long size)
     }
 
 #ifdef CONFIG_TESTS
-    if (heap_fail_injected()) {
+    if (fail_fire(&heap_fail)) {
         return NULL;
     }
 #endif

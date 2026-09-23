@@ -1,6 +1,8 @@
 #ifndef PERSPICUA_TESTS_TEST_H
 #define PERSPICUA_TESTS_TEST_H
 
+#include <stdint.h>
+
 #include "stdio.h"
 
 extern int tests_passed;
@@ -57,6 +59,20 @@ extern int _suite_failed;
     } while (0)
 
 void run_all_tests(void);
+
+// Issues a syscall from the running task, as though trapped from EL0.
+int64_t test_syscall(uint64_t nr, const uint64_t *args);
+
+/*
+ * Lends slot 0 an empty address space and installs it as the running task's
+ * TTBR0. test_release_user_pgd takes it back, along with every page mapped
+ * into it.
+ */
+unsigned long *test_borrow_user_pgd(void);
+void test_release_user_pgd(unsigned long *pgd);
+
+// Maps a fresh zeroed page at va. NULL leaves nothing allocated.
+void *test_map_user_page(unsigned long *pgd, unsigned long va, unsigned long flags);
 
 // lib tests
 void test_types(void);

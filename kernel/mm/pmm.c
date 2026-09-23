@@ -14,6 +14,7 @@
 #include "mm/addr.h"
 #include "core/lock.h"
 #include "devicetree/fdt.h"
+#include "mm/failinject.h"
 
 #define PMM_MAX_RESERVED_RANGES 64
 
@@ -364,21 +365,11 @@ void pmm_init(void)
 }
 
 #ifdef CONFIG_TESTS
-static unsigned long pmm_fail_countdown = 0;
+static struct fail_arming pmm_fail;
 
 void pmm_test_fail_nth(unsigned long n)
 {
-    __atomic_store_n(&pmm_fail_countdown, n, __ATOMIC_RELAXED);
-}
-
-// True once, on the nth call after arming. Two cores racing means one of them
-// takes the refusal, which is a refusal the caller did not schedule either.
-static int pmm_fail_injected(void)
-{
-    if (__atomic_load_n(&pmm_fail_countdown, __ATOMIC_RELAXED) == 0) {
-        return 0;
-    }
-    return __atomic_sub_fetch(&pmm_fail_countdown, 1, __ATOMIC_RELAXED) == 0;
+    fail_arm(&pmm_fail, n);
 }
 #endif
 
@@ -388,16 +379,16 @@ void *pmm_alloc_pages_nozero(unsigned long count)
         return NULL;
     }
 
-#ifdef CONFIG_TESTS
-    if (pmm_fail_injected()) {
-        return NULL;
-    }
-#endif
-
     unsigned int target_order = get_order(count);
     if (target_order > PMM_MAX_ORDER) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (fail_fire(&pmm_fail)) {
+        return NULL;
+    }
+#endif
 
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
 

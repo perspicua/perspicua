@@ -17,30 +17,17 @@
 #include "uapi/fcntl.h"
 #include "uapi/syscalls.h"
 
-#include "arch/exception.h"
-
-#include "core/syscall.h"
-#include "mm/addr.h"
+#include "fs/vfs.h"
 #include "mm/heap.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
-#include "sched/process.h"
 
 // Where the path handed to the syscall probe below lives.
 #define OOM_USER_VA 0x0000000051000000UL
+#define OOM_PATH    "/bin/init.elf"
 
-static struct exception_trap_frame oom_tf;
-
-static int64_t call_syscall(uint64_t nr, const uint64_t *args)
-{
-    memset(&oom_tf, 0, sizeof(oom_tf));
-    oom_tf.x[8] = nr;
-    for (int i = 0; i < 6; i++) {
-        oom_tf.x[i] = args[i];
-    }
-    syscall_handle(&oom_tf);
-    return (int64_t)oom_tf.x[0];
-}
+// Past the last allocation open makes, so the tail of the walk succeeds.
+#define OOM_OPEN_MAX_NTH 16
 
 void test_faultinject(void)
 {
@@ -117,35 +104,58 @@ void test_faultinject(void)
                        before);
     }
 
-    // every user path is copied into the kernel first, and refusing that copy
-    // must surface as -ENOMEM rather than a fault or a silent success
+    // each allocation open makes, refused in turn, surfaces as -ENOMEM and
+    // leaves no descriptor behind
     {
-        unsigned long *pgd = mmu_create_user_pgd();
-        void *page = pgd ? pmm_alloc_page() : NULL;
+        unsigned long *pgd = test_borrow_user_pgd();
+        char *path = pgd ? test_map_user_page(pgd, OOM_USER_VA, MMU_PAGE_USER_DATA) : NULL;
 
-        TEST_ASSERT("probe address space built", pgd != NULL && page != NULL);
+        TEST_ASSERT("probe address space built", path != NULL);
 
-        if (pgd && page) {
-            mmu_user_map_page(pgd, OOM_USER_VA, V2P(page), MMU_PAGE_USER_DATA);
-            strcpy((char *)page, "/bin/init.elf");
-
-            unsigned long flags = spin_lock_irqsave(&process_table_lock);
-            process_table[0]->user_pgd = pgd;
-            spin_unlock_irqrestore(&process_table_lock, flags);
-
+        if (path) {
+            strcpy(path, OOM_PATH);
             uint64_t args[6] = {OOM_USER_VA, O_RDONLY, 0, 0, 0, 0};
 
-            heap_test_fail_nth(1);
-            int64_t ret = call_syscall(SYS_OPEN, args);
-            heap_test_fail_nth(0);
+            int64_t first_fd = test_syscall(SYS_OPEN, args);
+            TEST_ASSERT("open succeeds unarmed", first_fd >= 0);
+            if (first_fd >= 0) {
+                vfs_close((int)first_fd);
+            }
 
-            TEST_ASSERT_EQ("open reports the refused allocation", ret, -ENOMEM);
+            int enomem_ok = 1;
+            int refusals = 0;
+            int walked_past = 0;
 
-            flags = spin_lock_irqsave(&process_table_lock);
-            process_table[0]->user_pgd = NULL;
-            spin_unlock_irqrestore(&process_table_lock, flags);
+            for (unsigned long nth = 1; nth <= OOM_OPEN_MAX_NTH; nth++) {
+                heap_test_fail_nth(nth);
+                int64_t ret = test_syscall(SYS_OPEN, args);
+                heap_test_fail_nth(0);
 
-            mmu_destroy_user_pgd(pgd);
+                if (ret >= 0) {
+                    vfs_close((int)ret);
+                    walked_past = 1;
+                } else if (ret == -ENOMEM) {
+                    refusals++;
+                } else {
+                    pr_err("test: open with allocation %lu refused returned %ld [FAILED]\n", nth,
+                           (long)ret);
+                    enomem_ok = 0;
+                }
+            }
+
+            TEST_ASSERT("open's allocations can be refused", refusals > 0);
+            TEST_ASSERT("the walk reaches past open's last allocation", walked_past);
+            TEST_ASSERT("every refusal is reported as -ENOMEM", enomem_ok);
+
+            int64_t last_fd = test_syscall(SYS_OPEN, args);
+            TEST_ASSERT_EQ("a refused open leaves no descriptor behind", last_fd, first_fd);
+            if (last_fd >= 0) {
+                vfs_close((int)last_fd);
+            }
+        }
+
+        if (pgd) {
+            test_release_user_pgd(pgd);
         }
     }
 

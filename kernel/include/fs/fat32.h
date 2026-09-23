@@ -137,12 +137,15 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
 int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
                                  uint64_t device_blocks, struct fat32_fs *out);
 
+// The mount path up to the point it would replace the mounted volume.
+int fat32_test_read_volume(struct block_device *dev);
+
 /*
- * The mounted volume is one global, and a failed mount clears it. A test that
- * probes a crafted volume borrows that global and must put the live one back.
+ * Mounts dev in place of the live volume for one lookup of name and one
+ * readdir of its root, then puts the live volume back. fat32_lock is held
+ * throughout, so no other FAT32 operation sees the swap.
  */
-void fat32_test_save_fs(struct fat32_fs *out);
-void fat32_test_restore_fs(const struct fat32_fs *in);
+int fat32_test_scan_root(struct block_device *dev, const char *name, int *found, int *readdir_ret);
 #endif
 
 #endif // PERSPICUA_FS_FAT32_H

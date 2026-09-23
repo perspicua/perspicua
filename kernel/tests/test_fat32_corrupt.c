@@ -1,10 +1,11 @@
 /*
  * test_fat32_corrupt.c - Mounting volumes crafted to be wrong.
  *
- * Where test_fat32.c drives the BPB validator directly, this drives
- * fat32_init: the signature, the partition search, the geometry and the guard
+ * Where test_fat32.c drives the BPB validator directly, this drives the mount
+ * path: the signature, the partition search, the geometry and the guard
  * against a cluster chain that loops. The device reports 32 MB and stores one
- * sector, synthesising the rest, so a volume of any shape costs 512 bytes.
+ * sector, synthesising the rest, so a volume of any shape costs 512 bytes. It
+ * is never registered, so nothing outside this suite can reach it.
  */
 
 #include <stddef.h>
@@ -45,7 +46,6 @@
 #define LIVE_FILE "/README.md"
 
 static uint8_t ram_sector0[RAM_BLOCK_SIZE];
-static struct block_device ram_dev;
 
 // While set, every FAT entry reads as cluster 2, so the root chain is a loop.
 static int ram_fat_cycles;
@@ -99,12 +99,18 @@ static int ram_write_blocks(struct block_device *dev, const void *buffer, size_t
     return -EIO;
 }
 
-// The cache remembers sector 0, so a volume rewritten in place has to be
-// dropped from it or the next mount reads the previous one.
+static struct block_device ram_dev = {
+    .name = "ramfat",
+    .block_count = RAM_BLOCKS,
+    .block_size = RAM_BLOCK_SIZE,
+    .read_blocks = ram_read_blocks,
+    .write_blocks = ram_write_blocks,
+    .present = 1,
+};
+
 static int ram_mount(void)
 {
-    block_test_invalidate(&ram_dev);
-    return fat32_init("ramfat");
+    return fat32_test_read_volume(&ram_dev);
 }
 
 // Lays a mountable volume into sector 0, which each probe then damages.
@@ -130,20 +136,7 @@ void test_fat32_corrupt(void)
 {
     TEST_SUITE_BEGIN("FAT32 Corrupt Media");
 
-    struct fat32_fs live;
-    fat32_test_save_fs(&live);
-
-    memset(&ram_dev, 0, sizeof(ram_dev));
-    strcpy(ram_dev.name, "ramfat");
-    ram_dev.block_count = RAM_BLOCKS;
-    ram_dev.block_size = RAM_BLOCK_SIZE;
-    ram_dev.read_blocks = ram_read_blocks;
-    ram_dev.write_blocks = ram_write_blocks;
-    ram_dev.present = 1;
     ram_fat_cycles = 0;
-
-    block_device_register(&ram_dev);
-    TEST_ASSERT("synthetic device registered", block_device_lookup("ramfat") == &ram_dev);
 
     // the baseline has to mount, or every rejection below proves nothing
     {
@@ -210,29 +203,23 @@ void test_fat32_corrupt(void)
     TEST_ASSERT("an unknown device refused", fat32_init("no_such_device") != 0);
 
     // nothing in a cluster cycle is end-of-chain or out of range, so only the
-    // guard ends the walk: without it this call never returns
+    // guard ends a walk: without it neither call returns
     {
+        int found = 0;
+        int readdir_ret = 0;
+
         ram_write_good_bpb();
         ram_fat_cycles = 1;
-
-        TEST_ASSERT_EQ("the looping volume still mounts", ram_mount(), 0);
-
-        struct vfs_vnode *root = fat32_get_root_node();
-        TEST_ASSERT("root node built", root != NULL);
-
-        if (root) {
-            struct vfs_vnode *found = root->ops->lookup(root, "anything.txt");
-            TEST_ASSERT("a cyclic directory chain terminates", found == NULL);
-            vfs_vnode_put(root);
-        }
-
+        int err = fat32_test_scan_root(&ram_dev, "anything.txt", &found, &readdir_ret);
         ram_fat_cycles = 0;
+
+        TEST_ASSERT_EQ("the looping volume mounts", err, 0);
+        TEST_ASSERT("lookup in a cyclic directory terminates", err == 0 && !found);
+        TEST_ASSERT_EQ("readdir of a cyclic directory terminates", readdir_ret, -EIO);
     }
 
-    fat32_test_restore_fs(&live);
-
-    // the probes cleared the mounted volume on their way through, and the
-    // suites that follow read real files, so prove the restore
+    // the scan swapped the mounted volume out and back, and the suites that
+    // follow read real files
     {
         int fd = vfs_open(LIVE_FILE, O_RDONLY);
         TEST_ASSERT("the live volume survived the probes", fd >= 0);

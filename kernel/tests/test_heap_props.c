@@ -19,26 +19,35 @@
 #define TEST_SLAB_MAX    1024 // HEAP_SLAB_MAX: at or below this, slab serves it
 #define TEST_ALIGN       16   // HEAP_ALIGN quantum
 #define TEST_HEADER_SIZE 32   // sizeof(struct heap_block_header)
+#define TEST_FOOTER_SIZE 16   // sizeof(struct heap_block_footer)
 
 // Remainder below this stays with the block instead of becoming a free block.
 #define TEST_SPLIT_MIN (TEST_HEADER_SIZE + 16)
 
 #define MAX_SWEEP 128
 
+// Allocations made to find three that sit back to back.
+#define HOLE_RUN 8
+
 static unsigned long sweep[MAX_SWEEP];
 static int sweep_count;
+static int sweep_dropped;
 
 #define GUARD_BYTE 0x5A
 
 static void sweep_add(unsigned long n)
 {
-    if (n == 0 || sweep_count >= MAX_SWEEP) {
+    if (n == 0) {
         return;
     }
     for (int i = 0; i < sweep_count; i++) {
         if (sweep[i] == n) {
             return;
         }
+    }
+    if (sweep_count >= MAX_SWEEP) {
+        sweep_dropped = 1;
+        return;
     }
     sweep[sweep_count++] = n;
 }
@@ -49,6 +58,7 @@ static void sweep_build(void)
     static const unsigned long classes[] = {16, 32, 64, 128, 256, 512, 1024};
 
     sweep_count = 0;
+    sweep_dropped = 0;
 
     for (unsigned long n = 1; n <= 2 * TEST_ALIGN; n++) {
         sweep_add(n);
@@ -85,7 +95,7 @@ void test_heap_props(void)
     TEST_SUITE_BEGIN("Heap Properties");
 
     sweep_build();
-    TEST_ASSERT("sweep fits its table", sweep_count > 0 && sweep_count <= MAX_SWEEP);
+    TEST_ASSERT("sweep fits its table", sweep_count > 0 && !sweep_dropped);
 
     // routing: the slab path has no footer and the first-fit path does, so
     // every assertion below reads differently on the wrong side of 1024
@@ -258,43 +268,81 @@ void test_heap_props(void)
         TEST_ASSERT("a full allocation does not reach its neighbours", isolation_ok);
     }
 
-    // A block freed back to the pool is the next request's best fit, so asking
-    // for progressively less of it walks the splitter across its threshold.
+    // A block freed between two live ones cannot coalesce, and nothing below it
+    // fits its size, so it is first fit for a request of that size or a little
+    // less. Walking the request down crosses the point where the remainder is
+    // big enough to split off.
     {
-        const unsigned long base = 4096;
-        int split_ok = 1;
+        const unsigned long base = 4000;
+        const unsigned long stride = TEST_HEADER_SIZE + base + TEST_FOOTER_SIZE;
+        const unsigned long hole_free = base + TEST_FOOTER_SIZE;
+        unsigned char *run[HOLE_RUN];
+        unsigned char *hole = NULL;
 
-        for (unsigned long take = 0; take <= 2 * TEST_SPLIT_MIN; take += 8) {
-            void *big = heap_malloc(base);
-            if (!big) {
-                split_ok = 0;
-                continue;
-            }
-            heap_free(big);
-
-            unsigned long want = base - take;
-            unsigned char *p = heap_malloc(want);
-            if (!p) {
-                split_ok = 0;
-                continue;
-            }
-
-            unsigned long usable = heap_test_usable_size(p);
-            if (usable < want) {
-                split_ok = 0;
-            }
-
-            for (unsigned long b = 0; b < usable; b++) {
-                p[b] = fill_byte(want, b);
-            }
-            if (!heap_test_redzone_ok(p)) {
-                split_ok = 0;
-            }
-
-            heap_free(p);
+        for (int i = 0; i < HOLE_RUN; i++) {
+            run[i] = heap_malloc(base);
         }
 
-        TEST_ASSERT("a split block still carries its request and its redzone", split_ok);
+        for (int i = 0; i + 2 < HOLE_RUN && !hole; i++) {
+            if (run[i] && run[i + 1] && run[i + 2] && run[i + 1] == run[i] + stride
+                && run[i + 2] == run[i + 1] + stride) {
+                hole = run[i + 1];
+                run[i + 1] = NULL;
+            }
+        }
+
+        TEST_ASSERT("three neighbours carved back to back", hole != NULL);
+
+        if (hole) {
+            heap_free(hole);
+
+            int whole_ok = 0;
+            int rule_ok = 1;
+            int props_ok = 1;
+
+            for (unsigned long take = 0; take <= 2 * TEST_SPLIT_MIN; take += TEST_ALIGN) {
+                unsigned long want = base - take;
+                unsigned char *p = heap_malloc(want);
+                if (!p) {
+                    props_ok = 0;
+                    continue;
+                }
+
+                unsigned long usable = heap_test_usable_size(p);
+
+                if (p == hole) {
+                    unsigned long need = want + TEST_FOOTER_SIZE;
+                    unsigned long expect =
+                        hole_free >= need + TEST_SPLIT_MIN ? want : hole_free - TEST_FOOTER_SIZE;
+                    if (usable != expect) {
+                        rule_ok = 0;
+                    }
+                    if (take == 0 && usable == base) {
+                        whole_ok = 1;
+                    }
+                }
+
+                if (usable < want) {
+                    props_ok = 0;
+                }
+                for (unsigned long b = 0; b < usable; b++) {
+                    p[b] = fill_byte(want, b);
+                }
+                if (!heap_test_redzone_ok(p)) {
+                    props_ok = 0;
+                }
+
+                heap_free(p);
+            }
+
+            TEST_ASSERT("a request the hole fits exactly takes it whole", whole_ok);
+            TEST_ASSERT("the hole splits exactly when the remainder holds a block", rule_ok);
+            TEST_ASSERT("every request carries its size and its redzone", props_ok);
+        }
+
+        for (int i = 0; i < HOLE_RUN; i++) {
+            heap_free(run[i]);
+        }
     }
 
     // the same sweep held live all at once: splitting and coalescing need a
