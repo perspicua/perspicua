@@ -136,6 +136,16 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
  */
 int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
                                  uint64_t device_blocks, struct fat32_fs *out);
+
+// The mount path up to the point it would replace the mounted volume.
+int fat32_test_read_volume(struct block_device *dev);
+
+/*
+ * Mounts dev in place of the live volume for one lookup of name and one
+ * readdir of its root, then puts the live volume back. fat32_lock is held
+ * throughout, so no other FAT32 operation sees the swap.
+ */
+int fat32_test_scan_root(struct block_device *dev, const char *name, int *found, int *readdir_ret);
 #endif
 
 #endif // PERSPICUA_FS_FAT32_H

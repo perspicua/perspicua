@@ -17,26 +17,16 @@
 #include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
-#include "arch/exception.h"
-
 #include "core/signals.h"
-#include "core/syscall.h"
 #include "sched/process.h"
 
 // init is created first and is the process these tests target.
 #define INIT_PID 1
 
-// Driving SYS_KILL needs a trap frame; it is 800 bytes, so keep it off the stack.
-static struct exception_trap_frame kill_tf;
-
 static int64_t call_kill(int64_t target_pid, int sig)
 {
-    memset(&kill_tf, 0, sizeof(kill_tf));
-    kill_tf.x[8] = SYS_KILL;
-    kill_tf.x[0] = (uint64_t)target_pid;
-    kill_tf.x[1] = (uint64_t)sig;
-    syscall_handle(&kill_tf);
-    return (int64_t)kill_tf.x[0];
+    uint64_t args[6] = {(uint64_t)target_pid, (uint64_t)sig, 0, 0, 0, 0};
+    return test_syscall(SYS_KILL, args);
 }
 
 void test_signals(void)

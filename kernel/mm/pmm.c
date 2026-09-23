@@ -14,6 +14,7 @@
 #include "mm/addr.h"
 #include "core/lock.h"
 #include "devicetree/fdt.h"
+#include "mm/failinject.h"
 
 #define PMM_MAX_RESERVED_RANGES 64
 
@@ -363,6 +364,15 @@ void pmm_init(void)
             (pmm_free_pages_count * PAGE_SIZE) / (1024UL * 1024));
 }
 
+#ifdef CONFIG_TESTS
+static struct fail_arming pmm_fail;
+
+void pmm_test_fail_nth(unsigned long n)
+{
+    fail_arm(&pmm_fail, n);
+}
+#endif
+
 void *pmm_alloc_pages_nozero(unsigned long count)
 {
     if (count == 0) {
@@ -373,6 +383,12 @@ void *pmm_alloc_pages_nozero(unsigned long count)
     if (target_order > PMM_MAX_ORDER) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (fail_fire(&pmm_fail)) {
+        return NULL;
+    }
+#endif
 
     unsigned long irq = spin_lock_irqsave(&pmm_lock);
 

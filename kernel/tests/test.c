@@ -21,16 +21,20 @@ void run_all_tests(void)
     test_pmm();
     test_slab();
     test_heap();
+    test_heap_props();
     test_timer();
     test_sd();
     test_mmu();
     test_mmu_user();
     test_vfs();
     test_fat32();
+    test_fat32_corrupt();
     test_pipe();
     test_mutex();
     test_uaccess();
     test_process();
+    test_syscall_bounds();
+    test_faultinject();
 
     printk("\n");
 

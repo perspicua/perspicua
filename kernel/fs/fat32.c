@@ -1434,6 +1434,10 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
     uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
     uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
 
+    if (file->offset / bytes_per_cluster > FAT32_MAX_DIR_CLUSTERS) {
+        return 0;
+    }
+
     uint32_t clusters_to_skip = (uint32_t)(file->offset / bytes_per_cluster);
     for (uint32_t i = 0; i < clusters_to_skip; i++) {
         cluster = get_next_cluster(cluster);
@@ -1447,7 +1451,15 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
     int has_lfn = 0;
 
     struct fat32_dir_entry dirs[16];
+    uint32_t visited = 0;
+
     while (cluster_valid(cluster) && entries_read < (int)max_entries) {
+        if (++visited > FAT32_MAX_DIR_CLUSTERS) {
+            pr_err("fat32: directory chain at cluster %u does not terminate\n",
+                   (uint32_t)(uintptr_t)file->node->internal_info);
+            return -EIO;
+        }
+
         uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
         uint32_t start_sector = offset_in_cluster / 512;
 
@@ -2235,21 +2247,11 @@ static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partiti
     return 0;
 }
 
-#ifdef CONFIG_TESTS
-int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
-                                 uint64_t device_blocks, struct fat32_fs *out)
+/*
+ * fat32_read_volume - Finds the FAT32 volume on a device and derives its geometry.
+ */
+static int fat32_read_volume(struct block_device *dev, struct fat32_fs *out)
 {
-    return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
-}
-#endif
-
-int fat32_init(const char *device_name)
-{
-    struct block_device *dev = block_device_lookup(device_name);
-    if (!dev) {
-        return -ENOENT;
-    }
-
     uint8_t sector0[512];
     if (dev->read_blocks(dev, sector0, 0, 1) != 0) {
         return -EIO;
@@ -2260,16 +2262,13 @@ int fat32_init(const char *device_name)
         return -EINVAL;
     }
 
-    if (sector0[0] == 0xEB || sector0[0] == 0xE9) {
-        current_fs.dev = dev;
-        current_fs.partition_lba_start = 0;
-    } else {
+    uint32_t partition_lba = 0;
+    if (sector0[0] != 0xEB && sector0[0] != 0xE9) {
         struct mbr *mbr = (struct mbr *)sector0;
         int found = 0;
         for (size_t i = 0; i < 4 && !found; i++) {
             if (mbr->partitions[i].type == 0x0B || mbr->partitions[i].type == 0x0C) {
-                current_fs.dev = dev;
-                current_fs.partition_lba_start = mbr->partitions[i].lba_start;
+                partition_lba = mbr->partitions[i].lba_start;
                 found = 1;
             }
         }
@@ -2279,20 +2278,87 @@ int fat32_init(const char *device_name)
     }
 
     struct fat32_bpb bpb;
-    if (dev->read_blocks(dev, &bpb, current_fs.partition_lba_start, 1) != 0) {
+    if (dev->read_blocks(dev, &bpb, partition_lba, 1) != 0) {
         return -EIO;
     }
 
-    int geom = fat32_geometry_from_bpb(&bpb, current_fs.partition_lba_start,
-                                       (uint64_t)dev->block_count, &current_fs);
+    int geom = fat32_geometry_from_bpb(&bpb, partition_lba, (uint64_t)dev->block_count, out);
     if (geom != 0) {
         pr_err("fat32: rejecting volume with an implausible BPB\n");
-        current_fs.dev = NULL;
         return geom;
     }
 
-    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n",
-            current_fs.partition_lba_start, current_fs.max_cluster - 1,
-            current_fs.sectors_per_cluster);
+    out->dev = dev;
+    return 0;
+}
+
+#ifdef CONFIG_TESTS
+int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
+                                 uint64_t device_blocks, struct fat32_fs *out)
+{
+    return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
+}
+
+int fat32_test_read_volume(struct block_device *dev)
+{
+    struct fat32_fs fs = {0};
+    return fat32_read_volume(dev, &fs);
+}
+
+int fat32_test_scan_root(struct block_device *dev, const char *name, int *found, int *readdir_ret)
+{
+    struct fat32_fs fs = {0};
+    int err = fat32_read_volume(dev, &fs);
+    if (err != 0) {
+        return err;
+    }
+
+    kmutex_lock(&fat32_lock);
+    struct fat32_fs live = current_fs;
+    current_fs = fs;
+
+    struct vfs_vnode *root = fat32_get_root_node();
+    if (root) {
+        struct vfs_vnode *node = fat32_vfs_lookup(root, name);
+        *found = node != NULL;
+        if (node) {
+            vfs_vnode_put(node);
+        }
+
+        struct dirent ents[2];
+        struct vfs_file file = {.node = root};
+        *readdir_ret = fat32_vfs_readdir(&file, ents, sizeof(ents));
+        vfs_vnode_put(root);
+    } else {
+        err = -ENOMEM;
+    }
+
+    current_fs = live;
+    kmutex_unlock(&fat32_lock);
+    return err;
+}
+#endif
+
+int fat32_init(const char *device_name)
+{
+    struct block_device *dev = block_device_lookup(device_name);
+    if (!dev) {
+        return -ENOENT;
+    }
+
+    // Validated whole before it replaces anything, so a rejected volume leaves
+    // the mounted one intact.
+    struct fat32_fs fs = {0};
+    int err = fat32_read_volume(dev, &fs);
+    if (err != 0) {
+        return err;
+    }
+
+    kmutex_lock(&fat32_lock);
+    current_fs = fs;
+    kmutex_unlock(&fat32_lock);
+
+    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n", fs.partition_lba_start,
+            fs.max_cluster - 1, fs.sectors_per_cluster);
     return 0;
 }

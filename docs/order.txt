@@ -116,7 +116,7 @@ what makes the system usable enough to develop against.
         and keep blocked_signals per-task with the handler table shared per
         process, which is what POSIX specifies.
 
-   7. Close the test-coverage gaps the audit exposed                   (IMP-011)
+   7. Close the test-coverage gaps the audit exposed [DONE]            (IMP-011)
       Effort: M | Unlocks: regressions caught by the suite instead of by hand
       Scope: three test families. (1) A syscall boundary fuzzer: for each syscall
         number, drive edge-case arguments — 0, 1, SIZE_MAX, negative, KERNEL_VMA,
@@ -130,17 +130,27 @@ what makes the system usable enough to develop against.
         heap_malloc/pmm_alloc_page (fail the Nth allocation) to reach the OOM
         paths, which pairs directly with Phase 2 item 4.
       Done: each family fails against a deliberately reintroduced defect.
-      Note: per-module coverage is good (test_pmm, test_slab, test_heap,
+      Note: per-module coverage was good (test_pmm, test_slab, test_heap,
         test_uaccess, test_mmu_user, …) but every audit finding sat in a gap it
-        does not reach: adversarial syscall arguments, concurrent operations on
-        shared objects, and malformed on-disk data. Most findings were a single
-        argument, a single allocation size, or a single crafted image away.
-        user/apps/stress.c now covers the concurrency third of that from
-        userspace — it verifies content rather than return codes, seeds its PRNG
-        so a failure replays, and compares high-water marks across waves to
-        expose leaks. It found the FAT32 name-shortening mismatch and the pipe
-        lost-wakeup deadlock on its first two runs. The in-kernel fuzzer and
-        property tests are the halves it cannot reach.
+        did not reach: adversarial syscall arguments, concurrent operations on
+        shared objects, and malformed on-disk data. user/apps/stress.c covers
+        the concurrency third from userspace. The rest landed as four suites:
+        test_heap_props (the size sweep), test_syscall_bounds (the dispatcher),
+        test_fat32_corrupt (a synthesised volume, mounted end to end), and
+        test_faultinject (the OOM paths, via a one-shot refusal armed on
+        heap_malloc or pmm_alloc_pages).
+
+        Each was checked against a reintroduced defect. Two results worth
+        keeping: a bad user pointer is refused twice over, by the range checks
+        and again by the unprivileged loads the copy helpers use, so removing
+        either alone leaves every syscall return unchanged and the fuzzer is a
+        backstop there rather than the gate. And a cyclic cluster chain is only
+        walked at all when the directory clusters are full, since a zeroed one
+        ends the directory before the chain is followed.
+
+        Three hooks were added to make the suites possible: a non-panicking
+        redzone check (heap.h), save/restore of the mounted volume (fat32.h),
+        and a per-device block-cache drop (block.h). All are CONFIG_TESTS only.
 
 
 ================================================================================

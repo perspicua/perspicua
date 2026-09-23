@@ -10,6 +10,7 @@
 #include "panic.h"
 
 #include "core/lock.h"
+#include "mm/failinject.h"
 #include "mm/slab.h"
 #include "mm/pmm.h"
 
@@ -146,6 +147,15 @@ void heap_init(void)
     pr_info("heap: %lu bytes aligned to 16 bytes\n", heap_free_list->size);
 }
 
+#ifdef CONFIG_TESTS
+static struct fail_arming heap_fail;
+
+void heap_test_fail_nth(unsigned long n)
+{
+    fail_arm(&heap_fail, n);
+}
+#endif
+
 /*
  * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
  */
@@ -154,6 +164,12 @@ void *heap_malloc(unsigned long size)
     if (size == 0 || size > HEAP_MAX_ALLOC) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (fail_fire(&heap_fail)) {
+        return NULL;
+    }
+#endif
 
     if (size <= HEAP_SLAB_MAX) {
         return slab_alloc(size);
@@ -301,5 +317,29 @@ unsigned long heap_test_usable_size(const void *ptr)
     const struct heap_block_header *block =
         (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
     return block->size;
+}
+
+int heap_test_redzone_ok(const void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    // Slab objects carry no footer; their counterpart is the free canary,
+    // which slab_alloc checks when the object is handed out again.
+    if (slab_owns((void *)ptr)) {
+        return 1;
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        return 0;
+    }
+
+    const struct heap_block_footer *footer =
+        (const struct heap_block_footer *)((const unsigned char *)block + HEAP_HEADER_SIZE
+                                           + block->size);
+    return footer->magic == HEAP_REDZONE_MAGIC;
 }
 #endif

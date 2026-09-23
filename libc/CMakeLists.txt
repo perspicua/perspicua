@@ -40,6 +40,7 @@ target_compile_definitions(libk PRIVATE __KERNEL__)
 # Same configuration the kernel sees: libk compiles kernel headers, so reading
 # them with different CONFIG_* values would give the two sides different structs.
 target_compile_options(libk PUBLIC ${KERNEL_CONFIG_FORCE_INCLUDE})
+set_source_files_properties(arch/setjmp.S PROPERTIES OBJECT_DEPENDS ${KERNEL_CONFIG_INCLUDE}/config.h)
 
 # libc (for user space)
 #

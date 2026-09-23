@@ -102,6 +102,10 @@ static int copy_path_from_user(const char *upath, char **out)
 {
     *out = NULL;
 
+    if (!upath || (uintptr_t)upath >= USER_VA_LIMIT) {
+        return -EINVAL;
+    }
+
     char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
     if (!kpath) {
         return -ENOMEM;
