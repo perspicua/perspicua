@@ -28,6 +28,7 @@ void run_all_tests(void)
     test_mmu_user();
     test_vfs();
     test_fat32();
+    test_fat32_corrupt();
     test_pipe();
     test_mutex();
     test_uaccess();

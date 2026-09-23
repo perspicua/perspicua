@@ -2241,6 +2241,16 @@ int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition
 {
     return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
 }
+
+void fat32_test_save_fs(struct fat32_fs *out)
+{
+    *out = current_fs;
+}
+
+void fat32_test_restore_fs(const struct fat32_fs *in)
+{
+    current_fs = *in;
+}
 #endif
 
 int fat32_init(const char *device_name)

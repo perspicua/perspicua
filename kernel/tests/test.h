@@ -80,6 +80,7 @@ void test_mutex(void);
 void test_uaccess(void);
 void test_process(void);
 void test_syscall_bounds(void);
+void test_faultinject(void);
 void test_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)

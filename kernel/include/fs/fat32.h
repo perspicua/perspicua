@@ -136,6 +136,13 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
  */
 int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
                                  uint64_t device_blocks, struct fat32_fs *out);
+
+/*
+ * The mounted volume is one global, and a failed mount clears it. A test that
+ * probes a crafted volume borrows that global and must put the live one back.
+ */
+void fat32_test_save_fs(struct fat32_fs *out);
+void fat32_test_restore_fs(const struct fat32_fs *in);
 #endif
 
 #endif // PERSPICUA_FS_FAT32_H

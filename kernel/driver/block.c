@@ -355,6 +355,38 @@ static int block_device_vfs_write(struct vfs_file *file, const void *buffer, siz
 static struct vfs_vnode_ops block_device_vfs_ops = {
     .read = block_device_vfs_read, .write = block_device_vfs_write, .lookup = NULL, .close = NULL};
 
+#ifdef CONFIG_TESTS
+void block_test_invalidate(struct block_device *dev)
+{
+    if (!dev) {
+        return;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
+
+    for (size_t h = 0; h < BLOCK_HASH_SIZE; h++) {
+        struct block_cache_entry **pp = &hash_table[h];
+        while (*pp) {
+            struct block_cache_entry *entry = *pp;
+            if (entry->dev != dev) {
+                pp = &entry->next;
+                continue;
+            }
+
+            // Dropped, not written back: the media a test crafts is not one
+            // whose dirty blocks mean anything.
+            *pp = entry->next;
+            lru_remove(entry);
+            pmm_free_pages(entry->data);
+            slab_free(entry);
+            cache_count--;
+        }
+    }
+
+    spin_unlock_irqrestore(&cache_lock, flags);
+}
+#endif
+
 void block_device_register(struct block_device *dev)
 {
     if (!dev) {
