@@ -20,6 +20,8 @@ file(GLOB_RECURSE KERNEL_ASMS CONFIGURE_DEPENDS
     "core/*.S"
     "arch/*.S"
 )
+# CMake's ASM dependency scanner cannot see the -include'd config.h.
+set_source_files_properties(${KERNEL_ASMS} PROPERTIES OBJECT_DEPENDS ${KERNEL_CONFIG_INCLUDE}/config.h)
 
 # The linker script needs CONFIG_NR_CPUS for the boot stacks, and -T does not
 # run it through the preprocessor.
