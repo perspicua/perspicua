@@ -84,6 +84,9 @@ struct vfs_vnode {
     struct vfs_vnode_ops *ops;
     void *internal_info;
     atomic_t refcount;
+
+    // The filesystem's stamp for when size and location were last read.
+    unsigned long revalidated;
 };
 
 /*

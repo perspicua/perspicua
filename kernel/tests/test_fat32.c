@@ -39,6 +39,53 @@ static uint8_t big_readback[BIG_SIZE];
 
 static uint8_t lfn_guarded[LFN_FENCE_LOW + LFN_NAME_SIZE + LFN_FENCE_HIGH];
 
+static struct dirent listing[8];
+
+static int count_listed(const char *dir, const char *name)
+{
+    int fd = vfs_open(dir, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+
+    int count = 0;
+    int n;
+    while ((n = vfs_readdir(fd, listing, sizeof(listing))) > 0) {
+        for (int i = 0; i < n; i++) {
+            if (strcmp(listing[i].d_name, name) == 0) {
+                count++;
+            }
+        }
+    }
+    vfs_close(fd);
+    return count;
+}
+
+// The first byte of path, or -1 if it cannot be read.
+static int first_byte(const char *path)
+{
+    int fd = vfs_open(path, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    unsigned char c = 0;
+    int n = vfs_read(fd, &c, 1);
+    vfs_close(fd);
+    return n == 1 ? c : -1;
+}
+
+static int write_file(const char *path, const char *text)
+{
+    int fd = vfs_open(path, O_RDWR | O_CREAT | O_TRUNC);
+    if (fd < 0) {
+        return fd;
+    }
+    int len = (int)strlen(text);
+    int n = vfs_write(fd, text, (size_t)len);
+    vfs_close(fd);
+    return n == len ? 0 : -1;
+}
+
 void test_fat32(void)
 {
     TEST_SUITE_BEGIN("FAT32");
@@ -472,7 +519,7 @@ void test_fat32(void)
 
     /*
      * A deleted entry keeps its old name with name[0] overwritten to 0xE5,
-     * and name_match only folds 'a'-'z' -- 0xE5 passes through untouched, so
+     * and name_as_83 only folds 'a'-'z' -- 0xE5 passes through untouched, so
      * a live file can be named to collide with a ghost byte-for-byte. unlink
      * must not treat that collision as a match: doing so frees the ghost's
      * stale start cluster, which may by then belong to a live file.
@@ -536,6 +583,154 @@ void test_fat32(void)
         TEST_ASSERT("recreate after unlink", fd >= 0);
         vfs_close(fd);
         TEST_ASSERT_EQ("cleanup long name", vfs_unlink(lname), 0);
+    }
+
+    // A long name is never cut down to 8.3 to find a match: these are two
+    // files, and truncating the long one must leave the short one alone.
+    {
+        const char *short_name = "/VERYLONG.TXT";
+        const char *long_name = "/verylongname.txt";
+        struct stat st;
+
+        TEST_ASSERT_EQ("create the 8.3 file", write_file(short_name, "S"), 0);
+        TEST_ASSERT_EQ("create a long name sharing its prefix", write_file(long_name, "L"), 0);
+
+        TEST_ASSERT_EQ("the 8.3 file keeps its byte", first_byte(short_name), 'S');
+        TEST_ASSERT_EQ("the long file has its own", first_byte(long_name), 'L');
+
+        TEST_ASSERT_EQ("unlink the long file", vfs_unlink(long_name), 0);
+        TEST_ASSERT_EQ("the 8.3 file survives it", vfs_stat(short_name, &st), 0);
+        TEST_ASSERT_EQ("unlink the 8.3 file", vfs_unlink(short_name), 0);
+    }
+
+    // Names compare without case, long ones too, so another spelling opens
+    // the same file rather than creating a second one
+    {
+        const char *name = "/Mixed_Case_Name.txt";
+        struct stat st;
+
+        TEST_ASSERT_EQ("create a mixed-case long name", write_file(name, "c"), 0);
+        TEST_ASSERT_EQ("found in upper case", vfs_stat("/MIXED_CASE_NAME.TXT", &st), 0);
+
+        int fd = vfs_open("/mixed_case_name.txt", O_RDWR | O_CREAT);
+        TEST_ASSERT("opened in lower case", fd >= 0);
+        if (fd >= 0) {
+            vfs_close(fd);
+        }
+        TEST_ASSERT_EQ(
+            "no second entry was made",
+            count_listed("/", "Mixed_Case_Name.txt") + count_listed("/", "mixed_case_name.txt"), 1);
+
+        TEST_ASSERT_EQ("unlink in another case", vfs_unlink("/MIXED_CASE_NAME.TXT"), 0);
+        TEST_ASSERT("the file is gone", vfs_stat(name, &st) != 0);
+    }
+
+    // rename replaces an existing target of the same kind, and refuses the rest
+    {
+        const char *src = "/tfrsrc.tmp";
+        const char *dst = "/tfrdst.tmp";
+        const char *dir = "/tfrdir";
+        struct stat st;
+
+        TEST_ASSERT_EQ("create the source", write_file(src, "new"), 0);
+        TEST_ASSERT_EQ("create the target", write_file(dst, "old!"), 0);
+
+        TEST_ASSERT_EQ("rename onto an existing file", vfs_rename(src, dst), 0);
+        TEST_ASSERT_EQ("the target is listed once", count_listed("/", "tfrdst.tmp"), 1);
+        TEST_ASSERT_EQ("the target holds the source", first_byte(dst), 'n');
+        TEST_ASSERT("the source name is gone", vfs_stat(src, &st) != 0);
+
+        TEST_ASSERT_EQ("mkdir for the kind checks", vfs_mkdir(dir), 0);
+        TEST_ASSERT_EQ("a file does not replace a directory", vfs_rename(dst, dir), -EISDIR);
+        TEST_ASSERT_EQ("a directory does not replace a file", vfs_rename(dir, dst), -ENOTDIR);
+        TEST_ASSERT_EQ("a directory cannot move beneath itself", vfs_rename(dir, "/tfrdir/in"),
+                       -EINVAL);
+
+        TEST_ASSERT_EQ("mkdir a second directory", vfs_mkdir("/tfrdir2"), 0);
+        TEST_ASSERT_EQ("fill it", write_file("/tfrdir2/f.tmp", "f"), 0);
+        TEST_ASSERT_EQ("a non-empty directory is not replaced", vfs_rename(dir, "/tfrdir2"),
+                       -ENOTEMPTY);
+        TEST_ASSERT_EQ("empty it", vfs_unlink("/tfrdir2/f.tmp"), 0);
+        TEST_ASSERT_EQ("an empty directory is replaced", vfs_rename(dir, "/tfrdir2"), 0);
+        TEST_ASSERT_EQ("the replaced name is listed once", count_listed("/", "tfrdir2"), 1);
+        TEST_ASSERT("the source directory is gone", vfs_stat(dir, &st) != 0);
+
+        TEST_ASSERT_EQ("cleanup the target", vfs_unlink(dst), 0);
+        TEST_ASSERT_EQ("cleanup the directory", vfs_rmdir("/tfrdir2"), 0);
+    }
+
+    // A directory moved to another parent takes its ".." with it
+    {
+        int err = 0;
+        uint32_t dotdot = 0;
+
+        TEST_ASSERT_EQ("mkdir first parent", vfs_mkdir("/tfmva"), 0);
+        TEST_ASSERT_EQ("mkdir second parent", vfs_mkdir("/tfmvb"), 0);
+        TEST_ASSERT_EQ("mkdir the one that moves", vfs_mkdir("/tfmva/d"), 0);
+        TEST_ASSERT_EQ("move it across", vfs_rename("/tfmva/d", "/tfmvb/d"), 0);
+
+        struct vfs_vnode *moved = vfs_resolve_path("/tfmvb/d", NULL, &err);
+        struct vfs_vnode *parent = vfs_resolve_path("/tfmvb", NULL, &err);
+        TEST_ASSERT("moved directory resolves", moved != NULL && parent != NULL);
+
+        if (moved && parent) {
+            TEST_ASSERT_EQ("read its ..", fat32_test_dotdot(moved, &dotdot), 0);
+            TEST_ASSERT_EQ("its .. names the new parent", dotdot,
+                           (uint32_t)(uintptr_t)parent->internal_info);
+        }
+        if (moved) {
+            vfs_vnode_put(moved);
+        }
+        if (parent) {
+            vfs_vnode_put(parent);
+        }
+
+        TEST_ASSERT_EQ("cleanup moved dir", vfs_rmdir("/tfmvb/d"), 0);
+        TEST_ASSERT_EQ("cleanup second parent", vfs_rmdir("/tfmvb"), 0);
+        TEST_ASSERT_EQ("cleanup first parent", vfs_rmdir("/tfmva"), 0);
+    }
+
+    /*
+     * A write refused partway reports what landed, and the offset and size
+     * cover exactly that, so a retry from the offset repeats and loses nothing.
+     * Every page allocation the write makes is refused in turn.
+     */
+    {
+        const int len = 3 * 4096;
+        int ok = 1;
+        int partial = 0;
+
+        for (int i = 0; i < len; i++) {
+            big_pattern[i] = (uint8_t)(i * 7);
+        }
+
+        for (unsigned long nth = 1; nth <= 24 && ok; nth++) {
+            int fd = vfs_open(BIG_FILE, O_RDWR | O_CREAT | O_TRUNC);
+            if (fd < 0) {
+                ok = 0;
+                break;
+            }
+
+            pmm_test_fail_nth(nth);
+            int r = vfs_write(fd, big_pattern, (size_t)len);
+            pmm_test_fail_nth(0);
+
+            long off = vfs_lseek(fd, 0, SEEK_CUR);
+            struct stat st;
+            int st_ok = vfs_fstat(fd, &st) == 0;
+
+            if (r > 0) {
+                ok = off == r && st_ok && (long)st.st_size >= r;
+                partial |= r < len;
+            } else {
+                ok = off == 0;
+            }
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT("a refused write moves the offset by what it reports", ok);
+        TEST_ASSERT("some refusal landed partway through", partial);
+        vfs_unlink(BIG_FILE);
     }
 
     TEST_SUITE_END("FAT32");

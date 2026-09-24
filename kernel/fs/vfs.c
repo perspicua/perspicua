@@ -136,6 +136,13 @@ struct vfs_file *vfs_test_file_at(int fd)
 }
 #endif
 
+// A trailing slash asserts the path names a directory.
+static int has_trailing_slash(const char *path)
+{
+    size_t len = strlen(path);
+    return len > 1 && path[len - 1] == '/';
+}
+
 /*
  * vfs_split_parent - Splits a path into its directory and final component.
  *
@@ -473,6 +480,13 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
     char *token = strtok_r(filepath, "/", &saveptr);
 
     while (token) {
+        // A filesystem's lookup would read a file's data as directory entries.
+        if (curr->type != VFS_VNODE_TYPE_DIR) {
+            vfs_vnode_put(curr);
+            *error = -ENOTDIR;
+            return NULL;
+        }
+
         struct vfs_vnode *next = NULL;
         if (strcmp(token, ".") == 0) {
             next = curr;
@@ -518,6 +532,12 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
         token = strtok_r(NULL, "/", &saveptr);
     }
 
+    if (has_trailing_slash(path) && curr->type != VFS_VNODE_TYPE_DIR) {
+        vfs_vnode_put(curr);
+        *error = -ENOTDIR;
+        return NULL;
+    }
+
     *error = 0;
     return curr;
 }
@@ -534,8 +554,12 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
     struct vfs_vnode *node = vfs_resolve_path(path, p->cwd, &error);
     if (!node) {
-        if (!(flags & O_CREAT)) { // not asking to create -> just fail
+        // Only a name that is not there is created; any other failure stands.
+        if (!(flags & O_CREAT) || error != -ENOENT) {
             return error;
+        }
+        if (has_trailing_slash(path)) {
+            return -EISDIR;
         }
 
         // Split path into parent + name, resolve parent, call create
@@ -549,6 +573,11 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
         struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
         if (!parent) {
             return error;
+        }
+
+        if (parent->type != VFS_VNODE_TYPE_DIR) {
+            vfs_vnode_put(parent);
+            return -ENOTDIR;
         }
 
         if (!parent->ops || !parent->ops->create) {
@@ -705,9 +734,13 @@ int vfs_read(int fd, void *buffer, size_t count)
     }
 
     int mode = f->flags & O_ACCMODE;
-    if ((mode != O_RDONLY && mode != O_RDWR) || !f->node->ops->read) {
+    if (mode != O_RDONLY && mode != O_RDWR) {
         vfs_file_put(f);
-        return -EACCES;
+        return -EBADF;
+    }
+    if (!f->node->ops->read) {
+        vfs_file_put(f);
+        return -EINVAL;
     }
 
     vnode_revalidate(f->node);
@@ -731,9 +764,13 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     }
 
     int mode = f->flags & O_ACCMODE;
-    if ((mode != O_RDONLY && mode != O_RDWR) || !f->node->ops->read) {
+    if (mode != O_RDONLY && mode != O_RDWR) {
         vfs_file_put(f);
-        return -EACCES;
+        return -EBADF;
+    }
+    if (!f->node->ops->read) {
+        vfs_file_put(f);
+        return -EINVAL;
     }
 
     vnode_revalidate(f->node);
@@ -864,9 +901,13 @@ int vfs_write(int fd, const void *buffer, size_t count)
     }
 
     int mode = f->flags & O_ACCMODE;
-    if ((mode != O_WRONLY && mode != O_RDWR) || !f->node->ops->write) {
+    if (mode != O_WRONLY && mode != O_RDWR) {
         vfs_file_put(f);
-        return -EACCES;
+        return -EBADF;
+    }
+    if (!f->node->ops->write) {
+        vfs_file_put(f);
+        return -EINVAL;
     }
 
     vnode_revalidate(f->node);
@@ -894,9 +935,13 @@ int vfs_pwrite(int fd, const void *buffer, size_t count, vfs_off_t offset)
     }
 
     int mode = f->flags & O_ACCMODE;
-    if ((mode != O_WRONLY && mode != O_RDWR) || !f->node->ops->write) {
+    if (mode != O_WRONLY && mode != O_RDWR) {
         vfs_file_put(f);
-        return -EACCES;
+        return -EBADF;
+    }
+    if (!f->node->ops->write) {
+        vfs_file_put(f);
+        return -EINVAL;
     }
 
     vnode_revalidate(f->node);
@@ -951,6 +996,7 @@ static int vfs_vnode_truncate(struct vfs_vnode *node, vfs_off_t length)
     if (!node->ops || !node->ops->truncate) {
         return -ENOTSUP;
     }
+    vnode_revalidate(node);
     return node->ops->truncate(node, length);
 }
 
@@ -1175,8 +1221,7 @@ int vfs_unlink(const char *path)
      * the slash first would turn `unlink("file/")` into a successful delete of
      * a file the caller did not name.
      */
-    size_t plen = strlen(path);
-    if (plen > 1 && path[plen - 1] == '/') {
+    if (has_trailing_slash(path)) {
         return -ENOTDIR;
     }
 
@@ -1200,6 +1245,23 @@ int vfs_unlink(const char *path)
     int res = parent->ops->unlink(parent, name);
     vfs_vnode_put(parent);
     return res;
+}
+
+/*
+ * vnode_within - Whether node is dir or lies beneath it. Vnodes are per open,
+ * so identity is the filesystem's own key rather than the pointer.
+ */
+static int vnode_within(const struct vfs_vnode *node, const struct vfs_vnode *dir)
+{
+    if (!dir->internal_info) {
+        return 0;
+    }
+    for (; node; node = node->parent) {
+        if (node->ops == dir->ops && node->internal_info == dir->internal_info) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int vfs_rename(const char *oldpath, const char *newpath)
@@ -1247,6 +1309,26 @@ int vfs_rename(const char *oldpath, const char *newpath)
         vfs_vnode_put(new_parent_node);
         vfs_vnode_put(old_parent_node);
         return -ENOTDIR;
+    }
+
+    // A trailing slash asserts a directory, and a directory cannot move beneath itself.
+    struct vfs_vnode *old_node = vfs_resolve_path(oldpath, p->cwd, &error);
+    if (!old_node) {
+        vfs_vnode_put(new_parent_node);
+        vfs_vnode_put(old_parent_node);
+        return error;
+    }
+    int refused = 0;
+    if (old_node->type != VFS_VNODE_TYPE_DIR && has_trailing_slash(newpath)) {
+        refused = -ENOTDIR;
+    } else if (old_node->type == VFS_VNODE_TYPE_DIR && vnode_within(new_parent_node, old_node)) {
+        refused = -EINVAL;
+    }
+    vfs_vnode_put(old_node);
+    if (refused != 0) {
+        vfs_vnode_put(new_parent_node);
+        vfs_vnode_put(old_parent_node);
+        return refused;
     }
 
     if (!old_parent_node->ops || !old_parent_node->ops->rename) {

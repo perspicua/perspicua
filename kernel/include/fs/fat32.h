@@ -137,6 +137,9 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
 int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition_lba,
                                  uint64_t device_blocks, struct fat32_fs *out);
 
+// The cluster a directory's ".." entry records.
+int fat32_test_dotdot(struct vfs_vnode *dir, uint32_t *out);
+
 // The mount path up to the point it would replace the mounted volume.
 int fat32_test_read_volume(struct block_device *dev);
 

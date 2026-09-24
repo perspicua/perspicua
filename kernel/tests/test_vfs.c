@@ -378,5 +378,53 @@ void test_vfs(void)
         vfs_unlink(f);
     }
 
+    // A trailing slash asserts a directory, and a path cannot run through a file
+    {
+        const char *f = "/tslash.tmp";
+        struct stat st;
+
+        TEST_ASSERT_EQ("create never makes a file from dir/",
+                       vfs_open("/tslnew/", O_RDWR | O_CREAT), -EISDIR);
+        TEST_ASSERT("nothing was created", vfs_stat("/tslnew", &st) != 0);
+
+        int fd = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create slash probe file", fd >= 0);
+        if (fd >= 0) {
+            vfs_write(fd, "data", 4);
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT_EQ("a file named with a slash is not a directory",
+                       vfs_stat("/tslash.tmp/", &st), -ENOTDIR);
+        TEST_ASSERT_EQ("a path cannot continue through a file",
+                       vfs_open("/tslash.tmp/inner", O_RDWR | O_CREAT), -ENOTDIR);
+        TEST_ASSERT_EQ("rename refuses a file into dir/", vfs_rename(f, "/tslother/"), -ENOTDIR);
+
+        TEST_ASSERT_EQ("stat after the refusals", vfs_stat(f, &st), 0);
+        TEST_ASSERT_EQ("the file was not written through", st.st_size, 4);
+
+        vfs_unlink(f);
+    }
+
+    // The access mode an fd was opened with is checked as EBADF
+    {
+        const char *f = "/tmode.tmp";
+        char c = 0;
+
+        int wfd = vfs_open(f, O_WRONLY | O_CREAT | O_TRUNC);
+        int rfd = vfs_open(f, O_RDONLY);
+        TEST_ASSERT("open mode probes", wfd >= 0 && rfd >= 0);
+
+        if (wfd >= 0) {
+            TEST_ASSERT_EQ("read on a write-only fd", vfs_read(wfd, &c, 1), -EBADF);
+            vfs_close(wfd);
+        }
+        if (rfd >= 0) {
+            TEST_ASSERT_EQ("write on a read-only fd", vfs_write(rfd, "x", 1), -EBADF);
+            vfs_close(rfd);
+        }
+        vfs_unlink(f);
+    }
+
     TEST_SUITE_END("VFS");
 }
