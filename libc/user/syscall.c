@@ -367,6 +367,7 @@ sighandler_t signal(int sig, sighandler_t handler)
 {
     struct sigaction act = {0}, oact = {0};
     act.sa_handler = handler;
+    act.sa_flags = SA_RESTART; // BSD semantics, as glibc gives signal()
 
     if (sigaction(sig, &act, &oact) < 0) {
         return SIG_ERR;

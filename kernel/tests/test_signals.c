@@ -93,7 +93,7 @@ void test_signals(void)
                        -ESRCH);
 
         // pid 0 is the kernel and stays a permission error, not a lookup failure
-        TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGTERM), -EACCES);
+        TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGTERM), -EPERM);
     }
 
     /*

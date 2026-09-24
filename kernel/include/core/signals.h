@@ -22,7 +22,10 @@ struct signal_frame {
     sigset_t saved_mask;
 };
 
-#define ERESTARTSYS 512
+// Re-issued after a signal: ERESTARTSYS only under SA_RESTART, ERESTARTNOHAND
+// only when no handler ran. Neither reaches userspace.
+#define ERESTARTSYS    512
+#define ERESTARTNOHAND 514
 
 struct process;
 

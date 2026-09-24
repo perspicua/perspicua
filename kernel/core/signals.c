@@ -97,6 +97,7 @@ enum signal_progress {
  */
 struct syscall_restart {
     int active;
+    int nohand; // ERESTARTNOHAND: a handler turns it into EINTR whatever SA_RESTART says
     uint64_t arg0;
 };
 
@@ -157,6 +158,7 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
             }
             sched_current_task()->state = SCHED_TASK_STOPPED;
             p->stop_reported = 0;
+            p->stop_sig = sig;
 
             /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
              * is invisible and the parent sleeps until we exit instead. */
@@ -202,7 +204,7 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     }
 
     if (restart->active) {
-        if (sa->sa_flags & SA_RESTART) {
+        if ((sa->sa_flags & SA_RESTART) && !restart->nohand) {
             syscall_rewind(tf, restart->arg0);
         } else {
             tf->x[0] = (uint64_t)-EINTR;
@@ -285,7 +287,9 @@ void signal_handle_pending(struct exception_trap_frame *tf)
     struct syscall_restart restart = {0};
 
     if (curr) {
-        restart.active = curr->in_syscall && tf->x[0] == (uint64_t)-ERESTARTSYS;
+        uint64_t ret = tf->x[0];
+        restart.nohand = ret == (uint64_t)-ERESTARTNOHAND;
+        restart.active = curr->in_syscall && (ret == (uint64_t)-ERESTARTSYS || restart.nohand);
         restart.arg0 = curr->syscall_arg0;
         curr->in_syscall = 0;
     }
@@ -300,6 +304,8 @@ void signal_handle_pending(struct exception_trap_frame *tf)
 
     if (restart.active) {
         syscall_rewind(tf, restart.arg0);
+    } else if (curr) {
+        curr->sleep_resume_at = 0;
     }
 }
 

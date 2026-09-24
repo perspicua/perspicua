@@ -282,7 +282,7 @@ static int64_t setpgid_handler(struct exception_trap_frame *tf)
     // Restrict setpgid to self or direct child
     if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -EACCES;
+        return -ESRCH;
     }
 
     /* A parent may only place a child before it execs; the new image
@@ -296,7 +296,7 @@ static int64_t setpgid_handler(struct exception_trap_frame *tf)
      * group elsewhere. */
     if (target_proc->sid == target_proc->pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -EACCES;
+        return -EPERM;
     }
 
     /* Groups do not span sessions; an empty group is only legal when the
@@ -305,11 +305,11 @@ static int64_t setpgid_handler(struct exception_trap_frame *tf)
     if (group_sid == 0) {
         if (new_pgid != target_pid) {
             spin_unlock_irqrestore(&process_table_lock, irqf);
-            return -EACCES;
+            return -EPERM;
         }
     } else if (group_sid != target_proc->sid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -EACCES;
+        return -EPERM;
     }
 
     target_proc->pgid = (uint32_t)new_pgid;
@@ -378,7 +378,7 @@ static int64_t tcsetpgrp_handler(struct exception_trap_frame *tf)
     spin_unlock_irqrestore(&process_table_lock, irqf);
 
     if (group_sid == 0 || group_sid != caller_sid) {
-        return -EACCES;
+        return -EPERM;
     }
 
     if (tty_access_check(tty, SIGTTOU) == TTY_ACCESS_STOPPED) {
@@ -391,7 +391,7 @@ static int64_t tcsetpgrp_handler(struct exception_trap_frame *tf)
     }
     if (tty->session_id != caller_sid) {
         spin_unlock_irqrestore(&tty->lock, ttyflags);
-        return -EACCES;
+        return -ENOTTY;
     }
     tty->foreground_pgid = (uint32_t)new_pgid;
     spin_unlock_irqrestore(&tty->lock, ttyflags);
@@ -449,7 +449,7 @@ static int64_t setsid_handler(struct exception_trap_frame *tf)
 
     if (curr_p->pgid == curr_p->pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -EACCES;
+        return -EPERM;
     }
 
     curr_p->sid = curr_p->pid;
@@ -531,10 +531,21 @@ static int64_t clock_gettime_handler(struct exception_trap_frame *tf)
     return 0;
 }
 
+static unsigned long ms_until(unsigned long deadline)
+{
+    // Signed, so a wrap reads as "deadline passed".
+    long left = (long)(deadline - timer_get_system_time());
+    return left > 0 ? (unsigned long)left : 0;
+}
+
 static int64_t nanosleep_handler(struct exception_trap_frame *tf)
 {
     const struct timespec *req = (const struct timespec *)tf->x[0];
     struct timespec *rem = (struct timespec *)tf->x[1];
+    struct task *curr = sched_current_task();
+
+    unsigned long resume_at = curr->sleep_resume_at;
+    curr->sleep_resume_at = 0;
 
     if (!req || !syscall_validate_user_buffer(req, sizeof(struct timespec), 0)) {
         return -EINVAL;
@@ -562,13 +573,12 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
     unsigned long ms =
         (unsigned long)kreq.tv_sec * 1000 + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
 
+    unsigned long deadline = resume_at ? resume_at : timer_get_system_time() + ms;
+
     // Only a signal ends the sleep early; anything else re-sleeps the rest.
-    unsigned long left = ms;
-    while (left > 0) {
-        left = sched_sleep_ms_interruptible(left);
-        if (left == 0 || signal_pending(process_current())) {
-            break;
-        }
+    unsigned long left;
+    while ((left = ms_until(deadline)) > 0 && !signal_pending(process_current())) {
+        sched_sleep_ms_interruptible(left);
     }
 
     if (rem) {
@@ -578,8 +588,14 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
         }
     }
 
-    // EINTR, not ERESTARTSYS: a restart would re-sleep the original duration.
-    return left > 0 ? -EINTR : 0;
+    if (left == 0) {
+        return 0;
+    }
+
+    // A stop or a handlerless signal re-issues the call, which resumes this
+    // deadline rather than sleeping req again.
+    curr->sleep_resume_at = deadline;
+    return -ERESTARTNOHAND;
 }
 
 static int64_t exit_handler(struct exception_trap_frame *tf)
@@ -680,13 +696,13 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
         // Enforce process hierarchy permissions
         if (target_pid != (int)pid && target->parent_pid != pid
             && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
-            return -EACCES;
+            return -EPERM;
         }
 
         return signal_send((uint32_t)target_pid, sig);
     } else if (target_pid == 0) {
         if (proc->pgid == 0) {
-            return -EACCES;
+            return -EPERM;
         }
         return signal_send_group(proc->pgid, sig);
     } else { // target_pid < -1
@@ -718,7 +734,7 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
         }
 
         if (!allowed) {
-            return -EACCES;
+            return -EPERM;
         }
 
         return signal_send_group(target_pgid, sig);
@@ -945,7 +961,9 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
     // re-block the signal that woke us and the handler would never run.
     proc->saved_sigmask = saved_mask;
     proc->has_saved_sigmask = 1;
-    return -EINTR;
+
+    // A stop, or a signal with no handler, suspends again.
+    return -ERESTARTNOHAND;
 }
 
 static int64_t sigreturn_handler(struct exception_trap_frame *tf)
@@ -1589,6 +1607,9 @@ void syscall_handle(struct exception_trap_frame *tf)
         int64_t ret = syscall_table[syscall_nr](tf);
         if (ret != SYSCALL_RETAIN_FRAME) {
             tf->x[0] = (uint64_t)ret;
+        } else {
+            // x0 is the installed frame's, not a result the restart check may read.
+            curr->in_syscall = 0;
         }
         return;
     }

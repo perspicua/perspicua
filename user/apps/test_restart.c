@@ -404,8 +404,179 @@ static int run_illegal_insn_case(void)
     return status & 0xFF;
 }
 
+static long elapsed_ms(const struct timespec *since)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (now.tv_sec - since->tv_sec) * 1000 + (now.tv_nsec - since->tv_nsec) / 1000000;
+}
+
+/*
+ * A sleep the child is stopped in, or sent a signal with no handler, runs to
+ * its deadline: neither is an interruption POSIX lets it report.
+ * 0 = slept the whole second, 1 = cut short with EINTR, 3 = anything else.
+ */
+static int run_sleep_through_case(int stop_it)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+
+        struct timespec req = {.tv_sec = 1, .tv_nsec = 0};
+        errno = 0;
+        int n = nanosleep(&req, NULL);
+        if (n < 0 && errno == EINTR) {
+            _exit(1);
+        }
+        _exit(n == 0 && elapsed_ms(&start) >= 950 ? 0 : 3);
+    }
+
+    usleep(200000);
+    if (stop_it) {
+        kill(pid, SIGSTOP);
+        usleep(200000);
+    }
+    kill(pid, SIGCONT);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// The signal behind a stop is what WSTOPSIG reports.
+static int run_stop_signal_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        for (;;) {
+            usleep(50000);
+        }
+    }
+
+    usleep(100000);
+    kill(pid, SIGSTOP);
+
+    int status = 0;
+    int r = waitpid(pid, &status, WUNTRACED);
+    kill(pid, SIGKILL);
+    waitpid(pid, NULL, 0);
+
+    if (r != pid || !WIFSTOPPED(status)) {
+        return -1;
+    }
+    return WSTOPSIG(status);
+}
+
+static volatile int chld_runs;
+
+static void on_chld(int sig)
+{
+    (void)sig;
+    chld_runs++;
+}
+
+/*
+ * signal() installs with SA_RESTART, so a waitpid the handler interrupts
+ * resumes. A shell waiting on its foreground job relies on this whenever a
+ * background job ends. 0 = resumed and reaped, 1 = failed with EINTR.
+ */
+static int run_signal_restarts_wait_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        signal(SIGCHLD, on_chld);
+
+        int slow = fork();
+        if (slow == 0) {
+            usleep(400000);
+            _exit(7);
+        }
+        int quick = fork();
+        if (quick == 0) {
+            usleep(100000);
+            _exit(0);
+        }
+
+        int status = 0;
+        errno = 0;
+        int r = waitpid(slow, &status, 0);
+        waitpid(quick, NULL, 0);
+
+        if (r < 0 && errno == EINTR) {
+            _exit(1);
+        }
+        _exit(r == slow && (status & 0xFF) == 7 && chld_runs > 0 ? 0 : 3);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+/*
+ * sigsuspend returns only for a signal that runs a handler, so a stop and
+ * continue on the way must not end it.
+ */
+static int run_suspend_through_stop_case(void)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        sigset_t usr1 = 1u << (SIGUSR1 - 1);
+        sigprocmask(SIG_BLOCK, &usr1, NULL);
+
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_usr1;
+        sigaction(SIGUSR1, &sa, NULL);
+
+        sigset_t none = 0;
+        errno = 0;
+        int n = sigsuspend(&none);
+        if (n < 0 && errno == EINTR) {
+            _exit(handler_runs ? CHILD_EINTR : CHILD_NO_HANDLER);
+        }
+        _exit(CHILD_OTHER);
+    }
+
+    usleep(200000);
+    kill(pid, SIGSTOP);
+    usleep(100000);
+    kill(pid, SIGCONT);
+    usleep(200000);
+    kill(pid, SIGUSR1);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+static int checks_run;
+
 static int check(const char *name, int got, int want)
 {
+    checks_run++;
     if (got == want) {
         printf("  [ok]     %s\n", name);
         return 0;
@@ -433,11 +604,18 @@ int main(void)
                       run_illegal_insn_case(), 128 + SIGILL);
     failures += check("an ignored SIGSEGV still kills", run_forced_fault_case(0), 128 + SIGSEGV);
     failures += check("a blocked SIGSEGV still kills", run_forced_fault_case(1), 128 + SIGSEGV);
+    failures += check("a stop and continue do not cut a sleep short", run_sleep_through_case(1), 0);
+    failures +=
+        check("a signal with no handler does not cut a sleep short", run_sleep_through_case(0), 0);
+    failures += check("WSTOPSIG names the stopping signal", run_stop_signal_case(), SIGSTOP);
+    failures += check("signal() handlers restart waitpid", run_signal_restarts_wait_case(), 0);
+    failures += check("sigsuspend waits through a stop and continue",
+                      run_suspend_through_stop_case(), CHILD_EINTR);
 
     if (failures == 0) {
-        printf("test_restart: all 12 tests passed\n");
+        printf("test_restart: all %d tests passed\n", checks_run);
     } else {
-        printf("test_restart: %d of 12 tests failed\n", failures);
+        printf("test_restart: %d of %d tests failed\n", failures, checks_run);
     }
     return failures != 0;
 }

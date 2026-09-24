@@ -95,6 +95,7 @@ struct process {
     uint32_t sid;
     int has_execed;
     int stop_reported;
+    int stop_sig; // the signal behind the current stop, as waitpid reports it
     char name[64];
     process_state_t state;
     uint32_t parent_pid;

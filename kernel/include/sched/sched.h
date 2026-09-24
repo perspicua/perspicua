@@ -79,6 +79,9 @@ struct task {
 
     int in_syscall;
     uint64_t syscall_arg0;
+
+    // Deadline a rewound nanosleep resumes; 0 when there is none.
+    unsigned long sleep_resume_at;
 };
 
 void sched_enqueue(int cpu, struct task *t);

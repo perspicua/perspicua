@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "dirent.h"
+#include "errno.h"
 #include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
@@ -49,10 +50,20 @@ static int wait_foreground(int pgid, const int *pids, int count)
     int shell_pgid = getpgid(0);
     int last_status = 0;
 
+    // handle_sigchld reaps with waitpid(-1), which would take a job member's
+    // status before the wait below sees it.
+    sigset_t chld = 1u << (SIGCHLD - 1);
+    sigset_t old_mask;
+    sigprocmask(SIG_BLOCK, &chld, &old_mask);
+
     tcsetpgrp(0, pgid);
     for (int i = 0; i < count; i++) {
         int status = 0;
-        if (waitpid(pids[i], &status, WUNTRACED) < 0) {
+        int r;
+        do {
+            r = waitpid(pids[i], &status, WUNTRACED);
+        } while (r < 0 && errno == EINTR);
+        if (r < 0) {
             continue;
         }
         if (WIFSTOPPED(status)) {
@@ -67,6 +78,7 @@ static int wait_foreground(int pgid, const int *pids, int count)
         }
     }
     tcsetpgrp(0, shell_pgid);
+    sigprocmask(SIG_SETMASK, &old_mask, NULL);
     return last_status;
 }
 

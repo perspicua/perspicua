@@ -20,6 +20,7 @@
 #include "arch/irq.h"
 #include "core/timer.h"
 #include "core/lock.h"
+#include "core/signals.h"
 #include "sched/process.h"
 
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
@@ -453,12 +454,27 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
     }
 
     unsigned long deadline = timer_get_system_time() + ms;
-    curr->state = SCHED_TASK_BLOCKED;
     curr->wake_time = deadline;
-    sleep_enqueue(curr);
 
+    // Published before the check, as in sigsuspend: a sender on another core
+    // sets the pending bit and then reads this state.
+    __atomic_store_n(&curr->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+    if (signal_pending(process_current())) {
+        enum sched_task_state expected = SCHED_TASK_BLOCKED;
+        __atomic_compare_exchange_n(&curr->state, &expected, SCHED_TASK_RUNNING, 0,
+                                    __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+        irq_restore(flags);
+        return ms;
+    }
+
+    sleep_enqueue(curr);
     sched_schedule();
     irq_restore(flags);
+
+    // A wakeup before the deadline leaves the entry linked.
+    sleep_dequeue(curr);
 
     // Signed, so a wrap reads as "deadline passed".
     long left = (long)(deadline - timer_get_system_time());

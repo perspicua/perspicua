@@ -972,7 +972,7 @@ int process_waitpid(int pid, int *status, int options)
                 int found_pid = (int)candidate->pid;
                 candidate->stop_reported = 1;
                 if (status) {
-                    *status = __W_STOPPED | SIGTSTP;
+                    *status = __W_STOPPED | candidate->stop_sig;
                 }
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
