@@ -33,6 +33,30 @@ void strip_comment(char *line)
 }
 
 /*
+ * Characters a $-expansion produced travel as stand-ins until parse_command,
+ * so the pipe splitter, the operator padding and the quote scanners after
+ * expansion never read them as syntax. POSIX never re-parses expanded text.
+ */
+static const char lit_syntax[] = "|<>&\"'";
+
+static char lit_encode(char c)
+{
+    const char *hit = strchr(lit_syntax, c);
+    return (c != '\0' && hit) ? (char)(1 + (hit - lit_syntax)) : c;
+}
+
+// In place, once a word's role is decided, so an expanded ">" stays a word.
+static char *lit_decode(char *word)
+{
+    for (char *c = word; *c; c++) {
+        if (*c >= 1 && *c <= (char)(sizeof(lit_syntax) - 1)) {
+            *c = lit_syntax[*c - 1];
+        }
+    }
+    return word;
+}
+
+/*
  * expand_variables - Substitutes $?, $$, $NAME and ${NAME} into dst.
  *
  * Expansion is suppressed inside 'single quotes' and honored inside "double
@@ -54,7 +78,7 @@ void expand_variables(const char *src, char *dst, size_t dst_size)
 #define SH_PUTS(str)                            \
     do {                                        \
         for (const char *_s = (str); *_s; _s++) \
-            SH_PUTC(*_s);                       \
+            SH_PUTC(lit_encode(*_s));           \
     } while (0)
 
     for (size_t i = 0; src[i]; i++) {
@@ -133,14 +157,14 @@ void expand_variables(const char *src, char *dst, size_t dst_size)
  *
  * Lets the tokenizer split on whitespace without breaking quotes. Control
  * operators (; && ||) are handled earlier, so only redirection and pipes
- * reach here.
+ * reach here. Output stops short of size rather than overrun it.
  */
-void expand_operators(const char *line, char *expanded)
+void expand_operators(const char *line, char *expanded, size_t size)
 {
-    int i = 0, j = 0;
+    size_t i = 0, j = 0;
     int in_single = 0, in_double = 0;
 
-    while (line[i] != '\0') {
+    while (line[i] != '\0' && j + 4 < size) {
         char c = line[i];
         if (c == '"' && !in_single) {
             in_double = !in_double;
@@ -198,7 +222,7 @@ void parse_command(char *str, Command *cmd)
             if (*p == '"' || *p == '\'') {
                 char quote = *p++;
                 while (*p && *p != quote) {
-                    *w++ = *p++;
+                    *w++ = lit_encode(*p++); // quoted, so never an operator
                 }
                 if (*p == quote) {
                     p++;
@@ -219,17 +243,17 @@ void parse_command(char *str, Command *cmd)
 
     for (int i = 0; i < token_count; i++) {
         if (strcmp(tokens[i], "<") == 0 && i + 1 < token_count) {
-            cmd->infile = tokens[++i];
+            cmd->infile = lit_decode(tokens[++i]);
         } else if (strcmp(tokens[i], ">") == 0 && i + 1 < token_count) {
-            cmd->outfile = tokens[++i];
+            cmd->outfile = lit_decode(tokens[++i]);
         } else if (strcmp(tokens[i], ">>") == 0 && i + 1 < token_count) {
             cmd->append = 1;
-            cmd->outfile = tokens[++i];
+            cmd->outfile = lit_decode(tokens[++i]);
         } else if (strcmp(tokens[i], "&") == 0) {
             cmd->background = 1;
         } else {
             if (cmd->argc < MAX_ARGS - 1) {
-                cmd->argv[cmd->argc++] = tokens[i];
+                cmd->argv[cmd->argc++] = lit_decode(tokens[i]);
             }
         }
     }

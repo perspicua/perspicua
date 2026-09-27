@@ -198,26 +198,20 @@ static void run_exec(Command *cmd)
     strncpy(path_copy, path_env, sizeof(path_copy));
     path_copy[sizeof(path_copy) - 1] = '\0';
 
+    // dir/name.elf first, then dir/name; a candidate that does not fit is skipped.
+    static const char *const suffixes[] = {".elf", ""};
+
     char *dir = strtok(path_copy, ":");
     while (dir) {
-        // Try dir/name.elf
-        strcpy(path, dir);
-        int len = strlen(path);
-        if (len > 0 && path[len - 1] != '/') {
-            strcat(path, "/");
-        }
-        strcat(path, name);
-        strcat(path, ".elf");
-        execve(path, cmd->argv, environ);
+        size_t dlen = strlen(dir);
+        const char *sep = (dlen > 0 && dir[dlen - 1] != '/') ? "/" : "";
 
-        // Try dir/name
-        strcpy(path, dir);
-        len = strlen(path);
-        if (len > 0 && path[len - 1] != '/') {
-            strcat(path, "/");
+        for (size_t k = 0; k < sizeof(suffixes) / sizeof(suffixes[0]); k++) {
+            int n = snprintf(path, sizeof(path), "%s%s%s%s", dir, sep, name, suffixes[k]);
+            if (n > 0 && (size_t)n < sizeof(path)) {
+                execve(path, cmd->argv, environ);
+            }
         }
-        strcat(path, name);
-        execve(path, cmd->argv, environ);
 
         dir = strtok(NULL, ":");
     }
@@ -255,127 +249,135 @@ static void execute_pipeline(char *pipe_string)
     char *commands_str[MAX_CMDS];
     int num_cmds = 0;
 
-    char *p = pipe_string;
-    commands_str[num_cmds++] = p;
-    while (*p) {
-        if (*p == '|') {
+    // Split on unquoted pipes: a quoted one is part of an argument.
+    commands_str[num_cmds++] = pipe_string;
+    int in_single = 0, in_double = 0;
+    for (char *p = pipe_string; *p; p++) {
+        if (*p == '\'' && !in_double) {
+            in_single = !in_single;
+        } else if (*p == '"' && !in_single) {
+            in_double = !in_double;
+        } else if (*p == '|' && !in_single && !in_double) {
+            if (num_cmds == MAX_CMDS) {
+                printf("sh: more than %d commands in a pipeline\n", MAX_CMDS);
+                g_last_status = 2;
+                return;
+            }
             *p = '\0';
             commands_str[num_cmds++] = p + 1;
         }
-        p++;
     }
 
-    if (num_cmds == 1) {
-        Command cmd;
-        parse_command(commands_str[0], &cmd);
-        if (cmd.argc == 0) {
+    static Command cmds[MAX_CMDS];
+    int background = 0;
+    for (int i = 0; i < num_cmds; i++) {
+        parse_command(commands_str[i], &cmds[i]);
+        if (cmds[i].argc == 0) {
+            if (num_cmds > 1) {
+                printf("sh: syntax error: empty command in a pipeline\n");
+                g_last_status = 2;
+            }
             return;
         }
+        background |= cmds[i].background;
+    }
 
-        if (is_parent_builtin(cmd.argv[0])) {
-            run_parent_builtin(&cmd);
-            return;
-        }
-
-        int pid = fork();
-        if (pid == 0) {
-            setpgid(0, 0);
-            if (apply_redirections(&cmd) < 0) {
-                _exit(1);
-            }
-
-            if (is_output_builtin(cmd.argv[0])) {
-                run_output_builtin(&cmd);
-                _exit(0);
-            }
-            run_exec(&cmd);
-            _exit(1);
-        } else {
-            setpgid(pid, pid);
-            if (!cmd.background) {
-                int pids[1] = {pid};
-                g_last_status = wait_foreground(pid, pids, 1);
-            } else {
-                g_last_status = 0; // a launched background job "succeeds"
-            }
-        }
+    if (num_cmds == 1 && is_parent_builtin(cmds[0].argv[0])) {
+        run_parent_builtin(&cmds[0]);
         return;
     }
 
-    // Handle multiple piped commands
-    int prev_pipe = -1;
-    int pipefd[2];
+    // From the first fork to the wait: otherwise handle_sigchld can reap a
+    // stage that exits early, and wait_foreground loses its status.
+    sigset_t chld = 1u << (SIGCHLD - 1);
+    sigset_t old_mask;
+    sigprocmask(SIG_BLOCK, &chld, &old_mask);
+
     int pids[MAX_CMDS];
-    int bg_flag = 0;
-    int pipeline_pgid = 0;
+    int started = 0;
+    int pgid = 0;
+    int prev_pipe = -1;
+    int failed = 0;
 
     for (int i = 0; i < num_cmds; i++) {
-        Command cmd;
-        parse_command(commands_str[i], &cmd);
-        if (cmd.argc == 0) {
-            continue;
-        }
-        if (cmd.background) {
-            bg_flag = 1;
-        }
-
-        if (i < num_cmds - 1) {
-            if (pipe(pipefd) < 0) {
-                printf("sh: pipe failed\n");
-                return;
-            }
+        int pipefd[2] = {-1, -1};
+        if (i < num_cmds - 1 && pipe(pipefd) < 0) {
+            printf("sh: pipe failed\n");
+            failed = 1;
+            break;
         }
 
         int pid = fork();
-        if (pid == 0) {
-            if (i == 0) {
-                setpgid(0, 0);
-            } else {
-                setpgid(0, pipeline_pgid);
+        if (pid < 0) {
+            printf("sh: fork failed\n");
+            if (pipefd[0] >= 0) {
+                close(pipefd[0]);
+                close(pipefd[1]);
             }
+            failed = 1;
+            break;
+        }
+
+        if (pid == 0) {
+            sigprocmask(SIG_SETMASK, &old_mask, NULL);
+            setpgid(0, pgid);
 
             if (prev_pipe != -1) {
                 dup2(prev_pipe, 0);
                 close(prev_pipe);
             }
-            if (i < num_cmds - 1) {
+            if (pipefd[1] >= 0) {
                 dup2(pipefd[1], 1);
                 close(pipefd[0]);
                 close(pipefd[1]);
             }
 
-            if (apply_redirections(&cmd) < 0) {
+            if (apply_redirections(&cmds[i]) < 0) {
                 _exit(1);
             }
-
-            if (is_output_builtin(cmd.argv[0])) {
-                run_output_builtin(&cmd);
+            if (is_output_builtin(cmds[i].argv[0])) {
+                run_output_builtin(&cmds[i]);
                 _exit(0);
             }
-            run_exec(&cmd);
+            run_exec(&cmds[i]);
             _exit(1);
-        } else {
-            pids[i] = pid;
-            if (i == 0) {
-                pipeline_pgid = pid;
-            }
-            setpgid(pid, pipeline_pgid);
+        }
 
-            if (prev_pipe != -1) {
-                close(prev_pipe);
-            }
-            if (i < num_cmds - 1) {
-                close(pipefd[1]);
-                prev_pipe = pipefd[0];
-            }
+        if (i == 0) {
+            pgid = pid;
+        }
+        setpgid(pid, pgid);
+        pids[started++] = pid;
+
+        if (prev_pipe != -1) {
+            close(prev_pipe);
+        }
+        prev_pipe = pipefd[0];
+        if (pipefd[1] >= 0) {
+            close(pipefd[1]);
         }
     }
 
-    if (!bg_flag && pipeline_pgid > 0) {
-        g_last_status = wait_foreground(pipeline_pgid, pids, num_cmds);
-    } else if (bg_flag) {
-        g_last_status = 0;
+    if (prev_pipe != -1) {
+        close(prev_pipe);
     }
+
+    if (failed) {
+        // A half-built pipeline is taken down and reaped, not left running.
+        if (pgid > 0) {
+            kill(-pgid, SIGKILL);
+        }
+        for (int i = 0; i < started; i++) {
+            waitpid(pids[i], NULL, 0);
+        }
+        g_last_status = 1;
+    } else if (background) {
+        g_last_status = 0; // a launched background job "succeeds"
+    } else {
+        g_last_status = wait_foreground(pgid, pids, started);
+    }
+
+    sigprocmask(SIG_SETMASK, &old_mask, NULL);
 }
 
 /* Run one leaf command (already free of ; && ||) through $-expansion, operator
@@ -403,7 +405,7 @@ static void run_pipeline_segment(char *cmd)
         return;
     }
     expand_variables(cmd, vexp, CMD_MAX_LEN * 2);
-    expand_operators(vexp, expanded);
+    expand_operators(vexp, expanded, CMD_MAX_LEN * 2);
     execute_pipeline(expanded);
     free(vexp);
     free(expanded);

@@ -44,7 +44,7 @@ void clear_completion_matches(void);
 // parse.c
 void strip_comment(char *line);
 void expand_variables(const char *src, char *dst, size_t dst_size);
-void expand_operators(const char *line, char *expanded);
+void expand_operators(const char *line, char *expanded, size_t size);
 void parse_command(char *str, Command *cmd);
 
 // exec.c

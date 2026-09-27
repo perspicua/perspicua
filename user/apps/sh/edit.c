@@ -190,8 +190,12 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
     int capacity = 32;
     int matches_count = 0;
     char **matches = malloc(capacity * sizeof(char *));
+    if (!matches) {
+        *count_out = 0;
+        return NULL;
+    }
 
-    while (path_part) {
+    for (; path_part; path_part = strtok(NULL, ":")) {
         DIR *dir = opendir(path_part);
         if (!dir) {
             continue;
@@ -214,6 +218,9 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
 
             int cmd_len = name_len - 4;
             char *cmd_name = malloc(cmd_len + 1);
+            if (!cmd_name) {
+                continue;
+            }
             strncpy(cmd_name, entry_name, cmd_len);
             cmd_name[cmd_len] = 0;
 
@@ -230,7 +237,12 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
                     int new_capacity = 2 * capacity;
                     char **tmp = realloc(matches, new_capacity * sizeof(char *));
                     if (!tmp) {
+                        for (int i = 0; i < matches_count; i++) {
+                            free(matches[i]);
+                        }
                         free(matches);
+                        free(cmd_name);
+                        closedir(dir);
                         *count_out = 0;
                         return NULL;
                     }
@@ -246,7 +258,6 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
             }
         }
         closedir(dir);
-        path_part = strtok(NULL, ":");
     }
 
     if (matches_count == 0) {
