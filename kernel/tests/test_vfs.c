@@ -406,6 +406,28 @@ void test_vfs(void)
         vfs_unlink(f);
     }
 
+    // SEEK_END sees what another descriptor appended, and whence is checked
+    {
+        const char *f = "/tseek.tmp";
+        int fd1 = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        int fd2 = vfs_open(f, O_RDWR);
+        TEST_ASSERT("open seek probes", fd1 >= 0 && fd2 >= 0);
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            vfs_write(fd1, "abcdef", 6);
+            TEST_ASSERT_EQ("SEEK_END through the other descriptor",
+                           (int)vfs_lseek(fd2, 0, SEEK_END), 6);
+            TEST_ASSERT_EQ("an unknown whence", (int)vfs_lseek(fd2, 0, 99), -EINVAL);
+        }
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+        vfs_unlink(f);
+    }
+
     // The access mode an fd was opened with is checked as EBADF
     {
         const char *f = "/tmode.tmp";

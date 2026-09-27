@@ -40,6 +40,102 @@ static struct fat32_fs current_fs;
  */
 static struct kmutex fat32_lock = KMUTEX_INIT;
 
+static struct vfs_vnode_ops fat32_vnode_ops;
+static int fat32_free_cluster_chain(uint32_t start_cluster);
+
+/*
+ * Files some vnode still has open, by start cluster. The start cluster is a
+ * file's identity for its whole life: create allocates it and truncate keeps
+ * it. Unlinking or replacing an open file leaves its chain to the last
+ * release, as on any Unix filesystem. Under fat32_lock.
+ */
+struct fat32_open {
+    uint32_t cluster;
+    uint32_t count;
+    int orphaned;
+    struct fat32_open *next;
+};
+
+static struct fat32_open *fat32_opens;
+
+static struct fat32_open *open_find(uint32_t cluster)
+{
+    for (struct fat32_open *o = fat32_opens; o; o = o->next) {
+        if (o->cluster == cluster) {
+            return o;
+        }
+    }
+    return NULL;
+}
+
+static int open_track(uint32_t cluster)
+{
+    if (cluster < 2) {
+        return 0;
+    }
+
+    struct fat32_open *o = open_find(cluster);
+    if (!o) {
+        o = slab_alloc(sizeof(*o));
+        if (!o) {
+            return -ENOMEM;
+        }
+        o->cluster = cluster;
+        o->count = 0;
+        o->orphaned = 0;
+        o->next = fat32_opens;
+        fat32_opens = o;
+    }
+    o->count++;
+    return 0;
+}
+
+static void open_untrack(uint32_t cluster)
+{
+    struct fat32_open **pp = &fat32_opens;
+    while (*pp && (*pp)->cluster != cluster) {
+        pp = &(*pp)->next;
+    }
+
+    struct fat32_open *o = *pp;
+    if (!o || --o->count > 0) {
+        return;
+    }
+
+    *pp = o->next;
+    int orphaned = o->orphaned;
+    slab_free(o);
+
+    if (orphaned) {
+        pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)cluster);
+        fat32_free_cluster_chain(cluster);
+    }
+}
+
+// Frees a chain no entry names any more, or leaves it to the last release.
+static int fat32_release_chain(uint32_t cluster)
+{
+    struct fat32_open *o = open_find(cluster);
+    if (o) {
+        o->orphaned = 1;
+        return 0;
+    }
+
+    pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)cluster);
+    return fat32_free_cluster_chain(cluster);
+}
+
+// A vnode's start cluster only ever goes from none to its first.
+static int node_take_cluster(struct vfs_vnode *node, uint32_t cluster)
+{
+    if (open_track(cluster) != 0) {
+        return -ENOMEM;
+    }
+    open_untrack((uint32_t)(uintptr_t)node->internal_info);
+    node->internal_info = (void *)(uintptr_t)cluster;
+    return 0;
+}
+
 // Every read and write path in this driver assumes 512-byte sectors.
 #define FAT32_SECTOR_SIZE 512
 
@@ -373,6 +469,9 @@ static int name_as_83(const char *name, uint8_t out_name[8], uint8_t out_ext[3])
 static int entry_named(const char *name, const struct fat32_dir_entry *entry,
                        const struct fat32_dir_pos *pos)
 {
+    if (entry->attributes & 0x08) {
+        return 0; // the volume label
+    }
     if (pos->has_lfn && name_eq_nocase(name, pos->lfn_name)) {
         return 1;
     }
@@ -431,8 +530,9 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
 /*
  * fat32_update_dir_entry - Persists a vnode's size and start cluster.
  *
- * The entry is located by name: a truncate to zero clears the start cluster,
- * so a cluster-keyed search would match a different zero-cluster entry.
+ * The entry is found by start cluster, so a vnode whose name was since
+ * unlinked, renamed or reused updates its own file or nothing. Only an entry
+ * still without a cluster is found by name: the one getting its first.
  */
 struct update_entry_ctx {
     struct vfs_vnode *node;
@@ -440,12 +540,11 @@ struct update_entry_ctx {
 
 static void fat32_stamp_entry(struct fat32_dir_entry *entry, int created);
 
-/*
- * Matches the long name as well as the 8.3 one. A file created with a name
- * that does not fit 8.3 is stored under a generated alias, so the short name
- * no longer resembles what the vnode is called -- matching only on it would
- * silently fail to find the entry, and the size would never reach the disk.
- */
+static uint32_t entry_cluster(const struct fat32_dir_entry *entry)
+{
+    return ((uint32_t)entry->cluster_high << 16) | entry->cluster_low;
+}
+
 static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry,
                                               const struct fat32_dir_pos *pos, void *ctx_,
                                               int *out_err, int *dirty)
@@ -456,7 +555,9 @@ static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry,
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!entry_named(ctx->node->name, entry, pos)) {
+    uint32_t have = entry_cluster(entry);
+    if (have != 0 ? have != (uint32_t)(uintptr_t)ctx->node->internal_info
+                  : !entry_named(ctx->node->name, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
@@ -480,25 +581,28 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
     return fat32_dir_walk(cluster, 0, update_entry_cb, &ctx);
 }
 
-// update_entry_cb's search, reading the entry instead of writing it.
+// Reads the entry back. A vnode still without a cluster finds it by name and
+// adopts the cluster another vnode gave the file.
 static enum fat32_walk_action revalidate_cb(struct fat32_dir_entry *entry,
                                             const struct fat32_dir_pos *pos, void *ctx_,
                                             int *out_err, int *dirty)
 {
     struct update_entry_ctx *ctx = ctx_;
-    (void)out_err;
     (void)dirty;
 
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!entry_named(ctx->node->name, entry, pos)) {
+    uint32_t mine = (uint32_t)(uintptr_t)ctx->node->internal_info;
+    if (mine != 0 ? entry_cluster(entry) != mine : !entry_named(ctx->node->name, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
     ctx->node->file_size = entry->size;
-    ctx->node->internal_info =
-        (void *)(uintptr_t)(((uint32_t)entry->cluster_high << 16) | entry->cluster_low);
+    if (entry_cluster(entry) != mine && node_take_cluster(ctx->node, entry_cluster(entry)) != 0) {
+        *out_err = -ENOMEM;
+        return FAT32_WALK_ERROR;
+    }
     return FAT32_WALK_STOP;
 }
 
@@ -568,8 +672,9 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
 
         uint32_t lba = cluster_to_lba(cluster) + sector_in_cluster;
 
-        if (current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
-            return -EIO;
+        int rerr = current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1);
+        if (rerr != 0) {
+            return rerr < 0 ? rerr : -EIO;
         }
 
         uint32_t can_read = 512 - offset_in_sector;
@@ -611,8 +716,12 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
         if (cluster == 0) {
             return -ENOSPC;
         }
-        node->internal_info = (void *)(uintptr_t)cluster;
+        if (node_take_cluster(node, cluster) != 0) {
+            set_fat_entry(cluster, 0);
+            return -ENOMEM;
+        }
         fat32_update_dir_entry(node);
+        fat32_entry_gen++;
     }
 
     while (cluster_index < clusters_to_skip) {
@@ -767,9 +876,13 @@ static int fat32_ensure_start_cluster(struct vfs_vnode *node)
     if (cluster == 0) {
         return -ENOSPC;
     }
+    if (node_take_cluster(node, cluster) != 0) {
+        set_fat_entry(cluster, 0);
+        return -ENOMEM;
+    }
 
-    node->internal_info = (void *)(uintptr_t)cluster;
     fat32_update_dir_entry(node);
+    fat32_entry_gen++;
     return 0;
 }
 
@@ -851,11 +964,12 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
         }
 
         /* A short count means the volume filled or a sector failed part-way
-         * through the page. The page stays dirty so a later sync can retry it,
-         * and the caller must not be told those bytes reached the disk. */
+         * through the page. The caller is told those bytes did not land, so
+         * the page is dropped and the next read comes from the disk. */
         int write_result = fat32_write_page(file->node, page_index, page_data, valid_in_page);
         if (write_result < 0 || (size_t)write_result < valid_in_page) {
             pagecache_put_page(file->node, page_index);
+            pagecache_drop_page(file->node, page_index);
             err = write_result < 0 ? write_result : -ENOSPC;
             break;
         }
@@ -1562,10 +1676,15 @@ static enum fat32_walk_action lookup_cb(struct fat32_dir_entry *entry,
         *out_err = -ENOMEM;
         return FAT32_WALK_ERROR;
     }
+    if (open_track(entry_cluster(entry)) != 0) {
+        slab_free(node);
+        *out_err = -ENOMEM;
+        return FAT32_WALK_ERROR;
+    }
     memset(node, 0, sizeof(struct vfs_vnode));
     node->type = (entry->attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
     node->ops = &fat32_vnode_ops;
-    node->internal_info = (void *)(uintptr_t)((entry->cluster_high << 16) | entry->cluster_low);
+    node->internal_info = (void *)(uintptr_t)entry_cluster(entry);
     node->file_size = entry->size;
     node->revalidated = fat32_entry_gen;
     node->parent = (struct vfs_vnode *)ctx->dir;
@@ -1808,9 +1927,7 @@ static int fat32_remove_entry(uint32_t parent_cluster, const char *name, int wan
     }
 
     if (ctx.freed_cluster >= 2) {
-        // Keyed on the start cluster, so the next file to get it inherits them.
-        pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)ctx.freed_cluster);
-        return fat32_free_cluster_chain(ctx.freed_cluster);
+        return fat32_release_chain(ctx.freed_cluster);
     }
     return 0;
 }
@@ -2041,14 +2158,13 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
 
     // Last, so a crash before this leaks the chain rather than cross-links it.
     if (replaced >= 2) {
-        pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)replaced);
-        fat32_free_cluster_chain(replaced);
+        fat32_release_chain(replaced);
     }
 
-    if (is_dir && new_parent_cluster != old_cluster) {
-        uint32_t dir_cluster =
-            ((uint32_t)ctx.entry.cluster_high << 16) | (uint32_t)ctx.entry.cluster_low;
-        return fat32_set_dotdot(dir_cluster, new_parent_cluster);
+    // The rename has happened by now; a stale ".." is for fsck, not the caller.
+    if (is_dir && new_parent_cluster != old_cluster
+        && fat32_set_dotdot(entry_cluster(&ctx.entry), new_parent_cluster) != 0) {
+        pr_err("fat32: could not update .. of a moved directory\n");
     }
     return 0;
 }
@@ -2225,7 +2341,6 @@ static int fat32_op_write_page(struct vfs_vnode *node, size_t page_index, void *
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_write_page(node, page_index, page_buffer, valid_bytes);
-    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -2298,11 +2413,15 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
     void *old_internal = node->internal_info;
     vfs_off_t old_size = node->file_size;
 
+    // The start cluster stays even at length 0: it is the file's identity.
     if (length == 0) {
         if (cluster_valid(start_cluster)) {
-            doomed = start_cluster;
+            new_tail = start_cluster;
+            uint32_t next = get_next_cluster(start_cluster);
+            if (cluster_valid(next)) {
+                doomed = next;
+            }
         }
-        node->internal_info = (void *)(uintptr_t)0;
     } else {
         uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
         uint32_t cluster_index = (uint32_t)((length - 1) / bytes_per_cluster);
@@ -2358,6 +2477,13 @@ static int fat32_op_truncate(struct vfs_vnode *node, vfs_off_t length)
     return r;
 }
 
+static void fat32_op_release(struct vfs_vnode *node)
+{
+    kmutex_lock(&fat32_lock);
+    open_untrack((uint32_t)(uintptr_t)node->internal_info);
+    kmutex_unlock(&fat32_lock);
+}
+
 static int fat32_op_revalidate(struct vfs_vnode *node)
 {
     kmutex_lock(&fat32_lock);
@@ -2370,6 +2496,7 @@ static struct vfs_vnode_ops fat32_vnode_ops = {
     .read = fat32_op_read,
     .write = fat32_op_write,
     .revalidate = fat32_op_revalidate,
+    .release = fat32_op_release,
     .truncate = fat32_op_truncate,
     .stat = fat32_op_stat,
     .lookup = fat32_op_lookup,

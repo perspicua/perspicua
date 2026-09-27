@@ -3,8 +3,10 @@
  */
 
 #include "dirent.h"
+#include "errno.h"
 #include "stdlib.h"
 #include "syscall.h"
+#include "uapi/stat.h"
 
 #include <stddef.h>
 
@@ -12,6 +14,13 @@ DIR *opendir(const char *name)
 {
     int fd = open(name, O_RDONLY);
     if (fd < 0) {
+        return NULL;
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0 || !S_ISDIR(st.st_mode)) {
+        close(fd);
+        errno = ENOTDIR;
         return NULL;
     }
 

@@ -688,15 +688,20 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
             return -ESRCH;
         }
 
-        struct process *target = process_slot((uint32_t)target_pid);
+        // Checked under the lock a reaper frees the target with; signal_send
+        // re-checks that it is still there.
+        unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+        struct process *target = process_table[target_pid];
+        int err = 0;
         if (!target || target->state != PROCESS_STATE_RUNNING) {
-            return -ESRCH;
+            err = -ESRCH;
+        } else if (target_pid != (int)pid && target->parent_pid != pid
+                   && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
+            err = -EPERM;
         }
-
-        // Enforce process hierarchy permissions
-        if (target_pid != (int)pid && target->parent_pid != pid
-            && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
-            return -EPERM;
+        spin_unlock_irqrestore(&process_table_lock, irqf);
+        if (err != 0) {
+            return err;
         }
 
         return signal_send((uint32_t)target_pid, sig);
@@ -774,8 +779,16 @@ static int64_t sigaction_handler(struct exception_trap_frame *tf)
         if (copy_from_user(&kact, uact, sizeof(struct sigaction)) != 0) {
             return -ENOMEM;
         }
+        kact.sa_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
+
+        // Under the lock signal_send reads the disposition with. Ignoring a
+        // signal also discards an instance already pending.
+        unsigned long flags = spin_lock_irqsave(&process_table_lock);
         proc->signal_handlers[sig - 1] = kact;
-        proc->signal_handlers[sig - 1].sa_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
+        if (kact.sa_handler == SIG_IGN) {
+            __atomic_fetch_and(&proc->pending_signals, ~(1u << (sig - 1)), __ATOMIC_SEQ_CST);
+        }
+        spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
     return 0;
@@ -906,7 +919,9 @@ static int64_t sigpending_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    if (copy_to_user(uset, &proc->pending_signals, sizeof(sigset_t)) != 0) {
+    // Pending means held back: an unblocked signal is on its way in, not waiting.
+    sigset_t held = proc->pending_signals & proc->blocked_signals;
+    if (copy_to_user(uset, &held, sizeof(sigset_t)) != 0) {
         return -ENOMEM;
     }
     return 0;
@@ -1087,7 +1102,7 @@ static int64_t fcntl_handler(struct exception_trap_frame *tf)
             ret = proc->fd_flags[fd];
             break;
         case F_SETFD:
-            proc->fd_flags[fd] = arg;
+            proc->fd_flags[fd] = arg & FD_CLOEXEC;
             break;
         case F_GETFL:
             ret = f->flags;

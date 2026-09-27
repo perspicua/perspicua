@@ -51,4 +51,18 @@ void pagecache_invalidate(struct vfs_vnode *node);
  */
 void pagecache_discard(void *fs_ops, void *file_id);
 
+/*
+ * pagecache_drop_page - Removes one page without writing it back, if nothing
+ * has it pinned. For a page whose write failed: the caller was told those
+ * bytes did not land, so the next read must come from the disk.
+ */
+void pagecache_drop_page(struct vfs_vnode *node, size_t page_index);
+
+/*
+ * pagecache_forget_vnode - Detaches a vnode about to be freed from the pages
+ * it added. Other vnodes of the same file keep using them; nothing writes
+ * through the freed one.
+ */
+void pagecache_forget_vnode(struct vfs_vnode *node);
+
 #endif // PERSPICUA_FS_PAGECACHE_H

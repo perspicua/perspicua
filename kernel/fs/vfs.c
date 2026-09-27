@@ -294,6 +294,13 @@ void vfs_vnode_put(struct vfs_vnode *node)
 
     if (atomic_dec_and_test(&node->refcount)) {
         struct vfs_vnode *parent = node->parent;
+
+        if (node->ops && node->ops->write_page) {
+            pagecache_forget_vnode(node);
+        }
+        if (node->ops && node->ops->release) {
+            node->ops->release(node);
+        }
         slab_free(node);
 
         if (parent) {
@@ -687,11 +694,12 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
             new_offset = f->offset + offset;
             break;
         case SEEK_END:
+            vnode_revalidate(f->node);
             new_offset = f->node->file_size + offset;
             break;
         default:
             vfs_file_put(f);
-            return -ENOSYS;
+            return -EINVAL;
     }
 
     if (new_offset < 0) {
@@ -1091,12 +1099,15 @@ int vfs_chdir(const char *kpath)
         return -ENOTDIR;
     }
 
+    // Released outside the lock: the last reference may sleep in release.
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    if (p->cwd) {
-        vfs_vnode_put(p->cwd);
-    }
+    struct vfs_vnode *old = p->cwd;
     p->cwd = node;
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
+    if (old) {
+        vfs_vnode_put(old);
+    }
 
     return 0;
 }

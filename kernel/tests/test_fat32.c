@@ -733,5 +733,96 @@ void test_fat32(void)
         vfs_unlink(BIG_FILE);
     }
 
+    /*
+     * An unlinked file stays whole through a descriptor still open on it: its
+     * clusters are not handed to the next file until the last close.
+     */
+    {
+        const char *doomed = "/tunl.tmp";
+        const char *next = "/tunl2.tmp";
+        const int len = 8192;
+        int ok = 1;
+
+        memset(big_pattern, 0x6B, len);
+        memset(big_readback, 0x33, len);
+
+        int fd = vfs_open(doomed, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("open the file to unlink", fd >= 0);
+        if (fd >= 0) {
+            TEST_ASSERT_EQ("fill it", vfs_write(fd, big_pattern, len), len);
+            TEST_ASSERT_EQ("unlink it while open", vfs_unlink(doomed), 0);
+
+            int nfd = vfs_open(next, O_RDWR | O_CREAT | O_TRUNC);
+            TEST_ASSERT("create a file after it", nfd >= 0);
+            if (nfd >= 0) {
+                TEST_ASSERT_EQ("fill that too", vfs_write(nfd, big_readback, len), len);
+                vfs_close(nfd);
+            }
+
+            memset(big_readback, 0, len);
+            ok = vfs_lseek(fd, 0, SEEK_SET) == 0 && vfs_read(fd, big_readback, len) == len
+                 && memcmp(big_readback, big_pattern, len) == 0;
+            vfs_close(fd);
+        }
+        TEST_ASSERT("the unlinked file still reads back whole", ok);
+
+        TEST_ASSERT_EQ("the later file kept its own bytes", first_byte(next), 0x33);
+        vfs_unlink(next);
+    }
+
+    // A descriptor whose name was unlinked and reused writes to its own file
+    {
+        const char *name = "/treuse.tmp";
+        struct stat st;
+
+        int fd = vfs_open(name, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("open the first file", fd >= 0);
+        if (fd >= 0) {
+            vfs_write(fd, "old", 3);
+            TEST_ASSERT_EQ("unlink it", vfs_unlink(name), 0);
+            TEST_ASSERT_EQ("reuse the name", write_file(name, "new"), 0);
+            TEST_ASSERT_EQ("write through the old descriptor", vfs_write(fd, "XXXXXXXX", 8), 8);
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT_EQ("stat the reused name", vfs_stat(name, &st), 0);
+        TEST_ASSERT_EQ("its size is its own", (int)st.st_size, 3);
+        TEST_ASSERT_EQ("so are its bytes", first_byte(name), 'n');
+        vfs_unlink(name);
+    }
+
+    // Replacing a file by rename does not take its clusters from under an
+    // open descriptor
+    {
+        const char *target = "/trrt.tmp";
+        const char *source = "/trrs.tmp";
+        const char *filler = "/trrx.tmp";
+        char buf[8] = {0};
+
+        int fd = vfs_open(target, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("open the target", fd >= 0);
+        if (fd >= 0) {
+            vfs_write(fd, "target", 6);
+            TEST_ASSERT_EQ("create the source", write_file(source, "source"), 0);
+            TEST_ASSERT_EQ("rename over the open target", vfs_rename(source, target), 0);
+
+            memset(big_pattern, 0x44, 8192);
+            int ffd = vfs_open(filler, O_RDWR | O_CREAT | O_TRUNC);
+            if (ffd >= 0) {
+                vfs_write(ffd, big_pattern, 8192);
+                vfs_close(ffd);
+            }
+
+            TEST_ASSERT("the replaced file still reads", vfs_lseek(fd, 0, SEEK_SET) == 0
+                                                             && vfs_read(fd, buf, 6) == 6
+                                                             && memcmp(buf, "target", 6) == 0);
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT_EQ("the name holds the source", first_byte(target), 's');
+        vfs_unlink(target);
+        vfs_unlink(filler);
+    }
+
     TEST_SUITE_END("FAT32");
 }

@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <string.h>
 #include <errno.h>
+#include <dirent.h>
 #include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
@@ -435,6 +436,57 @@ void test_review_bugfixes(void)
     printf("[ TEST ] review bug-fix regressions passed!\n");
 }
 
+static char e2big_arg[1000];
+
+// Regressions from the pre-merge audit.
+void test_audit_fixes(void)
+{
+    printf("[ TEST ] Running audit regressions...\n");
+
+    // An argument vector too large for the new stack is refused while the
+    // caller still exists to hear about it.
+    {
+        static char *argv[101];
+        memset(e2big_arg, 'x', sizeof(e2big_arg) - 1);
+        for (int i = 0; i < 100; i++) {
+            argv[i] = e2big_arg;
+        }
+        argv[100] = NULL;
+
+        errno = 0;
+        assert(execve("/bin/wc.elf", argv, NULL) < 0);
+        assert(errno == E2BIG);
+    }
+
+    // opendir refuses what is not a directory.
+    {
+        errno = 0;
+        assert(opendir("/README.md") == NULL);
+        assert(errno == ENOTDIR);
+    }
+
+    // F_SETFD keeps only the flag it defines.
+    {
+        int fd = open("/README.md", O_RDONLY);
+        assert(fd >= 0);
+        assert(fcntl(fd, F_SETFD, 0xFF) == 0);
+        assert(fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
+        close(fd);
+    }
+
+    // An unknown whence is EINVAL.
+    {
+        int fd = open("/README.md", O_RDONLY);
+        assert(fd >= 0);
+        errno = 0;
+        assert(lseek(fd, 0, 99) < 0);
+        assert(errno == EINVAL);
+        close(fd);
+    }
+
+    printf("[ TEST ] audit regressions passed!\n");
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -447,6 +499,7 @@ int main(void)
     test_truncate();
     test_procfs();
     test_review_bugfixes();
+    test_audit_fixes();
 
     printf("--- All Syscall Tests Passed! ---\n");
     return 0;

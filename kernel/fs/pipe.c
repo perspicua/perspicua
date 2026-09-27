@@ -173,7 +173,9 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
     while (written < count) {
         if (pipe->readers == 0) {
             spin_unlock_irqrestore(&pipe->lock, fdflags);
-            return -EPIPE;
+            // Without the signal a writer that ignores the error spins forever.
+            signal_send((uint32_t)process_current_pid(), SIGPIPE);
+            return written > 0 ? (int)written : -EPIPE;
         }
 
         if (pipe->count < PIPE_BUF_SIZE) {

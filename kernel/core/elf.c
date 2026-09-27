@@ -67,11 +67,12 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     }
 
     struct elf64_header ehdr;
+    // A failed read is the read's error; only a file too short is not an image.
     int rc = vfs_read(fd, &ehdr, sizeof(struct elf64_header));
     if (rc != sizeof(struct elf64_header)) {
         pr_err("elf: could not read ELF header\n");
         vfs_close(fd);
-        return -ENOEXEC;
+        return rc < 0 ? rc : -ENOEXEC;
     }
 
     rc = elf_check_header(&ehdr);
@@ -118,11 +119,12 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     }
 
     vfs_lseek(fd, ehdr.ph_offset, SEEK_SET);
-    if (vfs_read(fd, phdrs, phdr_table_size) != (int)phdr_table_size) {
+    rc = vfs_read(fd, phdrs, phdr_table_size);
+    if (rc != (int)phdr_table_size) {
         pr_err("elf: could not read program headers\n");
         heap_free(phdrs);
         vfs_close(fd);
-        return -ENOEXEC;
+        return rc < 0 ? rc : -ENOEXEC;
     }
 
     for (int i = 0; i < ehdr.ph_num; i++) {
@@ -186,7 +188,9 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
             } else {
                 kernel_vaddr = pmm_alloc_pages_nozero(1);
                 if (!kernel_vaddr) {
-                    PANIC("ELF: Out of memory during loading");
+                    heap_free(phdrs);
+                    vfs_close(fd);
+                    return -ENOMEM;
                 }
                 /* Zeroed here rather than by the allocator: the bytes past
                  * filesz are the segment's BSS and must read as zero. */
@@ -217,13 +221,13 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
 
                 vfs_lseek(fd, file_offset, SEEK_SET);
-                if (vfs_read(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
-                             bytes_to_read)
-                    != (int)bytes_to_read) {
+                rc = vfs_read(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
+                              bytes_to_read);
+                if (rc != (int)bytes_to_read) {
                     pr_err("elf: failed to read segment data\n");
                     heap_free(phdrs);
                     vfs_close(fd);
-                    return -EIO;
+                    return rc < 0 ? rc : -ENOEXEC;
                 }
             }
 

@@ -362,6 +362,49 @@ void pagecache_invalidate(struct vfs_vnode *node)
     }
 }
 
+void pagecache_drop_page(struct vfs_vnode *node, size_t page_index)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    size_t h = page_hash(node, page_index);
+    struct page_cache_entry **pp = &hash_table[h];
+
+    while (*pp) {
+        struct page_cache_entry *entry = *pp;
+        if (entry->fs_ops == node->ops && entry->file_id == node->internal_info
+            && entry->page_index == page_index) {
+            if (entry->pincount != 0) {
+                break;
+            }
+            *pp = entry->next;
+            lru_remove(entry);
+            cache_count--;
+            spin_unlock_irqrestore(&pagecache_lock, flags);
+
+            pmm_free_pages(entry->data);
+            slab_free(entry);
+            return;
+        }
+        pp = &entry->next;
+    }
+
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+}
+
+void pagecache_forget_vnode(struct vfs_vnode *node)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+
+    for (size_t h = 0; h < PAGECACHE_HASH_SIZE; h++) {
+        for (struct page_cache_entry *e = hash_table[h]; e; e = e->next) {
+            if (e->vnode == node) {
+                e->vnode = NULL;
+            }
+        }
+    }
+
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+}
+
 void pagecache_discard(void *fs_ops, void *file_id)
 {
     unsigned long flags = spin_lock_irqsave(&pagecache_lock);

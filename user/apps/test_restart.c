@@ -572,6 +572,71 @@ static int run_suspend_through_stop_case(void)
     return status & 0xFF;
 }
 
+/*
+ * Writing to a pipe with no reader raises SIGPIPE, whose default kills; with
+ * it ignored the write fails with EPIPE instead. Returns what the child saw.
+ */
+static int run_sigpipe_case(int ignore)
+{
+    int pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+
+    if (pid == 0) {
+        signal(SIGPIPE, ignore ? SIG_IGN : SIG_DFL);
+
+        int fds[2];
+        if (pipe(fds) < 0) {
+            _exit(3);
+        }
+        close(fds[0]);
+
+        errno = 0;
+        int n = write(fds[1], "x", 1);
+        _exit(n < 0 && errno == EPIPE ? 0 : 3);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        return -1;
+    }
+    return status & 0xFF;
+}
+
+// Ignoring a signal discards an instance already pending; sigpending lists
+// only what is blocked. Returns the count of properties that did not hold.
+static int run_ignore_discards_case(void)
+{
+    int bad = 0;
+    sigset_t usr1 = 1u << (SIGUSR1 - 1);
+    sigset_t old;
+    sigset_t pending = 0;
+
+    sigprocmask(SIG_BLOCK, &usr1, &old);
+    signal(SIGUSR1, on_usr1);
+    raise_self(SIGUSR1);
+
+    if (sigpending(&pending) < 0 || !(pending & usr1)) {
+        bad++;
+    }
+
+    signal(SIGUSR1, SIG_IGN);
+    if (sigpending(&pending) < 0 || (pending & usr1)) {
+        bad++;
+    }
+
+    int before = handler_runs;
+    signal(SIGUSR1, on_usr1);
+    sigprocmask(SIG_SETMASK, &old, NULL);
+    if (handler_runs != before) {
+        bad++;
+    }
+
+    signal(SIGUSR1, SIG_DFL);
+    return bad;
+}
+
 static int checks_run;
 
 static int check(const char *name, int got, int want)
@@ -588,6 +653,9 @@ static int check(const char *name, int got, int want)
 int main(void)
 {
     printf("test_restart: a signal arriving mid-read\n");
+
+    // run_case writes to a pipe whose reader may already have exited.
+    signal(SIGPIPE, SIG_IGN);
 
     int failures = 0;
     failures += check("SA_RESTART resumes the read", run_case(SA_RESTART), CHILD_RESTARTED);
@@ -611,6 +679,10 @@ int main(void)
     failures += check("signal() handlers restart waitpid", run_signal_restarts_wait_case(), 0);
     failures += check("sigsuspend waits through a stop and continue",
                       run_suspend_through_stop_case(), CHILD_EINTR);
+    failures += check("a write with no reader raises SIGPIPE", run_sigpipe_case(0), 128 + SIGPIPE);
+    failures += check("with SIGPIPE ignored the write fails with EPIPE", run_sigpipe_case(1), 0);
+    failures += check("ignoring a signal discards it, and sigpending lists the blocked",
+                      run_ignore_discards_case(), 0);
 
     if (failures == 0) {
         printf("test_restart: all %d tests passed\n", checks_run);

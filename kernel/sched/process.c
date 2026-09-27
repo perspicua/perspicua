@@ -92,19 +92,17 @@ static void process_start_task(struct process *p, struct task *t)
     sched_enqueue(cpu_id(), t);
 }
 
+// Each file is put outside fd_lock: the last reference may sleep in release.
 static void close_all_fds(struct process *p)
 {
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
+        unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
         struct vfs_file *f = p->fd_table[i];
-        if (!f) {
-            continue;
-        }
-
         p->fd_table[i] = NULL;
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
         vfs_file_put(f);
     }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 }
 
 /*
@@ -146,7 +144,8 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
     for (size_t i = 0; i < pages; i++) {
         void *page = pmm_alloc_page();
         if (!page) {
-            PANIC("process: user stack OOM");
+            process_va_free(va, vbase);
+            return 0;
         }
         if (mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA) != 0) {
             pmm_free_page(page);
@@ -523,6 +522,21 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
         return copy_err;
+    }
+
+    // Both vectors go on the new stack after the old image is gone, so they
+    // are sized now; they may take half of it, and the program keeps the rest.
+    size_t need = (size_t)(argc + envc + 2) * sizeof(uintptr_t) + 32;
+    for (int i = 0; i < argc; i++) {
+        need += strlen(kargv[i]) + 1 + 7;
+    }
+    for (int i = 0; i < envc; i++) {
+        need += strlen(kenvp[i]) + 1 + 7;
+    }
+    if (need > PROCESS_USER_STACK_PAGES * PAGE_SIZE / 2) {
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
+        return -E2BIG;
     }
 
     unsigned long *new_pgd = mmu_create_user_pgd();

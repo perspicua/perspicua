@@ -17,6 +17,7 @@
 #include "uapi/fcntl.h"
 #include "uapi/syscalls.h"
 
+#include "core/elf.h"
 #include "fs/vfs.h"
 #include "mm/heap.h"
 #include "mm/mmu.h"
@@ -157,6 +158,38 @@ void test_faultinject(void)
         if (pgd) {
             test_release_user_pgd(pgd);
         }
+    }
+
+    // loading an image out of memory fails the load, never the kernel: each
+    // page allocation it makes, the page cache's included, is refused in turn
+    {
+        int ok = 1;
+        int loaded = 0;
+
+        for (unsigned long nth = 1; nth <= 64 && ok && !loaded; nth++) {
+            unsigned long *pgd = mmu_create_user_pgd();
+            if (!pgd) {
+                ok = 0;
+                break;
+            }
+
+            uint64_t entry = 0;
+            pmm_test_fail_nth(nth);
+            int r = elf_load(OOM_PATH, pgd, &entry);
+            pmm_test_fail_nth(0);
+
+            // The image is fine, so a refusal must not be reported as a bad one.
+            if (r == 0) {
+                loaded = 1;
+            } else if (r == -ENOEXEC) {
+                pr_err("test: elf_load with page %lu refused blamed the image [FAILED]\n", nth);
+                ok = 0;
+            }
+            mmu_destroy_user_pgd(pgd);
+        }
+
+        TEST_ASSERT("every refusal fails the load without blaming the image", ok);
+        TEST_ASSERT("the walk reaches a load that succeeds", loaded);
     }
 
     // nothing above may leave an arming behind for the suites that follow
