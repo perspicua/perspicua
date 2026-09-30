@@ -59,98 +59,19 @@ later phases cite these by number; the detail is in the commits.
   17. Docs consolidation
 
 ================================================================================
-PHASE 1: FOUNDATION HARDENING  (finish filling the holes)
+PHASE 1: FOUNDATION HARDENING [COMPLETE]
 Goal: Complete the half-built features so the base is dependable. Nothing here is
 architecturally hard — it is the accumulated "we'll do it later" list, and it is
 what makes the system usable enough to develop against.
 ================================================================================
 
-   1. Remaining POSIX syscalls [DONE]
-      Effort: S each | Unlocks: closes the most common porting gaps
-      Scope: gettimeofday + clock_gettime (realtime +
-        monotonic), nanosleep, fstat (STAT is path-only today), truncate/ftruncate.
-      Done: a userspace test calls each and checks the result.
-
-   2. Process groups, sessions, and a controlling terminal [DONE]
-      Effort: M | Unlocks: job control; Ctrl-C reaching the right process
-      Scope: pgid and session id on struct process, inherited across fork and
-        preserved across exec; setpgid/getpgid/setsid; a foreground process group
-        on the tty, set via tcsetpgrp; kill() accepting a negative pid to signal a
-        whole group; the tty raising SIGINT/SIGTSTP on the foreground group rather
-        than on one process.
-      Done: Ctrl-C at the shell interrupts the running pipeline and returns to the
-        prompt, leaving the shell itself alive.
-
-   3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self [DONE]
-      Effort: S | Unlocks: monitoring tools and scripts that parse /proc
-      Scope: iterate the mount table / cpu info / global counters as text.
-      Done: cat of each returns well-formed output.
-
-   4. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes [DONE]
-      Effort: S-M | Unlocks: any non-trivial shell usage or scripting
-      Scope: track the last exit status; expand $NAME from environ; propagate the
-        rightmost non-zero exit through a pipeline.
-      Done: `false; echo $?` prints 1; `echo $PATH` expands.
-
-   5. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env [DONE]
-      Effort: M | Unlocks: turns the project from experiment into usable system
-      Scope: small programs over existing syscalls.
-      Done: you can create/inspect/delete files from the shell without redirection.
-
-   6. Signal delivery completeness [DONE]
-      Effort: M | Unlocks: interruptible I/O that libc callers don't hand-retry
-      Scope: loop over deliverable signals in signal_handle_pending until none
-        remain or a handler frame is pushed; record the syscall number and its
-        original arguments in the trap frame so a restartable syscall can rewind
-        elr_el1 by 4 and re-execute when SA_RESTART is set; add sigaltstack and
-        use it for the fault signals.
-      Done: a handler set with SA_RESTART survives a signal arriving mid-read
-        without the caller retrying; SIGSEGV from stack exhaustion is catchable.
-      Note: delivery is currently at most one signal per return to userspace, and
-        re-enters only on the next trap. Without SA_RESTART every interrupted
-        syscall returns -EINTR and each libc caller retries by hand.
-        Without sigaltstack a SIGSEGV caused by stack exhaustion cannot be
-        handled at all — the handler frame needs a stack the process no longer
-        has. Signals target p->main_task today; that assumption does not survive
-        threads, so when Phase 5 item 1 lands, move pending_signals to per-task
-        and keep blocked_signals per-task with the handler table shared per
-        process, which is what POSIX specifies.
-
-   7. Close the test-coverage gaps the audit exposed [DONE]            (IMP-011)
-      Effort: M | Unlocks: regressions caught by the suite instead of by hand
-      Scope: three test families. (1) A syscall boundary fuzzer: for each syscall
-        number, drive edge-case arguments — 0, 1, SIZE_MAX, negative, KERNEL_VMA,
-        unmapped, and read-only user pointers — and assert an error return rather
-        than a fault. (2) Allocator property tests: for heap_malloc(n) across n
-        spanning the slab/first-fit boundary and every block-splitting edge,
-        assert the region is writable for exactly n bytes and the redzone
-        survives. (3) A corrupt FAT32 image fixture with an out-of-range LFN
-        sequence, sectors_per_cluster == 0 and a cyclic cluster chain, asserting
-        the mount is rejected cleanly. Plus a fault-injection mode for
-        heap_malloc/pmm_alloc_page (fail the Nth allocation) to reach the OOM
-        paths, which pairs directly with Phase 2 item 4.
-      Done: each family fails against a deliberately reintroduced defect.
-      Note: per-module coverage was good (test_pmm, test_slab, test_heap,
-        test_uaccess, test_mmu_user, …) but every audit finding sat in a gap it
-        did not reach: adversarial syscall arguments, concurrent operations on
-        shared objects, and malformed on-disk data. user/apps/stress.c covers
-        the concurrency third from userspace. The rest landed as four suites:
-        test_heap_props (the size sweep), test_syscall_bounds (the dispatcher),
-        test_fat32_corrupt (a synthesised volume, mounted end to end), and
-        test_faultinject (the OOM paths, via a one-shot refusal armed on
-        heap_malloc or pmm_alloc_pages).
-
-        Each was checked against a reintroduced defect. Two results worth
-        keeping: a bad user pointer is refused twice over, by the range checks
-        and again by the unprivileged loads the copy helpers use, so removing
-        either alone leaves every syscall return unchanged and the fuzzer is a
-        backstop there rather than the gate. And a cyclic cluster chain is only
-        walked at all when the directory clusters are full, since a zeroed one
-        ends the directory before the chain is followed.
-
-        Three hooks were added to make the suites possible: a non-panicking
-        redzone check (heap.h), save/restore of the mounted volume (fat32.h),
-        and a per-device block-cache drop (block.h). All are CONFIG_TESTS only.
+   1. Remaining POSIX syscalls
+   2. Process groups, sessions, and a controlling terminal
+   3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
+   4. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
+   5. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
+   6. Signal delivery completeness
+   7. Close the test-coverage gaps the audit exposed
 
 
 ================================================================================
