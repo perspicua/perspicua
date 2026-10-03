@@ -8,6 +8,7 @@
 
 #include "arch/irq.h"
 #include "core/lock.h"
+#include "core/mutex.h"
 #include "core/signals.h"
 #include "sched/process.h"
 #include "sched/sched.h"
@@ -347,6 +348,84 @@ static void task_passon_b(void)
     passon_task_b_done = 1;
 }
 
+static struct kmutex test_contend_mutex = KMUTEX_INIT;
+static volatile int mutex_cs_count = 0;
+static volatile int mutex_cs_violation = 0;
+static volatile int holder_done = 0;
+static volatile int holder_release = 0;
+static volatile int contender1_done = 0;
+static volatile int contender2_done = 0;
+static volatile int contender_order[2] = {0, 0};
+static volatile int contender_order_idx = 0;
+
+static void task_contend_holder(void)
+{
+    kmutex_lock(&test_contend_mutex);
+    mutex_cs_count++;
+    if (mutex_cs_count > 1) {
+        mutex_cs_violation = 1;
+    }
+    while (!holder_release) {
+        sched_sleep_ms(5);
+    }
+    mutex_cs_count--;
+    holder_done = 1;
+    kmutex_unlock(&test_contend_mutex);
+}
+
+static void task_contender1(void)
+{
+    kmutex_lock(&test_contend_mutex);
+    mutex_cs_count++;
+    if (mutex_cs_count > 1) {
+        mutex_cs_violation = 1;
+    }
+    contender_order[contender_order_idx++] = 1;
+    sched_sleep_ms(10);
+    mutex_cs_count--;
+    contender1_done = 1;
+    kmutex_unlock(&test_contend_mutex);
+}
+
+static void task_contender2(void)
+{
+    kmutex_lock(&test_contend_mutex);
+    mutex_cs_count++;
+    if (mutex_cs_count > 1) {
+        mutex_cs_violation = 1;
+    }
+    contender_order[contender_order_idx++] = 2;
+    sched_sleep_ms(10);
+    mutex_cs_count--;
+    contender2_done = 1;
+    kmutex_unlock(&test_contend_mutex);
+}
+
+static volatile int sig_holder_done = 0;
+static volatile int sig_holder_release = 0;
+static volatile int sig_contender_done = 0;
+static volatile int sig_contender_acquired = 0;
+static struct task *sig_contender_task = NULL;
+
+static void task_mutex_sig_holder(void)
+{
+    kmutex_lock(&test_contend_mutex);
+    while (!sig_holder_release) {
+        sched_sleep_ms(5);
+    }
+    sig_holder_done = 1;
+    kmutex_unlock(&test_contend_mutex);
+}
+
+static void task_mutex_sig_contender(void)
+{
+    sig_contender_task = sched_current_task();
+    kmutex_lock(&test_contend_mutex);
+    sig_contender_acquired = 1;
+    sig_contender_done = 1;
+    kmutex_unlock(&test_contend_mutex);
+}
+
 void test_wait_scheduler(void)
 {
     TEST_SUITE_BEGIN("WaitQueue-MultiTask");
@@ -522,6 +601,116 @@ void test_wait_scheduler(void)
         TEST_ASSERT("passon_wq is empty", passon_wq.head == NULL);
 
         struct process *kproc = process_table[0];
+        if (kproc) {
+            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        }
+    }
+
+    // 7. Contended kmutex with multiple tasks
+    {
+        kmutex_init(&test_contend_mutex);
+        mutex_cs_count = 0;
+        mutex_cs_violation = 0;
+        holder_done = 0;
+        holder_release = 0;
+        contender1_done = 0;
+        contender2_done = 0;
+        contender_order_idx = 0;
+        contender_order[0] = 0;
+        contender_order[1] = 0;
+
+        // i. Holder takes the mutex
+        sched_create_task(task_contend_holder);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("holder has mutex", test_contend_mutex.depth == 1);
+        TEST_ASSERT("holder in progress", holder_done == 0);
+
+        // ii. Two contenders block on it
+        sched_create_task(task_contender1);
+        sched_sleep_ms(5);
+        TEST_ASSERT("contender 1 blocked", contender1_done == 0);
+        TEST_ASSERT("contender 1 queued in wq", test_contend_mutex.wq.head != NULL);
+
+        sched_create_task(task_contender2);
+        sched_sleep_ms(5);
+        TEST_ASSERT("contender 2 blocked", contender2_done == 0);
+        TEST_ASSERT("both contenders queued in wq",
+                    test_contend_mutex.wq.head != test_contend_mutex.wq.tail);
+
+        // Signal holder to release mutex
+        holder_release = 1;
+
+        // Bounded poll for completion
+        for (int i = 0; i < 100 && !(holder_done && contender1_done && contender2_done); i++) {
+            sched_sleep_ms(5);
+        }
+
+        // iii. After the unlock, each contender gets the mutex in turn
+        TEST_ASSERT("holder finished", holder_done == 1);
+        TEST_ASSERT("contender 1 finished", contender1_done == 1);
+        TEST_ASSERT("contender 2 finished", contender2_done == 1);
+        TEST_ASSERT("both contenders ran in turn", contender_order_idx == 2);
+
+        // iv. A counter protected by the mutex never sees two holders at once
+        TEST_ASSERT("counter never saw two holders at once", mutex_cs_violation == 0);
+        TEST_ASSERT("mutex fully unlocked",
+                    test_contend_mutex.depth == 0 && test_contend_mutex.owner == NULL);
+        TEST_ASSERT("mutex wq empty", test_contend_mutex.wq.head == NULL);
+    }
+
+    // 8. kmutex_lock blocks and succeeds even with a pending signal
+    {
+        kmutex_init(&test_contend_mutex);
+        sig_holder_done = 0;
+        sig_holder_release = 0;
+        sig_contender_done = 0;
+        sig_contender_acquired = 0;
+        sig_contender_task = NULL;
+
+        sched_create_task(task_mutex_sig_holder);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("sig holder owns mutex", test_contend_mutex.depth == 1);
+
+        sched_create_task(task_mutex_sig_contender);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("contender blocked", sig_contender_done == 0);
+        TEST_ASSERT("contender in mutex wq", test_contend_mutex.wq.head != NULL);
+        TEST_ASSERT("contender task recorded", sig_contender_task != NULL);
+
+        // Mark signal pending with atomic OR
+        struct process *kproc = process_table[0];
+        if (kproc) {
+            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+        }
+
+        // Unblock contender while holder still owns mutex
+        if (sig_contender_task) {
+            sched_unblock(sig_contender_task);
+        }
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("contender ignored signal wake, still blocked", sig_contender_done == 0);
+        TEST_ASSERT("contender still in mutex wq", test_contend_mutex.wq.head != NULL);
+        TEST_ASSERT("contender has not acquired mutex", sig_contender_acquired == 0);
+        TEST_ASSERT("holder still owns mutex", test_contend_mutex.depth == 1);
+
+        // Signal holder to release mutex
+        sig_holder_release = 1;
+
+        // Bounded poll for completion
+        for (int i = 0; i < 100 && !(sig_holder_done && sig_contender_done); i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("sig holder finished", sig_holder_done == 1);
+        TEST_ASSERT("contender succeeded after blocking", sig_contender_done == 1);
+        TEST_ASSERT("contender acquired mutex", sig_contender_acquired == 1);
+        TEST_ASSERT("mutex unlocked", test_contend_mutex.depth == 0);
+        TEST_ASSERT("mutex wq empty", test_contend_mutex.wq.head == NULL);
+
         if (kproc) {
             __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
         }

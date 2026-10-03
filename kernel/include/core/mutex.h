@@ -12,6 +12,7 @@
 #include <stddef.h>
 
 #include "core/lock.h"
+#include "sched/wait.h"
 
 struct task;
 
@@ -22,11 +23,10 @@ struct kmutex {
     spinlock_t guard;
     struct task *owner;
     unsigned int depth;
-    struct task *wait_head;
-    struct task *wait_tail;
+    struct wait_queue wq;
 };
 
-#define KMUTEX_INIT {SPINLOCK_INIT, NULL, 0, NULL, NULL}
+#define KMUTEX_INIT {SPINLOCK_INIT, NULL, 0, WAIT_QUEUE_INIT}
 
 void kmutex_init(struct kmutex *m);
 void kmutex_lock(struct kmutex *m);
