@@ -708,13 +708,7 @@ void process_exit(uint32_t pid, int exit_status)
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
-        struct task *dying = sched_current_task();
-        if (dying) {
-            dying->state = SCHED_TASK_DEAD;
-        }
-        for (;;) {
-            sched_schedule();
-        }
+        sched_exit_current();
     }
 
     if (p->sid == p->pid) {
@@ -806,14 +800,7 @@ void process_exit(uint32_t pid, int exit_status)
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    struct task *dying = sched_current_task();
-    if (dying) {
-        dying->state = SCHED_TASK_DEAD;
-    }
-
-    for (;;) {
-        sched_schedule();
-    }
+    sched_exit_current();
 }
 
 static int process_claim_slot(void)
@@ -1016,7 +1003,7 @@ int process_waitpid(int pid, int *status, int options)
 
         struct task *curr = sched_current_task();
         if (curr) {
-            curr->state = SCHED_TASK_BLOCKED;
+            sched_task_set_blocked(curr);
         }
 
         spin_unlock(&process_table_lock);

@@ -44,7 +44,7 @@ void wq_prepare(struct wait_queue *wq, struct wait_entry *e)
         PANIC("wq_prepare: entry already on another queue");
     }
 
-    __atomic_store_n(&curr->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+    sched_task_set_blocked(curr);
 
     spin_unlock_irqrestore(&wq->lock, flags);
 

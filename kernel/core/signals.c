@@ -142,38 +142,42 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
         }
 
         if (action == SIGNAL_DEFAULT_STOP) {
-            /*
-             * Commit to the stop under process_table_lock so it is serialised
-             * against a racing SIGCONT/SIGKILL in signal_send(): the sender sets
-             * the pending bit and inspects our task state under the same lock.
-             * If a CONT (cancels the stop) or KILL (trumps everything) slipped in
-             * after we popped the stop signal above, do not park a task that no
-             * one will resume -- leave it for the next pass.
-             */
-            const sigset_t stop_override = (1u << (SIGCONT - 1)) | (1u << (SIGKILL - 1));
-            unsigned long flags = spin_lock_irqsave(&process_table_lock);
-            if (p->pending_signals & stop_override) {
-                spin_unlock_irqrestore(&process_table_lock, flags);
+            for (;;) {
+                // signal_send holds this lock too, so a CONT or KILL cannot slip in before the stop
+                const sigset_t stop_override = (1u << (SIGCONT - 1)) | (1u << (SIGKILL - 1));
+                unsigned long flags = spin_lock_irqsave(&process_table_lock);
+                if (p->pending_signals & stop_override) {
+                    spin_unlock_irqrestore(&process_table_lock, flags);
+                    return SIGNAL_PROGRESS_MORE;
+                }
+
+                struct task *curr_task = sched_current_task();
+                if (!sched_task_set_stopped(curr_task)) {
+                    // Task was READY (run queue copy pending). Yield to let it run, then retry stop
+                    spin_unlock(&process_table_lock);
+                    sched_schedule();
+                    irq_restore(flags);
+                    continue;
+                }
+
+                p->stop_reported = 0;
+                p->stop_sig = sig;
+
+                /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
+                 * is invisible and the parent sleeps until we exit instead. */
+                struct process *parent = process_slot(p->parent_pid);
+                if (p->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
+                    && parent->main_task) {
+                    sched_unblock(parent->main_task);
+                }
+
+                spin_unlock(&process_table_lock); // keep IRQs masked across sched_schedule()
+                sched_schedule();
+                irq_restore(flags);
+
+                // Resumed. Whatever woke us is pending, so keep going.
                 return SIGNAL_PROGRESS_MORE;
             }
-            sched_current_task()->state = SCHED_TASK_STOPPED;
-            p->stop_reported = 0;
-            p->stop_sig = sig;
-
-            /* Wake a parent blocked in waitpid(WUNTRACED); without this the stop
-             * is invisible and the parent sleeps until we exit instead. */
-            struct process *parent = process_slot(p->parent_pid);
-            if (p->parent_pid != 0 && parent && parent->state == PROCESS_STATE_RUNNING
-                && parent->main_task) {
-                sched_unblock(parent->main_task);
-            }
-
-            spin_unlock(&process_table_lock); // keep IRQs masked across sched_schedule()
-            sched_schedule();
-            irq_restore(flags);
-
-            // Resumed. Whatever woke us is pending, so keep going.
-            return SIGNAL_PROGRESS_MORE;
         }
 
         process_exit(pid, 128 + sig);

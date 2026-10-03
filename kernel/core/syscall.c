@@ -955,7 +955,7 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
      * a sender on another core would see RUNNING and skip the wakeup. */
     for (;;) {
         unsigned long irqf = irq_save();
-        __atomic_store_n(&curr->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+        sched_task_set_blocked(curr);
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
         if (signal_pending(proc)) {

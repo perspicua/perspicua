@@ -280,6 +280,73 @@ static void task_sleep_interruptible(void)
     sched_test_done = 1;
 }
 
+static volatile int regression_done = 0;
+
+static void task_regression_ready_overwrite(void)
+{
+    unsigned long flags = irq_save();
+    struct task *self = sched_current_task();
+    struct wait_queue wq = WAIT_QUEUE_INIT;
+    struct wait_entry e = {0};
+
+    // Race 1: prepare sets BLOCKED, unblock sets READY and enqueues on run queue.
+    wq_prepare(&wq, &e);
+    sched_unblock(self);
+    TEST_ASSERT_EQ("repro: after first race state is READY", (long)self->state,
+                   (long)SCHED_TASK_READY);
+    TEST_ASSERT("repro: self in run queue", sched_test_in_run_queue(self));
+
+    // Race 2: second prepare while still on run queue must NOT overwrite READY with BLOCKED.
+    wq_prepare(&wq, &e);
+    TEST_ASSERT_EQ("repro: second prepare keeps state READY", (long)self->state,
+                   (long)SCHED_TASK_READY);
+
+    sched_unblock(self);
+    TEST_ASSERT("repro: self->rq_next != self", self->rq_next != self);
+    TEST_ASSERT_EQ("repro: state still READY after second unblock", (long)self->state,
+                   (long)SCHED_TASK_READY);
+
+    wq_finish(&wq, &e);
+
+    regression_done = 1;
+    irq_restore(flags);
+}
+
+static struct wait_queue passon_wq = WAIT_QUEUE_INIT;
+static volatile int passon_token = 0;
+static volatile int passon_cond_armed = 0;
+static volatile int passon_task_a_done = 0;
+static volatile int passon_task_a_ret = 0;
+static volatile int passon_task_b_done = 0;
+static struct task *passon_task_a = NULL;
+
+static int cond_func_a(void)
+{
+    if (passon_cond_armed == 1) {
+        passon_cond_armed = 2;
+        passon_token = 1;
+        struct process *kproc = process_table[0];
+        if (kproc) {
+            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+        }
+        wq_wake_one(&passon_wq);
+    }
+    return 0;
+}
+
+static void task_passon_a(void)
+{
+    passon_task_a = sched_current_task();
+    passon_task_a_ret = wq_wait_event_interruptible(&passon_wq, cond_func_a());
+    passon_task_a_done = 1;
+}
+
+static void task_passon_b(void)
+{
+    wq_wait_event(&passon_wq, passon_token != 0);
+    passon_task_b_done = 1;
+}
+
 void test_wait_scheduler(void)
 {
     TEST_SUITE_BEGIN("WaitQueue-MultiTask");
@@ -407,6 +474,54 @@ void test_wait_scheduler(void)
         TEST_ASSERT("uninterruptible task completed on condition", sched_test_done == 1);
         TEST_ASSERT("wq is empty", sched_test_wq.head == NULL);
 
+        if (kproc) {
+            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        }
+    }
+
+    // 5. Regression test: task never overwrites its own READY state
+    {
+        regression_done = 0;
+        sched_create_task(task_regression_ready_overwrite);
+        sched_sleep_ms(40);
+        TEST_ASSERT("regression test completed without loop", regression_done == 1);
+    }
+
+    // 6. Deterministic wake pass-on when woken task is signal-interrupted
+    {
+        wq_init(&passon_wq);
+        passon_token = 0;
+        passon_cond_armed = 0;
+        passon_task_a_done = 0;
+        passon_task_a_ret = 0;
+        passon_task_b_done = 0;
+        passon_task_a = NULL;
+
+        sched_create_task(task_passon_a);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("task A is waiting", passon_task_a_done == 0);
+        TEST_ASSERT("task A is in wq", passon_wq.head != NULL);
+
+        sched_create_task(task_passon_b);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("task B is waiting", passon_task_b_done == 0);
+        TEST_ASSERT("both tasks in wq", passon_wq.head != passon_wq.tail);
+
+        // Arm condition and unblock task A to evaluate condition
+        passon_cond_armed = 1;
+        if (passon_task_a) {
+            sched_unblock(passon_task_a);
+        }
+        sched_sleep_ms(40);
+
+        TEST_ASSERT("task A finished", passon_task_a_done == 1);
+        TEST_ASSERT_EQ("task A returned -ERESTARTSYS", (long)passon_task_a_ret, (long)-ERESTARTSYS);
+        TEST_ASSERT("task B woke and finished", passon_task_b_done == 1);
+        TEST_ASSERT("passon_wq is empty", passon_wq.head == NULL);
+
+        struct process *kproc = process_table[0];
         if (kproc) {
             __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
         }
