@@ -1,0 +1,416 @@
+/*
+ * test_wait.c - Tests for the generic wait queue implementation.
+ */
+
+#include "sched/wait.h"
+
+#include <stddef.h>
+
+#include "arch/irq.h"
+#include "core/lock.h"
+#include "core/signals.h"
+#include "sched/process.h"
+#include "sched/sched.h"
+#include "string.h"
+#include "test.h"
+#include "uapi/errno.h"
+
+void test_wait(void)
+{
+    TEST_SUITE_BEGIN("WaitQueue");
+
+    struct task *self = sched_current_task();
+
+    // 1. Initialisation and static initialiser match
+    {
+        struct wait_queue wq;
+        wq_init(&wq);
+        TEST_ASSERT("init lock unlocked", wq.lock.locked == 0);
+        TEST_ASSERT("init head null", wq.head == NULL);
+        TEST_ASSERT("init tail null", wq.tail == NULL);
+
+        struct wait_queue statically = WAIT_QUEUE_INIT;
+        TEST_ASSERT("static lock unlocked", statically.lock.locked == 0);
+        TEST_ASSERT("static head null", statically.head == NULL);
+        TEST_ASSERT("static tail null", statically.tail == NULL);
+    }
+
+    // 2. Prepare and finish a single waiter
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        struct wait_entry e = {0};
+
+        unsigned long flags = irq_save();
+        wq_prepare(&wq, &e);
+        TEST_ASSERT("prepare links head", wq.head == &e);
+        TEST_ASSERT("prepare links tail", wq.tail == &e);
+        TEST_ASSERT("entry queue recorded", e.queue == &wq);
+        TEST_ASSERT("entry next null", e.next == NULL);
+        TEST_ASSERT_EQ("entry woken 0", (long)e.woken, 0);
+        TEST_ASSERT("entry task is current", e.task == self);
+        TEST_ASSERT_EQ("prepare sets BLOCKED state", (long)self->state, (long)SCHED_TASK_BLOCKED);
+
+        // Spurious wakeup: re-prepare keeps place in line
+        wq_prepare(&wq, &e);
+        TEST_ASSERT("spurious prepare keeps head", wq.head == &e);
+        TEST_ASSERT("spurious prepare keeps tail", wq.tail == &e);
+        TEST_ASSERT("spurious prepare keeps next null", e.next == NULL);
+
+        wq_finish(&wq, &e);
+        irq_restore(flags);
+
+        TEST_ASSERT("finish unlinks head", wq.head == NULL);
+        TEST_ASSERT("finish unlinks tail", wq.tail == NULL);
+        TEST_ASSERT("finish clears entry queue", e.queue == NULL);
+        TEST_ASSERT("finish clears entry next", e.next == NULL);
+        TEST_ASSERT_EQ("finish restores RUNNING state", (long)self->state,
+                       (long)SCHED_TASK_RUNNING);
+    }
+
+    // 3. FIFO ordering and wake_one
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        struct wait_entry e1 = {0};
+        struct wait_entry e2 = {0};
+        struct wait_entry e3 = {0};
+
+        unsigned long flags = irq_save();
+        wq_prepare(&wq, &e1);
+        e1.task = NULL;
+        wq_prepare(&wq, &e2);
+        e2.task = NULL;
+        wq_prepare(&wq, &e3);
+        e3.task = NULL;
+
+        TEST_ASSERT("head is e1", wq.head == &e1);
+        TEST_ASSERT("e1 next is e2", e1.next == &e2);
+        TEST_ASSERT("e2 next is e3", e2.next == &e3);
+        TEST_ASSERT("e3 next is null", e3.next == NULL);
+        TEST_ASSERT("tail is e3", wq.tail == &e3);
+
+        // First wake pops e1
+        int w1 = wq_wake_one(&wq);
+        TEST_ASSERT_EQ("wake_one returns 1", (long)w1, 1);
+        TEST_ASSERT_EQ("e1 woken set", (long)e1.woken, 1);
+        TEST_ASSERT("e1 queue cleared", e1.queue == NULL);
+        TEST_ASSERT("e1 next cleared", e1.next == NULL);
+        TEST_ASSERT("head advances to e2", wq.head == &e2);
+        TEST_ASSERT("tail remains e3", wq.tail == &e3);
+
+        // Second wake pops e2
+        int w2 = wq_wake_one(&wq);
+        TEST_ASSERT_EQ("wake_one returns 1", (long)w2, 1);
+        TEST_ASSERT_EQ("e2 woken set", (long)e2.woken, 1);
+        TEST_ASSERT("e2 queue cleared", e2.queue == NULL);
+        TEST_ASSERT("head advances to e3", wq.head == &e3);
+        TEST_ASSERT("tail remains e3", wq.tail == &e3);
+
+        // Third wake pops e3 (last entry)
+        int w3 = wq_wake_one(&wq);
+        TEST_ASSERT_EQ("wake_one returns 1", (long)w3, 1);
+        TEST_ASSERT_EQ("e3 woken set", (long)e3.woken, 1);
+        TEST_ASSERT("e3 queue cleared", e3.queue == NULL);
+        TEST_ASSERT("head is null", wq.head == NULL);
+        TEST_ASSERT("tail is null", wq.tail == NULL);
+
+        // Fourth wake on empty queue returns 0
+        int w4 = wq_wake_one(&wq);
+        TEST_ASSERT_EQ("wake on empty queue returns 0", (long)w4, 0);
+
+        // Finish on already woken entries preserves woken flag
+        wq_finish(&wq, &e1);
+        wq_finish(&wq, &e2);
+        wq_finish(&wq, &e3);
+        self->state = SCHED_TASK_RUNNING;
+        irq_restore(flags);
+
+        TEST_ASSERT_EQ("e1 woken preserved after finish", (long)e1.woken, 1);
+        TEST_ASSERT_EQ("e2 woken preserved after finish", (long)e2.woken, 1);
+        TEST_ASSERT_EQ("e3 woken preserved after finish", (long)e3.woken, 1);
+    }
+
+    // 4. Unlinking middle and tail entries via wq_finish
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        struct wait_entry e1 = {0};
+        struct wait_entry e2 = {0};
+        struct wait_entry e3 = {0};
+
+        unsigned long flags = irq_save();
+        wq_prepare(&wq, &e1);
+        e1.task = NULL;
+        wq_prepare(&wq, &e2);
+        e2.task = NULL;
+        wq_prepare(&wq, &e3);
+        e3.task = NULL;
+
+        // Finish middle entry e2
+        wq_finish(&wq, &e2);
+        TEST_ASSERT("head still e1 after middle finish", wq.head == &e1);
+        TEST_ASSERT("e1 next points to e3", e1.next == &e3);
+        TEST_ASSERT("tail still e3 after middle finish", wq.tail == &e3);
+        TEST_ASSERT("e2 queue cleared", e2.queue == NULL);
+        TEST_ASSERT("e2 next cleared", e2.next == NULL);
+
+        // Finish tail entry e3
+        wq_finish(&wq, &e3);
+        TEST_ASSERT("head still e1 after tail finish", wq.head == &e1);
+        TEST_ASSERT("tail updated to e1", wq.tail == &e1);
+        TEST_ASSERT("e1 next is null", e1.next == NULL);
+        TEST_ASSERT("e3 queue cleared", e3.queue == NULL);
+
+        // Finish remaining entry e1
+        wq_finish(&wq, &e1);
+        self->state = SCHED_TASK_RUNNING;
+        irq_restore(flags);
+
+        TEST_ASSERT("queue empty after all finishes", wq.head == NULL && wq.tail == NULL);
+    }
+
+    // 5. wq_wake_all wakes every entry
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        struct wait_entry e1 = {0};
+        struct wait_entry e2 = {0};
+        struct wait_entry e3 = {0};
+
+        unsigned long flags = irq_save();
+        wq_prepare(&wq, &e1);
+        e1.task = NULL;
+        wq_prepare(&wq, &e2);
+        e2.task = NULL;
+        wq_prepare(&wq, &e3);
+        e3.task = NULL;
+
+        wq_wake_all(&wq);
+        self->state = SCHED_TASK_RUNNING;
+        irq_restore(flags);
+
+        TEST_ASSERT("wake_all empties head", wq.head == NULL);
+        TEST_ASSERT("wake_all empties tail", wq.tail == NULL);
+        TEST_ASSERT_EQ("wake_all woke e1", (long)e1.woken, 1);
+        TEST_ASSERT_EQ("wake_all woke e2", (long)e2.woken, 1);
+        TEST_ASSERT_EQ("wake_all woke e3", (long)e3.woken, 1);
+        TEST_ASSERT("e1 queue cleared", e1.queue == NULL);
+        TEST_ASSERT("e2 queue cleared", e2.queue == NULL);
+        TEST_ASSERT("e3 queue cleared", e3.queue == NULL);
+        TEST_ASSERT("e1 next cleared", e1.next == NULL);
+        TEST_ASSERT("e2 next cleared", e2.next == NULL);
+        TEST_ASSERT("e3 next cleared", e3.next == NULL);
+    }
+
+    // 6. wq_finish CAS state transitions
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        struct wait_entry e = {0};
+
+        // If state was set to READY by a waker, finish leaves it READY
+        unsigned long flags = irq_save();
+        wq_prepare(&wq, &e);
+        self->state = SCHED_TASK_READY;
+        wq_finish(&wq, &e);
+        TEST_ASSERT_EQ("finish leaves READY state intact", (long)self->state,
+                       (long)SCHED_TASK_READY);
+        self->state = SCHED_TASK_RUNNING;
+
+        // If state was set to RUNNING, finish leaves it RUNNING
+        wq_prepare(&wq, &e);
+        self->state = SCHED_TASK_RUNNING;
+        wq_finish(&wq, &e);
+        TEST_ASSERT_EQ("finish leaves RUNNING state intact", (long)self->state,
+                       (long)SCHED_TASK_RUNNING);
+        irq_restore(flags);
+    }
+
+    // 7. Wait macros with already-true conditions
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        int cond = 1;
+
+        int r1 = wq_wait_event(&wq, cond);
+        TEST_ASSERT_EQ("wait_event returns 0 when cond true", (long)r1, 0);
+        TEST_ASSERT("queue empty after wait_event", wq.head == NULL && wq.tail == NULL);
+        TEST_ASSERT_EQ("state RUNNING after wait_event", (long)self->state,
+                       (long)SCHED_TASK_RUNNING);
+
+        int r2 = wq_wait_event_interruptible(&wq, cond);
+        TEST_ASSERT_EQ("wait_event_interruptible returns 0 when cond true", (long)r2, 0);
+        TEST_ASSERT("queue empty after interruptible", wq.head == NULL && wq.tail == NULL);
+        TEST_ASSERT_EQ("state RUNNING after interruptible", (long)self->state,
+                       (long)SCHED_TASK_RUNNING);
+
+        spinlock_t lock = SPINLOCK_INIT;
+        unsigned long flags = spin_lock_irqsave(&lock);
+        int r3 = wq_wait_event_locked(&wq, cond, &lock);
+        spin_unlock_irqrestore(&lock, flags);
+        TEST_ASSERT_EQ("wait_event_locked returns 0 when cond true", (long)r3, 0);
+        TEST_ASSERT("queue empty after wait_event_locked", wq.head == NULL && wq.tail == NULL);
+
+        flags = spin_lock_irqsave(&lock);
+        int r4 = wq_wait_event_interruptible_locked(&wq, cond, &lock);
+        spin_unlock_irqrestore(&lock, flags);
+        TEST_ASSERT_EQ("wait_event_interruptible_locked returns 0 when cond true", (long)r4, 0);
+        TEST_ASSERT("queue empty after interruptible locked", wq.head == NULL && wq.tail == NULL);
+    }
+
+    TEST_SUITE_END("WaitQueue");
+}
+
+/*
+ * Multi-task tests running after sched_init and enable_interrupts.
+ */
+
+static struct wait_queue sched_test_wq = WAIT_QUEUE_INIT;
+static volatile int sched_test_cond = 0;
+static volatile int sched_test_done = 0;
+static volatile int sched_test_ret = 0;
+static struct task *sched_test_task_ptr = NULL;
+
+static void task_sleep_wait(void)
+{
+    sched_test_task_ptr = sched_current_task();
+    wq_wait_event(&sched_test_wq, sched_test_cond != 0);
+    sched_test_done = 1;
+}
+
+static void task_sleep_interruptible(void)
+{
+    sched_test_task_ptr = sched_current_task();
+    sched_test_ret = wq_wait_event_interruptible(&sched_test_wq, sched_test_cond != 0);
+    sched_test_done = 1;
+}
+
+void test_wait_scheduler(void)
+{
+    TEST_SUITE_BEGIN("WaitQueue-MultiTask");
+
+    // 1. Waking a task that is really asleep
+    {
+        wq_init(&sched_test_wq);
+        sched_test_cond = 0;
+        sched_test_done = 0;
+        sched_test_task_ptr = NULL;
+
+        sched_create_task(task_sleep_wait);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("sleeper task is waiting", sched_test_done == 0);
+        TEST_ASSERT("sleeper is in wq", sched_test_wq.head != NULL);
+
+        sched_test_cond = 1;
+        int woke = wq_wake_one(&sched_test_wq);
+        TEST_ASSERT_EQ("wake_one returned 1", (long)woke, 1);
+
+        sched_sleep_ms(30);
+        TEST_ASSERT("sleeper woke and finished", sched_test_done == 1);
+        TEST_ASSERT("wq is empty after sleep", sched_test_wq.head == NULL);
+    }
+
+    // 2. Spurious wakeup: condition still false, task goes back to sleep
+    {
+        wq_init(&sched_test_wq);
+        sched_test_cond = 0;
+        sched_test_done = 0;
+        sched_test_task_ptr = NULL;
+
+        sched_create_task(task_sleep_wait);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("spurious sleeper is waiting", sched_test_done == 0);
+        TEST_ASSERT("spurious sleeper in wq", sched_test_wq.head != NULL);
+
+        // Wake without setting condition
+        wq_wake_one(&sched_test_wq);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("sleeper stayed asleep on spurious wake", sched_test_done == 0);
+        TEST_ASSERT("sleeper still in wq after spurious wake", sched_test_wq.head != NULL);
+
+        // Real wake with condition true
+        sched_test_cond = 1;
+        wq_wake_one(&sched_test_wq);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("sleeper finished after real wake", sched_test_done == 1);
+        TEST_ASSERT("wq empty after spurious test", sched_test_wq.head == NULL);
+    }
+
+    // 3. Signal interrupt in wq_wait_event_interruptible
+    {
+        wq_init(&sched_test_wq);
+        sched_test_cond = 0;
+        sched_test_done = 0;
+        sched_test_ret = 0;
+        sched_test_task_ptr = NULL;
+
+        sched_create_task(task_sleep_interruptible);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("interruptible sleeper is waiting", sched_test_done == 0);
+        TEST_ASSERT("sleeper in wq", sched_test_wq.head != NULL);
+
+        // Mark signal pending on kernel process (pid 0) with atomic OR
+        struct process *kproc = process_table[0];
+        TEST_ASSERT("kproc exists", kproc != NULL);
+        if (kproc) {
+            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+        }
+
+        // Real signal unblocks the task without popping from wq
+        if (sched_test_task_ptr) {
+            sched_unblock(sched_test_task_ptr);
+        }
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("interruptible sleeper finished", sched_test_done == 1);
+        TEST_ASSERT_EQ("interruptible wait returned -ERESTARTSYS", (long)sched_test_ret,
+                       (long)-ERESTARTSYS);
+        TEST_ASSERT("wq empty after signal interrupt", sched_test_wq.head == NULL);
+
+        if (kproc) {
+            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        }
+    }
+
+    // 4. An uninterruptible wait that ignores a signal
+    {
+        wq_init(&sched_test_wq);
+        sched_test_cond = 0;
+        sched_test_done = 0;
+        sched_test_task_ptr = NULL;
+
+        sched_create_task(task_sleep_wait);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("uninterruptible task is waiting", sched_test_done == 0);
+
+        // Mark signal pending with atomic OR
+        struct process *kproc = process_table[0];
+        if (kproc) {
+            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+        }
+
+        // Unblock task while condition is still 0
+        if (sched_test_task_ptr) {
+            sched_unblock(sched_test_task_ptr);
+        }
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("uninterruptible task ignored signal", sched_test_done == 0);
+        TEST_ASSERT("uninterruptible task still in wq", sched_test_wq.head != NULL);
+
+        // Now satisfy condition and wake
+        sched_test_cond = 1;
+        wq_wake_one(&sched_test_wq);
+        sched_sleep_ms(30);
+
+        TEST_ASSERT("uninterruptible task completed on condition", sched_test_done == 1);
+        TEST_ASSERT("wq is empty", sched_test_wq.head == NULL);
+
+        if (kproc) {
+            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        }
+    }
+
+    TEST_SUITE_END("WaitQueue-MultiTask");
+}
