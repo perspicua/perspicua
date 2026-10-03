@@ -10,6 +10,8 @@
 #include "core/lock.h"
 #include "core/mutex.h"
 #include "core/signals.h"
+#include "driver/block.h"
+#include "driver/sd.h"
 #include "sched/process.h"
 #include "sched/sched.h"
 #include "string.h"
@@ -426,6 +428,42 @@ static void task_mutex_sig_contender(void)
     kmutex_unlock(&test_contend_mutex);
 }
 
+#define SD_CONTEND_TASKS 4
+#define SD_CONTEND_READS 20
+
+static volatile int sd_contend_done[SD_CONTEND_TASKS];
+static volatile int sd_contend_fail[SD_CONTEND_TASKS];
+static uint8_t sd_contend_buf[SD_CONTEND_TASKS][512];
+static volatile int sd_next_task_id = 0;
+
+static void task_sd_contender(void)
+{
+    int id = __atomic_fetch_add(&sd_next_task_id, 1, __ATOMIC_SEQ_CST);
+    if (id >= SD_CONTEND_TASKS) {
+        return;
+    }
+    struct block_device *dev = block_device_lookup("sd0");
+    if (!dev) {
+        sd_contend_fail[id] = 1;
+        sd_contend_done[id] = 1;
+        return;
+    }
+
+    for (int i = 0; i < SD_CONTEND_READS; i++) {
+        memset(sd_contend_buf[id], 0, 512);
+        int res = sd_read_blocks(dev, sd_contend_buf[id], 0, 1);
+        if (res != 0) {
+            sd_contend_fail[id] = 1;
+            break;
+        }
+        if (sd_contend_buf[id][510] != 0x55 || sd_contend_buf[id][511] != 0xAA) {
+            sd_contend_fail[id] = 1;
+            break;
+        }
+    }
+    sd_contend_done[id] = 1;
+}
+
 void test_wait_scheduler(void)
 {
     TEST_SUITE_BEGIN("WaitQueue-MultiTask");
@@ -714,6 +752,36 @@ void test_wait_scheduler(void)
         if (kproc) {
             __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
         }
+    }
+
+    // 9. Contended SD driver I/O across 4 tasks
+    {
+        sd_next_task_id = 0;
+        for (int i = 0; i < SD_CONTEND_TASKS; i++) {
+            sd_contend_done[i] = 0;
+            sd_contend_fail[i] = 0;
+        }
+
+        for (int i = 0; i < SD_CONTEND_TASKS; i++) {
+            sched_create_task(task_sd_contender);
+        }
+
+        // Bounded poll for completion
+        for (int i = 0; i < 200
+                        && !(sd_contend_done[0] && sd_contend_done[1] && sd_contend_done[2]
+                             && sd_contend_done[3]);
+             i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("sd task 0 finished", sd_contend_done[0] == 1);
+        TEST_ASSERT("sd task 1 finished", sd_contend_done[1] == 1);
+        TEST_ASSERT("sd task 2 finished", sd_contend_done[2] == 1);
+        TEST_ASSERT("sd task 3 finished", sd_contend_done[3] == 1);
+        TEST_ASSERT("sd task 0 read succeeded", sd_contend_fail[0] == 0);
+        TEST_ASSERT("sd task 1 read succeeded", sd_contend_fail[1] == 0);
+        TEST_ASSERT("sd task 2 read succeeded", sd_contend_fail[2] == 0);
+        TEST_ASSERT("sd task 3 read succeeded", sd_contend_fail[3] == 0);
     }
 
     TEST_SUITE_END("WaitQueue-MultiTask");

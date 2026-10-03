@@ -21,33 +21,29 @@
 #include "driver/uart.h"
 #include "driver/mailbox.h"
 #include "core/lock.h"
+#include "core/mutex.h"
 #include "sched/sched.h"
+#include "sched/wait.h"
 
 /*
  * SD Operation Serializer
- * sd_op_lock  - irqsave spinlock guarding sd_op_busy and the wait queue
- * sd_op_busy  - set while one task owns the SD controller
- * sd_op_wq_*  - FIFO of tasks waiting for the controller (uses task->wait_next)
+ * sd_op_mutex - Sleeping mutex providing exclusive access to the SD controller.
+ *               No spinlock is held during transfers, allowing tasks to block.
  */
-static spinlock_t sd_op_lock = SPINLOCK_INIT;
-static int sd_op_busy = 0;
-static struct task *sd_op_wq_head = NULL;
-static struct task *sd_op_wq_tail = NULL;
+static struct kmutex sd_op_mutex = KMUTEX_INIT;
 
 /*
  * Interrupt coordination between the ISR and the blocked task.
  *
- * sd_irq_lock        - Short irqsave spinlock protecting the fields below.
- * sd_irq_pending     - Accumulated hardware interrupt bits (ISR reads+clears
- *                      the hardware W1C register and OR's into this word).
- * sd_waiting_task    - Task blocked in sd_wait_interrupt(), or NULL.
- * sd_irq_waiting_mask - Interrupt mask the task is waiting for.
- * sd_irq_num         - Cached IRQ line from the devicetree (0 = no IRQ).
+ * sd_irq_lock    - Short irqsave spinlock protecting sd_irq_pending.
+ * sd_irq_pending - Accumulated hardware interrupt bits (ISR reads+clears
+ *                  the hardware W1C register and OR's into this word).
+ * sd_irq_wq      - Wait queue for tasks waiting for SD controller interrupts.
+ * sd_irq_num     - Cached IRQ line from the devicetree (0 = no IRQ).
  */
 static spinlock_t sd_irq_lock = SPINLOCK_INIT;
 static volatile uint32_t sd_irq_pending = 0;
-static struct task *sd_waiting_task = NULL;
-static uint32_t sd_irq_waiting_mask = 0;
+static struct wait_queue sd_irq_wq = WAIT_QUEUE_INIT;
 static unsigned int sd_irq_num = 0;
 
 typedef struct {
@@ -113,108 +109,10 @@ static uint32_t sd_rca = 0;
 static int sd_is_sdhc = 0;
 
 /*
- * sd_op_wq_remove - Unlink a task from the SD wait queue if still present.
- *
- * Caller holds sd_op_lock. A task woken by a signal rather than sd_op_release()
- * stays linked via wait_next; drop it before it retries so it is never
- * double-enqueued or dequeued twice.
- */
-static void sd_op_wq_remove(struct task *t)
-{
-    struct task **pp = &sd_op_wq_head;
-    struct task *prev = NULL;
-
-    while (*pp) {
-        if (*pp == t) {
-            *pp = t->wait_next;
-            if (sd_op_wq_tail == t) {
-                sd_op_wq_tail = prev;
-            }
-            t->wait_next = NULL;
-            return;
-        }
-        prev = *pp;
-        pp = &(*pp)->wait_next;
-    }
-}
-
-/*
- * sd_op_acquire - Claim exclusive access to the SD controller.
- *
- * If another task is already running an SD operation the caller is queued and
- * blocked until that operation completes. No lock is held on return, so
- * sched_schedule() calls inside the operation do not pollute lockdep's per-core
- * held-lock tracking.
- */
-static void sd_op_acquire(void)
-{
-    struct task *cur = sched_current_task();
-
-    for (;;) {
-        unsigned long flags = spin_lock_irqsave(&sd_op_lock);
-
-        // If a signal woke us while still queued, unlink before retrying.
-        if (cur) {
-            sd_op_wq_remove(cur);
-        }
-
-        if (!sd_op_busy) {
-            sd_op_busy = 1;
-            spin_unlock_irqrestore(&sd_op_lock, flags);
-            return;
-        }
-
-        if (!cur) {
-            // Early boot before scheduler: busy-wait (no tasks to switch to).
-            spin_unlock_irqrestore(&sd_op_lock, flags);
-            while (sd_op_busy)
-                ;
-            continue;
-        }
-
-        // Enqueue on the controller wait queue and block.
-        cur->state = SCHED_TASK_BLOCKED;
-        cur->wait_next = NULL;
-        if (sd_op_wq_tail) {
-            sd_op_wq_tail->wait_next = cur;
-            sd_op_wq_tail = cur;
-        } else {
-            sd_op_wq_head = sd_op_wq_tail = cur;
-        }
-        spin_unlock_irqrestore(&sd_op_lock, flags);
-        sched_schedule(); // No lock held — lockdep stays clean.
-    }
-}
-
-/*
- * sd_op_release - Relinquish exclusive access to the SD controller.
- *
- * Wakes the next queued waiter if one exists.
- */
-static void sd_op_release(void)
-{
-    unsigned long flags = spin_lock_irqsave(&sd_op_lock);
-
-    sd_op_busy = 0;
-
-    struct task *t = sd_op_wq_head;
-    if (t) {
-        sd_op_wq_head = t->wait_next;
-        if (!sd_op_wq_head) {
-            sd_op_wq_tail = NULL;
-        }
-        t->wait_next = NULL;
-        sched_unblock(t);
-    }
-
-    spin_unlock_irqrestore(&sd_op_lock, flags);
-}
-
-/*
  * sd_wait_status - Polls a hardware STATUS field, yielding between attempts.
  *
- * Called within an sd_op_acquire() / sd_op_release() region; no spinlock is
- * held, so sched_sleep_ms() can safely call sched_schedule() without lockdep issues.
+ * Called while holding sd_op_mutex; no spinlock is held, so sched_sleep_ms()
+ * can safely call sched_schedule() without lockdep issues.
  */
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
@@ -224,36 +122,31 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
     return (timeout_ms >= 0) ? 0 : -ETIMEDOUT;
 }
 
+// Atomically copies matching interrupt bits from sd_irq_pending to *bits and clears them.
+static int sd_irq_take(uint32_t mask, uint32_t *bits)
+{
+    unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
+    if (sd_irq_pending & (mask | INT_ERROR_MASK)) {
+        *bits = sd_irq_pending;
+        sd_irq_pending &= ~(mask | INT_ERROR_MASK);
+        spin_unlock_irqrestore(&sd_irq_lock, flags);
+        return 1;
+    }
+    spin_unlock_irqrestore(&sd_irq_lock, flags);
+    return 0;
+}
+
 /*
  * sd_wait_interrupt - Blocks until the SDHCI raises the requested interrupt.
  *
- * Fast path: the ISR already set the bits in sd_irq_pending before we got
- * here — consume them and return without blocking.
- *
- * Slow path: mark the current task BLOCKED, release sd_irq_lock (re-enables
- * IRQs), and call sched_schedule() with NO spinlock held so that lockdep sees a
- * clean lock state on both the sleeping and the woken task.
- *
- * Fallback: if sd_irq_num is 0 (no GIC binding) or there is no current task,
- * busy-wait on the status register instead so we never hang.
+ * A transfer must not be abandoned halfway: the controller would finish it and
+ * raise an unexpected interrupt during the next request.
  */
 static int sd_wait_interrupt(uint32_t mask)
 {
-    unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
-
-    // Fast path: interrupt already collected by the ISR.
-    if (sd_irq_pending & (mask | INT_ERROR_MASK)) {
-        uint32_t bits = sd_irq_pending;
-        sd_irq_pending &= ~(mask | INT_ERROR_MASK);
-        spin_unlock_irqrestore(&sd_irq_lock, flags);
-        return (bits & INT_ERROR_MASK) ? -EIO : 0;
-    }
-
     struct task *cur = sched_current_task();
     if (!cur || !sd_irq_num) {
         // No IRQ or no scheduler context: poll instead of sleeping forever.
-        spin_unlock_irqrestore(&sd_irq_lock, flags);
-
         int t = 1000;
         while (!(regs->interrupt & (mask | INT_ERROR_MASK)) && t--) {
             timer_sleep_ms(1);
@@ -269,21 +162,8 @@ static int sd_wait_interrupt(uint32_t mask)
         return 0;
     }
 
-    /* Slow path: block.  No other spinlock is held at this point (sd_op
-     * serialisation is done via the wait-queue, not a held spinlock). */
-    sd_irq_waiting_mask = mask;
-    sd_waiting_task = cur;
-    cur->state = SCHED_TASK_BLOCKED;
-    spin_unlock_irqrestore(&sd_irq_lock, flags); // Re-enables IRQs.
-
-    sched_schedule(); // Woken by sd_handle_irq() -> sched_unblock().
-
-    // Collect result posted by the ISR.
-    flags = spin_lock_irqsave(&sd_irq_lock);
-    uint32_t bits = sd_irq_pending;
-    sd_irq_pending &= ~(mask | INT_ERROR_MASK);
-    sd_waiting_task = NULL;
-    spin_unlock_irqrestore(&sd_irq_lock, flags);
+    uint32_t bits = 0;
+    wq_wait_event(&sd_irq_wq, sd_irq_take(mask, &bits));
 
     return (bits & INT_ERROR_MASK) ? -EIO : 0;
 }
@@ -299,16 +179,9 @@ int sd_handle_irq(void)
 
     unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
     sd_irq_pending |= bits;
-
-    int woke = 0;
-    if (sd_waiting_task && (sd_irq_pending & (sd_irq_waiting_mask | INT_ERROR_MASK))) {
-        sched_unblock(sd_waiting_task);
-        sd_waiting_task = NULL;
-        woke = 1;
-    }
-
     spin_unlock_irqrestore(&sd_irq_lock, flags);
-    return woke;
+
+    return wq_wake_one(&sd_irq_wq);
 }
 
 unsigned int sd_get_irq(void)
@@ -486,13 +359,7 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
 
     uint32_t *buf = (uint32_t *)buffer;
 
-    /*
-     * sd_op_acquire() blocks until we have exclusive access but releases all
-     * locks before returning, so the entire read runs with no spinlock held.
-     * This keeps lockdep's per-core held-lock tracking clean across the
-     * sched_schedule() calls in sd_wait_interrupt() and sd_wait_status().
-     */
-    sd_op_acquire();
+    kmutex_lock(&sd_op_mutex);
 
     for (size_t i = 0; i < num_blocks; i++) {
         uint32_t addr = (uint32_t)(start_block + i);
@@ -504,13 +371,13 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
         int res = sd_send_cmd(CMD17, addr);
         if (res != 0) {
             pr_err("sd: read failed at block %lu\n", start_block + i);
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
 
         res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
         if (res != 0) {
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
 
@@ -520,12 +387,12 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
 
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != 0) {
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
     }
 
-    sd_op_release();
+    kmutex_unlock(&sd_op_mutex);
     return 0;
 }
 
@@ -547,7 +414,7 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
     const uint32_t *buf = (const uint32_t *)buffer;
 
-    sd_op_acquire();
+    kmutex_lock(&sd_op_mutex);
 
     for (size_t i = 0; i < num_blocks; i++) {
         uint32_t addr = (uint32_t)(start_block + i);
@@ -558,13 +425,13 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
         regs->blk_size_cnt = (1 << 16) | 512;
         int res = sd_send_cmd(CMD24, addr);
         if (res != 0) {
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
 
         res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
         if (res != 0) {
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
 
@@ -574,12 +441,12 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
 
         res = sd_wait_interrupt(INT_DATA_DONE);
         if (res != 0) {
-            sd_op_release();
+            kmutex_unlock(&sd_op_mutex);
             return res;
         }
     }
 
-    sd_op_release();
+    kmutex_unlock(&sd_op_mutex);
     return 0;
 }
 

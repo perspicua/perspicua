@@ -252,7 +252,7 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
  * block_cache_sync - Flushes all dirty cache entries to their backing devices.
  *
  * Releases the cache lock during I/O to avoid sleeping with a spinlock held
- * (the SD driver's sd_op_acquire() can block).
+ * (the SD driver's write_blocks can block).
  */
 int block_cache_sync(void)
 {
