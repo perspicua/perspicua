@@ -12,6 +12,8 @@
 #include "core/signals.h"
 #include "driver/block.h"
 #include "driver/sd.h"
+#include "fs/pipe.h"
+#include "fs/vfs.h"
 #include "sched/process.h"
 #include "sched/sched.h"
 #include "string.h"
@@ -464,6 +466,18 @@ static void task_sd_contender(void)
     sd_contend_done[id] = 1;
 }
 
+static volatile int pipe_test_done = 0;
+static volatile int pipe_test_bytes = 0;
+static char pipe_test_buf[64];
+static int pipe_test_fds[2] = {-1, -1};
+
+static void task_pipe_reader(void)
+{
+    memset(pipe_test_buf, 0, sizeof(pipe_test_buf));
+    pipe_test_bytes = vfs_read(pipe_test_fds[0], pipe_test_buf, sizeof(pipe_test_buf));
+    pipe_test_done = 1;
+}
+
 void test_wait_scheduler(void)
 {
     TEST_SUITE_BEGIN("WaitQueue-MultiTask");
@@ -782,6 +796,56 @@ void test_wait_scheduler(void)
         TEST_ASSERT("sd task 1 read succeeded", sd_contend_fail[1] == 0);
         TEST_ASSERT("sd task 2 read succeeded", sd_contend_fail[2] == 0);
         TEST_ASSERT("sd task 3 read succeeded", sd_contend_fail[3] == 0);
+    }
+
+    // 10. Pipe read blocks on empty pipe and wakes on write
+    {
+        pipe_test_done = 0;
+        pipe_test_bytes = -1;
+        TEST_ASSERT_EQ("create pipe for blocked reader", pipe_create(pipe_test_fds), 0);
+
+        sched_create_task(task_pipe_reader);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("reader is blocked on empty pipe", pipe_test_done == 0);
+
+        static const char msg[] = "pipe wakeup test";
+        int len = (int)sizeof(msg);
+        TEST_ASSERT_EQ("write payload to pipe", vfs_write(pipe_test_fds[1], msg, len), len);
+
+        for (int i = 0; i < 100 && !pipe_test_done; i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("reader finished", pipe_test_done == 1);
+        TEST_ASSERT_EQ("reader read correct byte count", pipe_test_bytes, len);
+        TEST_ASSERT("reader received correct bytes", memcmp(pipe_test_buf, msg, len) == 0);
+
+        vfs_close(pipe_test_fds[0]);
+        vfs_close(pipe_test_fds[1]);
+    }
+
+    // 11. Pipe read blocks on empty pipe and wakes with EOF on writer close
+    {
+        pipe_test_done = 0;
+        pipe_test_bytes = -1;
+        TEST_ASSERT_EQ("create pipe for EOF test", pipe_create(pipe_test_fds), 0);
+
+        sched_create_task(task_pipe_reader);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("reader is blocked before EOF", pipe_test_done == 0);
+
+        TEST_ASSERT_EQ("close writer to trigger EOF", vfs_close(pipe_test_fds[1]), 0);
+
+        for (int i = 0; i < 100 && !pipe_test_done; i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("reader woke on writer close", pipe_test_done == 1);
+        TEST_ASSERT_EQ("reader got 0 for EOF", pipe_test_bytes, 0);
+
+        vfs_close(pipe_test_fds[0]);
     }
 
     TEST_SUITE_END("WaitQueue-MultiTask");
