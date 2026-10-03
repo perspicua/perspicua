@@ -10,6 +10,7 @@
 #include "core/lock.h"
 #include "core/mutex.h"
 #include "core/signals.h"
+#include "core/tty.h"
 #include "driver/block.h"
 #include "driver/sd.h"
 #include "fs/pipe.h"
@@ -478,6 +479,19 @@ static void task_pipe_reader(void)
     pipe_test_done = 1;
 }
 
+static volatile int tty_test_done = 0;
+static volatile int tty_test_bytes = 0;
+static char tty_test_buf[16];
+static struct task *tty_test_reader_task = NULL;
+
+static void task_tty_reader(void)
+{
+    tty_test_reader_task = sched_current_task();
+    memset(tty_test_buf, 0, sizeof(tty_test_buf));
+    tty_test_bytes = tty_read(&console_tty, NULL, tty_test_buf, 4);
+    tty_test_done = 1;
+}
+
 void test_wait_scheduler(void)
 {
     TEST_SUITE_BEGIN("WaitQueue-MultiTask");
@@ -846,6 +860,73 @@ void test_wait_scheduler(void)
         TEST_ASSERT_EQ("reader got 0 for EOF", pipe_test_bytes, 0);
 
         vfs_close(pipe_test_fds[0]);
+    }
+
+    // 12. TTY reader blocks on empty input and wakes on received byte
+    {
+        unsigned long flags = spin_lock_irqsave(&console_tty.lock);
+        console_tty.rx_head = 0;
+        console_tty.rx_tail = 0;
+        spin_unlock_irqrestore(&console_tty.lock, flags);
+
+        tty_test_done = 0;
+        tty_test_bytes = 0;
+        tty_test_reader_task = NULL;
+
+        sched_create_task(task_tty_reader);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("tty reader is blocked", tty_test_done == 0);
+        TEST_ASSERT("tty reader is in rx_wq", console_tty.rx_wq.head != NULL);
+
+        tty_handle_rx(&console_tty, 'a');
+
+        for (int i = 0; i < 100 && !tty_test_done; i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("tty reader woke and finished", tty_test_done == 1);
+        TEST_ASSERT_EQ("tty reader returned 1 byte", tty_test_bytes, 1);
+        TEST_ASSERT("tty reader received character 'a'", tty_test_buf[0] == 'a');
+    }
+
+    // 13. TTY reader blocks and returns -ERESTARTSYS on signal wake
+    {
+        tty_test_done = 0;
+        tty_test_bytes = 0;
+        tty_test_reader_task = NULL;
+
+        struct process *kproc = process_table[0];
+
+        sched_create_task(task_tty_reader);
+        sched_sleep_ms(5);
+
+        TEST_ASSERT("tty reader is blocked before signal", tty_test_done == 0);
+        TEST_ASSERT("tty reader is in rx_wq", console_tty.rx_wq.head != NULL);
+        TEST_ASSERT("tty reader task ptr set", tty_test_reader_task != NULL);
+
+        if (kproc) {
+            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+        }
+        if (tty_test_reader_task) {
+            sched_unblock(tty_test_reader_task);
+        }
+
+        for (int i = 0; i < 100 && !tty_test_done; i++) {
+            sched_sleep_ms(5);
+        }
+
+        TEST_ASSERT("tty reader woke on signal", tty_test_done == 1);
+        TEST_ASSERT_EQ("tty reader returned -ERESTARTSYS", tty_test_bytes, -ERESTARTSYS);
+
+        if (kproc) {
+            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        }
+
+        unsigned long flags = spin_lock_irqsave(&console_tty.lock);
+        console_tty.rx_head = 0;
+        console_tty.rx_tail = 0;
+        spin_unlock_irqrestore(&console_tty.lock, flags);
     }
 
     TEST_SUITE_END("WaitQueue-MultiTask");

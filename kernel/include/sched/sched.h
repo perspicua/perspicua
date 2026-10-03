@@ -73,7 +73,6 @@ struct task {
     unsigned char *stack;
     struct task *rq_next;
     struct task *sleep_next;
-    struct task *wait_next;
     int skip_signals;
     volatile int on_core;
 

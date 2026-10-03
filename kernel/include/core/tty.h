@@ -10,6 +10,7 @@
 
 #include "core/lock.h"
 #include "sched/sched.h"
+#include "sched/wait.h"
 
 #define TTY_BUFFER_SIZE 256
 
@@ -30,11 +31,8 @@ struct tty {
     size_t tx_head;
     size_t tx_tail;
 
-    struct task *wait_queue_head;
-    struct task *wait_queue_tail;
-
-    struct task *tx_wait_queue_head;
-    struct task *tx_wait_queue_tail;
+    struct wait_queue rx_wq;
+    struct wait_queue tx_wq;
 
     spinlock_t lock;
     int echo_enabled;
