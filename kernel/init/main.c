@@ -3,9 +3,9 @@
  */
 
 #include "mm/asid.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
-#include "types.h"
+#include <stdint.h>
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
@@ -38,7 +38,6 @@
 #include "driver/mailbox.h"
 #include "driver/fb.h"
 #include "driver/fb_console.h"
-#include "driver/dashboard.h"
 #include "driver/sd.h"
 #include "driver/block.h"
 
@@ -49,7 +48,7 @@
 #endif
 
 // Kernel metadata and versioning
-#define KERNEL_VERSION "0.1"
+#define KERNEL_VERSION "0.1.1"
 
 // Defined in arch/boot.S
 extern void _entry(void);
@@ -140,14 +139,6 @@ static void print_banner(void)
     pr_info("perspicua kernel v%s (" __DATE__ " " __TIME__ ")\n", KERNEL_VERSION);
 }
 
-static void dashboard_task(void)
-{
-    while (1) {
-        dashboard_update();
-        sched_sleep_ms(100);
-    }
-}
-
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 {
     // Stage 0: Devicetree parser initialization
@@ -186,9 +177,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     timer_interrupt_init();
     sched_init();
 
-    // Start background maintenance tasks
-    sched_create_task(dashboard_task);
-
     // Stage 4: Multi-processing and Filesystems
     smp_init();
 
@@ -200,7 +188,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     driver_probe_devices();
 
     // Root filesystem initialization (FAT32)
-    if (fat32_init("sd0") == PERS_SUCCESS) {
+    if (fat32_init("sd0") == 0) {
         vfs_mount("/", fat32_get_root_node());
     } else {
         PANIC("fat32: failed to mount root filesystem from sd0 — cannot continue");
@@ -211,7 +199,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
-
 #ifdef CONFIG_TESTS
     run_all_tests();
     run_scheduler_tests();

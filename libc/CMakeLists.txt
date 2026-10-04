@@ -35,9 +35,17 @@ set(LIBC_SRC_USER
 
 # libk (for kernel)
 add_library(libk STATIC ${LIBC_SRC_COMMON} ${LIBC_SRC_KERNEL})
-target_include_directories(libk PUBLIC include ../kernel/include ..)
+target_include_directories(libk PUBLIC include ../kernel/include .. ${KERNEL_CONFIG_INCLUDE})
 target_compile_definitions(libk PRIVATE __KERNEL__)
+# Same configuration the kernel sees: libk compiles kernel headers, so reading
+# them with different CONFIG_* values would give the two sides different structs.
+target_compile_options(libk PUBLIC ${KERNEL_CONFIG_FORCE_INCLUDE})
+set_source_files_properties(arch/setjmp.S PROPERTIES OBJECT_DEPENDS ${KERNEL_CONFIG_INCLUDE}/config.h)
 
 # libc (for user space)
+#
+# No ../kernel/include: userspace sees its own headers and the shared uapi/
+# (reached through ..), and nothing else. The path is PUBLIC, so anything that
+# had been added here would also have been handed to every app that links libc.
 add_library(libc STATIC ${LIBC_SRC_COMMON} ${LIBC_SRC_USER})
-target_include_directories(libc PUBLIC include ../kernel/include ..)
+target_include_directories(libc PUBLIC include ..)

@@ -2,9 +2,14 @@
  * test_vfs.c - Boot-phase tests for the virtual filesystem layer.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 
 #include "string.h"
+
+#include "uapi/errno.h"
 
 #include "fs/vfs.h"
 
@@ -63,7 +68,7 @@ void test_vfs(void)
 
     // opening a file that does not exist must fail rather than create one
     {
-        int fd = vfs_open("/definitely_not_here", VFS_O_RDONLY);
+        int fd = vfs_open("/definitely_not_here", O_RDONLY);
         TEST_ASSERT("open missing fails", fd < 0);
     }
 
@@ -76,13 +81,13 @@ void test_vfs(void)
         static const char payload[] = "perspicua vfs scratch payload";
         const size_t len = sizeof(payload) - 1;
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT | VFS_O_TRUNC);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create scratch file", fd >= 0);
 
         int written = vfs_write(fd, payload, len);
         TEST_ASSERT_EQ("write returns full length", written, (int)len);
 
-        vfs_off_t pos = vfs_lseek(fd, 0, VFS_SEEK_SET);
+        vfs_off_t pos = vfs_lseek(fd, 0, SEEK_SET);
         TEST_ASSERT_EQ("lseek to start", (int)pos, 0);
 
         static char readbuf[64];
@@ -91,7 +96,7 @@ void test_vfs(void)
         TEST_ASSERT_EQ("read returns full length", got, (int)len);
         TEST_ASSERT("read matches written", memcmp(readbuf, payload, len) == 0);
 
-        vfs_off_t end = vfs_lseek(fd, 0, VFS_SEEK_END);
+        vfs_off_t end = vfs_lseek(fd, 0, SEEK_END);
         TEST_ASSERT_EQ("lseek to end reports size", (int)end, (int)len);
 
         TEST_ASSERT_EQ("close scratch file", vfs_close(fd), 0);
@@ -107,7 +112,7 @@ void test_vfs(void)
 
     // reopening must see the persisted contents, not a fresh file
     {
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDONLY);
+        int fd = vfs_open(SCRATCH_FILE, O_RDONLY);
         TEST_ASSERT("reopen scratch file", fd >= 0);
 
         static char buf[64];
@@ -149,9 +154,9 @@ void test_vfs(void)
     // readdir must consult max_entries before writing an entry, so a buffer
     // too small for one dirent receives nothing rather than a 260-byte write
     {
-        const size_t dirent_size = sizeof(struct vfs_dirent);
+        const size_t dirent_size = sizeof(struct dirent);
 
-        int fd = vfs_open("/", VFS_O_RDONLY);
+        int fd = vfs_open("/", O_RDONLY);
         TEST_ASSERT("open root directory", fd >= 0);
 
         void *buf = readdir_arena(1);
@@ -167,9 +172,9 @@ void test_vfs(void)
 
     // a buffer sized for exactly one entry must yield exactly one entry
     {
-        const size_t dirent_size = sizeof(struct vfs_dirent);
+        const size_t dirent_size = sizeof(struct dirent);
 
-        int fd = vfs_open("/", VFS_O_RDONLY);
+        int fd = vfs_open("/", O_RDONLY);
         TEST_ASSERT("reopen root directory", fd >= 0);
 
         void *buf = readdir_arena(dirent_size);
@@ -177,8 +182,8 @@ void test_vfs(void)
         TEST_ASSERT_EQ("single-entry buffer returns one entry", res, 1);
         TEST_ASSERT("single-entry buffer not overrun", readdir_arena_intact(dirent_size));
 
-        struct vfs_dirent *got = (struct vfs_dirent *)buf;
-        TEST_ASSERT("first entry is \".\"", strcmp(got->name, ".") == 0);
+        struct dirent *got = (struct dirent *)buf;
+        TEST_ASSERT("first entry is \".\"", strcmp(got->d_name, ".") == 0);
 
         vfs_close(fd);
     }
@@ -191,7 +196,7 @@ void test_vfs(void)
     {
         unsigned long before = vfs_test_live_files();
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT);
         TEST_ASSERT("open for refcount test", fd >= 0);
 
         struct vfs_file *f = vfs_test_file_at(fd);
@@ -216,7 +221,7 @@ void test_vfs(void)
     {
         unsigned long before = vfs_test_live_files();
 
-        int fd = vfs_open(SCRATCH_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        int fd = vfs_open(SCRATCH_FILE, O_RDWR | O_CREAT);
         TEST_ASSERT("open for balance test", fd >= 0);
         TEST_ASSERT_EQ("close balances open", vfs_close(fd), 0);
         TEST_ASSERT_EQ("no file leaked", vfs_test_live_files(), before);
@@ -231,6 +236,216 @@ void test_vfs(void)
         TEST_ASSERT("read on unopened fd fails", vfs_read(VFS_MAX_FDS - 1, buf, sizeof(buf)) < 0);
         TEST_ASSERT("close on bad fd fails", vfs_close(-1) < 0);
         TEST_ASSERT("close on out-of-range fd fails", vfs_close(VFS_MAX_FDS + 100) < 0);
+    }
+
+    /*
+     * "dir/" and "dir" name the same directory. The path is split on its last
+     * slash to find the parent, so a trailing one used to leave an empty final
+     * component and every caller went looking for a nameless file -- rmdir and
+     * rename included.
+     */
+    {
+        const char *d = "/tslash";
+
+        TEST_ASSERT_EQ("mkdir for slash test", vfs_mkdir(d), 0);
+        TEST_ASSERT_EQ("rmdir with trailing slash", vfs_rmdir("/tslash/"), 0);
+        TEST_ASSERT("directory is gone", vfs_mkdir(d) == 0);
+
+        TEST_ASSERT_EQ("mkdir with trailing slash", vfs_mkdir("/tslash2/"), 0);
+        TEST_ASSERT_EQ("created without the slash", vfs_rmdir("/tslash2"), 0);
+        TEST_ASSERT_EQ("cleanup slash test", vfs_rmdir(d), 0);
+    }
+
+    /*
+     * A trailing slash asserts the target is a directory, so it must not
+     * delete a file -- stripping it blindly would make unlink("f/") remove f.
+     */
+    {
+        const char *f = "/tslashf.txt";
+
+        int fd = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create file for slash test", fd >= 0);
+        vfs_close(fd);
+
+        TEST_ASSERT_EQ("unlink file with trailing slash fails", vfs_unlink("/tslashf.txt/"),
+                       -ENOTDIR);
+        TEST_ASSERT("file survived", vfs_open(f, O_RDONLY) >= 0);
+        TEST_ASSERT_EQ("cleanup slash file", vfs_unlink(f), 0);
+    }
+
+    /*
+     * A directory's listing position used to live in the high bits of the byte
+     * offset, so any lseek on a directory fd silently rewrote it. It has its
+     * own field now, and lseek does the one thing that is defined: rewind.
+     */
+    {
+        int fd = vfs_open("/", O_RDONLY);
+        TEST_ASSERT("open root for seek test", fd >= 0);
+
+        struct dirent first[2];
+        int n = vfs_readdir(fd, first, sizeof(first));
+        TEST_ASSERT("first readdir returned entries", n > 0);
+
+        TEST_ASSERT_EQ("seek to a non-zero directory position fails", vfs_lseek(fd, 64, SEEK_SET),
+                       -EINVAL);
+
+        TEST_ASSERT_EQ("rewind a directory", vfs_lseek(fd, 0, SEEK_SET), 0);
+
+        struct dirent again[2];
+        int m = vfs_readdir(fd, again, sizeof(again));
+        TEST_ASSERT_EQ("rewound readdir returns the same count", m, n);
+        TEST_ASSERT("rewound readdir restarts the listing",
+                    strcmp(again[0].d_name, first[0].d_name) == 0);
+
+        vfs_close(fd);
+    }
+
+    // Two descriptors, two vnodes, one file: without revalidate the second
+    // writer records its own end-of-file over the first's.
+    {
+        const char *f = "/tcoh.tmp";
+        vfs_unlink(f);
+
+        int fd1 = vfs_open(f, O_WRONLY | O_CREAT);
+        int fd2 = vfs_open(f, O_WRONLY);
+        int wrote1 = -1, wrote2 = -1;
+        struct stat st;
+        int statted = -1;
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            wrote1 = vfs_write(fd1, "aaaa", 4);
+            wrote2 = vfs_write(fd2, "bb", 2);
+            statted = vfs_stat(f, &st);
+        }
+
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+
+        TEST_ASSERT("two descriptors opened", fd1 >= 0 && fd2 >= 0);
+        TEST_ASSERT_EQ("first descriptor wrote", wrote1, 4);
+        TEST_ASSERT_EQ("second descriptor wrote", wrote2, 2);
+        TEST_ASSERT_EQ("stat succeeded", statted, 0);
+        TEST_ASSERT_EQ("a shorter second write does not shrink the file", st.st_size, 4);
+
+        vfs_unlink(f);
+    }
+
+    // The same divergence on the offset side.
+    {
+        const char *f = "/tcoha.tmp";
+        vfs_unlink(f);
+
+        int fd1 = vfs_open(f, O_WRONLY | O_CREAT | O_APPEND);
+        int fd2 = vfs_open(f, O_WRONLY | O_APPEND);
+        char buf[8];
+        int got = -1;
+        struct stat st;
+        int statted = -1;
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            vfs_write(fd1, "aaaa", 4);
+            vfs_write(fd2, "bb", 2);
+            statted = vfs_stat(f, &st);
+
+            vfs_close(fd1);
+            vfs_close(fd2);
+            fd1 = fd2 = -1;
+
+            int rfd = vfs_open(f, O_RDONLY);
+            if (rfd >= 0) {
+                memset(buf, 0, sizeof(buf));
+                got = vfs_read(rfd, buf, sizeof(buf));
+                vfs_close(rfd);
+            }
+        }
+
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+
+        TEST_ASSERT_EQ("append stat succeeded", statted, 0);
+        TEST_ASSERT_EQ("appends from both descriptors accumulate", st.st_size, 6);
+        TEST_ASSERT_EQ("read back the whole file", got, 6);
+        TEST_ASSERT("second append went after the first", memcmp(buf, "aaaabb", 6) == 0);
+
+        vfs_unlink(f);
+    }
+
+    // A trailing slash asserts a directory, and a path cannot run through a file
+    {
+        const char *f = "/tslash.tmp";
+        struct stat st;
+
+        TEST_ASSERT_EQ("create never makes a file from dir/",
+                       vfs_open("/tslnew/", O_RDWR | O_CREAT), -EISDIR);
+        TEST_ASSERT("nothing was created", vfs_stat("/tslnew", &st) != 0);
+
+        int fd = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create slash probe file", fd >= 0);
+        if (fd >= 0) {
+            vfs_write(fd, "data", 4);
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT_EQ("a file named with a slash is not a directory",
+                       vfs_stat("/tslash.tmp/", &st), -ENOTDIR);
+        TEST_ASSERT_EQ("a path cannot continue through a file",
+                       vfs_open("/tslash.tmp/inner", O_RDWR | O_CREAT), -ENOTDIR);
+        TEST_ASSERT_EQ("rename refuses a file into dir/", vfs_rename(f, "/tslother/"), -ENOTDIR);
+
+        TEST_ASSERT_EQ("stat after the refusals", vfs_stat(f, &st), 0);
+        TEST_ASSERT_EQ("the file was not written through", st.st_size, 4);
+
+        vfs_unlink(f);
+    }
+
+    // SEEK_END sees what another descriptor appended, and whence is checked
+    {
+        const char *f = "/tseek.tmp";
+        int fd1 = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        int fd2 = vfs_open(f, O_RDWR);
+        TEST_ASSERT("open seek probes", fd1 >= 0 && fd2 >= 0);
+
+        if (fd1 >= 0 && fd2 >= 0) {
+            vfs_write(fd1, "abcdef", 6);
+            TEST_ASSERT_EQ("SEEK_END through the other descriptor",
+                           (int)vfs_lseek(fd2, 0, SEEK_END), 6);
+            TEST_ASSERT_EQ("an unknown whence", (int)vfs_lseek(fd2, 0, 99), -EINVAL);
+        }
+        if (fd1 >= 0) {
+            vfs_close(fd1);
+        }
+        if (fd2 >= 0) {
+            vfs_close(fd2);
+        }
+        vfs_unlink(f);
+    }
+
+    // The access mode an fd was opened with is checked as EBADF
+    {
+        const char *f = "/tmode.tmp";
+        char c = 0;
+
+        int wfd = vfs_open(f, O_WRONLY | O_CREAT | O_TRUNC);
+        int rfd = vfs_open(f, O_RDONLY);
+        TEST_ASSERT("open mode probes", wfd >= 0 && rfd >= 0);
+
+        if (wfd >= 0) {
+            TEST_ASSERT_EQ("read on a write-only fd", vfs_read(wfd, &c, 1), -EBADF);
+            vfs_close(wfd);
+        }
+        if (rfd >= 0) {
+            TEST_ASSERT_EQ("write on a read-only fd", vfs_write(rfd, "x", 1), -EBADF);
+            vfs_close(rfd);
+        }
+        vfs_unlink(f);
     }
 
     TEST_SUITE_END("VFS");

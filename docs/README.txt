@@ -22,12 +22,8 @@ THE MAP  (what to read, and when)
   order.txt
       The build ORDER (the "when"). A dependency-sequenced, phased roadmap of
       what to build next and what "done" means for each step. This is the
-      working plan.
-
-  ideas.txt
-      The feature/idea BACKLOG (the "what"). The full catalog, tagged
-      [DONE] / [PARTIAL] / [TODO] with rough difficulty/impact estimates.
-      order.txt sequences a subset of this.
+      working plan, and its last section is the backlog of what is wanted but
+      not yet sequenced.
 
   coding_style_guidelines.txt
       House style: naming, braces, header/source structure, include order, and
@@ -43,7 +39,7 @@ THE MAP  (what to read, and when)
 
 Process files that live at the repository ROOT (by convention, not here):
 
-  ../README.txt         Project overview, hardware support, build commands.
+  ../README.md          Project overview, hardware support, build commands.
   ../CONTRIBUTING.txt    The single entry point for making a change end to end.
   ../LICENSE             Licensing terms.
 

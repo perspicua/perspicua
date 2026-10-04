@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_DRIVER_BLOCK_H
 #define PERSPICUA_DRIVER_BLOCK_H
 
-#include "types.h"
+#include <stddef.h>
 
 /*
  * struct block_device - Represents a generic storage unit.

@@ -43,9 +43,14 @@ real_entry:
     eret
 
 el1_entry:
-    // enable fpu/simd
-    mov x0, #(3 << 20)
-    msr cpacr_el1, x0
+    // Leave CPACR_EL1.FPEN clear, so FP and SIMD trap at both EL0 and EL1.
+    // The trap frame holds general-purpose registers only; an FP instruction
+    // running here would use registers nothing saves or restores, and would
+    // corrupt whichever task ran next rather than failing. Nothing emits one
+    // today -- every target is built -mgeneral-regs-only -- so this costs
+    // nothing and turns a future silent corruption into a fault at the
+    // instruction that caused it.
+    msr cpacr_el1, xzr
     isb
 
     // The BCM2711 always has four cores; #3 extracts the id of whichever one
@@ -182,8 +187,12 @@ jump_main:
     br x1               // Core 0 goes to main()
 
 jump_secondary_main:
+#ifdef CONFIG_SMP
     ldr x0, =secondary_main
     br x0               // Cores 1, 2, 3 go to secondary_main()
+#else
+    b _entry_loop       // No SMP: there is no secondary_main to jump to.
+#endif
 
 _entry_loop:
     wfe

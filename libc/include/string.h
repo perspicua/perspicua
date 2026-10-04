@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_LIBC_STRING_H
 #define PERSPICUA_LIBC_STRING_H
 
-#include "types.h"
+#include <stddef.h>
 
 // String length and copying
 size_t strlen(const char *str);

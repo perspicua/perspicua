@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -16,7 +18,7 @@ static unsigned long file_count = 0;
 static int is_dir(const char *path)
 {
     struct stat st;
-    return sys_stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 /*
@@ -43,15 +45,15 @@ static void walk(const char *path, const char *prefix, int depth)
     }
 
     int count = 0;
-    struct vfs_dirent *e;
+    struct dirent *e;
     while ((e = readdir(d)) != NULL && count < MAX_ENTRIES) {
-        if (strcmp(e->name, ".") == 0 || strcmp(e->name, "..") == 0) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) {
             continue;
         }
-        if (e->name[0] == '.' && !show_all) {
+        if (e->d_name[0] == '.' && !show_all) {
             continue;
         }
-        names[count++] = strdup(e->name);
+        names[count++] = strdup(e->d_name);
     }
     closedir(d);
 
@@ -92,7 +94,7 @@ int main(int argc, char **argv)
     }
 
     struct stat st;
-    if (sys_stat(root, &st) < 0) {
+    if (stat(root, &st) < 0) {
         printf("tree: %s: No such file or directory\n", root);
         return 1;
     }

@@ -2,8 +2,10 @@
  * panic.h - Error handling and assertion primitives.
  */
 
-#ifndef PERSPICUA_LIBC_PANIC_H
-#define PERSPICUA_LIBC_PANIC_H
+#ifndef PERSPICUA_PANIC_H
+#define PERSPICUA_PANIC_H
+
+#include <stdbool.h>
 
 #include "arch/exception.h"
 
@@ -42,4 +44,4 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
         }                                                                                    \
     } while (0)
 
-#endif // PERSPICUA_LIBC_PANIC_H
+#endif // PERSPICUA_PANIC_H

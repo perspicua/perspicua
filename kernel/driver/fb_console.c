@@ -4,6 +4,8 @@
 
 #include "driver/fb_console.h"
 
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 

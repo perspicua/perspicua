@@ -5,15 +5,16 @@
 #ifndef PERSPICUA_LIBC_STDIO_H
 #define PERSPICUA_LIBC_STDIO_H
 
-#include "types.h"
+#include <stddef.h>
 
+#include "uapi/types.h"
+
+#include "uapi/fcntl.h"
 #include <stdarg.h>
 
 #define EOF (-1)
 
-#define SEEK_SET 0
-#define SEEK_CUR 1
-#define SEEK_END 2
+int rename(const char *oldpath, const char *newpath);
 
 typedef struct _FILE {
     int fd;
@@ -46,10 +47,20 @@ int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // Kernel-specific logging that prepends a system timestamp.
 int printk(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-    #define pr_info(fmt, ...)  printk(fmt, ##__VA_ARGS__)
-    #define pr_err(fmt, ...)   printk("ERROR: " fmt, ##__VA_ARGS__)
-    #define pr_warn(fmt, ...)  printk("WARNING: " fmt, ##__VA_ARGS__)
-    #define pr_debug(fmt, ...) printk("DEBUG: " fmt, ##__VA_ARGS__)
+    #define pr_info(fmt, ...) printk(fmt, ##__VA_ARGS__)
+    #define pr_err(fmt, ...)  printk("ERROR: " fmt, ##__VA_ARGS__)
+    #define pr_warn(fmt, ...) printk("WARNING: " fmt, ##__VA_ARGS__)
+    #ifdef CONFIG_DEBUG_LOG
+        #define pr_debug(fmt, ...) printk("DEBUG: " fmt, ##__VA_ARGS__)
+    #else
+        // Still type-checks the format and arguments when compiled out.
+        #define pr_debug(fmt, ...)              \
+            do {                                \
+                if (0) {                        \
+                    printk(fmt, ##__VA_ARGS__); \
+                }                               \
+            } while (0)
+    #endif
 #endif
 
 // va_list variant of printf.

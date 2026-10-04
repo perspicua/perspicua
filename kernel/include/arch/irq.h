@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_ARCH_IRQ_H
 #define PERSPICUA_ARCH_IRQ_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "arch/cpu.h"
 

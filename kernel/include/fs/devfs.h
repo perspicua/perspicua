@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_FS_DEVFS_H
 #define PERSPICUA_FS_DEVFS_H
 
-#include "types.h"
-
 #include "fs/vfs.h"
 
 void devfs_init(void);

@@ -5,22 +5,22 @@
 #include "syscall.h"
 #include "stdio.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
 #include "stdlib.h"
 
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
-    int fd = sys_open(path, VFS_O_RDONLY);
+    int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return -1;
     }
-    int n = sys_read(fd, buf, bufsz - 1);
+    int n = read(fd, buf, bufsz - 1);
     if (n > 0) {
         buf[n] = '\0';
     } else {
         buf[0] = '\0';
     }
-    sys_close(fd);
+    close(fd);
     return n;
 }
 
@@ -153,19 +153,19 @@ int main(void)
     unsigned long mem_used = (mem_total >= mem_free) ? mem_total - mem_free : 0;
 
     int procs = 0;
-    int fd = sys_open("/proc", VFS_O_RDONLY);
+    int fd = open("/proc", O_RDONLY);
     if (fd >= 0) {
-        struct vfs_dirent dent;
-        while (sys_getdents(fd, &dent, sizeof(dent)) > 0) {
-            if (dent.name[0] >= '1' && dent.name[0] <= '9') {
+        struct dirent dent;
+        while (getdents(fd, &dent, sizeof(dent)) > 0) {
+            if (dent.d_name[0] >= '1' && dent.d_name[0] <= '9') {
                 procs++;
             }
         }
-        sys_close(fd);
+        close(fd);
     }
 
     char cwd[256];
-    sys_getcwd(cwd, sizeof(cwd));
+    getcwd(cwd, sizeof(cwd));
 
     // 2. Format Info Lines
     add_info("OS", "Perspicua");
@@ -178,7 +178,7 @@ int main(void)
     add_info("SHELL", "sh");
     snprintf(tmp, sizeof(tmp), "%d", procs);
     add_info("PROCS", tmp);
-    snprintf(tmp, sizeof(tmp), "%d", sys_getpid());
+    snprintf(tmp, sizeof(tmp), "%d", getpid());
     add_info("PID", tmp);
     add_info("CWD", cwd);
     add_sep();

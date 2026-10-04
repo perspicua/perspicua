@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -32,7 +34,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    int fd = sys_open(argv[1], VFS_O_RDONLY);
+    int fd = open(argv[1], O_RDONLY);
     if (fd < 0) {
         printf("hd: cannot open %s\n", argv[1]);
         return 1;
@@ -42,7 +44,7 @@ int main(int argc, char **argv)
     int n, have_prev = 0, squelched = 0;
     unsigned long offset = 0;
 
-    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
         /* Only full 16-byte lines participate in collapsing, so a partial final
          * line is always shown. */
         if (n == 16 && have_prev && memcmp(buf, prev, 16) == 0) {
@@ -62,6 +64,6 @@ int main(int argc, char **argv)
     }
 
     printf("%08lx\n", offset);
-    sys_close(fd);
+    close(fd);
     return 0;
 }

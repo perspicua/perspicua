@@ -2,8 +2,10 @@
  * test_mutex.c - Tests for the recursive sleeping mutex (kmutex).
  *
  * Only the uncontended and recursive paths are covered here; the blocking
- * path needs a second runnable task and belongs in the scheduler phase.
+ * path needs live tasks and is in test_wait.c.
  */
+
+#include <stddef.h>
 
 #include "test.h"
 
@@ -22,8 +24,8 @@ void test_mutex(void)
         kmutex_init(&m);
         TEST_ASSERT("init leaves unowned", m.owner == NULL);
         TEST_ASSERT_EQ("init leaves depth 0", (long)m.depth, 0);
-        TEST_ASSERT("init leaves empty wait queue", m.wait_head == NULL);
-        TEST_ASSERT("init leaves null wait tail", m.wait_tail == NULL);
+        TEST_ASSERT("init leaves empty wait queue", m.wq.head == NULL);
+        TEST_ASSERT("init leaves null wait tail", m.wq.tail == NULL);
     }
 
     // the static initialiser must match kmutex_init
@@ -31,7 +33,8 @@ void test_mutex(void)
         struct kmutex statically = KMUTEX_INIT;
         TEST_ASSERT("static init unowned", statically.owner == NULL);
         TEST_ASSERT_EQ("static init depth 0", (long)statically.depth, 0);
-        TEST_ASSERT("static init empty queue", statically.wait_head == NULL);
+        TEST_ASSERT("static init empty queue", statically.wq.head == NULL);
+        TEST_ASSERT("static init null wait tail", statically.wq.tail == NULL);
     }
 
     // uncontended lock takes ownership and unlock releases it

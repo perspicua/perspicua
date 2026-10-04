@@ -7,16 +7,17 @@
  * take PID 1 and stop init from loading later in the boot.
  */
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
+#include "uapi/errno.h"
 
 #include "string.h"
 
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
 
-#include "arch/exception.h"
-
-#include "core/syscall.h"
 #include "fs/vfs.h"
 #include "mm/addr.h"
 #include "mm/mmu.h"
@@ -25,20 +26,12 @@
 
 #define MMAP_FILE "/tmmap.tmp"
 
-// Driving SYS_MMAP needs a trap frame; it is 800 bytes, so keep it off the stack.
-static struct exception_trap_frame mmap_tf;
-
 static int64_t call_mmap(size_t length, int flags, int fd)
 {
-    memset(&mmap_tf, 0, sizeof(mmap_tf));
-    mmap_tf.x[8] = SYS_MMAP;
-    mmap_tf.x[0] = 0; // addr hint, unused
-    mmap_tf.x[1] = length;
-    mmap_tf.x[2] = PROT_READ | PROT_WRITE;
-    mmap_tf.x[3] = (uint64_t)flags;
-    mmap_tf.x[4] = (uint64_t)(int64_t)fd;
-    syscall_handle(&mmap_tf);
-    return (int64_t)mmap_tf.x[0];
+    // The address hint is unused.
+    uint64_t args[6] = {0, length, PROT_READ | PROT_WRITE, (uint64_t)flags, (uint64_t)(int64_t)fd,
+                        0};
+    return test_syscall(SYS_MMAP, args);
 }
 
 static void release_slot(int slot)
@@ -161,23 +154,17 @@ void test_process(void)
      * has none: lend it one for the duration and take it back before asserting.
      */
     {
-        unsigned long *pgd = mmu_create_user_pgd();
-        int fd = vfs_open(MMAP_FILE, VFS_O_RDWR | VFS_O_CREAT);
+        unsigned long *pgd = test_borrow_user_pgd();
+        int fd = vfs_open(MMAP_FILE, O_RDWR | O_CREAT);
 
         int64_t file_backed = 0, anon = 0, anon_with_fd = 0, bad_fd = 0, no_backing = 0;
 
         if (pgd && fd >= 0) {
-            process_table[0]->user_pgd = pgd;
-            process_table[0]->va.count = 0;
-
             file_backed = call_mmap(PAGE_SIZE, 0, fd);              // no ->mmap op
             anon_with_fd = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, fd); // contradictory
             bad_fd = call_mmap(PAGE_SIZE, 0, VFS_MAX_FDS + 5);
             no_backing = call_mmap(PAGE_SIZE, 0, -1); // neither file nor anonymous
             anon = call_mmap(PAGE_SIZE, MAP_ANONYMOUS, -1);
-
-            process_table[0]->user_pgd = NULL;
-            process_table[0]->va.count = 0;
         }
 
         if (fd >= 0) {
@@ -185,18 +172,16 @@ void test_process(void)
             vfs_unlink(MMAP_FILE);
         }
         if (pgd) {
-            mmu_destroy_user_pgd(pgd);
+            test_release_user_pgd(pgd);
         }
 
+        // The errno is the assertion: -1 reaches the caller as EPERM.
         TEST_ASSERT("mmap test setup", pgd != NULL && fd >= 0);
-        TEST_ASSERT("file with no mmap op is refused",
-                    file_backed == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("anonymous with a descriptor is refused",
-                    anon_with_fd == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("out-of-range descriptor is refused", bad_fd == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("neither file nor anonymous is refused",
-                    no_backing == (int64_t)(uintptr_t)MAP_FAILED);
-        TEST_ASSERT("anonymous mapping succeeds", anon != (int64_t)(uintptr_t)MAP_FAILED);
+        TEST_ASSERT("file with no mmap op is refused", file_backed == -ENODEV);
+        TEST_ASSERT("anonymous with a descriptor is refused", anon_with_fd == -EBADF);
+        TEST_ASSERT("out-of-range descriptor is refused", bad_fd == -EBADF);
+        TEST_ASSERT("neither file nor anonymous is refused", no_backing == -EBADF);
+        TEST_ASSERT("anonymous mapping succeeds", anon > 0);
     }
 
     /*

@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_UAPI_STAT_H
 #define PERSPICUA_UAPI_STAT_H
 
-#include "types.h"
+#include <stdint.h>
 
 // File types
 #define S_IFMT  0xF000

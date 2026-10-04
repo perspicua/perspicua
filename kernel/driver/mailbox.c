@@ -5,6 +5,9 @@
 #include "driver/mailbox.h"
 #include "driver/device.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "panic.h"
 

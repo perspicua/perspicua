@@ -7,7 +7,7 @@
 
 #include "mm/asid.h"
 #include "uapi/wait.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 #include "arch/exception.h"
 #include "mm/addr.h"
 #include "core/elf.h"
@@ -20,13 +20,15 @@
 #include "stdio.h"
 #include "string.h"
 #include "arch/irq.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 #include "core/tty.h"
 #include "fs/vfs.h"
 #include "arch/uaccess.h"
 
 spinlock_t process_table_lock = SPINLOCK_INIT;
 struct process *process_table[PROCESS_TABLE_SIZE];
+unsigned long process_forks;
 
 // Performs ERET to EL0 using the trap frame on the kernel stack
 extern void ret_to_user(void);
@@ -42,9 +44,9 @@ static void va_init(struct va_allocator *va)
 
 static void open_std_fds(uint32_t pid)
 {
-    vfs_open_pid("/dev/console", VFS_O_RDONLY, pid);
-    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
-    vfs_open_pid("/dev/console", VFS_O_WRONLY, pid);
+    vfs_open_pid("/dev/console", O_RDONLY, pid);
+    vfs_open_pid("/dev/console", O_WRONLY, pid);
+    vfs_open_pid("/dev/console", O_WRONLY, pid);
 }
 
 // Names a process after the file it runs, truncating rather than overflowing.
@@ -61,8 +63,8 @@ static void process_set_name(struct process *p, const char *path)
 static void process_init_signals(struct process *p)
 {
     memset(p->signal_handlers, 0, sizeof(p->signal_handlers));
-    for (int i = 0; i < SIGNAL_COUNT; i++) {
-        p->signal_handlers[i].sa_handler = SIGNAL_DFL;
+    for (int i = 0; i < NSIG; i++) {
+        p->signal_handlers[i].sa_handler = SIG_DFL;
     }
 }
 
@@ -91,19 +93,17 @@ static void process_start_task(struct process *p, struct task *t)
     sched_enqueue(cpu_id(), t);
 }
 
+// Each file is put outside fd_lock: the last reference may sleep in release.
 static void close_all_fds(struct process *p)
 {
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
+        unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
         struct vfs_file *f = p->fd_table[i];
-        if (!f) {
-            continue;
-        }
-
         p->fd_table[i] = NULL;
+        spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
         vfs_file_put(f);
     }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
 }
 
 /*
@@ -145,9 +145,14 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
     for (size_t i = 0; i < pages; i++) {
         void *page = pmm_alloc_page();
         if (!page) {
-            PANIC("process: user stack OOM");
+            process_va_free(va, vbase);
+            return 0;
         }
-        mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA);
+        if (mmu_user_map_page(pgd, vbase + i * PAGE_SIZE, V2P(page), MMU_PAGE_USER_DATA) != 0) {
+            pmm_free_page(page);
+            process_va_free(va, vbase);
+            return 0;
+        }
     }
     return vbase;
 }
@@ -263,7 +268,7 @@ void process_va_free(struct va_allocator *va, uintptr_t base)
 int process_current_pid(void)
 {
     struct task *t = sched_current_task();
-    return t ? (int)t->pid : -PERS_ERR_NO_SUCH_PROCESS;
+    return t ? (int)t->pid : -ESRCH;
 }
 
 struct process *process_current(void)
@@ -342,20 +347,20 @@ void process_init(void)
 int process_create_from_file(const char *path, uint32_t pid)
 {
     if (pid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     // Allocated before the lock: heap_malloc must not run with interrupts off.
     struct process *p = process_alloc_pcb(pid);
     if (!p) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     if (process_table[pid]) {
         spin_unlock_irqrestore(&process_table_lock, flags);
         heap_free(p);
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
     process_table[pid] = p;
     spin_unlock_irqrestore(&process_table_lock, flags);
@@ -365,14 +370,14 @@ int process_create_from_file(const char *path, uint32_t pid)
     unsigned long *user_pgd = mmu_create_user_pgd();
     if (!user_pgd) {
         process_release_slot(pid);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     uint64_t entry_point;
     if (elf_load(path, user_pgd, &entry_point) != 0) {
         mmu_destroy_user_pgd(user_pgd);
         process_release_slot(pid);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return -ENOEXEC;
     }
 
     uintptr_t vaddr_stack = setup_user_stack(&p->va, user_pgd, PROCESS_USER_STACK_PAGES);
@@ -380,8 +385,9 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     if (!vaddr_stack || !kstack) {
         mmu_destroy_user_pgd(user_pgd);
+        kstack_free(kstack);
         process_release_slot(pid);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     p->parent_pid = 0;
@@ -400,9 +406,6 @@ int process_create_from_file(const char *path, uint32_t pid)
     uintptr_t user_sp_top = vaddr_stack + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     struct exception_trap_frame *tf = build_trap_frame((uintptr_t)kstack, entry_point, user_sp_top);
 
-    p->context.sp = (unsigned long)tf;
-    p->context.lr = (unsigned long)ret_to_user;
-
     int err;
     p->cwd = vfs_resolve_path("/", NULL, &err);
     for (int i = 0; i < VFS_MAX_FDS; i++) {
@@ -413,8 +416,8 @@ int process_create_from_file(const char *path, uint32_t pid)
 
     process_init_signals(p);
 
-    struct task *t =
-        sched_create_user_task(p->context.sp, p->context.lr, p->vaddr_kernel_stack, pid);
+    struct task *t = sched_create_user_task((unsigned long)tf, (unsigned long)ret_to_user,
+                                            p->vaddr_kernel_stack, pid);
     if (!t) {
         close_all_fds(p);
         if (p->cwd) {
@@ -423,13 +426,13 @@ int process_create_from_file(const char *path, uint32_t pid)
         kstack_free(kstack);
         mmu_destroy_user_pgd(user_pgd);
         process_release_slot(pid);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     process_start_task(p, t);
 
     pr_info("proc: loaded '%s' (PID %u)\n", path, pid);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 // Limits on a single exec vector: entries, and bytes per entry.
@@ -456,13 +459,13 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
     out[0] = NULL;
 
     if (!user_vec) {
-        return PERS_SUCCESS;
+        return 0;
     }
 
     while (count < EXEC_MAX_VECTOR - 1) {
         char *uentry;
         if (copy_from_user(&uentry, &user_vec[count], sizeof(char *)) != 0) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         if (!uentry) {
             break;
@@ -470,7 +473,7 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
 
         char *kentry = heap_malloc(EXEC_MAX_ARG);
         if (!kentry) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
 
         long len = strncpy_from_user(kentry, uentry, EXEC_MAX_ARG);
@@ -484,7 +487,7 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
     }
 
     out[count] = NULL;
-    return PERS_SUCCESS;
+    return 0;
 }
 
 int process_exec(const char *path, char *const argv[], char *const envp[])
@@ -496,22 +499,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     struct process *p = process_slot((uint32_t)pid);
     if (!p) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
-    }
-
-    int fds_to_close[VFS_MAX_FDS];
-    int close_count = 0;
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
-    for (int i = 0; i < VFS_MAX_FDS; i++) {
-        if (p->fd_table[i] && (p->fd_flags[i] & VFS_FD_CLOEXEC)) {
-            fds_to_close[close_count++] = i;
-        }
-    }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
-
-    for (int i = 0; i < close_count; i++) {
-        vfs_close(fds_to_close[i]);
+        return -ESRCH;
     }
 
     /*
@@ -525,25 +513,47 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     int envc = 0;
 
     int copy_err = copy_user_vector(argv, kargv, &argc);
-    if (copy_err != PERS_SUCCESS) {
+    if (copy_err != 0) {
         free_vector(kargv, argc);
         return copy_err;
     }
 
     copy_err = copy_user_vector(envp, kenvp, &envc);
-    if (copy_err != PERS_SUCCESS) {
+    if (copy_err != 0) {
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
         return copy_err;
     }
 
+    // Both vectors go on the new stack after the old image is gone, so they
+    // are sized now; they may take half of it, and the program keeps the rest.
+    size_t need = (size_t)(argc + envc + 2) * sizeof(uintptr_t) + 32;
+    for (int i = 0; i < argc; i++) {
+        need += strlen(kargv[i]) + 1 + 7;
+    }
+    for (int i = 0; i < envc; i++) {
+        need += strlen(kenvp[i]) + 1 + 7;
+    }
+    if (need > PROCESS_USER_STACK_PAGES * PAGE_SIZE / 2) {
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
+        return -E2BIG;
+    }
+
     unsigned long *new_pgd = mmu_create_user_pgd();
+    if (!new_pgd) {
+        free_vector(kargv, argc);
+        free_vector(kenvp, envc);
+        return -ENOMEM;
+    }
+
     uint64_t entry_point;
-    if (!new_pgd || elf_load(path, new_pgd, &entry_point) != 0) {
+    int load_err = elf_load(path, new_pgd, &entry_point);
+    if (load_err != 0) {
         mmu_destroy_user_pgd(new_pgd);
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
-        return -PERS_ERR_EXECUTABLE_FORMAT_ERROR;
+        return load_err;
     }
 
     struct va_allocator new_va;
@@ -553,7 +563,26 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         mmu_destroy_user_pgd(new_pgd);
         free_vector(kargv, argc);
         free_vector(kenvp, envc);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
+    }
+
+    /*
+     * Past the last failure point, so the caller of a failed exec keeps the
+     * descriptors it opened. POSIX requires a failed exec to change nothing.
+     */
+    int fds_to_close[VFS_MAX_FDS];
+    int close_count = 0;
+
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        if (p->fd_table[i] && (p->fd_flags[i] & FD_CLOEXEC)) {
+            fds_to_close[close_count++] = i;
+        }
+    }
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+
+    for (int i = 0; i < close_count; i++) {
+        vfs_close(fds_to_close[i]);
     }
 
     // Set up user stack with argc/argv (top-down)
@@ -616,19 +645,27 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
      * initial creation.
      */
 
-    for (int i = 0; i < SIGNAL_COUNT; i++) {
-        if (p->signal_handlers[i].sa_handler != SIGNAL_IGN) {
+    for (int i = 0; i < NSIG; i++) {
+        if (p->signal_handlers[i].sa_handler != SIG_IGN) {
             memset(&p->signal_handlers[i], 0, sizeof(struct sigaction));
-            p->signal_handlers[i].sa_handler = SIGNAL_DFL;
+            p->signal_handlers[i].sa_handler = SIG_DFL;
         }
     }
-    p->pending_signals = 0;
+    // pending_signals deliberately survives: POSIX keeps the pending set across
+    // exec, and clearing it here loses a SIGKILL sent while exec was running.
+
+    // The new image does not own the old one's alt stack address.
+    memset(&p->sigaltstack, 0, sizeof(p->sigaltstack));
 
     unsigned long *old_pgd = p->user_pgd;
     p->user_pgd = new_pgd;
     p->vaddr_code = (uintptr_t)entry_point;
     p->vaddr_user_stack = new_stack_base;
     p->va = new_va;
+
+    // p->asid alone may be from a retired generation, which after a rollover
+    // puts two live address spaces on one ASID.
+    asid_get_active(&p->asid, &p->asid_generation);
     p->ttbr0 = V2P(new_pgd) | asid_ttbr_field(p->asid);
 
     process_set_name(p, path);
@@ -649,9 +686,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     tf->x[1] = (uint64_t)argv_ptr;
     tf->x[2] = (uint64_t)envp_ptr;
 
-    p->context.sp = (unsigned long)tf;
-    p->context.lr = (unsigned long)ret_to_user;
-
     struct task *curr = sched_current_task();
     if (curr) {
         curr->context.sp = (unsigned long)tf;
@@ -661,8 +695,8 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     p->has_execed = 1;
-    pr_info("proc: PID %d exec '%s'\n", pid, path);
-    return PERS_SUCCESS;
+    pr_debug("proc: PID %d exec '%s'\n", pid, path);
+    return 0;
 }
 
 void process_exit(uint32_t pid, int exit_status)
@@ -675,23 +709,18 @@ void process_exit(uint32_t pid, int exit_status)
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
-        struct task *dying = sched_current_task();
-        if (dying) {
-            dying->state = SCHED_TASK_DEAD;
-        }
-        for (;;) {
-            sched_schedule();
-        }
+        sched_exit_current();
     }
 
     if (p->sid == p->pid) {
         tty_session_exit(p->sid);
     }
 
-    pr_info("proc: PID %u exiting with status %d\n", pid, exit_status);
+    pr_debug("proc: PID %u exiting with status %d\n", pid, exit_status);
 
     // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    int orphaned_zombie = 0;
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
         if (i == (int)pid) {
             continue;
@@ -701,6 +730,9 @@ void process_exit(uint32_t pid, int exit_status)
         }
         if (process_table[i]->parent_pid == pid) {
             process_table[i]->parent_pid = 1;
+            if (process_table[i]->state == PROCESS_STATE_ZOMBIE) {
+                orphaned_zombie = 1;
+            }
         }
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
@@ -737,6 +769,11 @@ void process_exit(uint32_t pid, int exit_status)
      * zombie state, so nothing can find it in between. */
     p->main_task = NULL;
 
+    // The slot can be reaped and its pid reused while this task still runs.
+    struct task *self = sched_current_task();
+    self->pid = 0;
+    self->ttbr0 = mmu_kernel_ttbr0();
+
     uint32_t ppid = p->parent_pid;
     struct process *parent = process_slot(ppid);
     int notify_parent = (ppid != 0 && parent && parent->state == PROCESS_STATE_RUNNING);
@@ -746,7 +783,7 @@ void process_exit(uint32_t pid, int exit_status)
      * wake a parent blocked in waitpid() even if it ignores SIGCHLD. Re-validate
      * under the lock before touching main_task in case the slot was reused. */
     if (notify_parent) {
-        signal_send(ppid, SIGNAL_CHLD);
+        signal_send(ppid, SIGCHLD);
 
         flags = spin_lock_irqsave(&process_table_lock);
         parent = process_table[ppid];
@@ -756,14 +793,20 @@ void process_exit(uint32_t pid, int exit_status)
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    struct task *dying = sched_current_task();
-    if (dying) {
-        dying->state = SCHED_TASK_DEAD;
+    // Init was never told about these deaths, and they are past announcing
+    // themselves, so it would sleep in waitpid holding their slots.
+    if (orphaned_zombie && pid != 1) {
+        signal_send(1, SIGCHLD);
+
+        flags = spin_lock_irqsave(&process_table_lock);
+        struct process *initp = process_slot(1);
+        if (initp && initp->state == PROCESS_STATE_RUNNING && initp->main_task != NULL) {
+            sched_unblock(initp->main_task);
+        }
+        spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    for (;;) {
-        sched_schedule();
-    }
+    sched_exit_current();
 }
 
 static int process_claim_slot(void)
@@ -775,7 +818,7 @@ static int process_claim_slot(void)
      */
     struct process *p = process_alloc_pcb(0);
     if (!p) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -794,7 +837,7 @@ static int process_claim_slot(void)
 
     spin_unlock_irqrestore(&process_table_lock, flags);
     heap_free(p);
-    return -PERS_ERR_OUT_OF_RESOURCES;
+    return -ENFILE;
 }
 
 #ifdef CONFIG_TESTS
@@ -818,7 +861,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
 
     struct process *parent = process_slot((uint32_t)parent_pid);
     if (!parent) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     int child_pid = process_claim_slot();
@@ -833,8 +876,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
 
     if (!child_pgd || !kstack) {
         mmu_destroy_user_pgd(child_pgd);
+        kstack_free(kstack);
         process_release_slot((uint32_t)child_pid);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     child->user_pgd = child_pgd;
@@ -856,6 +900,7 @@ int process_fork(struct exception_trap_frame *parent_tf)
     memcpy(child->signal_handlers, parent->signal_handlers, sizeof(child->signal_handlers));
     child->pending_signals = 0;
     child->blocked_signals = parent->blocked_signals;
+    child->sigaltstack = parent->sigaltstack;
 
     if (parent->cwd) {
         child->cwd = parent->cwd;
@@ -869,11 +914,8 @@ int process_fork(struct exception_trap_frame *parent_tf)
     memcpy(child_tf, parent_tf, sizeof(*child_tf));
     child_tf->x[0] = 0; // Child returns 0 from fork
 
-    child->context.sp = (unsigned long)child_tf;
-    child->context.lr = (unsigned long)ret_to_user;
-
-    struct task *t = sched_create_user_task(child->context.sp, child->context.lr, (uintptr_t)kstack,
-                                            (uint32_t)child_pid);
+    struct task *t = sched_create_user_task((unsigned long)child_tf, (unsigned long)ret_to_user,
+                                            (uintptr_t)kstack, (uint32_t)child_pid);
     if (!t) {
         close_all_fds(child);
         if (child->cwd) {
@@ -882,12 +924,13 @@ int process_fork(struct exception_trap_frame *parent_tf)
         kstack_free(kstack);
         mmu_destroy_user_pgd(child_pgd);
         process_release_slot((uint32_t)child_pid);
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     process_start_task(child, t);
+    __atomic_fetch_add(&process_forks, 1, __ATOMIC_RELAXED);
 
-    pr_info("proc: PID %d forked -> PID %d\n", parent_pid, child_pid);
+    pr_debug("proc: PID %d forked -> PID %d\n", parent_pid, child_pid);
     return child_pid;
 }
 
@@ -895,7 +938,7 @@ int process_waitpid(int pid, int *status, int options)
 {
     int parent_pid = process_current_pid();
     if (parent_pid < 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     for (;;) {
@@ -937,7 +980,7 @@ int process_waitpid(int pid, int *status, int options)
                 int found_pid = (int)candidate->pid;
                 candidate->stop_reported = 1;
                 if (status) {
-                    *status = PERS_STATUS_STOPPED | SIGNAL_TSTP;
+                    *status = __W_STOPPED | candidate->stop_sig;
                 }
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
@@ -948,7 +991,7 @@ int process_waitpid(int pid, int *status, int options)
         if (!has_children) {
             spin_unlock(&process_table_lock);
             irq_restore(irqf);
-            return -PERS_ERR_NO_SUCH_PROCESS;
+            return -ECHILD;
         }
 
         if (options & WNOHANG) {
@@ -957,9 +1000,17 @@ int process_waitpid(int pid, int *status, int options)
             return 0;
         }
 
+        // Under the table lock the sender also holds, so nothing slips in
+        // between this and the transition below.
+        if (signal_pending(process_slot((uint32_t)parent_pid))) {
+            spin_unlock(&process_table_lock);
+            irq_restore(irqf);
+            return -ERESTARTSYS;
+        }
+
         struct task *curr = sched_current_task();
         if (curr) {
-            curr->state = SCHED_TASK_BLOCKED;
+            sched_task_set_blocked(curr);
         }
 
         spin_unlock(&process_table_lock);

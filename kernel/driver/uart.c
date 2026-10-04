@@ -7,7 +7,8 @@
 
 #include "io.h"
 #include "stdio.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "arch/irq.h"
 #include "core/lock.h"
@@ -17,7 +18,7 @@
 #include "devicetree/fdt.h"
 #include "driver/gic.h"
 #include "driver/gpio.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
@@ -41,6 +42,7 @@ static volatile uint32_t *uart_icr = NULL;
 // Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
+static uart_tx_cb_t uart_flush_callback = NULL;
 
 static irq_result_t uart_irq_handler(void *ctx)
 {
@@ -52,7 +54,7 @@ static irq_result_t uart_irq_handler(void *ctx)
 static int pl011_uart_probe(struct device *dev)
 {
     if (uart_ready) {
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
 
     uintptr_t vbase = devm_get_io_base(dev, 0);
@@ -120,9 +122,32 @@ void uart_send_raw(char c)
     mmio_write(uart_dr, (unsigned int)c);
 }
 
+void uart_write_raw(const char *buf, size_t len)
+{
+    for (size_t i = 0; i < len; i++) {
+        uart_send_raw(buf[i]);
+    }
+}
+
+/*
+ * A panicking core must not take uart_tx_lock.
+ */
+static inline int uart_tx_unserialized(void)
+{
+    return kernel_panicked;
+}
+
 void uart_send(char c)
 {
+    if (uart_tx_unserialized()) {
+        uart_send_raw(c);
+        return;
+    }
+
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    if (uart_flush_callback) {
+        uart_flush_callback();
+    }
     uart_send_raw(c);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
@@ -131,10 +156,16 @@ void uart_send(char c)
 // bytes into it.
 void uart_write_locked(const char *buf, size_t len)
 {
-    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-    for (size_t i = 0; i < len; i++) {
-        uart_send_raw(buf[i]);
+    if (uart_tx_unserialized()) {
+        uart_write_raw(buf, len);
+        return;
     }
+
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    if (uart_flush_callback) {
+        uart_flush_callback();
+    }
+    uart_write_raw(buf, len);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 
@@ -176,9 +207,19 @@ void uart_reg_tx_callback(uart_tx_cb_t f)
     uart_tx_callback = f;
 }
 
+void uart_reg_flush_callback(uart_tx_cb_t f)
+{
+    uart_flush_callback = f;
+}
+
 void uart_handle_irq(void)
 {
     uint32_t mis = mmio_read(uart_mis);
+
+    /* Acknowledge before draining: a byte landing between the drain loop
+     * seeing RXFE and this write has already raised its own interrupt, and
+     * clearing afterwards strands it in the FIFO with nothing to read it. */
+    uart_clear_interrupt(mis);
 
     if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
         while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
@@ -193,6 +234,4 @@ void uart_handle_irq(void)
             uart_tx_callback();
         }
     }
-
-    uart_clear_interrupt(mis);
 }

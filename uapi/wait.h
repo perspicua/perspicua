@@ -9,9 +9,9 @@
  * well above that range marks a stop report without disturbing the raw status
  * convention every existing caller relies on.
  */
-#define PERS_STATUS_STOPPED 0x10000
+#define __W_STOPPED 0x10000
 
-#define WIFSTOPPED(s) (((s) & PERS_STATUS_STOPPED) != 0)
+#define WIFSTOPPED(s) (((s) & __W_STOPPED) != 0)
 #define WSTOPSIG(s)   ((s) & 0xFF)
 
 #endif // PERSPICUA_UAPI_WAIT_H

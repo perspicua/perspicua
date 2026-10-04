@@ -29,8 +29,11 @@ int preempt_active(void)
 
 void spin_lock(spinlock_t *lock)
 {
-    lockdep_acquire(lock);
+    /* Before lockdep, not after: lockdep_acquire takes a global lock of its
+     * own, and being preempted inside it leaves every other core spinning for
+     * that lock behind a task that is no longer scheduled. */
     preempt_count[cpu_id()]++;
+    lockdep_acquire(lock);
 
     unsigned int tmp;
     unsigned int one = 1;

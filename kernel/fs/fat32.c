@@ -3,13 +3,16 @@
  */
 
 #include "fs/fat32.h"
+#include "core/timer.h"
 
 #include "fs/vfs.h"
 #include "stdio.h"
 #include "string.h"
 
-#include "types.h"
-#include "uapi/errors.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include "uapi/errno.h"
 
 #include "core/lock.h"
 #include "core/mutex.h"
@@ -36,6 +39,102 @@ static struct fat32_fs current_fs;
  * cache eviction path.
  */
 static struct kmutex fat32_lock = KMUTEX_INIT;
+
+static struct vfs_vnode_ops fat32_vnode_ops;
+static int fat32_free_cluster_chain(uint32_t start_cluster);
+
+/*
+ * Files some vnode still has open, by start cluster. The start cluster is a
+ * file's identity for its whole life: create allocates it and truncate keeps
+ * it. Unlinking or replacing an open file leaves its chain to the last
+ * release, as on any Unix filesystem. Under fat32_lock.
+ */
+struct fat32_open {
+    uint32_t cluster;
+    uint32_t count;
+    int orphaned;
+    struct fat32_open *next;
+};
+
+static struct fat32_open *fat32_opens;
+
+static struct fat32_open *open_find(uint32_t cluster)
+{
+    for (struct fat32_open *o = fat32_opens; o; o = o->next) {
+        if (o->cluster == cluster) {
+            return o;
+        }
+    }
+    return NULL;
+}
+
+static int open_track(uint32_t cluster)
+{
+    if (cluster < 2) {
+        return 0;
+    }
+
+    struct fat32_open *o = open_find(cluster);
+    if (!o) {
+        o = slab_alloc(sizeof(*o));
+        if (!o) {
+            return -ENOMEM;
+        }
+        o->cluster = cluster;
+        o->count = 0;
+        o->orphaned = 0;
+        o->next = fat32_opens;
+        fat32_opens = o;
+    }
+    o->count++;
+    return 0;
+}
+
+static void open_untrack(uint32_t cluster)
+{
+    struct fat32_open **pp = &fat32_opens;
+    while (*pp && (*pp)->cluster != cluster) {
+        pp = &(*pp)->next;
+    }
+
+    struct fat32_open *o = *pp;
+    if (!o || --o->count > 0) {
+        return;
+    }
+
+    *pp = o->next;
+    int orphaned = o->orphaned;
+    slab_free(o);
+
+    if (orphaned) {
+        pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)cluster);
+        fat32_free_cluster_chain(cluster);
+    }
+}
+
+// Frees a chain no entry names any more, or leaves it to the last release.
+static int fat32_release_chain(uint32_t cluster)
+{
+    struct fat32_open *o = open_find(cluster);
+    if (o) {
+        o->orphaned = 1;
+        return 0;
+    }
+
+    pagecache_discard(&fat32_vnode_ops, (void *)(uintptr_t)cluster);
+    return fat32_free_cluster_chain(cluster);
+}
+
+// A vnode's start cluster only ever goes from none to its first.
+static int node_take_cluster(struct vfs_vnode *node, uint32_t cluster)
+{
+    if (open_track(cluster) != 0) {
+        return -ENOMEM;
+    }
+    open_untrack((uint32_t)(uintptr_t)node->internal_info);
+    node->internal_info = (void *)(uintptr_t)cluster;
+    return 0;
+}
 
 // Every read and write path in this driver assumes 512-byte sectors.
 #define FAT32_SECTOR_SIZE 512
@@ -79,13 +178,48 @@ enum fat32_walk_action {
 };
 
 /*
+ * fat32_dir_slot - Where one 32-byte directory entry lives on disk.
+ */
+struct fat32_dir_slot {
+    uint32_t lba; // absolute sector LBA
+    int index;    // entry within that sector, 0..15
+};
+
+// A long name is at most 255 characters, 13 per LFN entry.
+#define FAT32_LFN_MAX_ENTRIES 20
+
+// Ceiling on a directory's cluster chain; a chain that loops has no other one.
+#define FAT32_MAX_DIR_CLUSTERS 65536U
+
+/*
+ * fat32_dir_pos - The entry's position, and the LFN entries that name it.
+ *
+ * lfn_slots is what lets a caller remove a name completely: the LFN entries
+ * sit immediately before the 8.3 entry and are invisible to cb otherwise, so
+ * deleting only the entry cb was handed would leave them behind as orphans
+ * that still carry the old name.
+ */
+struct fat32_dir_pos {
+    uint32_t lba;
+    int sector_index;
+    int entry_index;
+
+    const char *lfn_name;
+    int has_lfn;
+
+    const struct fat32_dir_slot *lfn_slots;
+    int lfn_count;
+
+    uint32_t ordinal; // slot number from the start of the directory, LFN slots included
+};
+
+/*
  * cb sets *dirty to persist any change it made to *entry: fat32_dir_walk
  * writes the whole sector back itself, so cb never needs to reconstruct the
  * sector buffer or call write_blocks on its own.
  */
 typedef enum fat32_walk_action (*fat32_dir_walk_cb)(struct fat32_dir_entry *entry,
-                                                    const char *lfn_name, int has_lfn, uint32_t lba,
-                                                    int sector_index, int entry_index, void *ctx,
+                                                    const struct fat32_dir_pos *pos, void *ctx,
                                                     int *out_err, int *dirty);
 
 static int fat32_dir_walk(uint32_t parent_cluster, int grow_chain, fat32_dir_walk_cb cb, void *ctx);
@@ -119,6 +253,10 @@ static uint32_t cluster_to_lba(uint32_t cluster)
     return current_fs.data_lba_start + (cluster - 2) * current_fs.sectors_per_cluster;
 }
 
+// A FAT that could not be read. Past any masked entry, so a walker stops on
+// it, but a caller about to extend the chain must not: the link is still live.
+#define FAT32_CLUSTER_IOERR 0xFFFFFFFFU
+
 static uint32_t get_next_cluster(uint32_t cluster)
 {
     // Terminate the chain rather than index the FAT with a corrupt value.
@@ -131,7 +269,7 @@ static uint32_t get_next_cluster(uint32_t cluster)
     uint32_t fat_buffer[128];
 
     if (current_fs.dev->read_blocks(current_fs.dev, &fat_buffer, fat_sector, 1) != 0) {
-        return FAT32_CLUSTER_EOC;
+        return FAT32_CLUSTER_IOERR;
     }
 
     return fat_buffer[fat_offset] & FAT32_CLUSTER_MASK;
@@ -144,6 +282,11 @@ static uint32_t get_next_cluster(uint32_t cluster)
  */
 static int set_fat_entry(uint32_t cluster, uint32_t value)
 {
+    // An out-of-range cluster addresses a sector past the FAT, over file data.
+    if (!cluster_valid(cluster)) {
+        return -EINVAL;
+    }
+
     uint32_t fat_sector_offset = cluster / 128;
     uint32_t fat_offset = cluster % 128;
     uint32_t fat_buffer[128];
@@ -153,17 +296,17 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
             current_fs.fat_lba_start + (i * current_fs.sectors_per_fat) + fat_sector_offset;
 
         if (current_fs.dev->read_blocks(current_fs.dev, fat_buffer, fat_sector, 1) != 0) {
-            return -PERS_ERR_IO_ERROR;
+            return -EIO;
         }
 
         fat_buffer[fat_offset] = value & FAT32_CLUSTER_MASK;
 
         if (current_fs.dev->write_blocks(current_fs.dev, fat_buffer, fat_sector, 1) != 0) {
-            return -PERS_ERR_IO_ERROR;
+            return -EIO;
         }
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -171,26 +314,52 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
  *
  * Returns the cluster number on success, or 0 on failure.
  */
+/*
+ * Where the last search left off. Restarting from cluster 2 on every call
+ * makes filling a disk quadratic: each allocation re-reads and re-scans every
+ * FAT sector already known to be full. The hint is advisory -- a wrong value
+ * costs a wasted scan, never a wrong answer -- so it needs no locking beyond
+ * the fat32 mutex already held here, and nothing goes wrong if it is stale.
+ *
+ * FAT32 keeps the same hint on disk in the FSInfo sector; reading it at mount
+ * would carry the benefit across boots. Writing it back is what makes that
+ * safe, and that belongs with the rest of the FSInfo bookkeeping.
+ */
+static uint32_t next_free_hint = 2;
+
 static uint32_t allocate_cluster(void)
 {
     uint32_t fat_buffer[128];
+    uint32_t last_sector = (uint32_t)-1;
 
-    // Scan clusters within the validated mount-time bound.
-    for (uint32_t cluster = 2; cluster <= current_fs.max_cluster; cluster++) {
+    if (next_free_hint < 2 || next_free_hint > current_fs.max_cluster) {
+        next_free_hint = 2;
+    }
+
+    // From the hint to the end, then wrap and cover what was skipped.
+    uint32_t total = current_fs.max_cluster - 1;
+    for (uint32_t n = 0; n < total; n++) {
+        uint32_t cluster = next_free_hint + n;
+        if (cluster > current_fs.max_cluster) {
+            cluster = 2 + (cluster - current_fs.max_cluster - 1);
+        }
+
         uint32_t fat_sector = current_fs.fat_lba_start + (cluster / 128);
         uint32_t fat_offset = cluster % 128;
 
-        if (fat_offset == 0 || cluster == 2) {
+        if (fat_sector != last_sector) {
             if (current_fs.dev->read_blocks(current_fs.dev, fat_buffer, fat_sector, 1) != 0) {
                 return 0;
             }
+            last_sector = fat_sector;
         }
 
         uint32_t entry = fat_buffer[fat_offset] & FAT32_CLUSTER_MASK;
         if (entry == 0) {
-            if (set_fat_entry(cluster, FAT32_CLUSTER_EOC) != PERS_SUCCESS) {
+            if (set_fat_entry(cluster, FAT32_CLUSTER_EOC) != 0) {
                 return 0;
             }
+            next_free_hint = (cluster < current_fs.max_cluster) ? cluster + 1 : 2;
             return cluster;
         }
     }
@@ -203,6 +372,33 @@ static uint32_t allocate_cluster(void)
  *
  * Returns the newly allocated cluster number, or 0 on failure.
  */
+/*
+ * zero_cluster - Blanks every sector of a cluster.
+ *
+ * A directory cluster must read back as free slots. allocate_cluster hands out
+ * whatever the cluster last held, so a directory that grows would otherwise
+ * find file data where it expects entries, and read it as one.
+ */
+static int zero_cluster(uint32_t cluster)
+{
+    uint8_t zero_sector[512];
+    memset(zero_sector, 0, sizeof(zero_sector));
+
+    uint32_t base = cluster_to_lba(cluster);
+    for (uint32_t s = 0; s < current_fs.sectors_per_cluster; s++) {
+        if (current_fs.dev->write_blocks(current_fs.dev, zero_sector, base + s, 1) != 0) {
+            return -EIO;
+        }
+    }
+    return 0;
+}
+
+// The spec writes the root as cluster 0 in a "..", whatever its real number.
+static uint32_t dotdot_cluster(uint32_t parent_cluster)
+{
+    return parent_cluster == current_fs.root_cluster ? 0 : parent_cluster;
+}
+
 static uint32_t extend_cluster_chain(uint32_t last_cluster)
 {
     uint32_t new_cluster = allocate_cluster();
@@ -211,7 +407,7 @@ static uint32_t extend_cluster_chain(uint32_t last_cluster)
     }
 
     if (last_cluster != 0) {
-        if (set_fat_entry(last_cluster, new_cluster) != PERS_SUCCESS) {
+        if (set_fat_entry(last_cluster, new_cluster) != 0) {
             set_fat_entry(new_cluster, 0);
             return 0;
         }
@@ -220,60 +416,69 @@ static uint32_t extend_cluster_chain(uint32_t last_cluster)
     return new_cluster;
 }
 
-static int name_match(const char *filename, struct fat32_dir_entry *entry)
+static char fold_upper(char c)
 {
-    char name[8], ext[3];
-    int i = 0, j = 0;
+    return (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+}
 
-    for (int k = 0; k < 8; k++) {
-        name[k] = ' ';
-    }
-    for (int k = 0; k < 3; k++) {
-        ext[k] = ' ';
+static int name_eq_nocase(const char *a, const char *b)
+{
+    for (; *a && fold_upper(*a) == fold_upper(*b); a++, b++) {}
+    return fold_upper(*a) == fold_upper(*b);
+}
+
+/*
+ * name_as_83 - Spells a name the way an 8.3 entry holds it, case folded.
+ *
+ * False when the name has no exact 8.3 spelling. It is never cut down to fit:
+ * a long name lives under LFN entries and an alias, and a truncated spelling
+ * would match some other file's short name.
+ */
+static int name_as_83(const char *name, uint8_t out_name[8], uint8_t out_ext[3])
+{
+    memset(out_name, ' ', 8);
+    memset(out_ext, ' ', 3);
+
+    if (name[0] == '\0' || name[0] == '.') {
+        return 0;
     }
 
-    while (filename[i] != '.' && filename[i] != '\0' && j < 8) {
-        char c = filename[i++];
-        if (c >= 'a' && c <= 'z') {
-            c -= 32;
+    int i = 0;
+    for (int j = 0; name[i] != '\0' && name[i] != '.'; i++) {
+        if (j == 8) {
+            return 0;
         }
-        name[j++] = c;
+        out_name[j++] = (uint8_t)fold_upper(name[i]);
     }
-
-    /*
-     * A basename past the eighth character is dropped, so skip the overflow to
-     * reach the extension. name_to_83 does the same when it builds the entry,
-     * and a lookup that stops short searches for a blank extension instead:
-     * the file it just created is then unfindable, and the next create appends
-     * a second entry for the same name.
-     */
-    while (filename[i] != '.' && filename[i] != '\0') {
+    if (name[i] == '.') {
         i++;
-    }
-
-    if (filename[i] == '.') {
-        i++;
-        j = 0;
-        while (filename[i] != '\0' && j < 3) {
-            char c = filename[i++];
-            if (c >= 'a' && c <= 'z') {
-                c -= 32;
+        for (int j = 0; name[i] != '\0'; i++) {
+            if (name[i] == '.' || j == 3) {
+                return 0;
             }
-            ext[j++] = c;
-        }
-    }
-
-    for (int k = 0; k < 8; k++) {
-        if (name[k] != entry->name[k]) {
-            return 0;
-        }
-    }
-    for (int k = 0; k < 3; k++) {
-        if (ext[k] != entry->ext[k]) {
-            return 0;
+            out_ext[j++] = (uint8_t)fold_upper(name[i]);
         }
     }
     return 1;
+}
+
+/*
+ * entry_named - Whether a name is how an entry is known: its long name, or an
+ * exact spelling of its short one. Neither compares case, as on any FAT.
+ */
+static int entry_named(const char *name, const struct fat32_dir_entry *entry,
+                       const struct fat32_dir_pos *pos)
+{
+    if (entry->attributes & 0x08) {
+        return 0; // the volume label
+    }
+    if (pos->has_lfn && name_eq_nocase(name, pos->lfn_name)) {
+        return 1;
+    }
+
+    uint8_t short_name[8], short_ext[3];
+    return name_as_83(name, short_name, short_ext) && memcmp(short_name, entry->name, 8) == 0
+           && memcmp(short_ext, entry->ext, 3) == 0;
 }
 
 /*
@@ -325,34 +530,34 @@ int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_bu
 /*
  * fat32_update_dir_entry - Persists a vnode's size and start cluster.
  *
- * The entry is located by name: a truncate to zero clears the start cluster,
- * so a cluster-keyed search would match a different zero-cluster entry.
+ * The entry is found by start cluster, so a vnode whose name was since
+ * unlinked, renamed or reused updates its own file or nothing. Only an entry
+ * still without a cluster is found by name: the one getting its first.
  */
 struct update_entry_ctx {
     struct vfs_vnode *node;
 };
 
-/*
- * Matches on the short name only, same as the loop this replaces -- unlike
- * lookup/unlink/rename it never matched on the assembled long name either, and
- * this refactor changes shape, not behavior.
- */
-static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                              int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+static void fat32_stamp_entry(struct fat32_dir_entry *entry, int created);
+
+static uint32_t entry_cluster(const struct fat32_dir_entry *entry)
+{
+    return ((uint32_t)entry->cluster_high << 16) | entry->cluster_low;
+}
+
+static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry,
+                                              const struct fat32_dir_pos *pos, void *ctx_,
                                               int *out_err, int *dirty)
 {
     struct update_entry_ctx *ctx = ctx_;
-    (void)lfn_name;
-    (void)has_lfn;
-    (void)lba;
-    (void)s;
-    (void)i;
     (void)out_err;
 
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!name_match(ctx->node->name, entry)) {
+    uint32_t have = entry_cluster(entry);
+    if (have != 0 ? have != (uint32_t)(uintptr_t)ctx->node->internal_info
+                  : !entry_named(ctx->node->name, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
@@ -360,6 +565,7 @@ static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry, con
     entry->size = (uint32_t)ctx->node->file_size;
     entry->cluster_high = (uint16_t)(target_cluster >> 16);
     entry->cluster_low = (uint16_t)(target_cluster & 0xFFFF);
+    fat32_stamp_entry(entry, 0);
     *dirty = 1;
     return FAT32_WALK_STOP;
 }
@@ -367,7 +573,7 @@ static enum fat32_walk_action update_entry_cb(struct fat32_dir_entry *entry, con
 static int fat32_update_dir_entry(struct vfs_vnode *node)
 {
     if (!node->parent) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     uint32_t cluster = (uint32_t)(uintptr_t)node->parent->internal_info;
@@ -375,8 +581,63 @@ static int fat32_update_dir_entry(struct vfs_vnode *node)
     return fat32_dir_walk(cluster, 0, update_entry_cb, &ctx);
 }
 
+// Reads the entry back. A vnode still without a cluster finds it by name and
+// adopts the cluster another vnode gave the file.
+static enum fat32_walk_action revalidate_cb(struct fat32_dir_entry *entry,
+                                            const struct fat32_dir_pos *pos, void *ctx_,
+                                            int *out_err, int *dirty)
+{
+    struct update_entry_ctx *ctx = ctx_;
+    (void)dirty;
+
+    if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
+        return FAT32_WALK_CONTINUE;
+    }
+    uint32_t mine = (uint32_t)(uintptr_t)ctx->node->internal_info;
+    if (mine != 0 ? entry_cluster(entry) != mine : !entry_named(ctx->node->name, entry, pos)) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    ctx->node->file_size = entry->size;
+    if (entry_cluster(entry) != mine && node_take_cluster(ctx->node, entry_cluster(entry)) != 0) {
+        *out_err = -ENOMEM;
+        return FAT32_WALK_ERROR;
+    }
+    return FAT32_WALK_STOP;
+}
+
+/*
+ * Bumped by every operation that can change a directory entry. A vnode stamped
+ * with the current value holds what its entry says, so revalidating it can
+ * skip the walk.
+ */
+static unsigned long fat32_entry_gen = 1;
+
+static int fat32_revalidate(struct vfs_vnode *node)
+{
+    if (!node || node->type != VFS_VNODE_TYPE_REGULAR || !node->parent) {
+        return 0;
+    }
+    if (node->revalidated == fat32_entry_gen) {
+        return 0;
+    }
+
+    uint32_t cluster = (uint32_t)(uintptr_t)node->parent->internal_info;
+    struct update_entry_ctx ctx = {.node = node};
+    int r = fat32_dir_walk(cluster, 0, revalidate_cb, &ctx);
+
+    // No entry is not an error: an unlinked file stays open through its fd.
+    if (r != 0 && r != -ENOENT) {
+        return r;
+    }
+    node->revalidated = fat32_entry_gen;
+    return 0;
+}
+
 static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page_buffer)
 {
+    memset(page_buffer, 0, PAGE_SIZE);
+
     uint32_t start_offset = page_index * PAGE_SIZE;
     if (start_offset >= node->file_size) {
         return 0;
@@ -386,10 +647,12 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
     uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
     uint32_t clusters_to_skip = start_offset / bytes_per_cluster;
 
+    // Below the recorded size every byte has to come off the disk: a chain that
+    // ends early, or a sector that will not read, is an error and not zeros.
     for (uint32_t i = 0; i < clusters_to_skip; i++) {
         cluster = get_next_cluster(cluster);
         if (cluster >= FAT32_CLUSTER_EOC_MIN) {
-            return 0;
+            return -EIO;
         }
     }
 
@@ -398,8 +661,6 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
     if (start_offset + to_read > node->file_size) {
         to_read = node->file_size - start_offset;
     }
-
-    memset(page_buffer, 0, PAGE_SIZE);
 
     uint8_t sector_buffer[512];
     uint32_t current_offset = start_offset;
@@ -411,8 +672,9 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
 
         uint32_t lba = cluster_to_lba(cluster) + sector_in_cluster;
 
-        if (current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
-            break;
+        int rerr = current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1);
+        if (rerr != 0) {
+            return rerr < 0 ? rerr : -EIO;
         }
 
         uint32_t can_read = 512 - offset_in_sector;
@@ -427,11 +689,11 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
         if (current_offset % bytes_per_cluster == 0) {
             cluster = get_next_cluster(cluster);
             if (cluster >= FAT32_CLUSTER_EOC_MIN && bytes_read < to_read) {
-                break;
+                return -EIO;
             }
         }
     }
-    return bytes_read;
+    return 0;
 }
 
 /*
@@ -452,17 +714,25 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
     if (cluster == 0) {
         cluster = allocate_cluster();
         if (cluster == 0) {
-            return -PERS_ERR_NO_SPACE_LEFT;
+            return -ENOSPC;
         }
-        node->internal_info = (void *)(uintptr_t)cluster;
+        if (node_take_cluster(node, cluster) != 0) {
+            set_fat_entry(cluster, 0);
+            return -ENOMEM;
+        }
+        fat32_update_dir_entry(node);
+        fat32_entry_gen++;
     }
 
     while (cluster_index < clusters_to_skip) {
         uint32_t next = get_next_cluster(cluster);
+        if (next == FAT32_CLUSTER_IOERR) {
+            return -EIO;
+        }
         if (next >= FAT32_CLUSTER_EOC_MIN) {
             next = extend_cluster_chain(cluster);
             if (next == 0) {
-                return -PERS_ERR_NO_SPACE_LEFT;
+                return -ENOSPC;
             }
         }
         cluster = next;
@@ -494,7 +764,7 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
         memcpy(sector_buffer + offset_in_sector, (uint8_t *)page_buffer + bytes_written, to_copy);
 
         if (current_fs.dev->write_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
-            return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_IO_ERROR;
+            return bytes_written > 0 ? (int)bytes_written : -EIO;
         }
 
         bytes_written += to_copy;
@@ -502,6 +772,9 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
 
         if (current_offset % bytes_per_cluster == 0 && bytes_written < valid_bytes) {
             uint32_t next = get_next_cluster(cluster);
+            if (next == FAT32_CLUSTER_IOERR) {
+                return bytes_written > 0 ? (int)bytes_written : -EIO;
+            }
             if (next >= FAT32_CLUSTER_EOC_MIN) {
                 next = extend_cluster_chain(cluster);
                 if (next == 0) {
@@ -518,7 +791,12 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
 static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *pos)
 {
     if (!file || !file->node || !buffer) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
+    }
+
+    // Truncating to 32 bits would read from the wrong place instead of EOF.
+    if (*pos < 0 || (uint64_t)*pos > UINT32_MAX) {
+        return 0;
     }
 
     uint32_t file_size = (uint32_t)file->node->file_size;
@@ -533,6 +811,7 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
 
     uint32_t bytes_read = 0;
     uint8_t *out_buf = (uint8_t *)buffer;
+    int err = 0;
 
     while (bytes_read < size) {
         size_t current_offset = offset + bytes_read;
@@ -546,14 +825,20 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            void *fresh = pmm_alloc_pages(1);
+            void *fresh = pmm_alloc_pages_nozero(1);
             if (!fresh) {
-                return bytes_read > 0 ? (int)bytes_read : -PERS_ERR_OUT_OF_MEMORY;
+                err = -ENOMEM;
+                break;
             }
 
-            fat32_read_page(file->node, page_index, fresh);
+            int rerr = fat32_read_page(file->node, page_index, fresh);
+            if (rerr != 0) {
+                pmm_free_pages(fresh);
+                err = rerr;
+                break;
+            }
 
-            if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
+            if (pagecache_add_page(file->node, page_index, fresh) == 0) {
                 page_data = fresh; // add_page pinned it
             } else {
                 pmm_free_pages(fresh);
@@ -565,10 +850,15 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
             memcpy(out_buf + bytes_read, (uint8_t *)page_data + offset_in_page, to_copy);
             pagecache_put_page(file->node, page_index);
         } else {
+            err = -ENOMEM;
             break;
         }
 
         bytes_read += to_copy;
+    }
+
+    if (bytes_read == 0 && err != 0) {
+        return err;
     }
 
     *pos += (vfs_off_t)bytes_read;
@@ -579,37 +869,50 @@ static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_
 static int fat32_ensure_start_cluster(struct vfs_vnode *node)
 {
     if ((uint32_t)(uintptr_t)node->internal_info != 0) {
-        return PERS_SUCCESS;
+        return 0;
     }
 
     uint32_t cluster = allocate_cluster();
     if (cluster == 0) {
-        return -PERS_ERR_NO_SPACE_LEFT;
+        return -ENOSPC;
+    }
+    if (node_take_cluster(node, cluster) != 0) {
+        set_fat_entry(cluster, 0);
+        return -ENOMEM;
     }
 
-    node->internal_info = (void *)(uintptr_t)cluster;
     fat32_update_dir_entry(node);
-    return PERS_SUCCESS;
+    fat32_entry_gen++;
+    return 0;
 }
 
 static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *pos)
 {
     if (!file || !file->node || !buffer) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (file->node->type == VFS_VNODE_TYPE_DIR) {
-        return -PERS_ERR_IS_A_DIRECTORY;
+        return -EISDIR;
+    }
+
+    // A FAT32 size field is 32 bits; past that is unwritable, not wrappable.
+    if (*pos < 0 || (uint64_t)*pos + size > UINT32_MAX) {
+        return -EFBIG;
+    }
+    if (size == 0) {
+        return 0;
     }
 
     int cluster_err = fat32_ensure_start_cluster(file->node);
-    if (cluster_err != PERS_SUCCESS) {
+    if (cluster_err != 0) {
         return cluster_err;
     }
 
     uint32_t offset = (uint32_t)*pos;
     uint32_t bytes_written = 0;
     const uint8_t *in_buf = (const uint8_t *)buffer;
+    int err = 0;
 
     while (bytes_written < size) {
         size_t current_offset = offset + bytes_written;
@@ -623,23 +926,28 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
 
         void *page_data = pagecache_get_page(file->node, page_index);
         if (!page_data) {
-            void *fresh = pmm_alloc_pages(1);
+            void *fresh = pmm_alloc_pages_nozero(1);
             if (!fresh) {
-                return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_OUT_OF_MEMORY;
-            }
-            memset(fresh, 0, PAGE_SIZE);
-
-            if (page_index * PAGE_SIZE < (size_t)file->node->file_size) {
-                fat32_read_page(file->node, page_index, fresh);
+                err = -ENOMEM;
+                break;
             }
 
-            if (pagecache_add_page(file->node, page_index, fresh) == PERS_SUCCESS) {
+            // The bytes around the write go back to disk with it.
+            int rerr = fat32_read_page(file->node, page_index, fresh);
+            if (rerr != 0) {
+                pmm_free_pages(fresh);
+                err = rerr;
+                break;
+            }
+
+            if (pagecache_add_page(file->node, page_index, fresh) == 0) {
                 page_data = fresh; // add_page pinned it
             } else {
                 pmm_free_pages(fresh);
                 page_data = pagecache_get_page(file->node, page_index);
                 if (!page_data) {
-                    return bytes_written > 0 ? (int)bytes_written : -PERS_ERR_OUT_OF_MEMORY;
+                    err = -ENOMEM;
+                    break;
                 }
             }
         }
@@ -655,10 +963,15 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
             valid_in_page = PAGE_SIZE;
         }
 
+        /* A short count means the volume filled or a sector failed part-way
+         * through the page. The caller is told those bytes did not land, so
+         * the page is dropped and the next read comes from the disk. */
         int write_result = fat32_write_page(file->node, page_index, page_data, valid_in_page);
-        if (write_result < 0) {
+        if (write_result < 0 || (size_t)write_result < valid_in_page) {
             pagecache_put_page(file->node, page_index);
-            return bytes_written > 0 ? (int)bytes_written : write_result;
+            pagecache_drop_page(file->node, page_index);
+            err = write_result < 0 ? write_result : -ENOSPC;
+            break;
         }
 
         pagecache_clear_dirty(file->node, page_index);
@@ -667,99 +980,561 @@ static int fat32_vfs_write(struct vfs_file *file, const void *buffer, size_t siz
         bytes_written += to_copy;
     }
 
-    *pos += (vfs_off_t)bytes_written;
-
-    if (*pos > file->node->file_size) {
-        file->node->file_size = *pos;
-        fat32_update_dir_entry(file->node);
+    if (bytes_written == 0) {
+        return err;
     }
 
+    // What landed before a failure is the caller's: the offset and the size
+    // have to cover it, or a retry overwrites it.
+    *pos += (vfs_off_t)bytes_written;
+    if (*pos > file->node->file_size) {
+        file->node->file_size = *pos;
+    }
+
+    // Also the modification time, which moves whether or not the file grew.
+    fat32_update_dir_entry(file->node);
     return (int)bytes_written;
 }
 
 static struct vfs_vnode_ops fat32_vnode_ops;
 
-static void name_to_83(const char *filename, uint8_t out_name[8], uint8_t out_ext[3])
+/*
+ * fat32_stamp_entry - Fills in an entry's dates from the wall clock.
+ *
+ * FAT packs a date as (year-1980)<<9 | month<<5 | day and a time as
+ * hour<<11 | minute<<5 | second/2 -- two-second resolution is the format's,
+ * not ours. Everything is local time with no zone recorded, which is why two
+ * systems can disagree about when the same file was written.
+ */
+static void fat32_stamp_entry(struct fat32_dir_entry *entry, int created)
 {
-    for (int k = 0; k < 8; k++) {
-        out_name[k] = ' ';
-    }
-    for (int k = 0; k < 3; k++) {
-        out_ext[k] = ' ';
+    int64_t secs = (int64_t)timer_get_wall_time();
+    int64_t days = secs / 86400;
+    int64_t rem = secs % 86400;
+
+    // Inverse of the era arithmetic in timer_get_wall_time.
+    int64_t z = days + 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    int64_t doe = z - era * 146097;
+    int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t y = yoe + era * 400;
+    int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int64_t mp = (5 * doy + 2) / 153;
+    int64_t d = doy - (153 * mp + 2) / 5 + 1;
+    int64_t m = mp + (mp < 10 ? 3 : -9);
+    y += (m <= 2);
+
+    if (y < 1980) {
+        y = 1980; // the format cannot represent anything earlier
     }
 
-    int i = 0, j = 0;
-    while (filename[i] != '.' && filename[i] != '\0' && j < 8) {
-        char c = filename[i++];
+    uint16_t date = (uint16_t)(((y - 1980) << 9) | (m << 5) | d);
+    uint16_t time = (uint16_t)(((rem / 3600) << 11) | ((rem % 3600 / 60) << 5) | (rem % 60 / 2));
+
+    entry->last_mod_date = date;
+    entry->last_mod_time = time;
+    entry->last_access_date = date;
+
+    if (created) {
+        entry->create_date = date;
+        entry->create_time = time;
+        entry->create_time_ms = 0;
+    }
+}
+
+// Longest name a directory entry can carry, in characters.
+#define FAT32_LFN_MAX_NAME 255
+
+/*
+ * fat32_put_slot - Writes one 32-byte entry into its slot on disk.
+ *
+ * Read-modify-write of the containing sector: a run of LFN entries can span
+ * sectors, so the caller places them one slot at a time rather than assuming
+ * they share a buffer.
+ */
+static int fat32_put_slot(const struct fat32_dir_slot *slot, const struct fat32_dir_entry *entry)
+{
+    struct fat32_dir_entry sector[16];
+
+    if (current_fs.dev->read_blocks(current_fs.dev, sector, slot->lba, 1) != 0) {
+        return -EIO;
+    }
+    sector[slot->index] = *entry;
+    if (current_fs.dev->write_blocks(current_fs.dev, sector, slot->lba, 1) != 0) {
+        return -EIO;
+    }
+    return 0;
+}
+
+/*
+ * fat32_clear_lfn_slots - Marks an entry's LFN entries deleted.
+ *
+ * Removing a name means removing all of it. The LFN entries sit immediately
+ * before the 8.3 entry and still spell the old name, so an entry deleted
+ * without them leaves fragments that a later scan can still assemble.
+ *
+ * Slots inside the caller's own sector are edited in that buffer: fat32_dir_walk
+ * writes the whole sector back after the callback returns, and would otherwise
+ * undo a separate write to it.
+ */
+static int fat32_clear_lfn_slots(const struct fat32_dir_pos *pos,
+                                 struct fat32_dir_entry *sector_base)
+{
+    for (int k = 0; k < pos->lfn_count; k++) {
+        const struct fat32_dir_slot *slot = &pos->lfn_slots[k];
+
+        if (slot->lba == pos->lba) {
+            sector_base[slot->index].name[0] = 0xE5;
+            continue;
+        }
+
+        struct fat32_dir_entry sector[16];
+        if (current_fs.dev->read_blocks(current_fs.dev, sector, slot->lba, 1) != 0) {
+            return -EIO;
+        }
+        sector[slot->index].name[0] = 0xE5;
+        if (current_fs.dev->write_blocks(current_fs.dev, sector, slot->lba, 1) != 0) {
+            return -EIO;
+        }
+    }
+    return 0;
+}
+
+/*
+ * lfn_checksum - Ties LFN entries to the 8.3 entry they name.
+ *
+ * Every LFN entry carries this checksum of the short name. A tool that does
+ * not understand long names can rename or replace the 8.3 entry, and the
+ * mismatch is how the orphaned fragments are then recognised as stale.
+ */
+static uint8_t lfn_checksum(const uint8_t name[8], const uint8_t ext[3])
+{
+    uint8_t sum = 0;
+
+    for (int i = 0; i < 8; i++) {
+        sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + name[i]);
+    }
+    for (int i = 0; i < 3; i++) {
+        sum = (uint8_t)(((sum & 1) << 7) + (sum >> 1) + ext[i]);
+    }
+    return sum;
+}
+
+/*
+ * struct lfn_run - A long name being assembled from the fragments before an entry.
+ *
+ * Fragments sit in descending sequence order, the first flagged 0x40, and all
+ * carry the checksum of the short name they belong to. A run that breaks any
+ * of that is discarded, so a fragment a FAT tool orphaned is never read as the
+ * name of whichever entry happens to follow it.
+ */
+struct lfn_run {
+    char name[FAT32_LFN_BUF_SIZE];
+    int active;
+    unsigned int next_seq; // sequence the next fragment must carry; 0 once complete
+    uint8_t sum;
+};
+
+static void lfn_reset(struct lfn_run *run)
+{
+    // extract_lfn_part writes no terminator, so a shorter name assembled next
+    // would keep this one's tail.
+    memset(run->name, 0, sizeof(run->name));
+    run->active = 0;
+    run->next_seq = 0;
+}
+
+// Returns 0 when the fragment extends the run, -1 when the run was discarded.
+static int lfn_add(struct lfn_run *run, const struct fat32_lfn_entry *lfn)
+{
+    unsigned int seq = lfn->sequence & 0x3F;
+
+    if (lfn->sequence & 0x40) {
+        lfn_reset(run);
+        run->active = 1;
+        run->next_seq = seq;
+        run->sum = lfn->checksum;
+    }
+
+    if (!run->active || seq != run->next_seq || lfn->checksum != run->sum
+        || extract_lfn_part(lfn, run->name, sizeof(run->name)) != 0) {
+        lfn_reset(run);
+        return -1;
+    }
+
+    run->next_seq--;
+    return 0;
+}
+
+static int lfn_names(const struct lfn_run *run, const struct fat32_dir_entry *entry)
+{
+    return run->active && run->next_seq == 0 && run->sum == lfn_checksum(entry->name, entry->ext);
+}
+
+// Characters FAT refuses in a short name; a long name may still contain them.
+static int short_name_char_ok(char c)
+{
+    if (c >= 'A' && c <= 'Z') {
+        return 1;
+    }
+    if (c >= '0' && c <= '9') {
+        return 1;
+    }
+    return strchr("$%'-_@~`!(){}^#&", c) != NULL;
+}
+
+/*
+ * name_fits_83 - True when the name survives the trip through an 8.3 entry.
+ *
+ * Lowercase counts as not fitting: the 8.3 entry cannot hold it, so a name
+ * typed as readme.txt needs LFN entries to come back as anything but
+ * README.TXT.
+ */
+static int name_fits_83(const char *name)
+{
+    if (name[0] == '\0' || name[0] == '.') {
+        return 0;
+    }
+
+    int base = 0, ext = 0, dots = 0;
+    const char *p = name;
+
+    for (; *p && *p != '.'; p++, base++) {
+        if (!short_name_char_ok(*p)) {
+            return 0;
+        }
+    }
+    if (*p == '.') {
+        dots++;
+        for (p++; *p; p++, ext++) {
+            if (*p == '.') {
+                return 0; // a second dot has no 8.3 spelling
+            }
+            if (!short_name_char_ok(*p)) {
+                return 0;
+            }
+        }
+    }
+    (void)dots;
+    return base >= 1 && base <= 8 && ext <= 3;
+}
+
+struct short_name_taken_ctx {
+    const uint8_t *name;
+    const uint8_t *ext;
+    int taken;
+};
+
+static enum fat32_walk_action short_name_taken_cb(struct fat32_dir_entry *entry,
+                                                  const struct fat32_dir_pos *pos, void *ctx_,
+                                                  int *out_err, int *dirty)
+{
+    struct short_name_taken_ctx *ctx = ctx_;
+    (void)pos;
+    (void)out_err;
+    (void)dirty;
+
+    if (entry->name[0] == 0x00) {
+        return FAT32_WALK_STOP;
+    }
+    if (entry->name[0] == 0xE5) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    if (memcmp(entry->name, ctx->name, 8) == 0 && memcmp(entry->ext, ctx->ext, 3) == 0) {
+        ctx->taken = 1;
+        return FAT32_WALK_STOP;
+    }
+    return FAT32_WALK_CONTINUE;
+}
+
+// Tails up to this are settled by one scan of the directory.
+#define FAT32_ALIAS_SCAN 1024
+
+// Writes BASE~N, shortening the base to make room for the tail.
+static int alias_with_tail(const uint8_t *base, int base_len, uint32_t n, uint8_t out[8])
+{
+    char tail[8];
+    int tail_len = snprintf(tail, sizeof(tail), "~%lu", (unsigned long)n);
+    if (tail_len <= 0 || tail_len > 7) {
+        return -1;
+    }
+
+    int keep = base_len + tail_len > 8 ? 8 - tail_len : base_len;
+    memcpy(out, base, (size_t)keep);
+    memcpy(out + keep, tail, (size_t)tail_len);
+    memset(out + keep + tail_len, ' ', (size_t)(8 - keep - tail_len));
+    return 0;
+}
+
+struct alias_scan_ctx {
+    const uint8_t *base;
+    int base_len;
+    const uint8_t *ext;
+    uint8_t taken[FAT32_ALIAS_SCAN / 8 + 1];
+};
+
+static enum fat32_walk_action alias_scan_cb(struct fat32_dir_entry *entry,
+                                            const struct fat32_dir_pos *pos, void *ctx_,
+                                            int *out_err, int *dirty)
+{
+    struct alias_scan_ctx *ctx = ctx_;
+    (void)pos;
+    (void)out_err;
+    (void)dirty;
+
+    if (entry->name[0] == 0x00) {
+        return FAT32_WALK_STOP;
+    }
+    if (entry->name[0] == 0xE5 || memcmp(entry->ext, ctx->ext, 3) != 0) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    int t = 0;
+    while (t < 8 && entry->name[t] != '~') {
+        t++;
+    }
+    uint32_t n = 0;
+    for (int d = t + 1; d < 8 && entry->name[d] >= '0' && entry->name[d] <= '9'; d++) {
+        n = n * 10 + (uint32_t)(entry->name[d] - '0');
+    }
+    if (t == 8 || n == 0 || n > FAT32_ALIAS_SCAN) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    // The number is read off the entry; rebuilding the alias confirms the rest.
+    uint8_t alias[8];
+    if (alias_with_tail(ctx->base, ctx->base_len, n, alias) == 0
+        && memcmp(alias, entry->name, 8) == 0) {
+        ctx->taken[n / 8] |= (uint8_t)(1u << (n % 8));
+    }
+    return FAT32_WALK_CONTINUE;
+}
+
+/*
+ * generate_short_name - Builds the 8.3 alias a long name is stored under.
+ *
+ * Follows the usual BASE~N.EXT shape. The tail has to make the alias unique
+ * within this directory, because the short name is what every FAT tool that
+ * ignores long names will see -- two files sharing one is two files that are
+ * the same file.
+ */
+static int generate_short_name(uint32_t dir_cluster, const char *filename, uint8_t out_name[8],
+                               uint8_t out_ext[3])
+{
+    memset(out_name, ' ', 8);
+    memset(out_ext, ' ', 3);
+
+    // Longest trailing extension, as the shell means it.
+    const char *dot = NULL;
+    for (const char *p = filename; *p; p++) {
+        if (*p == '.') {
+            dot = p;
+        }
+    }
+
+    int j = 0;
+    for (const char *p = filename; *p && (!dot || p < dot) && j < 6; p++) {
+        char c = *p;
         if (c >= 'a' && c <= 'z') {
             c -= 32;
         }
-        out_name[j++] = c;
+        if (c == ' ') {
+            continue;
+        }
+        out_name[j++] = short_name_char_ok(c) ? (uint8_t)c : (uint8_t)'_';
     }
-    while (filename[i] != '.' && filename[i] != '\0') {
-        i++;
+    if (j == 0) {
+        out_name[j++] = '_';
     }
-    if (filename[i] == '.') {
-        i++;
-        j = 0;
-        while (filename[i] != '\0' && j < 3) {
-            char c = filename[i++];
+
+    if (dot) {
+        int k = 0;
+        for (const char *p = dot + 1; *p && k < 3; p++) {
+            char c = *p;
             if (c >= 'a' && c <= 'z') {
                 c -= 32;
             }
-            out_ext[j++] = c;
+            out_ext[k++] = short_name_char_ok(c) ? (uint8_t)c : (uint8_t)'_';
         }
     }
+
+    uint8_t base[8];
+    memcpy(base, out_name, sizeof(base));
+
+    struct alias_scan_ctx scan = {.base = base, .base_len = j, .ext = out_ext};
+    memset(scan.taken, 0, sizeof(scan.taken));
+    int scanned = fat32_dir_walk(dir_cluster, /*grow_chain=*/0, alias_scan_cb, &scan);
+    if (scanned != 0 && scanned != -ENOENT) {
+        return scanned;
+    }
+
+    for (uint32_t n = 1; n <= FAT32_ALIAS_SCAN; n++) {
+        if (!(scan.taken[n / 8] & (1u << (n % 8)))) {
+            return alias_with_tail(base, j, n, out_name) == 0 ? 0 : -EEXIST;
+        }
+    }
+
+    // Past the scanned range each candidate costs a walk of its own.
+    for (uint32_t n = FAT32_ALIAS_SCAN + 1; n < 1000000; n++) {
+        if (alias_with_tail(base, j, n, out_name) != 0) {
+            break;
+        }
+
+        struct short_name_taken_ctx ctx = {.name = out_name, .ext = out_ext, .taken = 0};
+        int ret = fat32_dir_walk(dir_cluster, /*grow_chain=*/0, short_name_taken_cb, &ctx);
+        if (ret != 0 && ret != -ENOENT) {
+            return ret;
+        }
+        if (!ctx.taken) {
+            return 0;
+        }
+    }
+    return -EEXIST;
+}
+
+struct find_slots_ctx {
+    int needed;
+    int found;
+    uint32_t last; // ordinal of the run's latest slot
+    struct fat32_dir_slot *out;
+};
+
+/*
+ * A long name's LFN entries and its 8.3 entry must be consecutive, so the
+ * slots are claimed as one run. Anything from the end-of-directory marker
+ * onward is free -- fat32_dir_walk zeroes a directory cluster when it grows
+ * one, so there is no stale data past the marker to mistake for an entry.
+ */
+static enum fat32_walk_action find_slots_cb(struct fat32_dir_entry *entry,
+                                            const struct fat32_dir_pos *pos, void *ctx_,
+                                            int *out_err, int *dirty)
+{
+    struct find_slots_ctx *ctx = ctx_;
+    (void)out_err;
+
+    uint8_t first = entry->name[0];
+    if (first != 0x00 && first != 0xE5) {
+        ctx->found = 0; // a live entry breaks the run
+        return FAT32_WALK_CONTINUE;
+    }
+
+    // Live LFN slots are never shown here, so a gap in the ordinals is one.
+    if (ctx->found > 0 && pos->ordinal != ctx->last + 1) {
+        ctx->found = 0;
+    }
+    ctx->last = pos->ordinal;
+
+    ctx->out[ctx->found].lba = pos->lba;
+    ctx->out[ctx->found].index = pos->entry_index;
+    ctx->found++;
+
+    if (ctx->found == ctx->needed) {
+        return FAT32_WALK_STOP;
+    }
+
+    if (first == 0x00) {
+        /*
+         * Claim the marker so the walk does not stop here: everything after it
+         * is free, and the run still needs more slots. Writing a deleted mark
+         * is safe either way -- if the walk then fails to grow the directory,
+         * the slot is simply free again.
+         */
+        entry->name[0] = 0xE5;
+        *dirty = 1;
+    }
+    return FAT32_WALK_CONTINUE;
+}
+
+/*
+ * fat32_write_dir_entries - Adds one name to a directory.
+ *
+ * A name that fits 8.3 is a single entry, as before. Anything else -- longer,
+ * lowercase, or carrying characters 8.3 has no room for -- is stored as LFN
+ * entries followed by a generated 8.3 alias. The LFN entries go on disk in
+ * reverse order, last fragment first, which is what lets a reader assemble the
+ * name having seen only the entries preceding the one it matched.
+ */
+static int fat32_write_dir_entries(uint32_t dir_cluster, const char *filename,
+                                   struct fat32_dir_entry *short_entry)
+{
+    size_t len = strlen(filename);
+    if (len > FAT32_LFN_MAX_NAME) {
+        return -ENAMETOOLONG;
+    }
+
+    int n_lfn = 0;
+    if (name_fits_83(filename)) {
+        name_as_83(filename, short_entry->name, short_entry->ext);
+    } else {
+        int ret = generate_short_name(dir_cluster, filename, short_entry->name, short_entry->ext);
+        if (ret != 0) {
+            return ret;
+        }
+        n_lfn = (int)((len + 12) / 13);
+    }
+
+    struct fat32_dir_slot slots[FAT32_LFN_MAX_ENTRIES + 1];
+    struct find_slots_ctx ctx = {.needed = n_lfn + 1, .found = 0, .out = slots};
+
+    int ret = fat32_dir_walk(dir_cluster, /*grow_chain=*/1, find_slots_cb, &ctx);
+    if (ret != 0 && ret != -ENOENT) {
+        return ret;
+    }
+    if (ctx.found < ctx.needed) {
+        return -ENOSPC;
+    }
+
+    uint8_t checksum = lfn_checksum(short_entry->name, short_entry->ext);
+
+    // Fragment n (1-based) holds characters [(n-1)*13, n*13). On disk the
+    // highest-numbered fragment comes first, so slot k holds fragment n_lfn-k.
+    for (int k = 0; k < n_lfn; k++) {
+        int seq = n_lfn - k;
+
+        struct fat32_lfn_entry lfn;
+        memset(&lfn, 0, sizeof(lfn));
+        lfn.sequence = (uint8_t)(seq == n_lfn ? (0x40 | seq) : seq);
+        lfn.attributes = 0x0F;
+        lfn.type = 0;
+        lfn.checksum = checksum;
+        lfn.first_cluster = 0;
+
+        uint16_t chars[13];
+        for (int c = 0; c < 13; c++) {
+            size_t idx = (size_t)(seq - 1) * 13 + (size_t)c;
+            if (idx < len) {
+                chars[c] = (uint16_t)(uint8_t)filename[idx];
+            } else if (idx == len) {
+                chars[c] = 0x0000; // terminator
+            } else {
+                chars[c] = 0xFFFF; // padding
+            }
+        }
+        memcpy(lfn.name1, &chars[0], sizeof(lfn.name1));
+        memcpy(lfn.name2, &chars[5], sizeof(lfn.name2));
+        memcpy(lfn.name3, &chars[11], sizeof(lfn.name3));
+
+        ret = fat32_put_slot(&slots[k], (struct fat32_dir_entry *)&lfn);
+        if (ret != 0) {
+            return ret;
+        }
+    }
+
+    return fat32_put_slot(&slots[n_lfn], short_entry);
 }
 
 static int fat32_free_cluster_chain(uint32_t start_cluster)
 {
     uint32_t current = start_cluster;
-    while (current < FAT32_CLUSTER_EOC_MIN && current >= 2) {
+    while (cluster_valid(current)) {
         uint32_t next = get_next_cluster(current);
-        if (set_fat_entry(current, 0) != PERS_SUCCESS) {
-            return -PERS_ERR_IO_ERROR;
+        if (set_fat_entry(current, 0) != 0) {
+            return -EIO;
         }
         current = next;
     }
-    return PERS_SUCCESS;
-}
-
-struct write_entry_ctx {
-    struct fat32_dir_entry *new_entry;
-};
-
-// Claims the first free slot (deleted or end-of-directory) instead of
-// matching a name -- the "odd one out" among the callbacks.
-static enum fat32_walk_action write_entry_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                             int has_lfn, uint32_t lba, int s, int i, void *ctx_,
-                                             int *out_err, int *dirty)
-{
-    struct write_entry_ctx *ctx = ctx_;
-    (void)lfn_name;
-    (void)has_lfn;
-    (void)lba;
-    (void)s;
-    (void)i;
-    (void)out_err;
-
-    if (entry->name[0] != 0x00 && entry->name[0] != 0xE5) {
-        return FAT32_WALK_CONTINUE;
-    }
-
-    *entry = *ctx->new_entry;
-    *dirty = 1;
-    return FAT32_WALK_STOP;
-}
-
-static int fat32_write_entry_to_parent(uint32_t parent_cluster, struct fat32_dir_entry *new_entry)
-{
-    struct write_entry_ctx ctx = {.new_entry = new_entry};
-    int ret = fat32_dir_walk(parent_cluster, /*grow_chain=*/1, write_entry_cb, &ctx);
-    // write_entry_cb claims the end-of-directory marker itself, so running off
-    // the chain (NOT_FOUND) only happens if growing it failed outright --
-    // report that the same way the old loop did.
-    return (ret == -PERS_ERR_NOT_FOUND) ? -PERS_ERR_OUT_OF_MEMORY : ret;
+    return 0;
 }
 
 struct lookup_ctx {
@@ -773,107 +1548,145 @@ static int fat32_dir_walk(uint32_t parent_cluster, int grow_chain, fat32_dir_wal
     uint32_t cluster = parent_cluster;
     struct fat32_dir_entry dirs[16];
 
-    char lfn_name[FAT32_LFN_BUF_SIZE];
-    memset(lfn_name, 0, sizeof(lfn_name));
-    int has_lfn = 0;
+    struct lfn_run run;
+    lfn_reset(&run);
+
+    // Where the LFN entries for the name being assembled live, so a caller
+    // that removes the entry can clear them in the same pass.
+    struct fat32_dir_slot lfn_slots[FAT32_LFN_MAX_ENTRIES];
+    int lfn_count = 0;
+    uint32_t ordinal = 0;
+
+    // Nothing in a cluster cycle is EOC or out of range, so only a cap ends it.
+    uint32_t visited = 0;
 
     while (cluster_valid(cluster)) {
+        if (++visited > FAT32_MAX_DIR_CLUSTERS) {
+            pr_err("fat32: directory chain at cluster %u does not terminate\n", parent_cluster);
+            return -EIO;
+        }
+
         uint32_t lba = cluster_to_lba(cluster);
         for (int s = 0; s < (int)current_fs.sectors_per_cluster; s++) {
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
-                return -PERS_ERR_IO_ERROR;
+                return -EIO;
             }
-            for (int i = 0; i < 16; i++) {
+            for (int i = 0; i < 16; i++, ordinal++) {
                 // LFN-continuation entries are consumed here and never shown
-                // to cb; a deleted or end-marker byte always wins over that,
-                // matching the order the loop this replaces checked in.
+                // to cb; a deleted or end-marker byte always wins over that.
                 if (dirs[i].attributes == 0x0F && dirs[i].name[0] != 0x00
                     && dirs[i].name[0] != 0xE5) {
                     struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
-                        /* Drop the partial name so a malformed fragment cannot
-                         * leak into the match for a later entry. */
-                        has_lfn = 0;
-                        memset(lfn_name, 0, sizeof(lfn_name));
+                    if (lfn->sequence & 0x40) {
+                        lfn_count = 0;
+                    }
+                    if (lfn_add(&run, lfn) != 0) {
+                        lfn_count = 0;
                         continue;
                     }
-                    has_lfn = 1;
+                    if (lfn_count < FAT32_LFN_MAX_ENTRIES) {
+                        lfn_slots[lfn_count].lba = lba + (uint32_t)s;
+                        lfn_slots[lfn_count].index = i;
+                        lfn_count++;
+                    }
                     continue;
                 }
 
-                int out_err = PERS_SUCCESS;
+                int named = lfn_names(&run, &dirs[i]);
+                int out_err = 0;
                 int dirty = 0;
-                enum fat32_walk_action action =
-                    cb(&dirs[i], lfn_name, has_lfn, lba, s, i, ctx_, &out_err, &dirty);
+                struct fat32_dir_pos pos = {
+                    .lba = lba + (uint32_t)s,
+                    .sector_index = s,
+                    .entry_index = i,
+                    .lfn_name = run.name,
+                    .has_lfn = named,
+                    .lfn_slots = lfn_slots,
+                    .lfn_count = named ? lfn_count : 0,
+                    .ordinal = ordinal,
+                };
+                enum fat32_walk_action action = cb(&dirs[i], &pos, ctx_, &out_err, &dirty);
 
                 if (dirty) {
                     if (current_fs.dev->write_blocks(current_fs.dev, &dirs, lba + s, 1) != 0) {
-                        return -PERS_ERR_IO_ERROR;
+                        return -EIO;
                     }
                 }
 
                 switch (action) {
                     case FAT32_WALK_STOP:
-                        return PERS_SUCCESS;
+                        return 0;
                     case FAT32_WALK_ERROR:
                         return out_err;
                     case FAT32_WALK_CONTINUE:
                         break;
                 }
 
-                has_lfn = 0;
-                memset(lfn_name, 0, sizeof(lfn_name));
+                lfn_reset(&run);
+                lfn_count = 0;
 
                 // Nothing valid follows the end marker: stop the whole walk
                 // right here, unless cb already claimed this slot above.
                 if (dirs[i].name[0] == 0x00) {
-                    return -PERS_ERR_NOT_FOUND;
+                    return -ENOENT;
                 }
             }
         }
 
         uint32_t next = get_next_cluster(cluster);
+        if (next == FAT32_CLUSTER_IOERR) {
+            return -EIO;
+        }
         if (next >= FAT32_CLUSTER_EOC_MIN) {
             if (!grow_chain) {
-                return -PERS_ERR_NOT_FOUND;
+                return -ENOENT;
             }
             next = extend_cluster_chain(cluster);
             if (next == 0) {
-                return -PERS_ERR_OUT_OF_MEMORY;
+                return -ENOMEM;
+            }
+            // This walk only grows directories, and the entries below are read
+            // straight out of the new cluster.
+            if (zero_cluster(next) != 0) {
+                return -EIO;
             }
         }
         cluster = next;
     }
-    return -PERS_ERR_NOT_FOUND;
+    return -ENOENT;
 }
 
-static enum fat32_walk_action lookup_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                        int has_lfn, uint32_t lba, int s, int i, void *ctx_,
-                                        int *out_err, int *dirty)
+static enum fat32_walk_action lookup_cb(struct fat32_dir_entry *entry,
+                                        const struct fat32_dir_pos *pos, void *ctx_, int *out_err,
+                                        int *dirty)
 {
     struct lookup_ctx *ctx = ctx_;
-    (void)lba;
-    (void)s;
-    (void)i;
+    (void)pos;
     (void)dirty;
 
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!((has_lfn && strcmp(ctx->filename, lfn_name) == 0) || name_match(ctx->filename, entry))) {
+    if (!entry_named(ctx->filename, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
     struct vfs_vnode *node = (struct vfs_vnode *)slab_alloc(sizeof(struct vfs_vnode));
     if (!node) {
-        *out_err = -PERS_ERR_OUT_OF_MEMORY;
+        *out_err = -ENOMEM;
+        return FAT32_WALK_ERROR;
+    }
+    if (open_track(entry_cluster(entry)) != 0) {
+        slab_free(node);
+        *out_err = -ENOMEM;
         return FAT32_WALK_ERROR;
     }
     memset(node, 0, sizeof(struct vfs_vnode));
     node->type = (entry->attributes & 0x10) ? VFS_VNODE_TYPE_DIR : VFS_VNODE_TYPE_REGULAR;
     node->ops = &fat32_vnode_ops;
-    node->internal_info = (void *)(uintptr_t)((entry->cluster_high << 16) | entry->cluster_low);
+    node->internal_info = (void *)(uintptr_t)entry_cluster(entry);
     node->file_size = entry->size;
+    node->revalidated = fat32_entry_gen;
     node->parent = (struct vfs_vnode *)ctx->dir;
     atomic_inc(&ctx->dir->refcount);
     atomic_set(&node->refcount, 1);
@@ -892,15 +1705,19 @@ static struct vfs_vnode *fat32_vfs_lookup(struct vfs_vnode *dir, const char *fil
 static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
 {
     if (file->node->type != VFS_VNODE_TYPE_DIR) {
-        return -PERS_ERR_NOT_A_DIRECTORY;
+        return -ENOTDIR;
     }
 
-    struct vfs_dirent *dirent_buf = (struct vfs_dirent *)buffer;
-    size_t max_entries = count / sizeof(struct vfs_dirent);
+    struct dirent *dirent_buf = (struct dirent *)buffer;
+    size_t max_entries = count / sizeof(struct dirent);
     int entries_read = 0;
 
     uint32_t cluster = (uint32_t)(uintptr_t)file->node->internal_info;
     uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
+
+    if (file->offset / bytes_per_cluster > FAT32_MAX_DIR_CLUSTERS) {
+        return 0;
+    }
 
     uint32_t clusters_to_skip = (uint32_t)(file->offset / bytes_per_cluster);
     for (uint32_t i = 0; i < clusters_to_skip; i++) {
@@ -910,12 +1727,19 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
         }
     }
 
-    char lfn_name[FAT32_LFN_BUF_SIZE];
-    memset(lfn_name, 0, sizeof(lfn_name));
-    int has_lfn = 0;
+    struct lfn_run run;
+    lfn_reset(&run);
 
     struct fat32_dir_entry dirs[16];
+    uint32_t visited = 0;
+
     while (cluster_valid(cluster) && entries_read < (int)max_entries) {
+        if (++visited > FAT32_MAX_DIR_CLUSTERS) {
+            pr_err("fat32: directory chain at cluster %u does not terminate\n",
+                   (uint32_t)(uintptr_t)file->node->internal_info);
+            return -EIO;
+        }
+
         uint32_t offset_in_cluster = (uint32_t)(file->offset % bytes_per_cluster);
         uint32_t start_sector = offset_in_cluster / 512;
 
@@ -923,7 +1747,7 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
              s < current_fs.sectors_per_cluster && entries_read < (int)max_entries; s++) {
             uint32_t lba = cluster_to_lba(cluster) + s;
             if (current_fs.dev->read_blocks(current_fs.dev, &dirs, lba, 1) != 0) {
-                return -PERS_ERR_IO_ERROR;
+                return -EIO;
             }
 
             uint32_t start_entry = (uint32_t)((file->offset % 512) / 32);
@@ -935,30 +1759,23 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                 }
 
                 if (dirs[i].name[0] == 0xE5) {
-                    has_lfn = 0;
+                    lfn_reset(&run);
                     continue;
                 }
                 if (dirs[i].attributes == 0x0F) {
-                    struct fat32_lfn_entry *lfn = (struct fat32_lfn_entry *)&dirs[i];
-                    if (extract_lfn_part(lfn, lfn_name, sizeof(lfn_name)) != 0) {
-                        /* Drop the partial name so a malformed fragment cannot
-                         * leak into the match for a later entry. */
-                        has_lfn = 0;
-                        memset(lfn_name, 0, sizeof(lfn_name));
-                        continue;
-                    }
-                    has_lfn = 1;
+                    lfn_add(&run, (struct fat32_lfn_entry *)&dirs[i]);
                     continue;
                 }
-                // Skip . and .. entries from the FAT filesystem itself
-                if (dirs[i].name[0] == '.') {
+                // Skip . and .., and the volume label, which is not a file.
+                if (dirs[i].name[0] == '.' || (dirs[i].attributes & 0x08)) {
+                    lfn_reset(&run);
                     continue;
                 }
 
-                struct vfs_dirent *dirent = &dirent_buf[entries_read];
-                if (has_lfn) {
-                    strncpy(dirent->name, lfn_name, 255);
-                    dirent->name[255] = '\0';
+                struct dirent *ent = &dirent_buf[entries_read];
+                if (lfn_names(&run, &dirs[i])) {
+                    strncpy(ent->d_name, run.name, 255);
+                    ent->d_name[255] = '\0';
                 } else {
                     int idx = 0;
                     for (int k = 0; k < 8; k++) {
@@ -969,10 +1786,10 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                         if (c >= 'A' && c <= 'Z') {
                             c = c - 'A' + 'a';
                         }
-                        dirent->name[idx++] = (char)c;
+                        ent->d_name[idx++] = (char)c;
                     }
                     if (dirs[i].ext[0] != ' ' && dirs[i].ext[0] != 0) {
-                        dirent->name[idx++] = '.';
+                        ent->d_name[idx++] = '.';
                         for (int k = 0; k < 3; k++) {
                             uint8_t c = dirs[i].ext[k];
                             if (c == ' ' || c == 0) {
@@ -981,15 +1798,14 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
                             if (c >= 'A' && c <= 'Z') {
                                 c = c - 'A' + 'a';
                             }
-                            dirent->name[idx++] = (char)c;
+                            ent->d_name[idx++] = (char)c;
                         }
                     }
-                    dirent->name[idx] = '\0';
+                    ent->d_name[idx] = '\0';
                 }
 
-                has_lfn = 0;
-                memset(lfn_name, 0, sizeof(lfn_name));
-                dirent->ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
+                lfn_reset(&run);
+                ent->d_ino = (uint32_t)((dirs[i].cluster_high << 16) | dirs[i].cluster_low);
                 entries_read++;
             }
         }
@@ -1001,15 +1817,11 @@ static int fat32_vfs_readdir(struct vfs_file *file, void *buffer, size_t count)
 
 // Stops as soon as it sees anything that isn't deleted, ".", or "..";
 // fat32_dir_is_empty turns that outcome (or the lack of one) into a bool.
-static enum fat32_walk_action dir_empty_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                           int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+static enum fat32_walk_action dir_empty_cb(struct fat32_dir_entry *entry,
+                                           const struct fat32_dir_pos *pos, void *ctx_,
                                            int *out_err, int *dirty)
 {
-    (void)lfn_name;
-    (void)has_lfn;
-    (void)lba;
-    (void)s;
-    (void)i;
+    (void)pos;
     (void)ctx_;
     (void)out_err;
     (void)dirty;
@@ -1025,10 +1837,10 @@ static enum fat32_walk_action dir_empty_cb(struct fat32_dir_entry *entry, const 
 static int fat32_dir_is_empty(uint32_t cluster)
 {
     int ret = fat32_dir_walk(cluster, 0, dir_empty_cb, NULL);
-    if (ret == -PERS_ERR_NOT_FOUND) {
+    if (ret == -ENOENT) {
         return 1; // walked off the end without seeing a real entry
     }
-    if (ret == PERS_SUCCESS) {
+    if (ret == 0) {
         return 0; // dir_empty_cb stopped on a real entry
     }
     return ret;
@@ -1055,29 +1867,26 @@ struct remove_entry_ctx {
     uint32_t freed_cluster; // chain to release once the entry is on disk
 };
 
-static enum fat32_walk_action remove_entry_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                              int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+static enum fat32_walk_action remove_entry_cb(struct fat32_dir_entry *entry,
+                                              const struct fat32_dir_pos *pos, void *ctx_,
                                               int *out_err, int *dirty)
 {
     struct remove_entry_ctx *ctx = ctx_;
-    (void)lba;
-    (void)s;
-    (void)i;
 
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!((has_lfn && strcmp(ctx->name, lfn_name) == 0) || name_match(ctx->name, entry))) {
+    if (!entry_named(ctx->name, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
     int is_dir = (entry->attributes & 0x10) != 0;
     if (ctx->want_dir && !is_dir) {
-        *out_err = -PERS_ERR_NOT_A_DIRECTORY;
+        *out_err = -ENOTDIR;
         return FAT32_WALK_ERROR;
     }
     if (!ctx->want_dir && is_dir) {
-        *out_err = -PERS_ERR_IS_A_DIRECTORY;
+        *out_err = -EISDIR;
         return FAT32_WALK_ERROR;
     }
 
@@ -1090,9 +1899,16 @@ static enum fat32_walk_action remove_entry_cb(struct fat32_dir_entry *entry, con
             return FAT32_WALK_ERROR;
         }
         if (!empty) {
-            *out_err = -PERS_ERR_DIR_NOT_EMPTY;
+            *out_err = -ENOTEMPTY;
             return FAT32_WALK_ERROR;
         }
+    }
+
+    // entry points into the walk's sector buffer; back up to its first entry.
+    int lfn_err = fat32_clear_lfn_slots(pos, entry - pos->entry_index);
+    if (lfn_err != 0) {
+        *out_err = lfn_err;
+        return FAT32_WALK_ERROR;
     }
 
     entry->name[0] = 0xE5;
@@ -1106,14 +1922,14 @@ static int fat32_remove_entry(uint32_t parent_cluster, const char *name, int wan
     struct remove_entry_ctx ctx = {.name = name, .want_dir = want_dir, .freed_cluster = 0};
 
     int ret = fat32_dir_walk(parent_cluster, 0, remove_entry_cb, &ctx);
-    if (ret != PERS_SUCCESS) {
+    if (ret != 0) {
         return ret;
     }
 
     if (ctx.freed_cluster >= 2) {
-        return fat32_free_cluster_chain(ctx.freed_cluster);
+        return fat32_release_chain(ctx.freed_cluster);
     }
-    return PERS_SUCCESS;
+    return 0;
 }
 
 static int fat32_unlink(struct vfs_vnode *parent, const char *name)
@@ -1129,28 +1945,25 @@ static int fat32_rmdir(struct vfs_vnode *parent, const char *name)
 static int fat32_mkdir(struct vfs_vnode *parent, const char *name)
 {
     if (strlen(name) > 255) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct vfs_vnode *existing = fat32_vfs_lookup(parent, name);
     if (existing) {
         vfs_vnode_put(existing);
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
 
     uint32_t new_cluster = allocate_cluster();
     if (new_cluster == 0) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
-    uint8_t zero_sector[512];
-    memset(zero_sector, 0, 512);
-    for (uint32_t s = 0; s < current_fs.sectors_per_cluster; s++) {
-        if (current_fs.dev->write_blocks(current_fs.dev, zero_sector,
-                                         cluster_to_lba(new_cluster) + s, 1)
-            != 0) {
-            return -PERS_ERR_IO_ERROR;
-        }
+    // Nothing on disk refers to the cluster until the entry lands, so every
+    // failure below has to free it.
+    if (zero_cluster(new_cluster) != 0) {
+        fat32_free_cluster_chain(new_cluster);
+        return -EIO;
     }
 
     struct fat32_dir_entry sector[16];
@@ -1169,34 +1982,42 @@ static int fat32_mkdir(struct vfs_vnode *parent, const char *name)
     memset(sector[1].ext, ' ', 3);
     sector[1].attributes = 0x10;
     uint32_t parent_cluster = (uint32_t)(uintptr_t)parent->internal_info;
-    sector[1].cluster_high = parent_cluster >> 16;
-    sector[1].cluster_low = parent_cluster & 0xFFFF;
+    uint32_t dotdot = dotdot_cluster(parent_cluster);
+    sector[1].cluster_high = dotdot >> 16;
+    sector[1].cluster_low = dotdot & 0xFFFF;
 
     if (current_fs.dev->write_blocks(current_fs.dev, sector, cluster_to_lba(new_cluster), 1) != 0) {
-        return -PERS_ERR_IO_ERROR;
+        fat32_free_cluster_chain(new_cluster);
+        return -EIO;
     }
 
     struct fat32_dir_entry new_entry;
     memset(&new_entry, 0, sizeof(new_entry));
-    name_to_83(name, new_entry.name, new_entry.ext);
     new_entry.attributes = 0x10;
     new_entry.cluster_high = new_cluster >> 16;
     new_entry.cluster_low = new_cluster & 0xFFFF;
     new_entry.size = 0;
+    fat32_stamp_entry(&new_entry, /*created=*/1);
 
-    return fat32_write_entry_to_parent(parent_cluster, &new_entry);
+    int err = fat32_write_dir_entries(parent_cluster, name, &new_entry);
+    if (err != 0) {
+        fat32_free_cluster_chain(new_cluster);
+    }
+    return err;
 }
 
 struct rename_find_ctx {
     const char *name;
     struct fat32_dir_entry entry;
-    uint32_t lba;
-    int s;
-    int i;
+    struct fat32_dir_slot slot;
+
+    // Copied out of the walk, whose array is gone once it returns.
+    struct fat32_dir_slot lfn_slots[FAT32_LFN_MAX_ENTRIES];
+    int lfn_count;
 };
 
-static enum fat32_walk_action rename_find_cb(struct fat32_dir_entry *entry, const char *lfn_name,
-                                             int has_lfn, uint32_t lba, int s, int i, void *ctx_,
+static enum fat32_walk_action rename_find_cb(struct fat32_dir_entry *entry,
+                                             const struct fat32_dir_pos *pos, void *ctx_,
                                              int *out_err, int *dirty)
 {
     struct rename_find_ctx *ctx = ctx_;
@@ -1206,15 +2027,38 @@ static enum fat32_walk_action rename_find_cb(struct fat32_dir_entry *entry, cons
     if (entry->name[0] == 0x00 || entry->name[0] == 0xE5) {
         return FAT32_WALK_CONTINUE;
     }
-    if (!((has_lfn && strcmp(ctx->name, lfn_name) == 0) || name_match(ctx->name, entry))) {
+    if (!entry_named(ctx->name, entry, pos)) {
         return FAT32_WALK_CONTINUE;
     }
 
     ctx->entry = *entry;
-    ctx->lba = lba;
-    ctx->s = s;
-    ctx->i = i;
+    ctx->slot.lba = pos->lba;
+    ctx->slot.index = pos->entry_index;
+
+    ctx->lfn_count = pos->lfn_count;
+    for (int k = 0; k < pos->lfn_count; k++) {
+        ctx->lfn_slots[k] = pos->lfn_slots[k];
+    }
     return FAT32_WALK_STOP;
+}
+
+// A directory's ".." is its second slot.
+static int fat32_set_dotdot(uint32_t dir_cluster, uint32_t parent_cluster)
+{
+    struct fat32_dir_entry sector[16];
+    uint32_t lba = cluster_to_lba(dir_cluster);
+
+    if (current_fs.dev->read_blocks(current_fs.dev, sector, lba, 1) != 0) {
+        return -EIO;
+    }
+    if (sector[1].name[0] != '.' || sector[1].name[1] != '.') {
+        return 0;
+    }
+
+    uint32_t dotdot = dotdot_cluster(parent_cluster);
+    sector[1].cluster_high = (uint16_t)(dotdot >> 16);
+    sector[1].cluster_low = (uint16_t)(dotdot & 0xFFFF);
+    return current_fs.dev->write_blocks(current_fs.dev, sector, lba, 1) != 0 ? -EIO : 0;
 }
 
 static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
@@ -1223,31 +2067,106 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
     uint32_t old_cluster = (uint32_t)(uintptr_t)old_parent->internal_info;
     struct rename_find_ctx ctx = {.name = old_name};
     int found = fat32_dir_walk(old_cluster, 0, rename_find_cb, &ctx);
-    if (found != PERS_SUCCESS) {
+    if (found != 0) {
         return found;
     }
 
-    struct fat32_dir_entry new_entry = ctx.entry;
-    name_to_83(new_name, new_entry.name, new_entry.ext);
-
     uint32_t new_parent_cluster = (uint32_t)(uintptr_t)new_parent->internal_info;
-    int res = fat32_write_entry_to_parent(new_parent_cluster, &new_entry);
-    if (res != PERS_SUCCESS) {
-        return res;
+    int is_dir = (ctx.entry.attributes & 0x10) != 0;
+
+    // An existing target is replaced once the kinds agree. Finding the entry
+    // being renamed is a change of case, not a target.
+    struct rename_find_ctx target = {.name = new_name};
+    int t = fat32_dir_walk(new_parent_cluster, 0, rename_find_cb, &target);
+    if (t != 0 && t != -ENOENT) {
+        return t;
     }
 
-    // The insert above may have grown/rewritten clusters, so re-read the old
-    // slot fresh rather than trusting a buffer from the earlier walk.
+    uint32_t replaced = 0; // the target's chain, freed once no entry names it
+
+    if (t == 0 && (target.slot.lba != ctx.slot.lba || target.slot.index != ctx.slot.index)) {
+        int target_is_dir = (target.entry.attributes & 0x10) != 0;
+        if (is_dir != target_is_dir) {
+            return is_dir ? -ENOTDIR : -EISDIR;
+        }
+
+        uint32_t target_cluster =
+            ((uint32_t)target.entry.cluster_high << 16) | (uint32_t)target.entry.cluster_low;
+        if (target_is_dir) {
+            int empty = fat32_dir_is_empty(target_cluster);
+            if (empty <= 0) {
+                return empty < 0 ? empty : -ENOTEMPTY;
+            }
+        }
+
+        // The source takes over the target's entry, name and all, so there is
+        // no moment at which the target name is missing and no slot to find.
+        struct fat32_dir_entry sector[16];
+        if (current_fs.dev->read_blocks(current_fs.dev, sector, target.slot.lba, 1) != 0) {
+            return -EIO;
+        }
+        struct fat32_dir_entry taken = ctx.entry;
+        memcpy(taken.name, target.entry.name, sizeof(taken.name));
+        memcpy(taken.ext, target.entry.ext, sizeof(taken.ext));
+        sector[target.slot.index] = taken;
+        if (current_fs.dev->write_blocks(current_fs.dev, sector, target.slot.lba, 1) != 0) {
+            return -EIO;
+        }
+
+        uint32_t source_cluster =
+            ((uint32_t)ctx.entry.cluster_high << 16) | (uint32_t)ctx.entry.cluster_low;
+        if (target_cluster != source_cluster) {
+            replaced = target_cluster;
+        }
+    } else {
+        struct fat32_dir_entry new_entry = ctx.entry;
+        int res = fat32_write_dir_entries(new_parent_cluster, new_name, &new_entry);
+        if (res != 0) {
+            return res;
+        }
+    }
+
+    /*
+     * The new name is on disk now, so the old one can go. Deleting it second
+     * is deliberate: a crash between the two leaves the file reachable under
+     * both names, where the other order would leave it reachable under
+     * neither.
+     *
+     * Re-read the slot rather than trusting a buffer from the earlier walk --
+     * the insert above may have grown or rewritten the directory.
+     */
     struct fat32_dir_entry dirs[16];
-    if (current_fs.dev->read_blocks(current_fs.dev, &dirs, ctx.lba + ctx.s, 1) != 0) {
-        return -PERS_ERR_IO_ERROR;
+    if (current_fs.dev->read_blocks(current_fs.dev, &dirs, ctx.slot.lba, 1) != 0) {
+        return -EIO;
     }
-    dirs[ctx.i].name[0] = 0xE5;
-    if (current_fs.dev->write_blocks(current_fs.dev, &dirs, ctx.lba + ctx.s, 1) != 0) {
-        return -PERS_ERR_IO_ERROR;
+    dirs[ctx.slot.index].name[0] = 0xE5;
+    if (current_fs.dev->write_blocks(current_fs.dev, &dirs, ctx.slot.lba, 1) != 0) {
+        return -EIO;
     }
 
-    return PERS_SUCCESS;
+    // The old name's LFN entries spell the old name and must go with it.
+    for (int k = 0; k < ctx.lfn_count; k++) {
+        struct fat32_dir_entry sector[16];
+        if (current_fs.dev->read_blocks(current_fs.dev, sector, ctx.lfn_slots[k].lba, 1) != 0) {
+            return -EIO;
+        }
+        sector[ctx.lfn_slots[k].index].name[0] = 0xE5;
+        if (current_fs.dev->write_blocks(current_fs.dev, sector, ctx.lfn_slots[k].lba, 1) != 0) {
+            return -EIO;
+        }
+    }
+
+    // Last, so a crash before this leaks the chain rather than cross-links it.
+    if (replaced >= 2) {
+        fat32_release_chain(replaced);
+    }
+
+    // The rename has happened by now; a stale ".." is for fsck, not the caller.
+    if (is_dir && new_parent_cluster != old_cluster
+        && fat32_set_dotdot(entry_cluster(&ctx.entry), new_parent_cluster) != 0) {
+        pr_err("fat32: could not update .. of a moved directory\n");
+    }
+    return 0;
 }
 
 static int fat32_create(struct vfs_vnode *parent, const char *name)
@@ -1260,35 +2179,122 @@ static int fat32_create(struct vfs_vnode *parent, const char *name)
      */
     uint32_t new_cluster = allocate_cluster();
     if (new_cluster == 0) {
-        return -PERS_ERR_NO_SPACE_LEFT;
+        return -ENOSPC;
     }
 
     // Zero the cluster so stale data from a deleted file cannot surface.
-    uint8_t zero_sector[512];
-    memset(zero_sector, 0, sizeof(zero_sector));
-    for (uint32_t s = 0; s < current_fs.sectors_per_cluster; s++) {
-        if (current_fs.dev->write_blocks(current_fs.dev, zero_sector,
-                                         cluster_to_lba(new_cluster) + s, 1)
-            != 0) {
-            fat32_free_cluster_chain(new_cluster);
-            return -PERS_ERR_IO_ERROR;
-        }
+    if (zero_cluster(new_cluster) != 0) {
+        fat32_free_cluster_chain(new_cluster);
+        return -EIO;
     }
 
     struct fat32_dir_entry new_entry;
     memset(&new_entry, 0, sizeof(new_entry));
-    name_to_83(name, new_entry.name, new_entry.ext);
     new_entry.attributes = 0x20; // archive = regular file
     new_entry.cluster_high = (uint16_t)(new_cluster >> 16);
     new_entry.cluster_low = (uint16_t)(new_cluster & 0xFFFF);
     new_entry.size = 0;
+    fat32_stamp_entry(&new_entry, /*created=*/1);
 
     uint32_t parent_cluster = (uint32_t)(uintptr_t)parent->internal_info;
-    int res = fat32_write_entry_to_parent(parent_cluster, &new_entry);
-    if (res != PERS_SUCCESS) {
+    int res = fat32_write_dir_entries(parent_cluster, name, &new_entry);
+    if (res != 0) {
         fat32_free_cluster_chain(new_cluster);
     }
     return res;
+}
+
+struct stat_ctx {
+    const char *name;
+    uint16_t mod_date;
+    uint16_t mod_time;
+    uint16_t create_date;
+    uint16_t create_time;
+    int found;
+};
+
+static enum fat32_walk_action stat_cb(struct fat32_dir_entry *entry,
+                                      const struct fat32_dir_pos *pos, void *ctx_, int *out_err,
+                                      int *dirty)
+{
+    struct stat_ctx *ctx = ctx_;
+    (void)out_err;
+    (void)dirty;
+
+    if (entry->name[0] == 0x00) {
+        return FAT32_WALK_STOP;
+    }
+    if (entry->name[0] == 0xE5) {
+        return FAT32_WALK_CONTINUE;
+    }
+    if (!entry_named(ctx->name, entry, pos)) {
+        return FAT32_WALK_CONTINUE;
+    }
+
+    ctx->mod_date = entry->last_mod_date;
+    ctx->mod_time = entry->last_mod_time;
+    ctx->create_date = entry->create_date;
+    ctx->create_time = entry->create_time;
+    ctx->found = 1;
+    return FAT32_WALK_STOP;
+}
+
+// Unpacks a FAT date/time pair into seconds since the Unix epoch.
+static time_t fat32_decode_time(uint16_t date, uint16_t time)
+{
+    if (date == 0) {
+        return 0; // never stamped
+    }
+
+    int year = 1980 + (date >> 9);
+    int month = (date >> 5) & 0x0F;
+    int day = date & 0x1F;
+    int hour = time >> 11;
+    int min = (time >> 5) & 0x3F;
+    int sec = (time & 0x1F) * 2;
+
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+        return 0;
+    }
+    return timer_civil_to_epoch(year, month, day, hour, min, sec);
+}
+
+/*
+ * fat32_stat - Adds the times to what the VFS already filled in.
+ *
+ * They live in the directory entry rather than on the vnode, so this re-reads
+ * the parent. FAT has no change-time, so st_ctime reports creation, which is
+ * what the field means on the systems this format came from.
+ */
+static int fat32_stat(struct vfs_vnode *node, struct stat *buf)
+{
+    if (!node->parent) {
+        return 0; // the root has no entry naming it
+    }
+
+    uint32_t parent_cluster = (uint32_t)(uintptr_t)node->parent->internal_info;
+    struct stat_ctx ctx = {.name = node->name, .found = 0};
+
+    int ret = fat32_dir_walk(parent_cluster, /*grow_chain=*/0, stat_cb, &ctx);
+    if (ret != 0 && ret != -ENOENT) {
+        return ret;
+    }
+    if (!ctx.found) {
+        return 0;
+    }
+
+    buf->st_mtime = (uint32_t)fat32_decode_time(ctx.mod_date, ctx.mod_time);
+    buf->st_ctime = (uint32_t)fat32_decode_time(ctx.create_date, ctx.create_time);
+    buf->st_atime = buf->st_mtime;
+    return 0;
+}
+
+static int fat32_op_stat(struct vfs_vnode *node, struct stat *buf)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_stat(node, buf);
+    kmutex_unlock(&fat32_lock);
+    return r;
 }
 
 /*
@@ -1309,6 +2315,7 @@ static int fat32_op_write(struct vfs_file *file, const void *buffer, size_t size
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_vfs_write(file, buffer, size, pos);
+    file->node->revalidated = ++fat32_entry_gen;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1342,6 +2349,7 @@ static int fat32_op_mkdir(struct vfs_vnode *parent, const char *name)
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_mkdir(parent, name);
+    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1350,6 +2358,7 @@ static int fat32_op_create(struct vfs_vnode *parent, const char *name)
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_create(parent, name);
+    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1358,6 +2367,7 @@ static int fat32_op_rmdir(struct vfs_vnode *parent, const char *name)
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_rmdir(parent, name);
+    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1366,6 +2376,7 @@ static int fat32_op_unlink(struct vfs_vnode *parent, const char *name)
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_unlink(parent, name);
+    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1375,6 +2386,7 @@ static int fat32_op_rename(struct vfs_vnode *old_parent, const char *old_name,
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_rename(old_parent, old_name, new_parent, new_name);
+    fat32_entry_gen++;
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1382,10 +2394,10 @@ static int fat32_op_rename(struct vfs_vnode *old_parent, const char *old_name,
 static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
 {
     if (length > node->file_size) {
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED; // grow: TODO, first cut
+        return -ENOTSUP; // grow: TODO, first cut
     }
     if (length == node->file_size) {
-        return PERS_SUCCESS; // no-op
+        return 0; // no-op
     }
 
     pagecache_invalidate(node);
@@ -1398,11 +2410,18 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
     uint32_t new_tail = 0; // cluster to cap with an end-of-chain marker
     uint32_t doomed = 0;   // first cluster of the chain to release
 
+    void *old_internal = node->internal_info;
+    vfs_off_t old_size = node->file_size;
+
+    // The start cluster stays even at length 0: it is the file's identity.
     if (length == 0) {
         if (cluster_valid(start_cluster)) {
-            doomed = start_cluster;
+            new_tail = start_cluster;
+            uint32_t next = get_next_cluster(start_cluster);
+            if (cluster_valid(next)) {
+                doomed = next;
+            }
         }
-        node->internal_info = (void *)(uintptr_t)0;
     } else {
         uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
         uint32_t cluster_index = (uint32_t)((length - 1) / bytes_per_cluster);
@@ -1432,7 +2451,11 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
      * a chain that covers it.
      */
     int err = fat32_update_dir_entry(node);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
+        // The vnode goes back too, or the next write allocates a second chain
+        // and orphans the one the entry still names.
+        node->internal_info = old_internal;
+        node->file_size = old_size;
         return err;
     }
 
@@ -1442,13 +2465,29 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
     if (doomed) {
         fat32_free_cluster_chain(doomed);
     }
-    return PERS_SUCCESS;
+    return 0;
 }
 
 static int fat32_op_truncate(struct vfs_vnode *node, vfs_off_t length)
 {
     kmutex_lock(&fat32_lock);
     int r = fat32_truncate(node, length);
+    node->revalidated = ++fat32_entry_gen;
+    kmutex_unlock(&fat32_lock);
+    return r;
+}
+
+static void fat32_op_release(struct vfs_vnode *node)
+{
+    kmutex_lock(&fat32_lock);
+    open_untrack((uint32_t)(uintptr_t)node->internal_info);
+    kmutex_unlock(&fat32_lock);
+}
+
+static int fat32_op_revalidate(struct vfs_vnode *node)
+{
+    kmutex_lock(&fat32_lock);
+    int r = fat32_revalidate(node);
     kmutex_unlock(&fat32_lock);
     return r;
 }
@@ -1456,7 +2495,10 @@ static int fat32_op_truncate(struct vfs_vnode *node, vfs_off_t length)
 static struct vfs_vnode_ops fat32_vnode_ops = {
     .read = fat32_op_read,
     .write = fat32_op_write,
+    .revalidate = fat32_op_revalidate,
+    .release = fat32_op_release,
     .truncate = fat32_op_truncate,
+    .stat = fat32_op_stat,
     .lookup = fat32_op_lookup,
     .readdir = fat32_op_readdir,
     .write_page = fat32_op_write_page,
@@ -1497,19 +2539,19 @@ static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partiti
     uint32_t sectors_per_fat = bpb->sectors_per_fat_32;
 
     if (bpb->bytes_per_sector != FAT32_SECTOR_SIZE) {
-        return -PERS_ERR_OPERATION_NOT_SUPPORTED;
+        return -ENOTSUP;
     }
 
     /* A power of two up to 128 keeps a cluster within the 64 KB the spec allows
      * and, more importantly here, keeps it non-zero: it is a divisor. */
     if (spc == 0 || spc > 128 || (spc & (spc - 1)) != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (reserved == 0 || sectors_per_fat == 0 || num_fats < 1 || num_fats > 2) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (bpb->root_cluster < 2) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     /* Compute in 64 bits: num_fats * sectors_per_fat overflows a uint32_t for
@@ -1518,12 +2560,12 @@ static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partiti
     uint64_t data_lba = fat_lba + (uint64_t)num_fats * sectors_per_fat;
 
     if (data_lba >= device_blocks) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     uint64_t cluster_count = (device_blocks - data_lba) / spc;
     if (cluster_count == 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     // Clusters are numbered from 2, and the top values are reserved markers.
@@ -1531,8 +2573,19 @@ static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partiti
     if (max_cluster > FAT32_CLUSTER_MAX) {
         max_cluster = FAT32_CLUSTER_MAX;
     }
+
+    // The FAT is the real limit at 128 entries per sector, and a BPB can
+    // describe a data area larger than it addresses.
+    uint64_t fat_capacity = (uint64_t)sectors_per_fat * (FAT32_SECTOR_SIZE / 4);
+    if (max_cluster >= fat_capacity) {
+        max_cluster = fat_capacity - 1;
+    }
+    if (max_cluster < 2) {
+        return -EINVAL;
+    }
+
     if (bpb->root_cluster > max_cluster) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     out->bytes_per_sector = FAT32_SECTOR_SIZE;
@@ -1546,7 +2599,52 @@ static int fat32_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partiti
     out->data_lba_start = (uint32_t)data_lba;
     out->max_cluster = (uint32_t)max_cluster;
 
-    return PERS_SUCCESS;
+    return 0;
+}
+
+/*
+ * fat32_read_volume - Finds the FAT32 volume on a device and derives its geometry.
+ */
+static int fat32_read_volume(struct block_device *dev, struct fat32_fs *out)
+{
+    uint8_t sector0[512];
+    if (dev->read_blocks(dev, sector0, 0, 1) != 0) {
+        return -EIO;
+    }
+
+    uint16_t sig = *(uint16_t *)(sector0 + 510);
+    if (sig != 0xAA55) {
+        return -EINVAL;
+    }
+
+    uint32_t partition_lba = 0;
+    if (sector0[0] != 0xEB && sector0[0] != 0xE9) {
+        struct mbr *mbr = (struct mbr *)sector0;
+        int found = 0;
+        for (size_t i = 0; i < 4 && !found; i++) {
+            if (mbr->partitions[i].type == 0x0B || mbr->partitions[i].type == 0x0C) {
+                partition_lba = mbr->partitions[i].lba_start;
+                found = 1;
+            }
+        }
+        if (!found) {
+            return -ENOENT;
+        }
+    }
+
+    struct fat32_bpb bpb;
+    if (dev->read_blocks(dev, &bpb, partition_lba, 1) != 0) {
+        return -EIO;
+    }
+
+    int geom = fat32_geometry_from_bpb(&bpb, partition_lba, (uint64_t)dev->block_count, out);
+    if (geom != 0) {
+        pr_err("fat32: rejecting volume with an implausible BPB\n");
+        return geom;
+    }
+
+    out->dev = dev;
+    return 0;
 }
 
 #ifdef CONFIG_TESTS
@@ -1555,58 +2653,83 @@ int fat32_test_geometry_from_bpb(const struct fat32_bpb *bpb, uint32_t partition
 {
     return fat32_geometry_from_bpb(bpb, partition_lba, device_blocks, out);
 }
+
+int fat32_test_dotdot(struct vfs_vnode *dir, uint32_t *out)
+{
+    struct fat32_dir_entry sector[16];
+
+    kmutex_lock(&fat32_lock);
+    uint32_t lba = cluster_to_lba((uint32_t)(uintptr_t)dir->internal_info);
+    int r = current_fs.dev->read_blocks(current_fs.dev, sector, lba, 1);
+    kmutex_unlock(&fat32_lock);
+
+    if (r != 0) {
+        return -EIO;
+    }
+    *out = ((uint32_t)sector[1].cluster_high << 16) | sector[1].cluster_low;
+    return 0;
+}
+
+int fat32_test_read_volume(struct block_device *dev)
+{
+    struct fat32_fs fs = {0};
+    return fat32_read_volume(dev, &fs);
+}
+
+int fat32_test_scan_root(struct block_device *dev, const char *name, int *found, int *readdir_ret)
+{
+    struct fat32_fs fs = {0};
+    int err = fat32_read_volume(dev, &fs);
+    if (err != 0) {
+        return err;
+    }
+
+    kmutex_lock(&fat32_lock);
+    struct fat32_fs live = current_fs;
+    current_fs = fs;
+
+    struct vfs_vnode *root = fat32_get_root_node();
+    if (root) {
+        struct vfs_vnode *node = fat32_vfs_lookup(root, name);
+        *found = node != NULL;
+        if (node) {
+            vfs_vnode_put(node);
+        }
+
+        struct dirent ents[2];
+        struct vfs_file file = {.node = root};
+        *readdir_ret = fat32_vfs_readdir(&file, ents, sizeof(ents));
+        vfs_vnode_put(root);
+    } else {
+        err = -ENOMEM;
+    }
+
+    current_fs = live;
+    kmutex_unlock(&fat32_lock);
+    return err;
+}
 #endif
 
 int fat32_init(const char *device_name)
 {
     struct block_device *dev = block_device_lookup(device_name);
     if (!dev) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
-    uint8_t sector0[512];
-    if (dev->read_blocks(dev, sector0, 0, 1) != 0) {
-        return -PERS_ERR_IO_ERROR;
+    // Validated whole before it replaces anything, so a rejected volume leaves
+    // the mounted one intact.
+    struct fat32_fs fs = {0};
+    int err = fat32_read_volume(dev, &fs);
+    if (err != 0) {
+        return err;
     }
 
-    uint16_t sig = *(uint16_t *)(sector0 + 510);
-    if (sig != 0xAA55) {
-        return -PERS_ERR_INVALID_ARGUMENT;
-    }
+    kmutex_lock(&fat32_lock);
+    current_fs = fs;
+    kmutex_unlock(&fat32_lock);
 
-    if (sector0[0] == 0xEB || sector0[0] == 0xE9) {
-        current_fs.dev = dev;
-        current_fs.partition_lba_start = 0;
-    } else {
-        struct mbr *mbr = (struct mbr *)sector0;
-        int found = 0;
-        for (size_t i = 0; i < 4 && !found; i++) {
-            if (mbr->partitions[i].type == 0x0B || mbr->partitions[i].type == 0x0C) {
-                current_fs.dev = dev;
-                current_fs.partition_lba_start = mbr->partitions[i].lba_start;
-                found = 1;
-            }
-        }
-        if (!found) {
-            return -PERS_ERR_NOT_FOUND;
-        }
-    }
-
-    struct fat32_bpb bpb;
-    if (dev->read_blocks(dev, &bpb, current_fs.partition_lba_start, 1) != 0) {
-        return -PERS_ERR_IO_ERROR;
-    }
-
-    int geom = fat32_geometry_from_bpb(&bpb, current_fs.partition_lba_start,
-                                       (uint64_t)dev->block_count, &current_fs);
-    if (geom != PERS_SUCCESS) {
-        pr_err("fat32: rejecting volume with an implausible BPB\n");
-        current_fs.dev = NULL;
-        return geom;
-    }
-
-    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n",
-            current_fs.partition_lba_start, current_fs.max_cluster - 1,
-            current_fs.sectors_per_cluster);
-    return PERS_SUCCESS;
+    pr_info("fat32: partition at LBA %u, %u clusters of %u sectors\n", fs.partition_lba_start,
+            fs.max_cluster - 1, fs.sectors_per_cluster);
+    return 0;
 }

@@ -14,29 +14,30 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Kernel Configuration (Kconfig-lite)
 option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
 option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
+# OFF halts in a wfe loop instead: there is no watchdog driver yet to reboot
+# from, so this is "let an unattended board sit dark" rather than "recover" --
+# see order.txt Phase 0 item 14.
+option(CONFIG_KDB_ON_PANIC "Drop into the interactive debugger on a kernel panic (blocks on UART input)" ON)
 option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
+option(CONFIG_DEBUG_LOG "Print pr_debug messages, e.g. every fork, exec and exit" OFF)
 set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
 set(CONFIG_MAX_PROCESSES 128 CACHE STRING "Process table slots (one pointer each; PCBs allocated on demand)")
 set(CONFIG_MAX_FDS 64 CACHE STRING "Open file descriptors per process")
 
-# Propagate config to compiler defines
-set(KERNEL_CONFIG_DEFS "")
-if(CONFIG_SMP)
-    list(APPEND KERNEL_CONFIG_DEFS CONFIG_SMP)
-endif()
-if(CONFIG_LOCKDEP)
-    list(APPEND KERNEL_CONFIG_DEFS CONFIG_LOCKDEP)
-endif()
-if(CONFIG_TESTS)
-    list(APPEND KERNEL_CONFIG_DEFS CONFIG_TESTS)
-endif()
-list(APPEND KERNEL_CONFIG_DEFS "CONFIG_NR_CPUS=${CONFIG_NR_CPUS}")
-list(APPEND KERNEL_CONFIG_DEFS "CONFIG_MAX_PROCESSES=${CONFIG_MAX_PROCESSES}")
-list(APPEND KERNEL_CONFIG_DEFS "CONFIG_MAX_FDS=${CONFIG_MAX_FDS}")
+# One generated header carries the configuration, force-included into every
+# translation unit compiled as kernel code. Passing these as -D per target was
+# how libk came to be built without CONFIG_NR_CPUS while the kernel had it:
+# arch/cpu.h then sized CPU_MAX_CORES at 4 on one side and at the configured
+# value on the other. A single -include cannot drift that way.
+configure_file(cmake/config.h.in ${CMAKE_BINARY_DIR}/include/config.h @ONLY)
+
+set(KERNEL_CONFIG_INCLUDE ${CMAKE_BINARY_DIR}/include)
+set(KERNEL_CONFIG_FORCE_INCLUDE -include ${CMAKE_BINARY_DIR}/include/config.h)
 
 # Build Type Logic
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Choose the type of build: Debug Release" FORCE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING
+        "Build type: RelWithDebInfo (-O2 -g), Debug (-O0 -g), Release (-O2)" FORCE)
 endif()
 
 # Dependency Checks (Configuration Phase)
@@ -81,7 +82,7 @@ add_custom_command(
 
 add_custom_target(sdcard
     COMMAND ${MCOPY} -o -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
-    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.txt" ::/
+    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.md" ::/
     DEPENDS ${SD_IMAGE} ${USER_ELFS}
     VERBATIM
     COMMENT "Updating SD card image (incremental)"

@@ -12,29 +12,29 @@ static const char *basename_of(const char *path)
 static int is_dir(const char *path)
 {
     struct stat st;
-    return sys_stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static int copy_file(const char *src, const char *dst)
 {
-    int in = sys_open(src, VFS_O_RDONLY);
+    int in = open(src, O_RDONLY);
     if (in < 0) {
         printf("cp: cannot open '%s'\n", src);
         return 1;
     }
-    int out = sys_open(dst, VFS_O_WRONLY | VFS_O_CREAT | VFS_O_TRUNC);
+    int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC);
     if (out < 0) {
         printf("cp: cannot create '%s'\n", dst);
-        sys_close(in);
+        close(in);
         return 1;
     }
 
     char buf[4096];
     int n, rc = 0;
-    while ((n = sys_read(in, buf, sizeof(buf))) > 0) {
+    while ((n = read(in, buf, sizeof(buf))) > 0) {
         int off = 0;
         while (off < n) {
-            int w = sys_write(out, buf + off, n - off);
+            int w = write(out, buf + off, n - off);
             if (w <= 0) {
                 printf("cp: write error on '%s'\n", dst);
                 rc = 1;
@@ -48,8 +48,8 @@ static int copy_file(const char *src, const char *dst)
         rc = 1;
     }
 done:
-    sys_close(in);
-    sys_close(out);
+    close(in);
+    close(out);
     return rc;
 }
 

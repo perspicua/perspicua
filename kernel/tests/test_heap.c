@@ -1,7 +1,8 @@
 #include "test.h"
 #include "mm/heap.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdbool.h>
 
 #define TEST_HEADER_SIZE 32   // sizeof(block_header)
 #define LARGE            2048 // > SLAB_MAX (1024), forces first-fit path
@@ -938,9 +939,11 @@ void test_heap(void)
         heap_free(b);
         heap_free(c);
 
-        // Phase 3: alloc into holes (first-fit into b's old slot)
+        /* Phase 3: first fit takes the lower freed slot. Which one that is
+         * depends on the holes boot left behind, which move with image size. */
         void *e = heap_malloc(LARGE);
-        TEST_ASSERT("lifecycle2: reuse b slot", e == b);
+        void *lowest = ((unsigned long)b < (unsigned long)c) ? b : c;
+        TEST_ASSERT("lifecycle2: reuse the lowest freed slot", e == lowest);
 
         // Phase 4: free everything
         heap_free(a);

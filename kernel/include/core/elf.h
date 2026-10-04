@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_CORE_ELF_H
 #define PERSPICUA_CORE_ELF_H
 
-#include "types.h"
+#include <stdint.h>
 
 #define ELF_IDENT_MAG0       0
 #define ELF_IDENT_MAG1       1

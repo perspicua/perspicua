@@ -4,6 +4,8 @@
 
 #include "driver/graphics.h"
 
+#include <stdint.h>
+
 #include "string.h"
 
 #include "driver/fb.h"

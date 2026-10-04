@@ -4,10 +4,13 @@
 
 #include "mm/heap.h"
 
+#include <stddef.h>
+
 #include "stdio.h"
 #include "panic.h"
 
 #include "core/lock.h"
+#include "mm/failinject.h"
 #include "mm/slab.h"
 #include "mm/pmm.h"
 
@@ -59,6 +62,18 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     unsigned long total = min_size + HEAP_HEADER_SIZE + HEAP_FOOTER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
+    /* pmm_alloc_pages hands back a power-of-two block and charges the heap for
+     * all of it. Rounding here too keeps the tail inside the block the heap
+     * hands out, instead of stranding it between the two allocators. */
+    unsigned long rounded = 1;
+    while (rounded < pages) {
+        rounded <<= 1;
+        if (rounded == 0) {
+            return NULL;
+        }
+    }
+    pages = rounded;
+
     void *region = pmm_alloc_pages(pages);
     if (!region) {
         return NULL;
@@ -70,7 +85,8 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     block->is_free = 1;
     block->magic = HEAP_MAGIC_FREE;
 
-    heap_total_size += pages * PAGE_SIZE;
+    // heap_expand runs outside heap_lock, so two cores can grow concurrently.
+    __atomic_fetch_add(&heap_total_size, pages * PAGE_SIZE, __ATOMIC_RELAXED);
 
     return block;
 }
@@ -131,6 +147,15 @@ void heap_init(void)
     pr_info("heap: %lu bytes aligned to 16 bytes\n", heap_free_list->size);
 }
 
+#ifdef CONFIG_TESTS
+static struct fail_arming heap_fail;
+
+void heap_test_fail_nth(unsigned long n)
+{
+    fail_arm(&heap_fail, n);
+}
+#endif
+
 /*
  * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
  */
@@ -139,6 +164,12 @@ void *heap_malloc(unsigned long size)
     if (size == 0 || size > HEAP_MAX_ALLOC) {
         return NULL;
     }
+
+#ifdef CONFIG_TESTS
+    if (fail_fire(&heap_fail)) {
+        return NULL;
+    }
+#endif
 
     if (size <= HEAP_SLAB_MAX) {
         return slab_alloc(size);
@@ -218,9 +249,14 @@ void heap_free(void *ptr)
         return;
     }
 
-    unsigned long flags = spin_lock_irqsave(&heap_lock);
     struct heap_block_header *block =
         (struct heap_block_header *)((unsigned char *)ptr - HEAP_HEADER_SIZE);
+
+    if (!pmm_is_managed((void *)block)) {
+        PANIC("heap: pointer was not returned by heap_malloc");
+    }
+
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
 
     // Confirm the header is ours before size is used to locate anything.
     if (block->magic == HEAP_MAGIC_FREE) {
@@ -281,5 +317,29 @@ unsigned long heap_test_usable_size(const void *ptr)
     const struct heap_block_header *block =
         (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
     return block->size;
+}
+
+int heap_test_redzone_ok(const void *ptr)
+{
+    if (!ptr) {
+        return 0;
+    }
+
+    // Slab objects carry no footer; their counterpart is the free canary,
+    // which slab_alloc checks when the object is handed out again.
+    if (slab_owns((void *)ptr)) {
+        return 1;
+    }
+
+    const struct heap_block_header *block =
+        (const struct heap_block_header *)((const unsigned char *)ptr - HEAP_HEADER_SIZE);
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        return 0;
+    }
+
+    const struct heap_block_footer *footer =
+        (const struct heap_block_footer *)((const unsigned char *)block + HEAP_HEADER_SIZE
+                                           + block->size);
+    return footer->magic == HEAP_REDZONE_MAGIC;
 }
 #endif

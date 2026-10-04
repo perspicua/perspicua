@@ -1,3 +1,6 @@
+#include <stddef.h>
+#include <stdint.h>
+
 #include "test.h"
 #include "driver/block.h"
 #include "string.h"

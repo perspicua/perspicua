@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "test.h"
 #include "sched/sched.h"
 #include "mm/heap.h"
@@ -71,9 +73,14 @@ static void task_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
+/*
+ * Two blocks below assert "not yet" partway through this, so changing the
+ * duration means changing both their waits. One that outlives its block leaks
+ * its counter_b++ into the next.
+ */
 static void task_long_sleep_then_inc(void)
 {
-    sched_sleep_ms(40);
+    sched_sleep_ms(600);
     unsigned long flags = spin_lock_irqsave(&test_lock);
     counter_b++;
     spin_unlock_irqrestore(&test_lock, flags);
@@ -195,7 +202,7 @@ static void task_short_sleep_ts(void)
 
 static void task_long_sleep_ts(void)
 {
-    sched_sleep_ms(40);
+    sched_sleep_ms(200);
     ts_long_done = timer_get_system_time();
 }
 
@@ -211,7 +218,7 @@ static void task_yield_loop(void)
     }
 }
 
-// task that simulates the pipe_wait race: set state to BLOCKED, then yield
+// task that simulates a waiter racing its waker: publish BLOCKED, then yield
 static volatile int race_task_ran = 0;
 static struct task *race_wait_queue = NULL;
 
@@ -220,8 +227,8 @@ static void task_race_waiter(void)
     struct task *self = sched_current_task();
     unsigned long flags = irq_save();
 
-    // 1. Pre-mark as BLOCKED (simulating pipe_wait)
-    self->state = SCHED_TASK_BLOCKED;
+    // 1. Pre-mark as BLOCKED, as a wait queue does
+    sched_task_set_blocked(self);
 
     // 2. Add to a "queue" so the unblocker can find us
     unsigned long lock_flags = spin_lock_irqsave(&test_lock);
@@ -377,9 +384,9 @@ void test_scheduler(void)
     {
         ts_short_done = 0;
         ts_long_done = 0;
-        sched_create_task(task_long_sleep_ts);  // sleeps 40ms
+        sched_create_task(task_long_sleep_ts);  // sleeps 200ms
         sched_create_task(task_short_sleep_ts); // sleeps 20ms
-        sched_sleep_ms(80);
+        sched_sleep_ms(300);
         TEST_ASSERT("short done", ts_short_done != 0);
         TEST_ASSERT("long done", ts_long_done != 0);
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);
@@ -416,9 +423,11 @@ void test_scheduler(void)
 
     // task sleeps then increments
     {
+        // A sleeper wakes on the first tick at or after its deadline, so each
+        // sched_sleep_ms(n) can cost n + 10 and a loaded host adds more.
         counter_a = 0;
         sched_create_task(task_sleep_then_inc);
-        sched_sleep_ms(50);
+        sched_sleep_ms(150);
         TEST_ASSERT("sleep-then-inc", counter_a == 1);
     }
 
@@ -426,7 +435,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_multi_sleep);
-        sched_sleep_ms(80);
+        sched_sleep_ms(250);
         TEST_ASSERT("multi-sleep task", counter_a == 3);
     }
 
@@ -434,7 +443,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_inc_a_with_delay);
-        sched_sleep_ms(100);
+        sched_sleep_ms(300);
         TEST_ASSERT("work+sleep task", counter_a == 5);
     }
 
@@ -445,11 +454,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
-        sched_sleep_ms(30);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
+        sched_sleep_ms(150);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
-        sched_sleep_ms(50);
+        sched_sleep_ms(700);
         TEST_ASSERT("long sleeper done", counter_b == 1);
     }
 
@@ -527,11 +536,11 @@ void test_scheduler(void)
         counter_a = 0;
         counter_b = 0;
         sched_create_task(task_inc_a);               // instant
-        sched_create_task(task_long_sleep_then_inc); // sleeps 40ms, inc b
-        sched_sleep_ms(30);
+        sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
+        sched_sleep_ms(150);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);
-        sched_sleep_ms(50);
+        sched_sleep_ms(700);
         TEST_ASSERT("slow done", counter_b == 1);
     }
 

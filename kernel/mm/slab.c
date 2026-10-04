@@ -4,6 +4,9 @@
 
 #include "mm/slab.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "panic.h"
 
@@ -156,6 +159,7 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
     }
 
     sp->total_slots = count;
+    pmm_set_slab(page, 1);
     __atomic_fetch_add(&slab_total_pages, 1, __ATOMIC_RELAXED);
 
     sp->next = sc->partial_list;
@@ -165,6 +169,7 @@ static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
 
 static void slab_release_page(struct slab_page *sp)
 {
+    pmm_set_slab((void *)sp, 0);
     __atomic_fetch_sub(&slab_total_pages, 1, __ATOMIC_RELAXED);
     pmm_free_page((void *)sp);
 }
@@ -214,6 +219,13 @@ void *slab_alloc(unsigned long size)
         PANIC("slab: partial page with an empty free list");
     }
 
+    // Bounds before the canary read below dereferences obj: an overflow into
+    // a free object corrupts its in-band next pointer, not its canary.
+    int slot = slab_slot_of(sp, obj);
+    if (slot < 0) {
+        PANIC("slab: free list holds a misaligned object");
+    }
+
     /*
      * Nothing may write to an object while it sits on the free list, so a
      * disturbed marker here means a use-after-free. Checked on the way out
@@ -221,11 +233,6 @@ void *slab_alloc(unsigned long size)
      */
     if (obj->free_canary != SLAB_FREE_POISON) {
         PANIC("slab: free object was written after being freed");
-    }
-
-    int slot = slab_slot_of(sp, obj);
-    if (slot < 0) {
-        PANIC("slab: free list holds a misaligned object");
     }
 
     sp->free_list = obj->next;
@@ -250,8 +257,11 @@ void slab_free(void *ptr)
     }
 
     struct slab_page *sp = ptr_to_slab(ptr);
+    if (!pmm_is_slab((void *)sp)) {
+        PANIC("slab: free of a pointer the slab allocator never returned");
+    }
     if (sp->magic != SLAB_MAGIC) {
-        PANIC("slab: invalid pointer in free");
+        PANIC("slab: slab page header is corrupt");
     }
 
     if (sp->class_idx >= SLAB_NUM_CLASSES) {
@@ -320,11 +330,7 @@ int slab_owns(void *ptr)
     if (!ptr) {
         return 0;
     }
-    struct slab_page *sp = ptr_to_slab(ptr);
-    if (!pmm_is_managed((void *)sp)) {
-        return 0;
-    }
-    return sp->magic == SLAB_MAGIC;
+    return pmm_is_slab(ptr_to_slab(ptr));
 }
 
 unsigned long slab_get_used(void)

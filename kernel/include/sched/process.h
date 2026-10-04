@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_SCHED_PROCESS_H
 #define PERSPICUA_SCHED_PROCESS_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "uapi/wait.h"
 
@@ -94,6 +95,7 @@ struct process {
     uint32_t sid;
     int has_execed;
     int stop_reported;
+    int stop_sig; // the signal behind the current stop, as waitpid reports it
     char name[64];
     process_state_t state;
     uint32_t parent_pid;
@@ -113,7 +115,6 @@ struct process {
     unsigned long asid_generation;
     unsigned long ttbr0;
 
-    struct cpu_context context;
     struct va_allocator va;
 
     struct vfs_file *fd_table[VFS_MAX_FDS];
@@ -123,7 +124,13 @@ struct process {
 
     sigset_t pending_signals;
     sigset_t blocked_signals;
-    struct sigaction signal_handlers[SIGNAL_COUNT];
+
+    // The mask sigsuspend displaced, parked until a handler frame carries it.
+    sigset_t saved_sigmask;
+    int has_saved_sigmask;
+
+    struct sigaction signal_handlers[NSIG];
+    stack_t sigaltstack;
 };
 
 /*
@@ -134,6 +141,9 @@ struct process {
  */
 extern struct process *process_table[PROCESS_TABLE_SIZE];
 extern spinlock_t process_table_lock;
+
+// Successful forks since boot, as /proc/stat's "processes" reports them.
+extern unsigned long process_forks;
 
 /*
  * process_slot - The PCB for a pid, or NULL if the slot is free.

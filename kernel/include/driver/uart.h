@@ -5,7 +5,8 @@
 #ifndef PERSPICUA_DRIVER_UART_H
 #define PERSPICUA_DRIVER_UART_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 #include "core/lock.h"
 
@@ -53,6 +54,8 @@ char uart_getc(void);
 
 void uart_write_locked(const char *buf, size_t len);
 
+void uart_write_raw(const char *buf, size_t len);
+
 int uart_data_ready(void);
 
 void uart_enable_interrupts(void);
@@ -64,6 +67,9 @@ unsigned int uart_get_irq(void);
 void uart_reg_rx_callback(uart_rx_cb_t f);
 
 void uart_reg_tx_callback(uart_tx_cb_t f);
+
+// Runs under uart_tx_lock before every direct write, to send output queued ahead of it.
+void uart_reg_flush_callback(uart_tx_cb_t f);
 
 void uart_handle_irq(void);
 

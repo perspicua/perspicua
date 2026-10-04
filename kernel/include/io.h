@@ -2,10 +2,10 @@
  * io.h - Memory-Mapped I/O (MMIO) primitives.
  */
 
-#ifndef PERSPICUA_LIBC_IO_H
-#define PERSPICUA_LIBC_IO_H
+#ifndef PERSPICUA_IO_H
+#define PERSPICUA_IO_H
 
-#include "types.h"
+#include <stdint.h>
 
 // Reads a 32-bit value from MMIO register with load barrier.
 static inline uint32_t mmio_read(volatile uint32_t *reg)
@@ -37,4 +37,4 @@ static inline void mmio_write8(volatile uint8_t *reg, uint8_t val)
     *reg = val;
 }
 
-#endif // PERSPICUA_LIBC_IO_H
+#endif // PERSPICUA_IO_H

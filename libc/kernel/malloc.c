@@ -6,6 +6,8 @@
  * userspace mmap allocator in libc/src/malloc.c.
  */
 
+#include <stddef.h>
+
 #include "stdlib.h"
 
 #include "panic.h"

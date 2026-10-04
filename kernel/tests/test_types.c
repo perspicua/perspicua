@@ -1,5 +1,9 @@
 #include "test.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+
+#include "uapi/types.h"
 
 void test_types(void)
 {

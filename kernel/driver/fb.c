@@ -5,9 +5,11 @@
 #include "driver/fb.h"
 
 #include "stdio.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
+#include "uapi/mman.h"
 
 #include "driver/mailbox.h"
 #include "fs/devfs.h"
@@ -27,21 +29,39 @@ struct fb_info_struct fb_info;
 static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags)
 {
     (void)file;
-    (void)prot;
     (void)flags;
+
+    if (!fb_info.ptr || fb_info.size == 0) {
+        return -ENODEV;
+    }
+
+    // Past the framebuffer is ordinary physical memory, so an unclamped length
+    // hands the caller the kernel's own pages.
+    if (length > fb_info.size) {
+        return -EINVAL;
+    }
 
     uintptr_t phys_fb = V2P((uintptr_t)fb_info.ptr);
     size_t pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
 
     struct process *p = process_current();
     if (!p || !p->user_pgd) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     unsigned long *pgd = p->user_pgd;
 
+    // NG, or the entry outlives the address space: asid_free's tlbi aside1is
+    // leaves global entries alone.
+    unsigned long attrs = MMU_FLAGS_FRAMEBUFFER | MMU_AP_USER | MMU_PTE_NG;
+    if (!(prot & PROT_WRITE)) {
+        attrs |= MMU_AP_RO;
+    }
+
     for (size_t i = 0; i < pages; i++) {
-        mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE,
-                          MMU_FLAGS_FRAMEBUFFER | MMU_AP_USER);
+        int err = mmu_user_map_page(pgd, vaddr + i * PAGE_SIZE, phys_fb + i * PAGE_SIZE, attrs);
+        if (err != 0) {
+            return err;
+        }
     }
 
     return 0;

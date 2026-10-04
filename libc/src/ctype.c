@@ -4,7 +4,7 @@
 
 #include "ctype.h"
 
-#include "types.h"
+#include <stdint.h>
 
 #define CTYPE_UPPER   0x1
 #define CTYPE_LOWER   0X2

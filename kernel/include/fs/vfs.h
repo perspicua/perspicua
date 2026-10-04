@@ -5,8 +5,11 @@
 #ifndef PERSPICUA_FS_VFS_H
 #define PERSPICUA_FS_VFS_H
 
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
+#include "uapi/fcntl.h"
+#include "uapi/dirent.h"
 #include "uapi/stat.h"
 
 #include "core/lock.h"
@@ -25,32 +28,6 @@
 #endif
 #define VFS_MAX_MOUNTS 8
 
-// Standard file open flags
-#define VFS_O_RDONLY  0x0000
-#define VFS_O_WRONLY  0x0001
-#define VFS_O_RDWR    0x0002
-#define VFS_O_ACCMODE 0x0003
-
-#define VFS_O_CREAT    0x0100
-#define VFS_O_TRUNC    0x0200
-#define VFS_O_APPEND   0x0400
-#define VFS_O_CLOEXEC  0x0800
-#define VFS_O_NONBLOCK 0x1000
-
-// fcntl commands
-#define VFS_F_GETFD 1
-#define VFS_F_SETFD 2
-#define VFS_F_GETFL 3
-#define VFS_F_SETFL 4
-
-// fcntl file descriptor flags
-#define VFS_FD_CLOEXEC 1
-
-// Seek mode constants
-#define VFS_SEEK_SET 0
-#define VFS_SEEK_CUR 1
-#define VFS_SEEK_END 2
-
 typedef int64_t vfs_off_t;
 
 /*
@@ -66,14 +43,6 @@ struct vfs_vnode;
 struct vfs_file;
 
 /*
- * struct vfs_dirent - Directory entry format returned to userspace.
- */
-struct vfs_dirent {
-    uint32_t ino;
-    char name[256];
-};
-
-/*
  * struct vfs_vnode_ops - Functional interface for filesystem-specific operations.
  */
 struct vfs_vnode_ops {
@@ -85,6 +54,12 @@ struct vfs_vnode_ops {
      */
     int (*read)(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset);
     int (*write)(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *offset);
+
+    // Refreshes size and location from the filesystem's own record. Optional:
+    // needed only where one file can have more than one vnode.
+    int (*revalidate)(struct vfs_vnode *node);
+    // Called once, as the last reference goes. May sleep.
+    void (*release)(struct vfs_vnode *node);
     int (*truncate)(struct vfs_vnode *node, vfs_off_t length);
     struct vfs_vnode *(*lookup)(struct vfs_vnode *dir, const char *filename);
     int (*readdir)(struct vfs_file *file, void *buffer, size_t count);
@@ -111,6 +86,18 @@ struct vfs_vnode {
     struct vfs_vnode_ops *ops;
     void *internal_info;
     atomic_t refcount;
+
+    // The filesystem's stamp for when size and location were last read.
+    unsigned long revalidated;
+};
+
+/*
+ * struct vfs_dir_pos - Where a directory listing has got to.
+ */
+struct vfs_dir_pos {
+    uint32_t fs_offset; // position the filesystem's readdir understands
+    uint32_t mount_idx; // how far through the mount table synthetic entries are
+    uint32_t dot_idx;   // 0 = "." next, 1 = ".." next, 2 = done
 };
 
 /*
@@ -119,6 +106,7 @@ struct vfs_vnode {
 struct vfs_file {
     struct vfs_vnode *node;
     vfs_off_t offset;
+    struct vfs_dir_pos dir_pos;
     int flags;
     atomic_t refcount;
 };

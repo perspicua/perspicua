@@ -1,3 +1,6 @@
+#include <stddef.h>
+#include <stdint.h>
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -35,11 +38,43 @@ static void print_mode(uint32_t mode)
     printf("%c", (mode & S_IXOTH) ? 'x' : '-');
 }
 
+/*
+ * format_time - "Mmm dd hh:mm", the column ls has always shown.
+ *
+ * Done here rather than with localtime/strftime because the libc has neither
+ * yet. Everything is UTC: nothing records a zone, on disk or anywhere else.
+ */
+static void format_time(uint32_t secs, char *out, size_t n)
+{
+    static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+    if (secs == 0) {
+        snprintf(out, n, "%12s", "-");
+        return;
+    }
+
+    long days = (long)(secs / 86400);
+    long rem = (long)(secs % 86400);
+
+    // Civil date from a day count, proleptic Gregorian.
+    long z = days + 719468;
+    long era = (z >= 0 ? z : z - 146096) / 146097;
+    long doe = z - era * 146097;
+    long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    long mp = (5 * doy + 2) / 153;
+    long day = doy - (153 * mp + 2) / 5 + 1;
+    long month = mp + (mp < 10 ? 3 : -9);
+
+    snprintf(out, n, "%s %2ld %02ld:%02ld", months[month - 1], day, rem / 3600, (rem % 3600) / 60);
+}
+
 static void print_header(void)
 {
-    printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  NAME\n");
-    for (int i = 0; i < 62; i++) {
-        sys_write(1, "─", 3);
+    printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  MODIFIED      NAME\n");
+    for (int i = 0; i < 76; i++) {
+        write(1, "─", 3);
     }
     printf("\n");
 }
@@ -52,8 +87,11 @@ static void print_entry(const char *name, struct stat *st, int long_format)
         char og[32];
         snprintf(og, sizeof(og), "%u:%u", (uint32_t)st->st_uid, (uint32_t)st->st_gid);
 
-        printf("  %3u  %-12s  %8u  %s\n", (unsigned int)st->st_nlink, og, (unsigned int)st->st_size,
-               name);
+        char when[16];
+        format_time((uint32_t)st->st_mtime, when, sizeof(when));
+
+        printf("  %3u  %-12s  %8u  %-12s  %s\n", (unsigned int)st->st_nlink, og,
+               (unsigned int)st->st_size, when, name);
     } else {
         printf("%s\n", name);
     }
@@ -65,7 +103,7 @@ static void print_entry(const char *name, struct stat *st, int long_format)
 // tcgetpgrp succeeds only on a terminal, distinguishing it from a pipe or file.
 static int stdout_is_tty(void)
 {
-    return sys_tcgetpgrp(1) >= 0;
+    return tcgetpgrp(1) >= 0;
 }
 
 // Pack names into columns (down-then-across), like ls at a terminal.
@@ -106,7 +144,7 @@ static void print_columnar(char **names, int count)
 static int list_path_with_options(const char *path, int long_format, int show_all)
 {
     struct stat st;
-    if (sys_stat(path, &st) < 0) {
+    if (stat(path, &st) < 0) {
         printf("ls: cannot stat '%s'\n", path);
         return 1;
     }
@@ -137,34 +175,34 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         names = malloc(sizeof(char *) * LS_MAX_ENTRIES);
     }
 
-    struct vfs_dirent *ent;
+    struct dirent *ent;
     char full_path[512];
     int path_len = strlen(path);
 
     while ((ent = readdir(dirp)) != NULL) {
-        if (ent->name[0] == '.' && !show_all) {
+        if (ent->d_name[0] == '.' && !show_all) {
             continue;
         }
 
         if (long_format) {
             struct stat entry_st;
             if (strcmp(path, ".") == 0) {
-                strncpy(full_path, ent->name, sizeof(full_path));
+                strncpy(full_path, ent->d_name, sizeof(full_path));
             } else {
                 strncpy(full_path, path, sizeof(full_path));
                 if (path[path_len - 1] != '/') {
                     strncat(full_path, "/", sizeof(full_path) - strlen(full_path) - 1);
                 }
-                strncat(full_path, ent->name, sizeof(full_path) - strlen(full_path) - 1);
+                strncat(full_path, ent->d_name, sizeof(full_path) - strlen(full_path) - 1);
             }
 
-            if (sys_stat(full_path, &entry_st) < 0) {
-                printf("?---------      ?       ?       ?        ?  %s\n", ent->name);
+            if (stat(full_path, &entry_st) < 0) {
+                printf("?---------      ?       ?       ?        ?  %s\n", ent->d_name);
             } else {
-                print_entry(ent->name, &entry_st, long_format);
+                print_entry(ent->d_name, &entry_st, long_format);
             }
         } else if (names && count < LS_MAX_ENTRIES) {
-            names[count++] = strdup(ent->name);
+            names[count++] = strdup(ent->d_name);
         }
     }
 

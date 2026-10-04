@@ -5,7 +5,7 @@
 #ifndef PERSPICUA_ARCH_UACCESS_H
     #define PERSPICUA_ARCH_UACCESS_H
 
-    #include "types.h"
+    #include <stddef.h>
 
 // Forward declaration for the exception_trap_frame struct
 struct exception_trap_frame;

@@ -1,6 +1,7 @@
 #include "test.h"
 #include "string.h"
-#include "types.h"
+#include <stddef.h>
+#include <stdint.h>
 
 void test_string(void)
 {

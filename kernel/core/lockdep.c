@@ -7,6 +7,8 @@
 #include "stdio.h"
 #include "panic.h"
 
+#include <stdint.h>
+
 /*
  * When CONFIG_LOCKDEP is disabled, lockdep.h supplies inline no-op stubs and
  * this translation unit compiles to nothing, so a release build carries no

@@ -5,8 +5,6 @@
 #ifndef PERSPICUA_MM_PMM_H
 #define PERSPICUA_MM_PMM_H
 
-#include "types.h"
-
 #define PMM_MAX_ORDER 10
 #define PAGE_SIZE     4096
 
@@ -20,9 +18,18 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
 void *pmm_alloc_page(void);
 
 /*
- * pmm_alloc_pages - Allocates a power-of-two block of pages.
+ * pmm_alloc_pages - Allocates a power-of-two block of pages, zeroing them.
  */
 void *pmm_alloc_pages(unsigned long count);
+
+/*
+ * pmm_alloc_pages_nozero - Allocates a power-of-two block of pages, as they
+ * came back from their last owner.
+ *
+ * The caller must overwrite every byte before the memory becomes reachable
+ * from userspace; whatever it leaves untouched is the previous owner's data.
+ */
+void *pmm_alloc_pages_nozero(unsigned long count);
 
 void pmm_free_page(void *ptr);
 
@@ -34,10 +41,23 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
 
 int pmm_is_managed(void *ptr);
 
+int pmm_is_slab(void *ptr);
+
+void pmm_set_slab(void *ptr, int is_slab);
+
 unsigned int pmm_page_refcount(void *ptr);
 
 unsigned long pmm_get_free_pages(void);
 
 unsigned long pmm_get_total_pages(void);
+
+#ifdef CONFIG_TESTS
+/*
+ * Arms a one-shot refusal: the calling task's nth page allocation from now
+ * returns NULL as though the machine were out of memory. n == 0 disarms.
+ * Orders the allocator would have refused anyway are not counted.
+ */
+void pmm_test_fail_nth(unsigned long n);
+#endif
 
 #endif // PERSPICUA_MM_PMM_H

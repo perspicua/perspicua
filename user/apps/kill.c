@@ -2,16 +2,18 @@
 #include "stdlib.h"
 #include "string.h"
 #include "stdio.h"
-#include "signals.h"
+#include "signal.h"
 #include "errno.h"
 
 // Signal number -> short name, indexed by signal number (0 unused).
 static const char *const signames[] = {
-    "0",    "HUP",  "INT",  "QUIT", "ILL",  "TRAP", "ABRT",   "BUS",  "FPE",   "KILL",
-    "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CONT",  "STOP",
-    "TSTP", "TTIN", "TTOU", "URG",  "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO",
+    "0",    "HUP",  "INT",  "QUIT", "ILL",    "TRAP",   "ABRT",  "BUS",  "FPE",  "KILL", "USR1",
+    "SEGV", "USR2", "PIPE", "ALRM", "TERM",   "STKFLT", "CHLD",  "CONT", "STOP", "TSTP", "TTIN",
+    "TTOU", "URG",  "XCPU", "XFSZ", "VTALRM", "PROF",   "WINCH", "IO",   "PWR",  "SYS",
 };
-#define NSIG ((int)(sizeof(signames) / sizeof(signames[0])))
+
+// list_signals indexes this by every signal the kernel defines.
+_Static_assert(sizeof(signames) / sizeof(signames[0]) == NSIG, "signames is missing a signal");
 
 static void list_signals(void)
 {
@@ -28,7 +30,7 @@ static void list_signals(void)
 
 int main(int argc, char **argv)
 {
-    int sig = SIGNAL_TERM;
+    int sig = SIGTERM;
     int start = 1;
 
     if (argc > 1 && strcmp(argv[1], "-l") == 0) {
@@ -50,7 +52,7 @@ int main(int argc, char **argv)
     int rc = 0;
     for (int i = start; i < argc; i++) {
         int pid = atoi(argv[i]);
-        if (sys_kill(pid, sig) < 0) {
+        if (kill(pid, sig) < 0) {
             if (errno == EPERM) {
                 printf("kill: (%d) - operation not permitted\n", pid);
             } else {

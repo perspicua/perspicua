@@ -4,7 +4,10 @@
 #include "mm/heap.h"
 #include "mm/addr.h"
 #include "panic.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
@@ -38,7 +41,8 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
             // Probe the driver
             int ret = drv->probe(&dev);
             if (ret != 0) {
-                if (ret != -PERS_ERR_NOT_FOUND) {
+                // ENOENT: not my hardware. EEXIST: another driver already took it.
+                if (ret != -ENOENT && ret != -EEXIST) {
                     pr_err("driver: %s probe failed with error %d\n", drv->name, ret);
                 }
             } else {
@@ -148,6 +152,10 @@ unsigned int devm_get_irq(struct device *dev, int index)
     const uint32_t *irq_data = (const uint32_t *)irq_prop.value;
 
     // ARM GIC bindings typically have 3 cells: type, number, flags.
+    if ((uint32_t)(index * 3 + 2) * 4 > irq_prop.size) {
+        return 0;
+    }
+
     uint32_t type = fdt32_to_cpu(irq_data[index * 3]);
     uint32_t num = fdt32_to_cpu(irq_data[index * 3 + 1]);
 

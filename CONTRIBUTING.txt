@@ -6,7 +6,7 @@ detailed docs rather than repeating them — follow the links for specifics.
 
   Documentation map ......... docs/README.txt
   Architecture tour ......... docs/architecture.txt
-  What to build next ........ docs/order.txt   (backlog: docs/ideas.txt)
+  What to build next ........ docs/order.txt   (backlog at the end of it)
   House code style .......... docs/coding_style_guidelines.txt
   Branch/release model ...... docs/branch_workflow.txt
   Testing ................... docs/testing.txt
@@ -16,7 +16,7 @@ detailed docs rather than repeating them — follow the links for specifics.
 PREREQUISITES
 --------------------------------------------------------------------------------
 An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, and mtools.
-QEMU (qemu-system-aarch64) for running. See README.txt for the toolchain file.
+QEMU (qemu-system-aarch64) for running. See README.md for the toolchain file.
 
 
 --------------------------------------------------------------------------------

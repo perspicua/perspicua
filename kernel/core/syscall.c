@@ -4,13 +4,18 @@
 
 #include "core/syscall.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "uapi/types.h"
+
 #include "stdio.h"
 #include "string.h"
 #include "panic.h"
 
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 #include "uapi/time.h"
 
 #include "arch/uaccess.h"
@@ -41,8 +46,8 @@ int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
     uintptr_t start = (uintptr_t)ptr;
     uintptr_t end = start + len;
 
-    // Prevent wrap-around or kernel-space intrusion
-    if (end < start || end > KERNEL_VMA) {
+    // Past USER_VA_LIMIT, L1_IDX wraps onto another entry of the same pgd.
+    if (end < start || end > KERNEL_VMA || end > USER_VA_LIMIT) {
         return 0;
     }
 
@@ -97,19 +102,23 @@ static int copy_path_from_user(const char *upath, char **out)
 {
     *out = NULL;
 
+    if (!upath || (uintptr_t)upath >= USER_VA_LIMIT) {
+        return -EINVAL;
+    }
+
     char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
     if (!kpath) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     long copied = strncpy_from_user(kpath, upath, VFS_MAX_PATH_LEN);
     if (copied < 0) {
         heap_free(kpath);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return (int)copied;
     }
 
     *out = kpath;
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -123,25 +132,25 @@ static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
     *out = NULL;
 
     if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     void *kbuf = heap_malloc(len);
     if (!kbuf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     if (copy_from_user(kbuf, ubuf, len) != 0) {
         heap_free(kbuf);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     *out = kbuf;
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -155,20 +164,20 @@ static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
     *out = NULL;
 
     if (len == 0 || len > SYSCALL_MAX_RW_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     void *kbuf = heap_malloc(len);
     if (!kbuf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     *out = kbuf;
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -179,18 +188,18 @@ static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
 static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
 {
     if (len == 0) {
-        return PERS_SUCCESS;
+        return 0;
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (copy_to_user(ubuf, kbuf, len) != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
@@ -199,17 +208,17 @@ static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
  * into tf->x[0].
  *
  * Used by:
- *   - sys_exec_handler: process_exec() builds the new frame and sets argc in
+ *   - exec_handler: process_exec() builds the new frame and sets argc in
  *     tf->x[0]; storing a return value would destroy the argument count.
- *   - sys_sigreturn_handler: restores the user trap frame verbatim from the
+ *   - sigreturn_handler: restores the user trap frame verbatim from the
  *     stack; storing a return value would corrupt the restored register state.
  *
  * Why INT64_MAX is collision-free across all other syscalls:
  *   - mmap returns user virtual addresses below USER_VA_LIMIT (0x8000000000)
- *     or MAP_FAILED (-1).
+ *     or a negative errno.
  *   - lseek returns file offsets (vfs_off_t, positive values up to file size).
  *   - All other handlers return small non-negative integers (byte counts, PIDs,
- *     file descriptors, 0 for success) or negative error codes (-PERS_ERR_*).
+ *     file descriptors, 0 for success) or negative error codes (-ENOENT and friends).
  * None can legitimately return INT64_MAX. Note: any future syscall returning an
  * unconstrained 64-bit value must take care not to collide with this sentinel.
  */
@@ -217,37 +226,37 @@ static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
 
 typedef int64_t (*syscall_fn)(struct exception_trap_frame *tf);
 
-static int64_t sys_getpid_handler(struct exception_trap_frame *tf)
+static int64_t getpid_handler(struct exception_trap_frame *tf)
 {
     (void)tf;
     return (int64_t)sched_current_task()->pid;
 }
 
-static int64_t sys_yield_handler(struct exception_trap_frame *tf)
+static int64_t yield_handler(struct exception_trap_frame *tf)
 {
     (void)tf;
     sched_schedule();
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_getppid_handler(struct exception_trap_frame *tf)
+static int64_t getppid_handler(struct exception_trap_frame *tf)
 {
     (void)tf;
     struct process *proc = process_current();
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     return (int64_t)proc->parent_pid;
 }
 
-static int64_t sys_setpgid_handler(struct exception_trap_frame *tf)
+static int64_t setpgid_handler(struct exception_trap_frame *tf)
 {
     int target_pid = (int)tf->x[0];
     int new_pgid = (int)tf->x[1];
 
     int curr_pid = process_current_pid();
     if (curr_pid < 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     if (target_pid == 0) {
@@ -260,34 +269,34 @@ static int64_t sys_setpgid_handler(struct exception_trap_frame *tf)
     // A pgid is always some process's pid, so it carries the same bound.
     if (target_pid < 1 || target_pid >= PROCESS_TABLE_SIZE || new_pgid < 1
         || new_pgid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
     struct process *target_proc = process_table[target_pid];
     if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     // Restrict setpgid to self or direct child
     if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -ESRCH;
     }
 
     /* A parent may only place a child before it execs; the new image
      * owns its own membership afterwards. Moving yourself stays legal. */
     if (target_pid != curr_pid && target_proc->has_execed) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EACCES;
     }
 
     /* A session leader's pid names its session, so it cannot also name a
      * group elsewhere. */
     if (target_proc->sid == target_proc->pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EPERM;
     }
 
     /* Groups do not span sessions; an empty group is only legal when the
@@ -296,44 +305,44 @@ static int64_t sys_setpgid_handler(struct exception_trap_frame *tf)
     if (group_sid == 0) {
         if (new_pgid != target_pid) {
             spin_unlock_irqrestore(&process_table_lock, irqf);
-            return -PERS_ERR_PERMISSION_DENIED;
+            return -EPERM;
         }
     } else if (group_sid != target_proc->sid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EPERM;
     }
 
     target_proc->pgid = (uint32_t)new_pgid;
     spin_unlock_irqrestore(&process_table_lock, irqf);
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_getpgid_handler(struct exception_trap_frame *tf)
+static int64_t getpgid_handler(struct exception_trap_frame *tf)
 {
     int target_pid = (int)tf->x[0];
     int curr_pid = process_current_pid();
     if (curr_pid < 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     if (target_pid == 0) {
         target_pid = curr_pid;
     }
     if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
     struct process *target_proc = process_table[target_pid];
     if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     uint32_t res_pgid = target_proc->pgid;
     spin_unlock_irqrestore(&process_table_lock, irqf);
     return (int64_t)res_pgid;
 }
 
-static int64_t sys_tcsetpgrp_handler(struct exception_trap_frame *tf)
+static int64_t tcsetpgrp_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     int new_pgid = (int)tf->x[1];
@@ -341,25 +350,25 @@ static int64_t sys_tcsetpgrp_handler(struct exception_trap_frame *tf)
     int curr_pid = process_current_pid();
     if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS || new_pgid < 1
         || new_pgid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct process *curr_proc = process_slot((uint32_t)curr_pid);
     if (!curr_proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
     struct vfs_file *file = curr_proc->fd_table[fd];
     if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
         spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     struct tty *tty = (struct tty *)file->node->internal_info;
     spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
 
     if (!tty) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
@@ -369,11 +378,11 @@ static int64_t sys_tcsetpgrp_handler(struct exception_trap_frame *tf)
     spin_unlock_irqrestore(&process_table_lock, irqf);
 
     if (group_sid == 0 || group_sid != caller_sid) {
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EPERM;
     }
 
-    if (tty_access_check(tty, SIGNAL_TTOU) == TTY_ACCESS_STOPPED) {
-        return -PERS_ERR_INTERRUPTED;
+    if (tty_access_check(tty, SIGTTOU) == TTY_ACCESS_STOPPED) {
+        return -EINTR;
     }
 
     unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
@@ -382,38 +391,38 @@ static int64_t sys_tcsetpgrp_handler(struct exception_trap_frame *tf)
     }
     if (tty->session_id != caller_sid) {
         spin_unlock_irqrestore(&tty->lock, ttyflags);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -ENOTTY;
     }
     tty->foreground_pgid = (uint32_t)new_pgid;
     spin_unlock_irqrestore(&tty->lock, ttyflags);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_tcgetpgrp_handler(struct exception_trap_frame *tf)
+static int64_t tcgetpgrp_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     int curr_pid = process_current_pid();
     if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct process *curr_proc = process_slot((uint32_t)curr_pid);
     if (!curr_proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
     struct vfs_file *file = curr_proc->fd_table[fd];
     if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
         spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     struct tty *tty = (struct tty *)file->node->internal_info;
     spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
 
     if (!tty) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
@@ -423,24 +432,24 @@ static int64_t sys_tcgetpgrp_handler(struct exception_trap_frame *tf)
     return (int64_t)fg_pgid;
 }
 
-static int64_t sys_setsid_handler(struct exception_trap_frame *tf)
+static int64_t setsid_handler(struct exception_trap_frame *tf)
 {
     (void)tf;
     int curr_pid = process_current_pid();
     if (curr_pid < 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
     struct process *curr_p = process_table[curr_pid];
     if (!curr_p || curr_p->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     if (curr_p->pgid == curr_p->pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_PERMISSION_DENIED;
+        return -EPERM;
     }
 
     curr_p->sid = curr_p->pid;
@@ -451,37 +460,37 @@ static int64_t sys_setsid_handler(struct exception_trap_frame *tf)
     return (int64_t)new_sid;
 }
 
-static int64_t sys_getsid_handler(struct exception_trap_frame *tf)
+static int64_t getsid_handler(struct exception_trap_frame *tf)
 {
     int target_pid = (int)tf->x[0];
     int curr_pid = process_current_pid();
     if (curr_pid < 0) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     if (target_pid == 0) {
         target_pid = curr_pid;
     }
     if (target_pid < 0 || target_pid >= PROCESS_TABLE_SIZE) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
     struct process *target_proc = process_table[target_pid];
     if (!target_proc || target_proc->state != PROCESS_STATE_RUNNING) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
     uint32_t res_sid = target_proc->sid;
     spin_unlock_irqrestore(&process_table_lock, irqf);
     return (int64_t)res_sid;
 }
 
-static int64_t sys_gettimeofday_handler(struct exception_trap_frame *tf)
+static int64_t gettimeofday_handler(struct exception_trap_frame *tf)
 {
     struct timeval *tv = (struct timeval *)tf->x[0];
 
     if (!tv || !syscall_validate_user_buffer(tv, sizeof(struct timeval), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long ms = timer_get_system_time();
@@ -490,23 +499,23 @@ static int64_t sys_gettimeofday_handler(struct exception_trap_frame *tf)
     ktv.tv_usec = (long)((ms % 1000) * 1000);
 
     if (copy_to_user(tv, &ktv, sizeof(struct timeval)) != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_clock_gettime_handler(struct exception_trap_frame *tf)
+static int64_t clock_gettime_handler(struct exception_trap_frame *tf)
 {
     clockid_t clk_id = (clockid_t)tf->x[0];
     struct timespec *tp = (struct timespec *)tf->x[1];
 
     if (clk_id != CLOCK_REALTIME && clk_id != CLOCK_MONOTONIC) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (!tp || !syscall_validate_user_buffer(tp, sizeof(struct timespec), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     // TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now
@@ -516,72 +525,92 @@ static int64_t sys_clock_gettime_handler(struct exception_trap_frame *tf)
     ktp.tv_nsec = (long)((ms % 1000) * 1000000);
 
     if (copy_to_user(tp, &ktp, sizeof(struct timespec)) != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_nanosleep_handler(struct exception_trap_frame *tf)
+static unsigned long ms_until(unsigned long deadline)
+{
+    // Signed, so a wrap reads as "deadline passed".
+    long left = (long)(deadline - timer_get_system_time());
+    return left > 0 ? (unsigned long)left : 0;
+}
+
+static int64_t nanosleep_handler(struct exception_trap_frame *tf)
 {
     const struct timespec *req = (const struct timespec *)tf->x[0];
     struct timespec *rem = (struct timespec *)tf->x[1];
+    struct task *curr = sched_current_task();
+
+    unsigned long resume_at = curr->sleep_resume_at;
+    curr->sleep_resume_at = 0;
 
     if (!req || !syscall_validate_user_buffer(req, sizeof(struct timespec), 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (rem && !syscall_validate_user_buffer(rem, sizeof(struct timespec), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct timespec kreq;
     if (copy_from_user(&kreq, req, sizeof(struct timespec)) != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     if (kreq.tv_sec < 0 || kreq.tv_nsec < 0 || kreq.tv_nsec > 999999999) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     /* Overflow guard: cap tv_sec to prevent (tv_sec * 1000) from overflowing unsigned long.
      */
     if (kreq.tv_sec > (time_t)(0x7FFFFFFFFFFFFFFFLL / 1000)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     unsigned long ms =
         (unsigned long)kreq.tv_sec * 1000 + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
 
-    if (ms > 0) {
-        sched_sleep_ms(ms);
+    unsigned long deadline = resume_at ? resume_at : timer_get_system_time() + ms;
+
+    // Only a signal ends the sleep early; anything else re-sleeps the rest.
+    unsigned long left;
+    while ((left = ms_until(deadline)) > 0 && !signal_pending(process_current())) {
+        sched_sleep_ms_interruptible(left);
     }
 
-    /* TODO: sched_sleep_ms is not signal-interruptible yet; sleep always completes, so rem
-     * is always zero. Revisit when EINTR/signal-aware sleep lands. */
     if (rem) {
-        struct timespec krem = {0, 0};
+        struct timespec krem = {(time_t)(left / 1000), (long)(left % 1000) * 1000000};
         if (copy_to_user(rem, &krem, sizeof(struct timespec)) != 0) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
     }
 
-    return PERS_SUCCESS;
+    if (left == 0) {
+        return 0;
+    }
+
+    // A stop or a handlerless signal re-issues the call, which resumes this
+    // deadline rather than sleeping req again.
+    curr->sleep_resume_at = deadline;
+    return -ERESTARTNOHAND;
 }
 
-static int64_t sys_exit_handler(struct exception_trap_frame *tf)
+static int64_t exit_handler(struct exception_trap_frame *tf)
 {
     int status = (int)tf->x[0];
     struct task *curr = sched_current_task();
     process_exit(curr->pid, status);
 }
 
-static int64_t sys_fork_handler(struct exception_trap_frame *tf)
+static int64_t fork_handler(struct exception_trap_frame *tf)
 {
     return process_fork(tf);
 }
 
-static int64_t sys_waitpid_handler(struct exception_trap_frame *tf)
+static int64_t waitpid_handler(struct exception_trap_frame *tf)
 {
     int wait_pid = (int)tf->x[0];
     int *ustatus = (int *)tf->x[1];
@@ -589,31 +618,31 @@ static int64_t sys_waitpid_handler(struct exception_trap_frame *tf)
     int kstatus = 0;
 
     if (ustatus != NULL && !syscall_validate_user_buffer(ustatus, sizeof(int), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     int res = process_waitpid(wait_pid, &kstatus, options);
     if (res >= 0 && ustatus != NULL) {
         if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
     }
     return res;
 }
 
-static int64_t sys_exec_handler(struct exception_trap_frame *tf)
+static int64_t exec_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)(tf->x[0]);
     char *const *argv = (char *const *)(tf->x[1]);
     char *const *envp = (char *const *)(tf->x[2]);
 
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -627,20 +656,20 @@ static int64_t sys_exec_handler(struct exception_trap_frame *tf)
     return SYSCALL_RETAIN_FRAME;
 }
 
-static int64_t sys_kill_handler(struct exception_trap_frame *tf)
+static int64_t kill_handler(struct exception_trap_frame *tf)
 {
     int target_pid = (int)tf->x[0];
     int sig = (int)tf->x[1];
 
-    if (sig < 1 || sig >= SIGNAL_COUNT) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+    if (sig < 1 || sig >= NSIG) {
+        return -EINVAL;
     }
 
     struct task *curr = sched_current_task();
     uint32_t pid = curr->pid;
     struct process *proc = process_slot(pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     /*
@@ -648,39 +677,44 @@ static int64_t sys_kill_handler(struct exception_trap_frame *tf)
      * target_pid > 0:  send to process target_pid.
      * target_pid == 0: send to caller's process group (proc->pgid).
      * target_pid == -1: reserved for broadcast; not supported yet, return
-     * -PERS_ERR_NO_SUCH_PROCESS. target_pid < -1: send to process group (-target_pid).
+     * -ESRCH. target_pid < -1: send to process group (-target_pid).
      */
     if (target_pid == -1) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     if (target_pid > 0) {
         if (target_pid >= PROCESS_TABLE_SIZE) {
-            return -PERS_ERR_NO_SUCH_PROCESS;
+            return -ESRCH;
         }
 
-        struct process *target = process_slot((uint32_t)target_pid);
+        // Checked under the lock a reaper frees the target with; signal_send
+        // re-checks that it is still there.
+        unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+        struct process *target = process_table[target_pid];
+        int err = 0;
         if (!target || target->state != PROCESS_STATE_RUNNING) {
-            return -PERS_ERR_NO_SUCH_PROCESS;
+            err = -ESRCH;
+        } else if (target_pid != (int)pid && target->parent_pid != pid
+                   && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
+            err = -EPERM;
         }
-
-        // Enforce process hierarchy permissions
-        if (target_pid != (int)pid && target->parent_pid != pid
-            && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
-            return -PERS_ERR_PERMISSION_DENIED;
+        spin_unlock_irqrestore(&process_table_lock, irqf);
+        if (err != 0) {
+            return err;
         }
 
         return signal_send((uint32_t)target_pid, sig);
     } else if (target_pid == 0) {
         if (proc->pgid == 0) {
-            return -PERS_ERR_PERMISSION_DENIED;
+            return -EPERM;
         }
         return signal_send_group(proc->pgid, sig);
     } else { // target_pid < -1
         int64_t raw_pid = target_pid;
         uint64_t abs_pgid = (uint64_t)(-raw_pid);
         if (abs_pgid == 0 || abs_pgid >= PROCESS_TABLE_SIZE) {
-            return -PERS_ERR_NO_SUCH_PROCESS;
+            return -ESRCH;
         }
 
         uint32_t target_pgid = (uint32_t)abs_pgid;
@@ -705,55 +739,128 @@ static int64_t sys_kill_handler(struct exception_trap_frame *tf)
         }
 
         if (!allowed) {
-            return -PERS_ERR_PERMISSION_DENIED;
+            return -EPERM;
         }
 
         return signal_send_group(target_pgid, sig);
     }
 }
 
-static int64_t sys_sigaction_handler(struct exception_trap_frame *tf)
+static int64_t sigaction_handler(struct exception_trap_frame *tf)
 {
     int sig = (int)tf->x[0];
     const struct sigaction *uact = (const struct sigaction *)tf->x[1];
     struct sigaction *uoact = (struct sigaction *)tf->x[2];
 
-    if (sig >= SIGNAL_COUNT || sig < 1 || sig == SIGNAL_KILL || sig == SIGNAL_STOP) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+    if (sig >= NSIG || sig < 1 || sig == SIGKILL || sig == SIGSTOP) {
+        return -EINVAL;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     if (uoact) {
         if (!syscall_validate_user_buffer(uoact, sizeof(struct sigaction), 1)) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         if (copy_to_user(uoact, &proc->signal_handlers[sig - 1], sizeof(struct sigaction)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
     }
 
     if (uact) {
         if (!syscall_validate_user_buffer(uact, sizeof(struct sigaction), 0)) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         struct sigaction kact;
         if (copy_from_user(&kact, uact, sizeof(struct sigaction)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
+        kact.sa_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
+
+        // Under the lock signal_send reads the disposition with. Ignoring a
+        // signal also discards an instance already pending.
+        unsigned long flags = spin_lock_irqsave(&process_table_lock);
         proc->signal_handlers[sig - 1] = kact;
-        proc->signal_handlers[sig - 1].sa_mask &=
-            ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        if (kact.sa_handler == SIG_IGN) {
+            __atomic_fetch_and(&proc->pending_signals, ~(1u << (sig - 1)), __ATOMIC_SEQ_CST);
+        }
+        spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_sigprocmask_handler(struct exception_trap_frame *tf)
+static int64_t sigaltstack_handler(struct exception_trap_frame *tf)
+{
+    const stack_t *uss = (const stack_t *)tf->x[0];
+    stack_t *uoss = (stack_t *)tf->x[1];
+
+    struct process *proc = process_current();
+    if (!proc) {
+        return -ESRCH;
+    }
+
+    int on_stack = signal_on_altstack(proc, tf->sp_el0);
+
+    if (uoss) {
+        if (!syscall_validate_user_buffer(uoss, sizeof(stack_t), 1)) {
+            return -EFAULT;
+        }
+        stack_t old = proc->sigaltstack;
+        old.ss_flags = on_stack ? SS_ONSTACK : (old.ss_sp ? 0 : SS_DISABLE);
+        if (copy_to_user(uoss, &old, sizeof(stack_t)) != 0) {
+            return -EFAULT;
+        }
+    }
+
+    if (!uss) {
+        return 0;
+    }
+
+    // Swapping it out underfoot would move the stack a handler is running on.
+    if (on_stack) {
+        return -EPERM;
+    }
+
+    if (!syscall_validate_user_buffer(uss, sizeof(stack_t), 0)) {
+        return -EFAULT;
+    }
+    stack_t kss;
+    if (copy_from_user(&kss, uss, sizeof(stack_t)) != 0) {
+        return -EFAULT;
+    }
+
+    if (kss.ss_flags & ~SS_DISABLE) {
+        return -EINVAL;
+    }
+
+    if (kss.ss_flags & SS_DISABLE) {
+        memset(&proc->sigaltstack, 0, sizeof(proc->sigaltstack));
+        return 0;
+    }
+
+    if (kss.ss_size < MINSIGSTKSZ) {
+        return -ENOMEM;
+    }
+
+    uintptr_t base = (uintptr_t)kss.ss_sp;
+    if (base == 0 || base + kss.ss_size < base || base + kss.ss_size > KERNEL_VMA) {
+        return -EINVAL;
+    }
+    if (!syscall_validate_user_buffer(kss.ss_sp, kss.ss_size, 1)) {
+        return -EFAULT;
+    }
+
+    kss.ss_flags = 0;
+    proc->sigaltstack = kss;
+    return 0;
+}
+
+static int64_t sigprocmask_handler(struct exception_trap_frame *tf)
 {
     int how = (int)tf->x[0];
     const sigset_t *uset = (const sigset_t *)tf->x[1];
@@ -762,25 +869,25 @@ static int64_t sys_sigprocmask_handler(struct exception_trap_frame *tf)
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     if (uoset) {
         if (!syscall_validate_user_buffer(uoset, sizeof(sigset_t), 1)) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         if (copy_to_user(uoset, &proc->blocked_signals, sizeof(sigset_t)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
     }
 
     if (uset) {
         if (!syscall_validate_user_buffer(uset, sizeof(sigset_t), 0)) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
         sigset_t kset;
         if (copy_from_user(&kset, uset, sizeof(sigset_t)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
 
         if (how == SIG_BLOCK) {
@@ -790,75 +897,91 @@ static int64_t sys_sigprocmask_handler(struct exception_trap_frame *tf)
         } else if (how == SIG_SETMASK) {
             proc->blocked_signals = kset;
         } else {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
 
-        proc->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+        proc->blocked_signals &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     }
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_sigpending_handler(struct exception_trap_frame *tf)
+static int64_t sigpending_handler(struct exception_trap_frame *tf)
 {
     sigset_t *uset = (sigset_t *)tf->x[0];
     if (!syscall_validate_user_buffer(uset, sizeof(sigset_t), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
-    if (copy_to_user(uset, &proc->pending_signals, sizeof(sigset_t)) != 0) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+    // Pending means held back: an unblocked signal is on its way in, not waiting.
+    sigset_t held = proc->pending_signals & proc->blocked_signals;
+    if (copy_to_user(uset, &held, sizeof(sigset_t)) != 0) {
+        return -ENOMEM;
     }
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_sigsuspend_handler(struct exception_trap_frame *tf)
+static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
 {
     const sigset_t *umask = (const sigset_t *)tf->x[0];
     if (!syscall_validate_user_buffer(umask, sizeof(sigset_t), 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     sigset_t kmask;
     if (copy_from_user(&kmask, umask, sizeof(sigset_t)) != 0) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     sigset_t saved_mask = proc->blocked_signals;
     proc->blocked_signals = kmask;
-    proc->blocked_signals &= ~((1u << (SIGNAL_KILL - 1)) | (1u << (SIGNAL_STOP - 1)));
+    proc->blocked_signals &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
 
-    /* Block until a signal is pending. Mask IRQs across the pending
-     * check and the state transition so a signal delivered on this core
-     * (e.g. Ctrl-C via the TTY IRQ) cannot be lost between them. */
+    /* Block until a signal is pending. BLOCKED is published BEFORE the check,
+     * with a fence between: the sender sets the pending bit and then reads this
+     * state, so ordering both stores ahead of both loads means at most one side
+     * can miss the other. Masking IRQs alone only closes the same-core window;
+     * a sender on another core would see RUNNING and skip the wakeup. */
     for (;;) {
         unsigned long irqf = irq_save();
-        if (proc->pending_signals & ~proc->blocked_signals) {
+        sched_task_set_blocked(curr);
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+        if (signal_pending(proc)) {
+            /* A CAS, not a store: losing it means a waker already moved us to
+             * READY and queued us, and READY must stand. */
+            enum sched_task_state expected = SCHED_TASK_BLOCKED;
+            __atomic_compare_exchange_n(&curr->state, &expected, SCHED_TASK_RUNNING, 0,
+                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
             irq_restore(irqf);
             break;
         }
-        curr->state = SCHED_TASK_BLOCKED;
-        irq_restore(irqf);
+
         sched_schedule();
+        irq_restore(irqf);
     }
 
-    // POSIX: sigsuspend restores the caller's original mask on return.
-    proc->blocked_signals = saved_mask;
-    return -PERS_ERR_INTERRUPTED;
+    // The handler runs after this returns, so restoring the mask here would
+    // re-block the signal that woke us and the handler would never run.
+    proc->saved_sigmask = saved_mask;
+    proc->has_saved_sigmask = 1;
+
+    // A stop, or a signal with no handler, suspends again.
+    return -ERESTARTNOHAND;
 }
 
-static int64_t sys_sigreturn_handler(struct exception_trap_frame *tf)
+static int64_t sigreturn_handler(struct exception_trap_frame *tf)
 {
     uintptr_t user_frame_ptr = tf->sp_el0;
     struct task *curr = sched_current_task();
@@ -886,21 +1009,23 @@ static int64_t sys_sigreturn_handler(struct exception_trap_frame *tf)
     memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
     if (proc) {
-        proc->blocked_signals = frame.saved_mask;
+        // The mask comes off the user stack, so it gets the same scrubbing as
+        // one passed to sigprocmask.
+        proc->blocked_signals = frame.saved_mask & ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     }
     tf->spsr_el1 &= 0xF0000000ULL;
 
     return SYSCALL_RETAIN_FRAME;
 }
 
-static int64_t sys_open_handler(struct exception_trap_frame *tf)
+static int64_t open_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)(tf->x[0]);
     int flags = (int)(tf->x[1]);
 
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -909,38 +1034,38 @@ static int64_t sys_open_handler(struct exception_trap_frame *tf)
     return fd;
 }
 
-static int64_t sys_close_handler(struct exception_trap_frame *tf)
+static int64_t close_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     return vfs_close(fd);
 }
 
-static int64_t sys_dup2_handler(struct exception_trap_frame *tf)
+static int64_t dup2_handler(struct exception_trap_frame *tf)
 {
     int oldfd = (int)tf->x[0];
     int newfd = (int)tf->x[1];
     return vfs_dup2(oldfd, newfd);
 }
 
-static int64_t sys_pipe_handler(struct exception_trap_frame *tf)
+static int64_t pipe_handler(struct exception_trap_frame *tf)
 {
     int *upipefd = (int *)tf->x[0];
     int kpipefd[2];
 
     if (!syscall_validate_user_buffer(upipefd, sizeof(int) * 2, 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     int res = pipe_create(kpipefd);
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         if (copy_to_user(upipefd, kpipefd, sizeof(int) * 2) != 0) {
-            return -PERS_ERR_INVALID_ARGUMENT;
+            return -EINVAL;
         }
     }
     return res;
 }
 
-static int64_t sys_lseek_handler(struct exception_trap_frame *tf)
+static int64_t lseek_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     off_t offset = (off_t)tf->x[1];
@@ -948,45 +1073,45 @@ static int64_t sys_lseek_handler(struct exception_trap_frame *tf)
     return vfs_lseek(fd, offset, whence);
 }
 
-static int64_t sys_fcntl_handler(struct exception_trap_frame *tf)
+static int64_t fcntl_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     int cmd = (int)tf->x[1];
     int arg = (int)tf->x[2];
 
     if (fd < 0 || fd >= VFS_MAX_FDS) {
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return -PERS_ERR_NO_SUCH_PROCESS;
+        return -ESRCH;
     }
 
     unsigned long fdflags = spin_lock_irqsave(&proc->fd_lock);
     struct vfs_file *f = proc->fd_table[fd];
     if (!f) {
         spin_unlock_irqrestore(&proc->fd_lock, fdflags);
-        return -PERS_ERR_BAD_FILE_DESCRIPTOR;
+        return -EBADF;
     }
 
     int ret = 0;
     switch (cmd) {
-        case VFS_F_GETFD:
+        case F_GETFD:
             ret = proc->fd_flags[fd];
             break;
-        case VFS_F_SETFD:
-            proc->fd_flags[fd] = arg;
+        case F_SETFD:
+            proc->fd_flags[fd] = arg & FD_CLOEXEC;
             break;
-        case VFS_F_GETFL:
+        case F_GETFL:
             ret = f->flags;
             break;
-        case VFS_F_SETFL:
-            f->flags = (f->flags & VFS_O_ACCMODE) | (arg & ~VFS_O_ACCMODE);
+        case F_SETFL:
+            f->flags = (f->flags & O_ACCMODE) | (arg & ~O_ACCMODE);
             break;
         default:
-            ret = -PERS_ERR_INVALID_ARGUMENT;
+            ret = -EINVAL;
             break;
     }
     spin_unlock_irqrestore(&proc->fd_lock, fdflags);
@@ -994,16 +1119,16 @@ static int64_t sys_fcntl_handler(struct exception_trap_frame *tf)
     return ret;
 }
 
-static int64_t sys_chdir_handler(struct exception_trap_frame *tf)
+static int64_t chdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)(tf->x[0]);
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -1012,19 +1137,19 @@ static int64_t sys_chdir_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_stat_handler(struct exception_trap_frame *tf)
+static int64_t stat_handler(struct exception_trap_frame *tf)
 {
     const char *upath = (const char *)tf->x[0];
     struct stat *ubuf = (struct stat *)tf->x[1];
 
     if (!syscall_validate_user_buffer(upath, 1, 0)
         || !syscall_validate_user_buffer(ubuf, sizeof(struct stat), 1)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     char *kpath;
     int err = copy_path_from_user(upath, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -1032,31 +1157,31 @@ static int64_t sys_stat_handler(struct exception_trap_frame *tf)
     int res = vfs_stat(kpath, &kbuf);
     heap_free(kpath);
 
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
     }
     return res;
 }
 
-static int64_t sys_sync_handler(struct exception_trap_frame *tf)
+static int64_t sync_handler(struct exception_trap_frame *tf)
 {
     (void)tf;
     pagecache_sync();
     block_cache_sync();
-    return PERS_SUCCESS;
+    return 0;
 }
 
-static int64_t sys_mkdir_handler(struct exception_trap_frame *tf)
+static int64_t mkdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
     int res = vfs_mkdir(kpath);
@@ -1064,15 +1189,15 @@ static int64_t sys_mkdir_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_rmdir_handler(struct exception_trap_frame *tf)
+static int64_t rmdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
     int res = vfs_rmdir(kpath);
@@ -1080,15 +1205,15 @@ static int64_t sys_rmdir_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_unlink_handler(struct exception_trap_frame *tf)
+static int64_t unlink_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
     int res = vfs_unlink(kpath);
@@ -1096,23 +1221,23 @@ static int64_t sys_unlink_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_rename_handler(struct exception_trap_frame *tf)
+static int64_t rename_handler(struct exception_trap_frame *tf)
 {
     const char *oldpath = (const char *)tf->x[0];
     const char *newpath = (const char *)tf->x[1];
     if (!syscall_validate_user_buffer(oldpath, 1, 0)
         || !syscall_validate_user_buffer(newpath, 1, 0)) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     char *koldpath;
     int err = copy_path_from_user(oldpath, &koldpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
     char *knewpath;
     err = copy_path_from_user(newpath, &knewpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         heap_free(koldpath);
         return err;
     }
@@ -1122,39 +1247,39 @@ static int64_t sys_rename_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_fsync_handler(struct exception_trap_frame *tf)
+static int64_t fsync_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     return vfs_fsync(fd);
 }
 
-static int64_t sys_fstat_handler(struct exception_trap_frame *tf)
+static int64_t fstat_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     struct stat *ubuf = (struct stat *)tf->x[1];
 
     if (!syscall_validate_user_buffer(ubuf, sizeof(struct stat), 1)) { // writable
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     struct stat kbuf;
     int res = vfs_fstat(fd, &kbuf);
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
     }
     return res;
 }
 
-static int64_t sys_truncate_handler(struct exception_trap_frame *tf)
+static int64_t truncate_handler(struct exception_trap_frame *tf)
 {
     const char *upath = (const char *)tf->x[0];
     vfs_off_t length = (vfs_off_t)tf->x[1];
 
     char *kpath = NULL;
     int err = copy_path_from_user(upath, &kpath);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -1163,22 +1288,27 @@ static int64_t sys_truncate_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_ftruncate_handler(struct exception_trap_frame *tf)
+static int64_t ftruncate_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     vfs_off_t length = (vfs_off_t)tf->x[1];
     return vfs_ftruncate(fd, length);
 }
 
-static int64_t sys_write_handler(struct exception_trap_frame *tf)
+static int64_t write_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     const char *buf = (const char *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
 
+    // Through the VFS, not short-circuited: the fd still has to be checked.
+    if (len == 0) {
+        return vfs_write(fd, "", 0);
+    }
+
     void *kbuf;
     int err = copy_buf_from_user(buf, len, &kbuf);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -1187,16 +1317,20 @@ static int64_t sys_write_handler(struct exception_trap_frame *tf)
     return bytes;
 }
 
-static int64_t sys_pwrite_handler(struct exception_trap_frame *tf)
+static int64_t pwrite_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     const char *buf = (const char *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (len == 0) {
+        return vfs_pwrite(fd, "", 0, offset);
+    }
+
     void *kbuf;
     int err = copy_buf_from_user(buf, len, &kbuf);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
@@ -1205,96 +1339,114 @@ static int64_t sys_pwrite_handler(struct exception_trap_frame *tf)
     return bytes;
 }
 
-static int64_t sys_read_handler(struct exception_trap_frame *tf)
+static int64_t read_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     void *buf = (void *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
 
+    if (len == 0) {
+        char none;
+        return vfs_read(fd, &none, 0);
+    }
+
     void *kbuf;
     int err = alloc_user_out_buf(buf, len, &kbuf);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
     int bytes = vfs_read(fd, kbuf, len);
     if (bytes > 0) {
         if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-            bytes = -PERS_ERR_INVALID_ARGUMENT;
+            bytes = -EINVAL;
         }
     }
     heap_free(kbuf);
     return bytes;
 }
 
-static int64_t sys_pread_handler(struct exception_trap_frame *tf)
+static int64_t pread_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     void *buf = (void *)(tf->x[1]);
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (len == 0) {
+        char none;
+        return vfs_pread(fd, &none, 0, offset);
+    }
+
     void *kbuf;
     int err = alloc_user_out_buf(buf, len, &kbuf);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
     int bytes = vfs_pread(fd, kbuf, len, offset);
     if (bytes > 0) {
         if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-            bytes = -PERS_ERR_INVALID_ARGUMENT;
+            bytes = -EINVAL;
         }
     }
     heap_free(kbuf);
     return bytes;
 }
 
-static int64_t sys_getdents_handler(struct exception_trap_frame *tf)
+static int64_t getdents_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)(tf->x[0]);
     void *buf = (void *)(tf->x[1]);
     size_t count = (size_t)(tf->x[2]);
 
+    if (count == 0) {
+        return 0;
+    }
+
     void *kbuf;
     int err = alloc_user_out_buf(buf, count, &kbuf);
-    if (err != PERS_SUCCESS) {
+    if (err != 0) {
         return err;
     }
 
+    // Whole struct dirents go back to the caller, but a filesystem only writes
+    // d_name up to its terminator; the tail would be recycled heap.
+    memset(kbuf, 0, count);
+
     int res = vfs_readdir(fd, kbuf, count);
     if (res > 0) {
-        size_t copy_size = (size_t)res * sizeof(struct vfs_dirent);
+        size_t copy_size = (size_t)res * sizeof(struct dirent);
         if (copy_to_user(buf, kbuf, copy_size) != 0) {
-            res = -PERS_ERR_INVALID_ARGUMENT;
+            res = -EINVAL;
         }
     }
     heap_free(kbuf);
     return res;
 }
 
-static int64_t sys_getcwd_handler(struct exception_trap_frame *tf)
+static int64_t getcwd_handler(struct exception_trap_frame *tf)
 {
     char *buf = (char *)tf->x[0];
     size_t size = (size_t)tf->x[1];
 
     if (!buf || size == 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     char *kbuf = heap_malloc(VFS_MAX_PATH_LEN);
     if (!kbuf) {
-        return -PERS_ERR_OUT_OF_MEMORY;
+        return -ENOMEM;
     }
 
     int res = vfs_getcwd(kbuf, VFS_MAX_PATH_LEN);
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         size_t len = strlen(kbuf) + 1;
         if (len > size) {
-            res = -PERS_ERR_INVALID_ARGUMENT;
+            res = -EINVAL;
         } else {
             int err = copy_buf_to_user(buf, kbuf, len);
-            if (err != PERS_SUCCESS) {
+            if (err != 0) {
                 res = err;
             }
         }
@@ -1304,7 +1456,7 @@ static int64_t sys_getcwd_handler(struct exception_trap_frame *tf)
     return res;
 }
 
-static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
+static int64_t mmap_handler(struct exception_trap_frame *tf)
 {
     size_t length = (size_t)tf->x[1];
     int prot = (int)tf->x[2];
@@ -1312,13 +1464,13 @@ static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
     int fd = (int)tf->x[4];
 
     if (length == 0 || length > SYSCALL_MAX_MMAP_SIZE) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -EINVAL;
     }
 
     struct task *curr = sched_current_task();
     struct process *proc = process_slot(curr->pid);
     if (!proc) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -ESRCH;
     }
 
     /*
@@ -1329,7 +1481,7 @@ static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
      */
     int anonymous = (flags & MAP_ANONYMOUS) != 0;
     if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -EBADF;
     }
 
     /* Hold a reference so a concurrent close cannot free the file out
@@ -1345,7 +1497,7 @@ static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
 
         if (!file || !file->node || !file->node->ops || !file->node->ops->mmap) {
             vfs_file_put(file);
-            return (int64_t)(uintptr_t)MAP_FAILED;
+            return -ENODEV;
         }
     }
 
@@ -1353,13 +1505,16 @@ static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
     uintptr_t new_region = process_va_alloc(&proc->va, pages_needed);
     if (new_region == 0) {
         vfs_file_put(file);
-        return (int64_t)(uintptr_t)MAP_FAILED;
+        return -ENOMEM;
     }
+
+    int fail_err = -ENOMEM;
 
     if (!anonymous) {
         int mres = file->node->ops->mmap(file, new_region, length, prot, flags);
         vfs_file_put(file);
         if (mres < 0) {
+            fail_err = mres;
             goto mmap_fail;
         }
     }
@@ -1377,8 +1532,12 @@ static int64_t sys_mmap_handler(struct exception_trap_frame *tf)
                 goto mmap_fail;
             }
             memset(kaddr, 0, PAGE_SIZE);
-            mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE, V2P((uintptr_t)kaddr),
-                              mmu_flags);
+            if (mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE, V2P((uintptr_t)kaddr),
+                                  mmu_flags)
+                != 0) {
+                pmm_free_page(kaddr);
+                goto mmap_fail;
+            }
         }
     }
     return (int64_t)new_region;
@@ -1390,56 +1549,57 @@ mmap_fail:
         mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
     }
     process_va_free(&proc->va, new_region);
-    return (int64_t)(uintptr_t)MAP_FAILED;
+    return fail_err;
 }
 
-static const syscall_fn syscall_table[SYS_FTRUNCATE + 1] = {
-    [SYS_OPEN] = sys_open_handler,
-    [SYS_WRITE] = sys_write_handler,
-    [SYS_EXIT] = sys_exit_handler,
-    [SYS_GETPID] = sys_getpid_handler,
-    [SYS_YIELD] = sys_yield_handler,
-    [SYS_READ] = sys_read_handler,
-    [SYS_CLOSE] = sys_close_handler,
-    [SYS_EXEC] = sys_exec_handler,
-    [SYS_FORK] = sys_fork_handler,
-    [SYS_WAITPID] = sys_waitpid_handler,
-    [SYS_PIPE] = sys_pipe_handler,
-    [SYS_DUP2] = sys_dup2_handler,
-    [SYS_SIGRETURN] = sys_sigreturn_handler,
-    [SYS_KILL] = sys_kill_handler,
-    [SYS_GETDENTS] = sys_getdents_handler,
-    [SYS_CHDIR] = sys_chdir_handler,
-    [SYS_GETCWD] = sys_getcwd_handler,
-    [SYS_MMAP] = sys_mmap_handler,
-    [SYS_SIGACTION] = sys_sigaction_handler,
-    [SYS_SIGPROCMASK] = sys_sigprocmask_handler,
-    [SYS_SIGPENDING] = sys_sigpending_handler,
-    [SYS_SIGSUSPEND] = sys_sigsuspend_handler,
-    [SYS_STAT] = sys_stat_handler,
-    [SYS_LSEEK] = sys_lseek_handler,
-    [SYS_SYNC] = sys_sync_handler,
-    [SYS_MKDIR] = sys_mkdir_handler,
-    [SYS_RMDIR] = sys_rmdir_handler,
-    [SYS_UNLINK] = sys_unlink_handler,
-    [SYS_RENAME] = sys_rename_handler,
-    [SYS_FSYNC] = sys_fsync_handler,
-    [SYS_FCNTL] = sys_fcntl_handler,
-    [SYS_PREAD] = sys_pread_handler,
-    [SYS_PWRITE] = sys_pwrite_handler,
-    [SYS_GETPPID] = sys_getppid_handler,
-    [SYS_SETPGID] = sys_setpgid_handler,
-    [SYS_GETPGID] = sys_getpgid_handler,
-    [SYS_TCSETPGRP] = sys_tcsetpgrp_handler,
-    [SYS_TCGETPGRP] = sys_tcgetpgrp_handler,
-    [SYS_SETSID] = sys_setsid_handler,
-    [SYS_GETSID] = sys_getsid_handler,
-    [SYS_GETTIMEOFDAY] = sys_gettimeofday_handler,
-    [SYS_CLOCK_GETTIME] = sys_clock_gettime_handler,
-    [SYS_NANOSLEEP] = sys_nanosleep_handler,
-    [SYS_FSTAT] = sys_fstat_handler,
-    [SYS_TRUNCATE] = sys_truncate_handler,
-    [SYS_FTRUNCATE] = sys_ftruncate_handler,
+static const syscall_fn syscall_table[SYS_SIGALTSTACK + 1] = {
+    [SYS_OPEN] = open_handler,
+    [SYS_WRITE] = write_handler,
+    [SYS_EXIT] = exit_handler,
+    [SYS_GETPID] = getpid_handler,
+    [SYS_YIELD] = yield_handler,
+    [SYS_READ] = read_handler,
+    [SYS_CLOSE] = close_handler,
+    [SYS_EXEC] = exec_handler,
+    [SYS_FORK] = fork_handler,
+    [SYS_WAITPID] = waitpid_handler,
+    [SYS_PIPE] = pipe_handler,
+    [SYS_DUP2] = dup2_handler,
+    [SYS_SIGRETURN] = sigreturn_handler,
+    [SYS_KILL] = kill_handler,
+    [SYS_GETDENTS] = getdents_handler,
+    [SYS_CHDIR] = chdir_handler,
+    [SYS_GETCWD] = getcwd_handler,
+    [SYS_MMAP] = mmap_handler,
+    [SYS_SIGACTION] = sigaction_handler,
+    [SYS_SIGPROCMASK] = sigprocmask_handler,
+    [SYS_SIGPENDING] = sigpending_handler,
+    [SYS_SIGSUSPEND] = sigsuspend_handler,
+    [SYS_STAT] = stat_handler,
+    [SYS_LSEEK] = lseek_handler,
+    [SYS_SYNC] = sync_handler,
+    [SYS_MKDIR] = mkdir_handler,
+    [SYS_RMDIR] = rmdir_handler,
+    [SYS_UNLINK] = unlink_handler,
+    [SYS_RENAME] = rename_handler,
+    [SYS_FSYNC] = fsync_handler,
+    [SYS_FCNTL] = fcntl_handler,
+    [SYS_PREAD] = pread_handler,
+    [SYS_PWRITE] = pwrite_handler,
+    [SYS_GETPPID] = getppid_handler,
+    [SYS_SETPGID] = setpgid_handler,
+    [SYS_GETPGID] = getpgid_handler,
+    [SYS_TCSETPGRP] = tcsetpgrp_handler,
+    [SYS_TCGETPGRP] = tcgetpgrp_handler,
+    [SYS_SETSID] = setsid_handler,
+    [SYS_GETSID] = getsid_handler,
+    [SYS_GETTIMEOFDAY] = gettimeofday_handler,
+    [SYS_CLOCK_GETTIME] = clock_gettime_handler,
+    [SYS_NANOSLEEP] = nanosleep_handler,
+    [SYS_FSTAT] = fstat_handler,
+    [SYS_TRUNCATE] = truncate_handler,
+    [SYS_FTRUNCATE] = ftruncate_handler,
+    [SYS_SIGALTSTACK] = sigaltstack_handler,
 };
 
 void syscall_handle(struct exception_trap_frame *tf)
@@ -1450,19 +1610,25 @@ void syscall_handle(struct exception_trap_frame *tf)
     /* A task running a syscall always has a live slot; refuse rather than
      * fault at EL1 if that ever stops holding. */
     if (!process_slot(curr->pid)) {
-        tf->x[0] = (uint64_t)-PERS_ERR_NO_SUCH_PROCESS;
+        tf->x[0] = (uint64_t)-ESRCH;
         return;
     }
+
+    curr->in_syscall = 1;
+    curr->syscall_arg0 = tf->x[0];
 
     if (syscall_nr < sizeof(syscall_table) / sizeof(syscall_table[0])
         && syscall_table[syscall_nr] != NULL) {
         int64_t ret = syscall_table[syscall_nr](tf);
         if (ret != SYSCALL_RETAIN_FRAME) {
             tf->x[0] = (uint64_t)ret;
+        } else {
+            // x0 is the installed frame's, not a result the restart check may read.
+            curr->in_syscall = 0;
         }
         return;
     }
 
     pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
-    tf->x[0] = (uint64_t)-PERS_ERR_NOT_IMPLEMENTED;
+    tf->x[0] = (uint64_t)-ENOSYS;
 }

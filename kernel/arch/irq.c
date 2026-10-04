@@ -4,7 +4,9 @@
 
 #include "arch/irq.h"
 
-#include "uapi/errors.h"
+#include <stddef.h>
+
+#include "uapi/errno.h"
 
 static struct irq_desc irq_table[IRQ_MAX];
 
@@ -34,10 +36,10 @@ void irq_restore(unsigned long flags)
 int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *name)
 {
     if (irq >= IRQ_MAX || handler == NULL) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (irq_table[irq].handler != NULL) {
-        return -PERS_ERR_ALREADY_EXISTS;
+        return -EEXIST;
     }
 
     irq_table[irq].handler = handler;
@@ -49,10 +51,10 @@ int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *
 int free_irq(unsigned int irq)
 {
     if (irq >= IRQ_MAX) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
     if (irq_table[irq].handler == NULL) {
-        return -PERS_ERR_NOT_FOUND;
+        return -ENOENT;
     }
 
     irq_table[irq].handler = NULL;

@@ -2,6 +2,8 @@
  * ptop.c - Minimal btop-style system monitor for Perspicua.
  */
 
+#include <stddef.h>
+
 #include "syscall.h"
 #include "stdio.h"
 #include "string.h"
@@ -25,38 +27,38 @@
 // tiny output helpers
 static void out(const char *s)
 {
-    sys_write(1, s, strlen(s));
+    write(1, s, strlen(s));
 }
 
 static void box_hchars(int n)
 {
     for (int i = 0; i < n; i++) {
-        sys_write(1, "─", 3);
+        write(1, "─", 3);
     }
 }
 
 static void box_top(const char *label)
 {
-    sys_write(1, "┌", 3);
+    write(1, "┌", 3);
     box_hchars(1);
-    sys_write(1, " ", 1);
+    write(1, " ", 1);
     out(label);
-    sys_write(1, " ", 1);
+    write(1, " ", 1);
     int dashes = INNER_W - ((int)strlen(label) + 3);
     if (dashes < 0) {
         dashes = 0;
     }
     box_hchars(dashes);
-    sys_write(1, "┐", 3);
-    sys_write(1, "\n", 1);
+    write(1, "┐", 3);
+    write(1, "\n", 1);
 }
 
 static void box_bottom(void)
 {
-    sys_write(1, "└", 3);
+    write(1, "└", 3);
     box_hchars(INNER_W);
-    sys_write(1, "┘", 3);
-    sys_write(1, "\n", 1);
+    write(1, "┘", 3);
+    write(1, "\n", 1);
 }
 
 // Draw one ASCII content line inside the box, padded to the inner width.
@@ -66,13 +68,13 @@ static void box_line(const char *s)
     if (len > INNER_W) {
         len = INNER_W;
     }
-    sys_write(1, "│", 3);
-    sys_write(1, s, len);
+    write(1, "│", 3);
+    write(1, s, len);
     for (int i = len; i < INNER_W; i++) {
-        sys_write(1, " ", 1);
+        write(1, " ", 1);
     }
-    sys_write(1, "│", 3);
-    sys_write(1, "\n", 1);
+    write(1, "│", 3);
+    write(1, "\n", 1);
 }
 
 static void make_bar(char *out_buf, int width, unsigned long used, unsigned long total)
@@ -93,20 +95,20 @@ static void make_bar(char *out_buf, int width, unsigned long used, unsigned long
 // /proc parsing
 static int read_proc_file(const char *path, char *buf, size_t bufsz)
 {
-    int fd = sys_open(path, VFS_O_RDONLY);
+    int fd = open(path, O_RDONLY);
     if (fd < 0) {
         return -1;
     }
     int total = 0, n;
     while ((size_t)total < bufsz - 1) {
-        n = sys_read(fd, buf + total, bufsz - 1 - total);
+        n = read(fd, buf + total, bufsz - 1 - total);
         if (n <= 0) {
             break;
         }
         total += n;
     }
     buf[total] = '\0';
-    sys_close(fd);
+    close(fd);
     return total;
 }
 
@@ -256,17 +258,17 @@ struct proc_info {
 
 static int collect_procs(struct proc_info *out_arr, int max)
 {
-    int fd = sys_open("/proc", VFS_O_RDONLY);
+    int fd = open("/proc", O_RDONLY);
     if (fd < 0) {
         return 0;
     }
 
-    struct vfs_dirent dent;
+    struct dirent dent;
     char path[PATH_BUF], sbuf[READ_BUF], field[64];
     int count = 0;
 
-    while (count < max && sys_getdents(fd, &dent, sizeof(dent)) > 0) {
-        const char *nm = dent.name;
+    while (count < max && getdents(fd, &dent, sizeof(dent)) > 0) {
+        const char *nm = dent.d_name;
         if (nm[0] < '0' || nm[0] > '9') {
             continue;
         }
@@ -303,7 +305,7 @@ static int collect_procs(struct proc_info *out_arr, int max)
         }
         count++;
     }
-    sys_close(fd);
+    close(fd);
     return count;
 }
 
@@ -349,16 +351,16 @@ static int stdin_flags_saved;
 
 static void set_nonblock(void)
 {
-    stdin_flags_saved = sys_fcntl(0, VFS_F_GETFL, 0);
+    stdin_flags_saved = fcntl(0, F_GETFL, 0);
     if (stdin_flags_saved >= 0) {
-        sys_fcntl(0, VFS_F_SETFL, stdin_flags_saved | VFS_O_NONBLOCK);
+        fcntl(0, F_SETFL, stdin_flags_saved | O_NONBLOCK);
     }
 }
 
 static void restore_blocking(void)
 {
     if (stdin_flags_saved >= 0) {
-        sys_fcntl(0, VFS_F_SETFL, stdin_flags_saved);
+        fcntl(0, F_SETFL, stdin_flags_saved);
     }
 }
 
@@ -367,12 +369,12 @@ static int wait_or_quit(void)
 {
     for (int elapsed = 0; elapsed < REFRESH_MS; elapsed += POLL_MS) {
         char c;
-        while (sys_read(0, &c, 1) == 1) {
+        while (read(0, &c, 1) == 1) {
             if (c == 'q' || c == 'Q' || c == 27) {
                 return 1;
             }
         }
-        sys_sleep(POLL_MS);
+        usleep((POLL_MS) * 1000);
     }
     return 0;
 }

@@ -2,7 +2,7 @@
  * hooks.c - Kernel-mode libc glue logic.
  */
 
-#include "types.h"
+#include <stddef.h>
 #include "driver/uart.h"
 
 // Routes string data to the kernel UART driver.

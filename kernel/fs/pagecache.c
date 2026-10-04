@@ -4,10 +4,13 @@
 
 #include "fs/pagecache.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "mm/pmm.h"
 #include "mm/slab.h"
@@ -130,7 +133,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         if (curr->fs_ops == node->ops && curr->file_id == node->internal_info
             && curr->page_index == page_index) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
-            return -PERS_ERR_ALREADY_EXISTS;
+            return -EEXIST;
         }
         curr = curr->next;
     }
@@ -174,7 +177,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
         entry = slab_alloc(sizeof(struct page_cache_entry));
         if (!entry) {
             spin_unlock_irqrestore(&pagecache_lock, flags);
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
         cache_count++;
     }
@@ -192,7 +195,7 @@ int pagecache_add_page(struct vfs_vnode *node, size_t page_index, void *data)
     lru_add_head(entry);
 
     spin_unlock_irqrestore(&pagecache_lock, flags);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 void pagecache_mark_dirty(struct vfs_vnode *node, size_t page_index)
@@ -234,7 +237,7 @@ void pagecache_clear_dirty(struct vfs_vnode *node, size_t page_index)
 int pagecache_writeback(struct vfs_vnode *node)
 {
     if (!node || !node->ops || !node->ops->write_page) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     int pages_written = 0;
@@ -244,20 +247,23 @@ int pagecache_writeback(struct vfs_vnode *node)
         struct page_cache_entry *curr = hash_table[h];
         while (curr) {
             if (curr->dirty && curr->fs_ops == node->ops && curr->file_id == node->internal_info) {
-                struct page_cache_entry *to_write = curr;
-                curr = curr->next;
-
+                // A pinned entry is skipped by eviction and invalidation, so
+                // curr and its chain link survive the unlock.
+                curr->pincount++;
                 spin_unlock_irqrestore(&pagecache_lock, flags);
 
-                int result =
-                    node->ops->write_page(node, to_write->page_index, to_write->data, PAGE_SIZE);
+                int result = node->ops->write_page(node, curr->page_index, curr->data, PAGE_SIZE);
 
                 flags = spin_lock_irqsave(&pagecache_lock);
 
                 if (result >= 0) {
-                    to_write->dirty = 0;
+                    curr->dirty = 0;
                     pages_written++;
                 }
+
+                struct page_cache_entry *next = curr->next;
+                curr->pincount--;
+                curr = next;
             } else {
                 curr = curr->next;
             }
@@ -277,21 +283,23 @@ int pagecache_sync(void)
         struct page_cache_entry *curr = hash_table[h];
         while (curr) {
             if (curr->dirty && curr->vnode && curr->vnode->ops && curr->vnode->ops->write_page) {
-                struct page_cache_entry *to_write = curr;
-                struct vfs_vnode *vnode = to_write->vnode;
-                curr = curr->next;
+                struct vfs_vnode *vnode = curr->vnode;
 
+                curr->pincount++;
                 spin_unlock_irqrestore(&pagecache_lock, flags);
 
-                int result =
-                    vnode->ops->write_page(vnode, to_write->page_index, to_write->data, PAGE_SIZE);
+                int result = vnode->ops->write_page(vnode, curr->page_index, curr->data, PAGE_SIZE);
 
                 flags = spin_lock_irqsave(&pagecache_lock);
 
                 if (result >= 0) {
-                    to_write->dirty = 0;
+                    curr->dirty = 0;
                     total_written++;
                 }
+
+                struct page_cache_entry *next = curr->next;
+                curr->pincount--;
+                curr = next;
             } else {
                 curr = curr->next;
             }
@@ -302,9 +310,15 @@ int pagecache_sync(void)
     return total_written;
 }
 
-void pagecache_invalidate(struct vfs_vnode *node)
+/*
+ * unhook_matching - Detaches every unpinned page of one file.
+ *
+ * Caller holds pagecache_lock. The result is chained through ->next and is off
+ * the hash and the LRU, so the caller may write it back with the lock dropped.
+ */
+static struct page_cache_entry *unhook_matching(void *fs_ops, void *file_id)
 {
-    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    struct page_cache_entry *doomed = NULL;
 
     for (size_t h = 0; h < PAGECACHE_HASH_SIZE; h++) {
         struct page_cache_entry **pp = &hash_table[h];
@@ -312,27 +326,96 @@ void pagecache_invalidate(struct vfs_vnode *node)
             struct page_cache_entry *entry = *pp;
 
             // Skip other files' pages and any page currently pinned in use.
-            if (entry->fs_ops != node->ops || entry->file_id != node->internal_info
-                || entry->pincount != 0) {
+            if (entry->fs_ops != fs_ops || entry->file_id != file_id || entry->pincount != 0) {
                 pp = &((*pp)->next);
                 continue;
             }
 
             *pp = entry->next;
             lru_remove(entry);
+            cache_count--;
 
-            // Write back if dirty before invalidating
-            if (entry->dirty && node->ops && node->ops->write_page) {
-                spin_unlock_irqrestore(&pagecache_lock, flags);
-                node->ops->write_page(node, entry->page_index, entry->data, PAGE_SIZE);
-                flags = spin_lock_irqsave(&pagecache_lock);
+            entry->next = doomed;
+            doomed = entry;
+        }
+    }
+
+    return doomed;
+}
+
+void pagecache_invalidate(struct vfs_vnode *node)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    struct page_cache_entry *doomed = unhook_matching(node->ops, node->internal_info);
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+
+    while (doomed) {
+        struct page_cache_entry *next = doomed->next;
+
+        if (doomed->dirty && node->ops && node->ops->write_page) {
+            node->ops->write_page(node, doomed->page_index, doomed->data, PAGE_SIZE);
+        }
+
+        pmm_free_pages(doomed->data);
+        slab_free(doomed);
+        doomed = next;
+    }
+}
+
+void pagecache_drop_page(struct vfs_vnode *node, size_t page_index)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    size_t h = page_hash(node, page_index);
+    struct page_cache_entry **pp = &hash_table[h];
+
+    while (*pp) {
+        struct page_cache_entry *entry = *pp;
+        if (entry->fs_ops == node->ops && entry->file_id == node->internal_info
+            && entry->page_index == page_index) {
+            if (entry->pincount != 0) {
+                break;
             }
+            *pp = entry->next;
+            lru_remove(entry);
+            cache_count--;
+            spin_unlock_irqrestore(&pagecache_lock, flags);
 
             pmm_free_pages(entry->data);
             slab_free(entry);
-            cache_count--;
+            return;
+        }
+        pp = &entry->next;
+    }
+
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+}
+
+void pagecache_forget_vnode(struct vfs_vnode *node)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+
+    for (size_t h = 0; h < PAGECACHE_HASH_SIZE; h++) {
+        for (struct page_cache_entry *e = hash_table[h]; e; e = e->next) {
+            if (e->vnode == node) {
+                e->vnode = NULL;
+            }
         }
     }
 
     spin_unlock_irqrestore(&pagecache_lock, flags);
+}
+
+void pagecache_discard(void *fs_ops, void *file_id)
+{
+    unsigned long flags = spin_lock_irqsave(&pagecache_lock);
+    struct page_cache_entry *doomed = unhook_matching(fs_ops, file_id);
+    spin_unlock_irqrestore(&pagecache_lock, flags);
+
+    // No writeback: the file these belong to no longer exists.
+    while (doomed) {
+        struct page_cache_entry *next = doomed->next;
+        pmm_free_pages(doomed->data);
+        slab_free(doomed);
+        doomed = next;
+    }
 }

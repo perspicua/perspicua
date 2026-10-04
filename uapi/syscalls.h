@@ -53,5 +53,6 @@
 #define SYS_FSTAT         47
 #define SYS_TRUNCATE      48
 #define SYS_FTRUNCATE     49
+#define SYS_SIGALTSTACK   50
 
 #endif // PERSPICUA_UAPI_SYSCALLS_H

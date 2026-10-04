@@ -4,6 +4,7 @@
 
 #ifndef PERSPICUA_KERNEL_ADDR_H
 #define PERSPICUA_KERNEL_ADDR_H
+#include <stdint.h>
 
 /*
  * KERNEL_VMA - The base virtual address where the kernel is mapped.

@@ -1,39 +1,60 @@
-#include "syscall.h"
-#include "stdio.h"
+/*
+ * wc - print newline, word, and byte counts for each file.
+ *
+ * Written against POSIX only: the includes below are angle-bracketed and
+ * nothing here knows it is running on this kernel. It is the portability
+ * check for the libc -- if a stock program stops building, this does too.
+ */
 
-static int want_l, want_w, want_c;
+#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
-static void count_fd(int fd, unsigned long *lines, unsigned long *words, unsigned long *bytes)
+struct counts {
+    unsigned long lines;
+    unsigned long words;
+    unsigned long bytes;
+};
+
+static int show_lines, show_words, show_bytes;
+
+static int count_fd(int fd, struct counts *c)
 {
     char buf[4096];
-    int n, in_word = 0;
-    while ((n = sys_read(fd, buf, sizeof(buf))) > 0) {
-        *bytes += (unsigned long)n;
-        for (int i = 0; i < n; i++) {
-            char c = buf[i];
-            if (c == '\n') {
-                (*lines)++;
+    int in_word = 0;
+    ssize_t n;
+
+    while ((n = read(fd, buf, sizeof(buf))) > 0) {
+        c->bytes += (unsigned long)n;
+        for (ssize_t i = 0; i < n; i++) {
+            char ch = buf[i];
+            if (ch == '\n') {
+                c->lines++;
             }
-            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\v' || ch == '\f') {
                 in_word = 0;
             } else if (!in_word) {
                 in_word = 1;
-                (*words)++;
+                c->words++;
             }
         }
     }
+    return n < 0 ? -1 : 0;
 }
 
-static void print_counts(unsigned long l, unsigned long w, unsigned long b, const char *name)
+static void report(const struct counts *c, const char *name)
 {
-    if (want_l) {
-        printf("%8lu", l);
+    if (show_lines) {
+        printf("%8lu", c->lines);
     }
-    if (want_w) {
-        printf("%8lu", w);
+    if (show_words) {
+        printf("%8lu", c->words);
     }
-    if (want_c) {
-        printf("%8lu", b);
+    if (show_bytes) {
+        printf("%8lu", c->bytes);
     }
     if (name) {
         printf(" %s", name);
@@ -41,88 +62,69 @@ static void print_counts(unsigned long l, unsigned long w, unsigned long b, cons
     printf("\n");
 }
 
-/* A column header makes the numbers legible, but only at a terminal — piping to
- * another program must stay clean, so we suppress it unless stdout is a tty. */
-static void print_header(int have_names)
-{
-    if (want_l) {
-        printf("%8s", "LINES");
-    }
-    if (want_w) {
-        printf("%8s", "WORDS");
-    }
-    if (want_c) {
-        printf("%8s", "BYTES");
-    }
-    if (have_names) {
-        printf(" FILE");
-    }
-    printf("\n");
-}
-
-/* tcgetpgrp succeeds only on a real terminal (the kernel checks the fd's node is
- * the tty device), so it distinguishes a tty from a pipe or file — which plain
- * S_ISCHR does not, since pipes report as character devices too. */
-static int stdout_is_tty(void)
-{
-    return sys_tcgetpgrp(1) >= 0;
-}
-
 int main(int argc, char **argv)
 {
-    int start = 1;
-    for (int i = 1; i < argc; i++) {
-        if (argv[i][0] == '-' && argv[i][1] != '\0') {
-            for (int j = 1; argv[i][j]; j++) {
-                if (argv[i][j] == 'l') {
-                    want_l = 1;
-                } else if (argv[i][j] == 'w') {
-                    want_w = 1;
-                } else if (argv[i][j] == 'c') {
-                    want_c = 1;
-                }
+    struct counts total = {0, 0, 0};
+    int status = 0;
+    int i = 1;
+
+    for (; i < argc && argv[i][0] == '-' && argv[i][1] != '\0'; i++) {
+        for (const char *p = argv[i] + 1; *p; p++) {
+            switch (*p) {
+                case 'l':
+                    show_lines = 1;
+                    break;
+                case 'w':
+                    show_words = 1;
+                    break;
+                case 'c':
+                    show_bytes = 1;
+                    break;
+                default:
+                    fprintf(stderr, "wc: invalid option -- '%c'\n", *p);
+                    return 2;
             }
-            start++;
-        } else {
-            break;
         }
     }
-    if (!want_l && !want_w && !want_c) {
-        want_l = want_w = want_c = 1;
+
+    if (!show_lines && !show_words && !show_bytes) {
+        show_lines = show_words = show_bytes = 1;
     }
 
-    int have_files = (start < argc);
-    if (stdout_is_tty()) {
-        print_header(have_files);
-    }
-
-    if (!have_files) {
-        unsigned long l = 0, w = 0, b = 0;
-        count_fd(0, &l, &w, &b);
-        print_counts(l, w, b, NULL);
+    if (i == argc) {
+        struct counts c = {0, 0, 0};
+        if (count_fd(STDIN_FILENO, &c) < 0) {
+            fprintf(stderr, "wc: -: %s\n", strerror(errno));
+            return 1;
+        }
+        report(&c, NULL);
         return 0;
     }
 
-    unsigned long tl = 0, tw = 0, tb = 0;
-    int rc = 0;
-    for (int i = start; i < argc; i++) {
-        int fd = sys_open(argv[i], VFS_O_RDONLY);
+    int files = argc - i;
+    for (; i < argc; i++) {
+        int fd = open(argv[i], O_RDONLY);
         if (fd < 0) {
-            printf("wc: %s: no such file\n", argv[i]);
-            rc = 1;
+            fprintf(stderr, "wc: %s: %s\n", argv[i], strerror(errno));
+            status = 1;
             continue;
         }
-        unsigned long l = 0, w = 0, b = 0;
-        count_fd(fd, &l, &w, &b);
-        sys_close(fd);
-        print_counts(l, w, b, argv[i]);
-        tl += l;
-        tw += w;
-        tb += b;
+
+        struct counts c = {0, 0, 0};
+        if (count_fd(fd, &c) < 0) {
+            fprintf(stderr, "wc: %s: %s\n", argv[i], strerror(errno));
+            status = 1;
+        } else {
+            report(&c, argv[i]);
+            total.lines += c.lines;
+            total.words += c.words;
+            total.bytes += c.bytes;
+        }
+        close(fd);
     }
 
-    if (argc - start > 1) {
-        print_counts(tl, tw, tb, "total");
+    if (files > 1) {
+        report(&total, "total");
     }
-    return rc;
+    return status;
 }

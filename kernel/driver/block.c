@@ -4,10 +4,13 @@
 
 #include "driver/block.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
 
-#include "uapi/errors.h"
+#include "uapi/errno.h"
 
 #include "fs/vfs.h"
 #include "fs/devfs.h"
@@ -113,11 +116,11 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
 
         void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
         if (!temp_buf) {
-            return -PERS_ERR_OUT_OF_MEMORY;
+            return -ENOMEM;
         }
 
         int res = ops->orig_read_blocks(dev, temp_buf, block_nr, 1);
-        if (res != PERS_SUCCESS) {
+        if (res != 0) {
             pmm_free_pages(temp_buf);
             return res;
         }
@@ -138,8 +141,10 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         if (cache_count >= BLOCK_CACHE_SIZE) {
             struct block_cache_entry *evict = lru_tail;
 
-            // Flush dirty block to disk before eviction
-            if (evict->dirty) {
+            /* Re-tested after every unlock: the tail can be a different entry
+             * by then, and evicting that one unflushed would lose its write.
+             * Nothing sets dirty while the cache is write-through. */
+            while (evict && evict->dirty) {
                 // Must release lock during I/O
                 void *evict_data = evict->data;
                 size_t evict_block_nr = evict->block_nr;
@@ -148,16 +153,25 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
 
                 struct block_ops_wrapper *evict_ops =
                     (struct block_ops_wrapper *)evict_dev->private_data;
-                evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
+                int wres = evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
 
                 flags = spin_lock_irqsave(&cache_lock);
-                // Re-lookup evict entry as it might have changed
-                evict = lru_tail;
-                if (!evict) {
+
+                if (wres != 0) {
                     pmm_free_pages(temp_buf);
                     spin_unlock_irqrestore(&cache_lock, flags);
-                    return -PERS_ERR_UNKNOWN;
+                    return wres;
                 }
+
+                // Entries are recycled, never freed, so this stays valid.
+                evict->dirty = 0;
+                evict = lru_tail;
+            }
+
+            if (!evict) {
+                pmm_free_pages(temp_buf);
+                spin_unlock_irqrestore(&cache_lock, flags);
+                return -EIO;
             }
 
             lru_remove(evict);
@@ -185,7 +199,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
             if (!entry) {
                 pmm_free_pages(temp_buf);
                 spin_unlock_irqrestore(&cache_lock, flags);
-                return -PERS_ERR_OUT_OF_MEMORY;
+                return -ENOMEM;
             }
             entry->data = temp_buf;
             cache_count++;
@@ -207,7 +221,7 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
     }
 
     spin_unlock_irqrestore(&cache_lock, flags);
-    return PERS_SUCCESS;
+    return 0;
 }
 
 static int cached_write_blocks(struct block_device *dev, const void *buffer, size_t start_block,
@@ -217,7 +231,7 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
 
     // Write-through strategy for simplicity
     int res = ops->orig_write_blocks(dev, buffer, start_block, num_blocks);
-    if (res != PERS_SUCCESS) {
+    if (res != 0) {
         return res;
     }
 
@@ -231,14 +245,14 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
     }
     spin_unlock_irqrestore(&cache_lock, flags);
 
-    return PERS_SUCCESS;
+    return 0;
 }
 
 /*
  * block_cache_sync - Flushes all dirty cache entries to their backing devices.
  *
  * Releases the cache lock during I/O to avoid sleeping with a spinlock held
- * (the SD driver's sd_op_acquire() can block).
+ * (the SD driver's write_blocks can block).
  */
 int block_cache_sync(void)
 {
@@ -273,7 +287,7 @@ int block_cache_sync(void)
                     }
                     cur = cur->next;
                 }
-                if (cur && res == PERS_SUCCESS) {
+                if (cur && res == 0) {
                     cur->dirty = 0;
                     flushed++;
                     made_progress = 1;
@@ -301,14 +315,14 @@ static int block_device_vfs_read(struct vfs_file *file, void *buffer, size_t siz
 
     // Enforce block-aligned offsets and sizes
     if (*offset % dev->block_size != 0 || size % dev->block_size != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     size_t start_block = (size_t)(*offset / dev->block_size);
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->read_blocks(dev, buffer, start_block, num_blocks);
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         *offset += (vfs_off_t)size;
         return (int)size;
     }
@@ -322,14 +336,14 @@ static int block_device_vfs_write(struct vfs_file *file, const void *buffer, siz
     struct block_device *dev = (struct block_device *)file->node->internal_info;
 
     if (*offset % dev->block_size != 0 || size % dev->block_size != 0) {
-        return -PERS_ERR_INVALID_ARGUMENT;
+        return -EINVAL;
     }
 
     size_t start_block = (size_t)(*offset / dev->block_size);
     size_t num_blocks = size / dev->block_size;
 
     int res = dev->write_blocks(dev, buffer, start_block, num_blocks);
-    if (res == PERS_SUCCESS) {
+    if (res == 0) {
         *offset += (vfs_off_t)size;
         return (int)size;
     }
@@ -367,7 +381,7 @@ void block_device_register(struct block_device *dev)
 
     devices[nr_devices++] = dev;
 
-    if (devfs_register_device(dev->name, &block_device_vfs_ops, dev) != PERS_SUCCESS) {
+    if (devfs_register_device(dev->name, &block_device_vfs_ops, dev) != 0) {
         pr_err("block: failed to register /dev/%s\n", dev->name);
     }
 
