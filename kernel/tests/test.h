@@ -11,13 +11,16 @@ extern int _suite_failed;
 
 // test assertion macros
 
+// Atomic so an assert from a spawned task on another core is never lost.
+#define TEST_COUNT(counter) __atomic_fetch_add(&(counter), 1, __ATOMIC_RELAXED)
+
 #define TEST_ASSERT(name, cond)                             \
     do {                                                    \
         if (!(cond)) {                                      \
             pr_err("test: %s: %s [FAILED]\n", name, #cond); \
-            tests_failed++;                                 \
+            TEST_COUNT(tests_failed);                       \
         } else {                                            \
-            tests_passed++;                                 \
+            TEST_COUNT(tests_passed);                       \
         }                                                   \
     } while (0)
 
@@ -27,9 +30,9 @@ extern int _suite_failed;
         long _e = (long)(expected);                                             \
         if (_a != _e) {                                                         \
             pr_err("test: %s: expected %ld, got %ld [FAILED]\n", name, _e, _a); \
-            tests_failed++;                                                     \
+            TEST_COUNT(tests_failed);                                           \
         } else {                                                                \
-            tests_passed++;                                                     \
+            TEST_COUNT(tests_passed);                                           \
         }                                                                       \
     } while (0)
 
@@ -39,9 +42,9 @@ extern int _suite_failed;
         long _u = (long)(unexpected);                                      \
         if (_a == _u) {                                                    \
             pr_err("test: %s: unexpected value %ld [FAILED]\n", name, _u); \
-            tests_failed++;                                                \
+            TEST_COUNT(tests_failed);                                      \
         } else {                                                           \
-            tests_passed++;                                                \
+            TEST_COUNT(tests_passed);                                      \
         }                                                                  \
     } while (0)
 
@@ -93,11 +96,13 @@ void test_fat32(void);
 void test_fat32_corrupt(void);
 void test_pipe(void);
 void test_mutex(void);
+void test_wait(void);
 void test_uaccess(void);
 void test_process(void);
 void test_syscall_bounds(void);
 void test_faultinject(void);
 void test_scheduler(void);
+void test_wait_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);

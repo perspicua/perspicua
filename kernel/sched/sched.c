@@ -24,9 +24,6 @@
 #include "sched/process.h"
 
 _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch — update switch.S");
-_Static_assert(__builtin_offsetof(struct task, state) == 112,
-               "task->state offset mismatch — update task_wrapper_asm");
-_Static_assert(SCHED_TASK_DEAD == 4, "task_wrapper_asm stores this value literally");
 
 #define TASK_CANARY_PTR(t) ((unsigned long *)((t)->stack + PAGE_SIZE))
 
@@ -200,7 +197,7 @@ static void sleep_dequeue(struct task *t)
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
 
-static void sleep_enqueue(struct task *t)
+static void sleep_enqueue(struct task *t, unsigned long wake_time)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
 
@@ -212,6 +209,9 @@ static void sleep_enqueue(struct task *t)
      * stale entry first so a task appears at most once.
      */
     sleep_unlink_locked(t);
+
+    // Written under the lock, after the unlink, so a linked entry's key never changes.
+    t->wake_time = wake_time;
 
     if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0) {
         t->sleep_next = sched_sleep_head;
@@ -241,12 +241,14 @@ static void sleep_drain(int cpu)
         struct task *w = sched_sleep_head;
         sched_sleep_head = w->sleep_next;
         w->sleep_next = NULL;
+
+        // Under the lock, which cleanup_dead_task takes before freeing w.
+        enum sched_task_state expected = SCHED_TASK_BLOCKED;
+        int won = __atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0,
+                                              __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
 
-        // Only enqueue if still blocked; prevents race with unblock.
-        enum sched_task_state expected = SCHED_TASK_BLOCKED;
-        if (__atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
-                                        __ATOMIC_SEQ_CST)) {
+        if (won) {
             rq_enqueue(cpu, w);
         }
 
@@ -317,6 +319,12 @@ static void cleanup_dead_task(int cpu)
 
     // Last line of defence: the sleep queue must not outlive the task.
     sleep_dequeue(dead);
+
+#ifdef CONFIG_TESTS
+    if (sched_test_in_run_queue(dead)) {
+        PANIC("sched: dead task still linked in run queue");
+    }
+#endif
 
     kstack_free(dead->stack);
     dead->stack = NULL;
@@ -422,6 +430,72 @@ struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forge
     return t;
 }
 
+int sched_task_set_blocked(struct task *t)
+{
+    if (!t) {
+        return 0;
+    }
+    enum sched_task_state expected = SCHED_TASK_RUNNING;
+    return __atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_BLOCKED, 0,
+                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
+int sched_task_set_stopped(struct task *t)
+{
+    if (!t) {
+        return 0;
+    }
+    enum sched_task_state expected = SCHED_TASK_RUNNING;
+    return __atomic_compare_exchange_n(&t->state, &expected, SCHED_TASK_STOPPED, 0,
+                                       __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+}
+
+int sched_task_is_idle(const struct task *t)
+{
+    for (int cpu = 0; cpu < CPU_MAX_CORES; cpu++) {
+        if (t == sched_idle[cpu]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void sched_timeout_arm(struct task *t, unsigned long deadline)
+{
+    sleep_enqueue(t, deadline);
+}
+
+void sched_timeout_cancel(struct task *t)
+{
+    sleep_dequeue(t);
+}
+
+void sched_exit_current(void)
+{
+    struct task *self = sched_current_task();
+    if (!self) {
+        for (;;) {
+            sched_schedule();
+        }
+    }
+
+    for (;;) {
+        enum sched_task_state expected = SCHED_TASK_RUNNING;
+        if (__atomic_compare_exchange_n(&self->state, &expected, SCHED_TASK_DEAD, 0,
+                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+            break;
+        }
+        if (expected != SCHED_TASK_READY) {
+            PANIC("sched_exit_current: illegal task state at exit");
+        }
+        sched_schedule();
+    }
+
+    for (;;) {
+        sched_schedule();
+    }
+}
+
 void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
@@ -433,12 +507,16 @@ void sched_sleep_ms(unsigned long ms)
         return;
     }
 
-    curr->state = SCHED_TASK_BLOCKED;
-    curr->wake_time = timer_get_system_time() + ms;
-    sleep_enqueue(curr);
+    while (!sched_task_set_blocked(curr)) {
+        sched_schedule();
+    }
+    sleep_enqueue(curr, timer_get_system_time() + ms);
 
     sched_schedule();
     irq_restore(flags);
+
+    // An unblock that lands before sleep_enqueue leaves the entry linked.
+    sleep_dequeue(curr);
 }
 
 // Returns the milliseconds still owed; 0 if the full time elapsed.
@@ -454,11 +532,10 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
     }
 
     unsigned long deadline = timer_get_system_time() + ms;
-    curr->wake_time = deadline;
 
     // Published before the check, as in sigsuspend: a sender on another core
     // sets the pending bit and then reads this state.
-    __atomic_store_n(&curr->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
+    sched_task_set_blocked(curr);
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
     if (signal_pending(process_current())) {
@@ -469,7 +546,7 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
         return ms;
     }
 
-    sleep_enqueue(curr);
+    sleep_enqueue(curr, deadline);
     sched_schedule();
     irq_restore(flags);
 
@@ -479,22 +556,6 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
     // Signed, so a wrap reads as "deadline passed".
     long left = (long)(deadline - timer_get_system_time());
     return left > 0 ? (unsigned long)left : 0;
-}
-
-void sched_block(void)
-{
-    unsigned long flags = irq_save();
-    int cpu = cpu_id();
-    struct task *curr = sched_current_task();
-
-    if (!curr || curr == sched_idle[cpu]) {
-        irq_restore(flags);
-        return;
-    }
-
-    curr->state = SCHED_TASK_BLOCKED;
-    sched_schedule();
-    irq_restore(flags);
 }
 
 void sched_unblock(struct task *t)
@@ -516,22 +577,6 @@ void sched_unblock(struct task *t)
         sleep_dequeue(t);
         rq_enqueue(cpu_id(), t);
     }
-}
-
-void sched_stop(void)
-{
-    unsigned long flags = irq_save();
-    int cpu = cpu_id();
-    struct task *curr = sched_current_task();
-
-    if (!curr || curr == sched_idle[cpu]) {
-        irq_restore(flags);
-        return;
-    }
-
-    curr->state = SCHED_TASK_STOPPED;
-    sched_schedule();
-    irq_restore(flags);
 }
 
 void sched_continue(struct task *t)
@@ -582,6 +627,24 @@ int sched_test_in_sleep_queue(const struct task *t)
 
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
     return found;
+}
+
+int sched_test_in_run_queue(const struct task *t)
+{
+    if (!t) {
+        return 0;
+    }
+    for (int cpu = 0; cpu < CPU_MAX_CORES; cpu++) {
+        unsigned long flags = spin_lock_irqsave(&sched_rq_lock[cpu]);
+        for (struct task *scan = sched_rq_head[cpu]; scan; scan = scan->rq_next) {
+            if (scan == t) {
+                spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
+                return 1;
+            }
+        }
+        spin_unlock_irqrestore(&sched_rq_lock[cpu], flags);
+    }
+    return 0;
 }
 #endif
 

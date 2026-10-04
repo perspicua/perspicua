@@ -73,7 +73,6 @@ struct task {
     unsigned char *stack;
     struct task *rq_next;
     struct task *sleep_next;
-    struct task *wait_next;
     int skip_signals;
     volatile int on_core;
 
@@ -93,10 +92,16 @@ struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forge
 void sched_sleep_ms(unsigned long ms);
 unsigned long sched_sleep_ms_interruptible(unsigned long ms);
 void sched_schedule(void);
-void sched_block(void);
 void sched_unblock(struct task *t);
-void sched_stop(void);
 void sched_continue(struct task *t);
+int sched_task_set_blocked(struct task *t);
+int sched_task_set_stopped(struct task *t);
+int sched_task_is_idle(const struct task *t);
+
+// Wakes a BLOCKED task at deadline (ms) unless something wakes it first.
+void sched_timeout_arm(struct task *t, unsigned long deadline);
+void sched_timeout_cancel(struct task *t);
+void sched_exit_current(void) __attribute__((noreturn));
 struct task *sched_current_task(void);
 int sched_get_core_pid(int cpu);
 
@@ -105,6 +110,9 @@ extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 #ifdef CONFIG_TESTS
 // True while a task is linked in the timed sleep queue.
 int sched_test_in_sleep_queue(const struct task *t);
+
+// True while a task is linked in any CPU run queue.
+int sched_test_in_run_queue(const struct task *t);
 
 // TTBR0 the scheduler would install for a process.
 unsigned long sched_test_task_ttbr0_for(uint32_t pid);

@@ -28,6 +28,7 @@
 
 spinlock_t process_table_lock = SPINLOCK_INIT;
 struct process *process_table[PROCESS_TABLE_SIZE];
+unsigned long process_forks;
 
 // Performs ERET to EL0 using the trap frame on the kernel stack
 extern void ret_to_user(void);
@@ -694,7 +695,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     p->has_execed = 1;
-    pr_info("proc: PID %d exec '%s'\n", pid, path);
+    pr_debug("proc: PID %d exec '%s'\n", pid, path);
     return 0;
 }
 
@@ -708,20 +709,14 @@ void process_exit(uint32_t pid, int exit_status)
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
-        struct task *dying = sched_current_task();
-        if (dying) {
-            dying->state = SCHED_TASK_DEAD;
-        }
-        for (;;) {
-            sched_schedule();
-        }
+        sched_exit_current();
     }
 
     if (p->sid == p->pid) {
         tty_session_exit(p->sid);
     }
 
-    pr_info("proc: PID %u exiting with status %d\n", pid, exit_status);
+    pr_debug("proc: PID %u exiting with status %d\n", pid, exit_status);
 
     // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
@@ -774,6 +769,11 @@ void process_exit(uint32_t pid, int exit_status)
      * zombie state, so nothing can find it in between. */
     p->main_task = NULL;
 
+    // The slot can be reaped and its pid reused while this task still runs.
+    struct task *self = sched_current_task();
+    self->pid = 0;
+    self->ttbr0 = mmu_kernel_ttbr0();
+
     uint32_t ppid = p->parent_pid;
     struct process *parent = process_slot(ppid);
     int notify_parent = (ppid != 0 && parent && parent->state == PROCESS_STATE_RUNNING);
@@ -806,14 +806,7 @@ void process_exit(uint32_t pid, int exit_status)
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    struct task *dying = sched_current_task();
-    if (dying) {
-        dying->state = SCHED_TASK_DEAD;
-    }
-
-    for (;;) {
-        sched_schedule();
-    }
+    sched_exit_current();
 }
 
 static int process_claim_slot(void)
@@ -935,8 +928,9 @@ int process_fork(struct exception_trap_frame *parent_tf)
     }
 
     process_start_task(child, t);
+    __atomic_fetch_add(&process_forks, 1, __ATOMIC_RELAXED);
 
-    pr_info("proc: PID %d forked -> PID %d\n", parent_pid, child_pid);
+    pr_debug("proc: PID %d forked -> PID %d\n", parent_pid, child_pid);
     return child_pid;
 }
 
@@ -1016,7 +1010,7 @@ int process_waitpid(int pid, int *status, int options)
 
         struct task *curr = sched_current_task();
         if (curr) {
-            curr->state = SCHED_TASK_BLOCKED;
+            sched_task_set_blocked(curr);
         }
 
         spin_unlock(&process_table_lock);

@@ -31,6 +31,7 @@ void run_all_tests(void)
     test_fat32_corrupt();
     test_pipe();
     test_mutex();
+    test_wait();
     test_uaccess();
     test_process();
     test_syscall_bounds();
@@ -57,6 +58,7 @@ void run_scheduler_tests(void)
     printk("\n");
 
     test_scheduler();
+    test_wait_scheduler();
 
     printk("\n");
 

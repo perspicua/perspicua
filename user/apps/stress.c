@@ -32,6 +32,7 @@
 #include "uapi/mman.h"
 #include "signal.h"
 #include "wait.h"
+#include "time.h"
 
 #define PAGE_SIZE 4096
 
@@ -1545,8 +1546,13 @@ int main(int argc, char **argv, char **envp)
         }
     }
     if (seed == 0) {
-        // Nothing here is a clock, so mix in what does vary between runs.
-        seed = (uint32_t)getpid() * 2654435761u + (uint32_t)(uintptr_t)&seed;
+        // The pid and stack address repeat from run to run; the clock does not.
+        struct timespec now = {0, 0};
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        seed = (uint32_t)getpid() * 2654435761u + (uint32_t)now.tv_nsec + (uint32_t)now.tv_sec;
+        if (seed == 0) {
+            seed = 1;
+        }
     }
 
     printf("[stress] seed %u, %d iteration(s), up to %d children per wave\n", seed, iters,

@@ -218,7 +218,7 @@ static void task_yield_loop(void)
     }
 }
 
-// task that simulates the pipe_wait race: set state to BLOCKED, then yield
+// task that simulates a waiter racing its waker: publish BLOCKED, then yield
 static volatile int race_task_ran = 0;
 static struct task *race_wait_queue = NULL;
 
@@ -227,8 +227,8 @@ static void task_race_waiter(void)
     struct task *self = sched_current_task();
     unsigned long flags = irq_save();
 
-    // 1. Pre-mark as BLOCKED (simulating pipe_wait)
-    self->state = SCHED_TASK_BLOCKED;
+    // 1. Pre-mark as BLOCKED, as a wait queue does
+    sched_task_set_blocked(self);
 
     // 2. Add to a "queue" so the unblocker can find us
     unsigned long lock_flags = spin_lock_irqsave(&test_lock);

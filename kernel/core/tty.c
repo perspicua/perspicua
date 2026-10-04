@@ -30,87 +30,49 @@ static void console_tx_adapter(void)
     tty_handle_tx(&console_tty);
 }
 
-static void wait_queue_add(struct task **head, struct task **tail, struct task *t)
+// The producer holds tty->lock, consumers uart_tx_lock; the indices cross via acquire/release.
+static size_t tty_tx_send_locked(struct tty *tty, int until_fifo_full)
 {
-    t->wait_next = NULL;
-    if (*tail) {
-        (*tail)->wait_next = t;
-        *tail = t;
-    } else {
-        *head = *tail = t;
+    size_t head = __atomic_load_n(&tty->tx_head, __ATOMIC_ACQUIRE);
+    size_t tail = tty->tx_tail;
+    size_t sent = 0;
+
+    while (tail != head) {
+        if (until_fifo_full && (mmio_read(uart_fr) & UART_FR_TXFF)) {
+            break;
+        }
+        uart_send_raw((unsigned char)tty->tx_buffer[tail]);
+        tail = (tail + 1) % TTY_BUFFER_SIZE;
+        sent++;
     }
+
+    __atomic_store_n(&tty->tx_tail, tail, __ATOMIC_RELEASE);
+    return sent;
 }
 
-/*
- * wait_queue_remove - Removes and returns the first blocked task in a TTY wait queue.
- */
-static struct task *wait_queue_remove(struct task **head, struct task **tail)
+static void console_flush_adapter(void)
 {
-    while (*head) {
-        struct task *t = *head;
-        *head = t->wait_next;
-        if (*head == NULL) {
-            *tail = NULL;
-        }
-        t->wait_next = NULL;
-
-        // Skip tasks that were woken up by other signals or timeouts
-        if (__atomic_load_n(&t->state, __ATOMIC_SEQ_CST) == SCHED_TASK_BLOCKED) {
-            return t;
-        }
-    }
-    return NULL;
+    tty_tx_send_locked(&console_tty, 0);
 }
 
-static void wait_queue_remove_task(struct task **head, struct task **tail, struct task *target)
+static int tty_tx_empty(const struct tty *tty)
 {
-    struct task *curr = *head;
-    struct task *prev = NULL;
-
-    while (curr) {
-        if (curr == target) {
-            if (prev) {
-                prev->wait_next = curr->wait_next;
-            } else {
-                *head = curr->wait_next;
-            }
-            if (curr == *tail) {
-                *tail = prev;
-            }
-            curr->wait_next = NULL;
-            return;
-        }
-        prev = curr;
-        curr = curr->wait_next;
-    }
+    return __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE) == tty->tx_head;
 }
 
 static void tty_pump_tx(struct tty *tty)
 {
-    size_t initial_tail = tty->tx_tail;
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-
-    while (tty->tx_head != tty->tx_tail) {
-        if (mmio_read(uart_fr) & UART_FR_TXFF) {
-            break;
-        }
-
-        uart_send_raw((unsigned char)tty->tx_buffer[tty->tx_tail]);
-        tty->tx_tail = (tty->tx_tail + 1) % TTY_BUFFER_SIZE;
-    }
-
+    size_t sent = tty_tx_send_locked(tty, 1);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 
-    // Wake writers if space became available
-    if (tty->tx_tail != initial_tail) {
-        struct task *t = wait_queue_remove(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail);
-        if (t) {
-            sched_unblock(t);
-        }
+    // A direct kernel write may have emptied the ring without waking anyone.
+    if (sent || tty_tx_empty(tty)) {
+        wq_wake_all(&tty->tx_wq);
     }
 
     // Enable TX IRQ only if data remains in buffer
-    if (tty->tx_head != tty->tx_tail) {
+    if (!tty_tx_empty(tty)) {
         mmio_write(uart_imsc, mmio_read(uart_imsc) | UART_IMSC_TXIM);
     } else {
         mmio_write(uart_imsc, mmio_read(uart_imsc) & ~UART_IMSC_TXIM);
@@ -120,15 +82,16 @@ static void tty_pump_tx(struct tty *tty)
 // One slot is always left empty so a full ring is distinguishable from an empty one.
 static size_t tty_tx_space(const struct tty *tty)
 {
-    return (tty->tx_tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
+    size_t tail = __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE);
+    return (tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
 }
 
 static void tty_put_tx_char(struct tty *tty, char c)
 {
     size_t next_tx_head = (tty->tx_head + 1) % TTY_BUFFER_SIZE;
-    if (next_tx_head != tty->tx_tail) {
+    if (next_tx_head != __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE)) {
         tty->tx_buffer[tty->tx_head] = c;
-        tty->tx_head = next_tx_head;
+        __atomic_store_n(&tty->tx_head, next_tx_head, __ATOMIC_RELEASE);
     }
 }
 
@@ -165,6 +128,17 @@ static int tty_has_line(struct tty *tty)
     return 0;
 }
 
+static int tty_rx_ready(struct tty *tty)
+{
+    if (tty->rx_head == tty->rx_tail) {
+        return 0;
+    }
+    if (tty->canon_enabled) {
+        return tty_has_line(tty);
+    }
+    return 1;
+}
+
 void tty_init(struct tty *tty)
 {
     memset(tty->rx_buffer, 0, TTY_BUFFER_SIZE);
@@ -175,10 +149,8 @@ void tty_init(struct tty *tty)
     tty->tx_head = 0;
     tty->tx_tail = 0;
 
-    tty->wait_queue_head = NULL;
-    tty->wait_queue_tail = NULL;
-    tty->tx_wait_queue_head = NULL;
-    tty->tx_wait_queue_tail = NULL;
+    wq_init(&tty->rx_wq);
+    wq_init(&tty->tx_wq);
     tty->lock = (spinlock_t)SPINLOCK_INIT;
     tty->echo_enabled = 0;
     tty->canon_enabled = 0;
@@ -187,6 +159,7 @@ void tty_init(struct tty *tty)
 
     uart_reg_rx_callback(console_rx_adapter);
     uart_reg_tx_callback(console_tx_adapter);
+    uart_reg_flush_callback(console_flush_adapter);
 
     pr_info("tty: console tty initialized\n");
 }
@@ -292,10 +265,7 @@ void tty_handle_rx(struct tty *tty, char c)
 
     // Wake readers for every char (raw) or every newline (canon)
     if (!tty->canon_enabled || c == '\n') {
-        struct task *t = wait_queue_remove(&tty->wait_queue_head, &tty->wait_queue_tail);
-        if (t) {
-            sched_unblock(t);
-        }
+        wq_wake_all(&tty->rx_wq);
     }
 
     spin_unlock_irqrestore(&tty->lock, flags);
@@ -312,69 +282,36 @@ int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count)
             break;
     }
 
-    size_t n = 0;
-    while (n < count) {
-        unsigned long flags = spin_lock_irqsave(&tty->lock);
+    if (count == 0) {
+        return 0;
+    }
 
-        int ready = (tty->rx_head != tty->rx_tail);
-        if (tty->canon_enabled && !tty_has_line(tty)) {
-            ready = 0;
-        }
+    unsigned long flags = spin_lock_irqsave(&tty->lock);
 
-        if (!ready) {
-            if (file && (file->flags & O_NONBLOCK)) {
-                spin_unlock_irqrestore(&tty->lock, flags);
-                if (n == 0) {
-                    return -EAGAIN;
-                }
-                break;
-            }
-            if (n > 0) {
-                spin_unlock_irqrestore(&tty->lock, flags);
-                break;
-            }
-
-            struct task *curr_task_inner = sched_current_task();
-
-            // The sender holds process_table_lock, not this one, and reads
-            // the state after setting the bit -- stores before loads.
-            __atomic_store_n(&curr_task_inner->state, SCHED_TASK_BLOCKED, __ATOMIC_SEQ_CST);
-            __atomic_thread_fence(__ATOMIC_SEQ_CST);
-
-            if (signal_pending(process_slot(curr_task_inner->pid))) {
-                enum sched_task_state expected = SCHED_TASK_BLOCKED;
-                __atomic_compare_exchange_n(&curr_task_inner->state, &expected, SCHED_TASK_RUNNING,
-                                            0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-                spin_unlock_irqrestore(&tty->lock, flags);
-                return -ERESTARTSYS;
-            }
-
-            wait_queue_add(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
+    if (!tty_rx_ready(tty)) {
+        if (file && (file->flags & O_NONBLOCK)) {
             spin_unlock_irqrestore(&tty->lock, flags);
-            sched_schedule();
-
-            // Cleanup after wake
-            unsigned long flags_cleanup = spin_lock_irqsave(&tty->lock);
-            wait_queue_remove_task(&tty->wait_queue_head, &tty->wait_queue_tail, curr_task_inner);
-            spin_unlock_irqrestore(&tty->lock, flags_cleanup);
-
-            continue;
+            return -EAGAIN;
         }
 
-        while (tty->rx_head != tty->rx_tail && n < count) {
-            char c = tty->rx_buffer[tty->rx_tail];
-            tty->rx_tail = (tty->rx_tail + 1) % TTY_BUFFER_SIZE;
-            buf[n++] = c;
-            if (tty->canon_enabled && c == '\n') {
-                spin_unlock_irqrestore(&tty->lock, flags);
-                return (int)n;
-            }
+        int ret = wq_wait_event_interruptible_locked(&tty->rx_wq, tty_rx_ready(tty), &tty->lock);
+        if (ret == -ERESTARTSYS) {
+            spin_unlock_irqrestore(&tty->lock, flags);
+            return -ERESTARTSYS;
         }
-        spin_unlock_irqrestore(&tty->lock, flags);
-        if (n > 0) {
+    }
+
+    size_t n = 0;
+    while (tty->rx_head != tty->rx_tail && n < count) {
+        char c = tty->rx_buffer[tty->rx_tail];
+        tty->rx_tail = (tty->rx_tail + 1) % TTY_BUFFER_SIZE;
+        buf[n++] = c;
+        if (tty->canon_enabled && c == '\n') {
             break;
         }
     }
+
+    spin_unlock_irqrestore(&tty->lock, flags);
     return (int)n;
 }
 
@@ -395,15 +332,7 @@ int tty_write(struct tty *tty, const char *buf, size_t count)
                 break;
             }
 
-            struct task *curr = sched_current_task();
-            curr->state = SCHED_TASK_BLOCKED;
-            wait_queue_add(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
-            spin_unlock_irqrestore(&tty->lock, flags);
-            sched_schedule();
-            flags = spin_lock_irqsave(&tty->lock);
-
-            // Cleanup after wake
-            wait_queue_remove_task(&tty->tx_wait_queue_head, &tty->tx_wait_queue_tail, curr);
+            wq_wait_event_locked(&tty->tx_wq, tty_tx_space(tty) >= need, &tty->lock);
         }
 
         if (c == '\n') {

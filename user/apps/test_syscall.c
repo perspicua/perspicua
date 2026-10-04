@@ -48,6 +48,7 @@ void test_pread_pwrite(void)
     assert(strcmp(buf, "01abcde789XYZ") == 0);
 
     close(fd);
+    unlink("test_pw.txt");
     printf("[ TEST ] pread/pwrite passed!\n");
 }
 
@@ -458,16 +459,22 @@ void test_audit_fixes(void)
         assert(errno == E2BIG);
     }
 
+    // Every image has to provide it, so the test makes its own regular file.
+    const char *plain = "audit_plain.txt";
+    int made = open(plain, O_CREAT | O_RDWR | O_TRUNC);
+    assert(made >= 0);
+    close(made);
+
     // opendir refuses what is not a directory.
     {
         errno = 0;
-        assert(opendir("/README.md") == NULL);
+        assert(opendir(plain) == NULL);
         assert(errno == ENOTDIR);
     }
 
     // F_SETFD keeps only the flag it defines.
     {
-        int fd = open("/README.md", O_RDONLY);
+        int fd = open(plain, O_RDONLY);
         assert(fd >= 0);
         assert(fcntl(fd, F_SETFD, 0xFF) == 0);
         assert(fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
@@ -476,7 +483,7 @@ void test_audit_fixes(void)
 
     // An unknown whence is EINVAL.
     {
-        int fd = open("/README.md", O_RDONLY);
+        int fd = open(plain, O_RDONLY);
         assert(fd >= 0);
         errno = 0;
         assert(lseek(fd, 0, 99) < 0);
@@ -484,6 +491,7 @@ void test_audit_fixes(void)
         close(fd);
     }
 
+    unlink(plain);
     printf("[ TEST ] audit regressions passed!\n");
 }
 
