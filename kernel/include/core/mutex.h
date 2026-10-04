@@ -17,7 +17,7 @@
 struct task;
 
 /*
- * struct kmutex - Recursive sleeping lock backed by a scheduler wait queue.
+ * struct kmutex - Recursive sleeping lock backed by a generic wait queue.
  */
 struct kmutex {
     spinlock_t guard;

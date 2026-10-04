@@ -68,6 +68,9 @@ void uart_reg_rx_callback(uart_rx_cb_t f);
 
 void uart_reg_tx_callback(uart_tx_cb_t f);
 
+// Runs under uart_tx_lock before every direct write, to send output queued ahead of it.
+void uart_reg_flush_callback(uart_tx_cb_t f);
+
 void uart_handle_irq(void);
 
 #endif // PERSPICUA_DRIVER_UART_H

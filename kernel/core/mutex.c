@@ -1,5 +1,5 @@
 /*
- * mutex.c - Recursive sleeping mutex built on the scheduler wait queue.
+ * mutex.c - Recursive sleeping mutex built on the generic wait queue (sched/wait.h).
  *
  * A task blocks (sched_schedule()) rather than spins when the lock is contended, so a
  * kmutex may be held across blocking operations such as SD card I/O. The short

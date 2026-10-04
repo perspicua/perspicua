@@ -71,10 +71,15 @@ int main(int argc, char *argv[])
     getppid();
 
     printf("[ STRESS ] Testing boundary sleep/yield...\n");
-    /* An extreme sleep: the kernel must reject or clamp it, not overflow. */
-    struct timespec huge = {.tv_sec = 0xffffffffUL / 1000,
-                            .tv_nsec = (0xffffffffUL % 1000) * 1000000};
-    nanosleep(&huge, NULL);
+    // Seconds whose conversion to ms would overflow must be refused, not slept.
+    struct timespec huge = {.tv_sec = (time_t)0x7FFFFFFFFFFFFFFFLL, .tv_nsec = 0};
+    if (nanosleep(&huge, NULL) == 0) {
+        printf("[ STRESS ] nanosleep accepted an overflowing duration\n");
+    }
+    struct timespec bad_nsec = {.tv_sec = 0, .tv_nsec = 1000000000};
+    if (nanosleep(&bad_nsec, NULL) == 0) {
+        printf("[ STRESS ] nanosleep accepted tv_nsec of one second\n");
+    }
     sched_yield();
 
     printf("[ STRESS ] System Call Fuzzer completed successfully.\n");

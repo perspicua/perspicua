@@ -340,6 +340,8 @@ static int signal_send_target_locked(struct process *p, int sig)
     int discarded = signal_discarded(p, sig);
     if (!discarded) {
         __atomic_fetch_or(&p->pending_signals, (1u << (sig - 1)), __ATOMIC_SEQ_CST);
+        // Pairs with the waiter's fence: the pending bit is visible before main_task->state is read.
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
 
     /* Resuming a stopped task is an effect of SENDING SIGCONT, not of

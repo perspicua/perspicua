@@ -30,29 +30,49 @@ static void console_tx_adapter(void)
     tty_handle_tx(&console_tty);
 }
 
-static void tty_pump_tx(struct tty *tty)
+// The producer holds tty->lock, consumers uart_tx_lock; the indices cross via acquire/release.
+static size_t tty_tx_send_locked(struct tty *tty, int until_fifo_full)
 {
-    size_t initial_tail = tty->tx_tail;
-    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    size_t head = __atomic_load_n(&tty->tx_head, __ATOMIC_ACQUIRE);
+    size_t tail = tty->tx_tail;
+    size_t sent = 0;
 
-    while (tty->tx_head != tty->tx_tail) {
-        if (mmio_read(uart_fr) & UART_FR_TXFF) {
+    while (tail != head) {
+        if (until_fifo_full && (mmio_read(uart_fr) & UART_FR_TXFF)) {
             break;
         }
-
-        uart_send_raw((unsigned char)tty->tx_buffer[tty->tx_tail]);
-        tty->tx_tail = (tty->tx_tail + 1) % TTY_BUFFER_SIZE;
+        uart_send_raw((unsigned char)tty->tx_buffer[tail]);
+        tail = (tail + 1) % TTY_BUFFER_SIZE;
+        sent++;
     }
 
+    __atomic_store_n(&tty->tx_tail, tail, __ATOMIC_RELEASE);
+    return sent;
+}
+
+static void console_flush_adapter(void)
+{
+    tty_tx_send_locked(&console_tty, 0);
+}
+
+static int tty_tx_empty(const struct tty *tty)
+{
+    return __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE) == tty->tx_head;
+}
+
+static void tty_pump_tx(struct tty *tty)
+{
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    size_t sent = tty_tx_send_locked(tty, 1);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 
-    // Wake writers if space became available
-    if (tty->tx_tail != initial_tail) {
+    // A direct kernel write may have emptied the ring without waking anyone.
+    if (sent || tty_tx_empty(tty)) {
         wq_wake_all(&tty->tx_wq);
     }
 
     // Enable TX IRQ only if data remains in buffer
-    if (tty->tx_head != tty->tx_tail) {
+    if (!tty_tx_empty(tty)) {
         mmio_write(uart_imsc, mmio_read(uart_imsc) | UART_IMSC_TXIM);
     } else {
         mmio_write(uart_imsc, mmio_read(uart_imsc) & ~UART_IMSC_TXIM);
@@ -62,15 +82,16 @@ static void tty_pump_tx(struct tty *tty)
 // One slot is always left empty so a full ring is distinguishable from an empty one.
 static size_t tty_tx_space(const struct tty *tty)
 {
-    return (tty->tx_tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
+    size_t tail = __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE);
+    return (tail + TTY_BUFFER_SIZE - tty->tx_head - 1) % TTY_BUFFER_SIZE;
 }
 
 static void tty_put_tx_char(struct tty *tty, char c)
 {
     size_t next_tx_head = (tty->tx_head + 1) % TTY_BUFFER_SIZE;
-    if (next_tx_head != tty->tx_tail) {
+    if (next_tx_head != __atomic_load_n(&tty->tx_tail, __ATOMIC_ACQUIRE)) {
         tty->tx_buffer[tty->tx_head] = c;
-        tty->tx_head = next_tx_head;
+        __atomic_store_n(&tty->tx_head, next_tx_head, __ATOMIC_RELEASE);
     }
 }
 
@@ -138,6 +159,7 @@ void tty_init(struct tty *tty)
 
     uart_reg_rx_callback(console_rx_adapter);
     uart_reg_tx_callback(console_tx_adapter);
+    uart_reg_flush_callback(console_flush_adapter);
 
     pr_info("tty: console tty initialized\n");
 }

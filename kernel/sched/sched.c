@@ -197,7 +197,7 @@ static void sleep_dequeue(struct task *t)
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
 
-static void sleep_enqueue(struct task *t)
+static void sleep_enqueue(struct task *t, unsigned long wake_time)
 {
     unsigned long flags = spin_lock_irqsave(&sched_sleep_lock);
 
@@ -209,6 +209,9 @@ static void sleep_enqueue(struct task *t)
      * stale entry first so a task appears at most once.
      */
     sleep_unlink_locked(t);
+
+    // Written under the lock, after the unlink, so a linked entry's key never changes.
+    t->wake_time = wake_time;
 
     if (!sched_sleep_head || (long)(t->wake_time - sched_sleep_head->wake_time) < 0) {
         t->sleep_next = sched_sleep_head;
@@ -238,12 +241,14 @@ static void sleep_drain(int cpu)
         struct task *w = sched_sleep_head;
         sched_sleep_head = w->sleep_next;
         w->sleep_next = NULL;
+
+        // Under the lock, which cleanup_dead_task takes before freeing w.
+        enum sched_task_state expected = SCHED_TASK_BLOCKED;
+        int won = __atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0,
+                                              __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
         spin_unlock_irqrestore(&sched_sleep_lock, flags);
 
-        // Only enqueue if still blocked; prevents race with unblock.
-        enum sched_task_state expected = SCHED_TASK_BLOCKED;
-        if (__atomic_compare_exchange_n(&w->state, &expected, SCHED_TASK_READY, 0, __ATOMIC_SEQ_CST,
-                                        __ATOMIC_SEQ_CST)) {
+        if (won) {
             rq_enqueue(cpu, w);
         }
 
@@ -445,6 +450,26 @@ int sched_task_set_stopped(struct task *t)
                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 }
 
+int sched_task_is_idle(const struct task *t)
+{
+    for (int cpu = 0; cpu < CPU_MAX_CORES; cpu++) {
+        if (t == sched_idle[cpu]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void sched_timeout_arm(struct task *t, unsigned long deadline)
+{
+    sleep_enqueue(t, deadline);
+}
+
+void sched_timeout_cancel(struct task *t)
+{
+    sleep_dequeue(t);
+}
+
 void sched_exit_current(void)
 {
     struct task *self = sched_current_task();
@@ -485,11 +510,13 @@ void sched_sleep_ms(unsigned long ms)
     while (!sched_task_set_blocked(curr)) {
         sched_schedule();
     }
-    curr->wake_time = timer_get_system_time() + ms;
-    sleep_enqueue(curr);
+    sleep_enqueue(curr, timer_get_system_time() + ms);
 
     sched_schedule();
     irq_restore(flags);
+
+    // An unblock that lands before sleep_enqueue leaves the entry linked.
+    sleep_dequeue(curr);
 }
 
 // Returns the milliseconds still owed; 0 if the full time elapsed.
@@ -505,7 +532,6 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
     }
 
     unsigned long deadline = timer_get_system_time() + ms;
-    curr->wake_time = deadline;
 
     // Published before the check, as in sigsuspend: a sender on another core
     // sets the pending bit and then reads this state.
@@ -520,7 +546,7 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
         return ms;
     }
 
-    sleep_enqueue(curr);
+    sleep_enqueue(curr, deadline);
     sched_schedule();
     irq_restore(flags);
 

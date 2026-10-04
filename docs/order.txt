@@ -86,22 +86,19 @@ single highest-leverage phase in the file.
 
    1. Generic wait-queue / condition-variable primitive          (IMP-007, part 1)
       Effort: M | Unlocks: select/poll, futexes, every future blocking driver
-      Scope: one wait_queue_t with wq_wait(wq, condition) / wq_wake_one /
-        wq_wake_all, correct prepare-to-wait/finish-wait ordering, a condition
-        re-check loop, and signal-interruptibility (returns -EINTR).
+      Scope: one struct wait_queue with wq_wait_event{,_interruptible,_timeout,
+        _locked}(wq, condition) / wq_wake_one / wq_wake_all, correct
+        prepare-to-wait/finish-wait ordering, a condition re-check loop, and
+        signal-interruptibility (returns -ERESTARTSYS for the restart path).
       Done: tty, pipe, sd, AND kmutex are all converted to it and their bespoke
         queues are deleted; a test covers wake, signal-interrupt, and spurious
         wakeup.
-      Note: struct task already has a dedicated wait_next link (separate from
-        rq_next/sleep_next) — that is the hook. The bespoke queues in tty/pipe/sd
-        each re-derive remove-on-wake logic slightly differently; that duplication
-        is exactly what caused the earlier lost-wakeup/corruption class of bugs.
-        kmutex (core/mutex.c) is a FOURTH bespoke user of wait_next — the sched.h
-        comment only mentions tty/pipe/sd, which is already stale. The shared link
-        means a task can be on at most one wait queue at a time; make the new
-        primitive assert that invariant instead of silently corrupting the list.
-        Wake waiters before blocking for space, not after the loop finishes --
-        that rule belongs in the primitive rather than in each copy of it.
+      Note: waiters link a struct wait_entry on their own stack, not the task, so
+        poll can later sleep on several queues at once; task->wait_next is gone.
+        An entry on two queues PANICs. A waker never touches an entry outside
+        wq->lock, and wq_finish always takes it, so no frame is written after
+        it returns. Wake-before-blocking-for-space stays at the call site (pipe),
+        since only the caller knows which other queue to wake.
         The ->poll(file, wq) readiness hook rides on this — see Phase 3 item 1.
 
    2. Sleeping-lock family

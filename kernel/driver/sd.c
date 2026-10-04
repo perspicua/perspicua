@@ -8,6 +8,7 @@
 
 #include "stdio.h"
 #include "string.h"
+#include "panic.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -101,7 +102,22 @@ typedef struct {
 #define CMD17  (CMD_IDX(17) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA | XFER_READ)
 #define CMD24  (CMD_IDX(24) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA)
 #define CMD55  (CMD_IDX(55) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
+#define ACMD6  (CMD_IDX(6) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
 #define ACMD41 (CMD_IDX(41) | CMD_RESP_48)
+
+#define HOST_DATA_4BIT      (1 << 1)
+#define CLK_INTERNAL_EN     (1 << 0)
+#define CLK_INTERNAL_STABLE (1 << 1)
+#define CLK_SD_EN           (1 << 2)
+#define CLK_DIV_MASK        0xFFE0
+#define CLK_RESET_CMD       (1 << 25)
+#define CLK_RESET_DAT       (1 << 26)
+
+// SDCLK = base / (2 * divider). The card must stay at or below 400 kHz until it is selected.
+#define SD_ID_DIVIDER     0xFA
+#define SD_DEFAULT_HZ     25000000
+#define SD_IRQ_TIMEOUT_MS 1000
+#define INT_STALE_MASK    (INT_CMD_DONE | INT_DATA_DONE | INT_ERROR_MASK)
 
 static sdhci_regs_t *regs = NULL;
 static struct block_device sd_block_dev;
@@ -116,10 +132,19 @@ static int sd_is_sdhc = 0;
  */
 static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
-    while (((regs->status & mask) != expected) && timeout_ms--) {
+    // A card at full speed answers within microseconds; one sleep costs a whole scheduler tick.
+    unsigned long spin_until = timer_get_system_time() + 2;
+    while ((regs->status & mask) != expected) {
+        if ((long)(timer_get_system_time() - spin_until) < 0) {
+            asm volatile("yield");
+            continue;
+        }
+        if (timeout_ms-- <= 0) {
+            return -ETIMEDOUT;
+        }
         sched_sleep_ms(1);
     }
-    return (timeout_ms >= 0) ? 0 : -ETIMEDOUT;
+    return 0;
 }
 
 // Atomically copies matching interrupt bits from sd_irq_pending to *bits and clears them.
@@ -163,7 +188,10 @@ static int sd_wait_interrupt(uint32_t mask)
     }
 
     uint32_t bits = 0;
-    wq_wait_event(&sd_irq_wq, sd_irq_take(mask, &bits));
+    int res = wq_wait_event_timeout(&sd_irq_wq, sd_irq_take(mask, &bits), SD_IRQ_TIMEOUT_MS);
+    if (res != 0) {
+        return res;
+    }
 
     return (bits & INT_ERROR_MASK) ? -EIO : 0;
 }
@@ -203,10 +231,58 @@ static int sd_send_cmd(uint32_t cmd, uint32_t arg)
         }
     }
 
+    // A late completion from an earlier, abandoned request must not satisfy this one.
+    unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
+    regs->interrupt = INT_STALE_MASK;
+    sd_irq_pending &= ~INT_STALE_MASK;
+    spin_unlock_irqrestore(&sd_irq_lock, flags);
+
     regs->arg1 = arg;
     regs->xfer_mode_cmd = cmd;
 
     return sd_wait_interrupt(INT_CMD_DONE);
+}
+
+// Clears a command or data error so the next request starts from a clean controller.
+static void sd_reset_lines(void)
+{
+    regs->clk_control |= CLK_RESET_CMD | CLK_RESET_DAT;
+    for (int i = 0; i < 100 && (regs->clk_control & (CLK_RESET_CMD | CLK_RESET_DAT)); i++) {
+        timer_sleep_ms(1);
+    }
+}
+
+static int sd_set_divider(uint32_t div)
+{
+    regs->clk_control &= ~CLK_SD_EN;
+    regs->clk_control = (regs->clk_control & ~CLK_DIV_MASK) | ((div & 0xFF) << 8)
+                        | (((div >> 8) & 0x3) << 6) | CLK_INTERNAL_EN;
+    for (int i = 0; !(regs->clk_control & CLK_INTERNAL_STABLE); i++) {
+        if (i == 100) {
+            return -ETIMEDOUT;
+        }
+        timer_sleep_ms(1);
+    }
+    regs->clk_control |= CLK_SD_EN;
+    timer_sleep_ms(2);
+    return 0;
+}
+
+// The firmware's current rate for one of its clocks, or 0 if it does not answer.
+static uint32_t sd_get_clock(uint32_t id)
+{
+    unsigned int __attribute__((aligned(16))) mbox[8];
+    mbox[0] = 8 * 4;
+    mbox[1] = 0;
+    mbox[2] = 0x00030002; // Get clock rate tag
+    mbox[3] = 8;
+    mbox[4] = 0;
+    mbox[5] = id;
+    mbox[6] = 0;
+    mbox[7] = 0;
+
+    mbox_call(mbox);
+    return (mbox[1] == 0x80000000 && mbox[5] == id) ? mbox[6] : 0;
 }
 
 static int sd_set_clock(uint32_t clock)
@@ -337,6 +413,109 @@ static int sd_init_card(void)
     return 0;
 }
 
+static int sd_read_locked(uint32_t *buf, size_t start_block, size_t num_blocks)
+{
+    for (size_t i = 0; i < num_blocks; i++) {
+        uint32_t addr = (uint32_t)(start_block + i);
+        if (!sd_is_sdhc) {
+            addr *= 512;
+        }
+
+        regs->blk_size_cnt = (1 << 16) | 512;
+        int res = sd_send_cmd(CMD17, addr);
+        if (res == 0) {
+            res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
+        }
+        if (res == 0) {
+            for (int j = 0; j < 128; j++) {
+                buf[i * 128 + j] = regs->data;
+            }
+            res = sd_wait_interrupt(INT_DATA_DONE);
+        }
+        if (res != 0) {
+            pr_err("sd: read failed at block %lu (%d)\n", start_block + i, res);
+            sd_reset_lines();
+            return res;
+        }
+    }
+    return 0;
+}
+
+static int sd_write_locked(const uint32_t *buf, size_t start_block, size_t num_blocks)
+{
+    for (size_t i = 0; i < num_blocks; i++) {
+        uint32_t addr = (uint32_t)(start_block + i);
+        if (!sd_is_sdhc) {
+            addr *= 512;
+        }
+
+        regs->blk_size_cnt = (1 << 16) | 512;
+        int res = sd_send_cmd(CMD24, addr);
+        if (res == 0) {
+            res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
+        }
+        if (res == 0) {
+            for (int j = 0; j < 128; j++) {
+                regs->data = buf[i * 128 + j];
+            }
+            res = sd_wait_interrupt(INT_DATA_DONE);
+        }
+        if (res != 0) {
+            pr_err("sd: write failed at block %lu (%d)\n", start_block + i, res);
+            sd_reset_lines();
+            return res;
+        }
+    }
+    return 0;
+}
+
+// Block 0 carries the 0x55AA signature whether it holds an MBR or a FAT boot sector.
+static int sd_read_test(void)
+{
+    static uint32_t sector[128];
+    if (sd_read_locked(sector, 0, 1) != 0) {
+        return -EIO;
+    }
+    const uint8_t *bytes = (const uint8_t *)sector;
+    return (bytes[510] == 0x55 && bytes[511] == 0xAA) ? 0 : -EIO;
+}
+
+/*
+ * Moves a selected card from the 1-bit identification clock to a 4-bit bus at
+ * up to 25 MHz. A failed test read restores the settings card init proved.
+ */
+static void sd_enable_fast_mode(uint32_t base_hz)
+{
+    if (base_hz == 0) {
+        pr_warn("sd: base clock unknown; staying at the identification clock\n");
+        return;
+    }
+
+    uint32_t div = (base_hz + 2 * SD_DEFAULT_HZ - 1) / (2 * SD_DEFAULT_HZ);
+    if (div > 0x3FF) {
+        div = 0x3FF;
+    }
+
+    if (sd_send_cmd(CMD55, sd_rca) != 0 || sd_send_cmd(ACMD6, 2) != 0) {
+        pr_warn("sd: card refused a 4-bit bus; staying at the identification clock\n");
+        return;
+    }
+    regs->host_control |= HOST_DATA_4BIT;
+
+    if (sd_set_divider(div) == 0 && sd_read_test() == 0) {
+        pr_info("sd: 4-bit bus at %u kHz\n", base_hz / (2 * div) / 1000);
+        return;
+    }
+
+    sd_reset_lines();
+    sd_set_divider(SD_ID_DIVIDER);
+    regs->host_control &= ~HOST_DATA_4BIT;
+    if (sd_send_cmd(CMD55, sd_rca) == 0) {
+        sd_send_cmd(ACMD6, 0);
+    }
+    pr_warn("sd: fast mode failed its test read; staying at the identification clock\n");
+}
+
 int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, size_t num_blocks)
 {
     if (!dev->present) {
@@ -357,43 +536,13 @@ int sd_read_blocks(struct block_device *dev, void *buffer, size_t start_block, s
         return -EINVAL;
     }
 
-    uint32_t *buf = (uint32_t *)buffer;
-
     kmutex_lock(&sd_op_mutex);
-
-    for (size_t i = 0; i < num_blocks; i++) {
-        uint32_t addr = (uint32_t)(start_block + i);
-        if (!sd_is_sdhc) {
-            addr *= 512;
-        }
-
-        regs->blk_size_cnt = (1 << 16) | 512;
-        int res = sd_send_cmd(CMD17, addr);
-        if (res != 0) {
-            pr_err("sd: read failed at block %lu\n", start_block + i);
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
-
-        res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
-        if (res != 0) {
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
-
-        for (int j = 0; j < 128; j++) {
-            buf[i * 128 + j] = regs->data;
-        }
-
-        res = sd_wait_interrupt(INT_DATA_DONE);
-        if (res != 0) {
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
+    if (sd_op_mutex.depth > 1) {
+        PANIC("sd: controller re-entered in the middle of a transfer");
     }
-
+    int res = sd_read_locked((uint32_t *)buffer, start_block, num_blocks);
     kmutex_unlock(&sd_op_mutex);
-    return 0;
+    return res;
 }
 
 int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_block,
@@ -412,42 +561,13 @@ int sd_write_blocks(struct block_device *dev, const void *buffer, size_t start_b
         return -EINVAL;
     }
 
-    const uint32_t *buf = (const uint32_t *)buffer;
-
     kmutex_lock(&sd_op_mutex);
-
-    for (size_t i = 0; i < num_blocks; i++) {
-        uint32_t addr = (uint32_t)(start_block + i);
-        if (!sd_is_sdhc) {
-            addr *= 512;
-        }
-
-        regs->blk_size_cnt = (1 << 16) | 512;
-        int res = sd_send_cmd(CMD24, addr);
-        if (res != 0) {
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
-
-        res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
-        if (res != 0) {
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
-
-        for (int j = 0; j < 128; j++) {
-            regs->data = buf[i * 128 + j];
-        }
-
-        res = sd_wait_interrupt(INT_DATA_DONE);
-        if (res != 0) {
-            kmutex_unlock(&sd_op_mutex);
-            return res;
-        }
+    if (sd_op_mutex.depth > 1) {
+        PANIC("sd: controller re-entered in the middle of a transfer");
     }
-
+    int res = sd_write_locked((const uint32_t *)buffer, start_block, num_blocks);
     kmutex_unlock(&sd_op_mutex);
-    return 0;
+    return res;
 }
 
 static void sd_probe_abort(sdhci_regs_t *r)
@@ -524,6 +644,13 @@ static int sd_probe(struct device *dev)
         sd_probe_abort(r);
         return -EIO;
     }
+
+    // Firmware clock 12 feeds EMMC2, clock 1 the legacy controller.
+    uint32_t base_hz = sd_get_clock(strcmp(dev->name, "bcm2711-emmc2") == 0 ? 12 : 1);
+    if (base_hz == 0) {
+        base_hz = ((regs->capabilities[0] >> 8) & 0xFF) * 1000000;
+    }
+    sd_enable_fast_mode(base_hz);
 
     sd_block_dev.block_size = 512;
     sd_block_dev.read_blocks = sd_read_blocks;

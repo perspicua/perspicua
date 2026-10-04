@@ -126,9 +126,12 @@ Memory
   every switch.
 
 Scheduling and processes
-  Per-core runqueues with round-robin selection; a task can be on a runqueue, a
-  sleep queue, or a wait queue, and these are SEPARATE linked-list links on the
-  task (conflating them was a past source of list corruption). A process owns an
+  Per-core runqueues with round-robin selection; a task can be on a runqueue and
+  a sleep queue through SEPARATE links on the task (conflating them was a past
+  source of list corruption). Wait queues (sched/wait.h) link an entry on the
+  waiting task's stack instead, so a task is never linked into one directly.
+  A task never overwrites its own READY: going BLOCKED, STOPPED or DEAD is a
+  CAS from RUNNING, so a wake that lands before the switch is kept. A process owns an
   address space, a file-descriptor table, and signal state; exec loads an ELF,
   exit tears the process down. Signals are POSIX-style; job-control stops
   (SIGSTOP/SIGCONT) are not fully wired yet.

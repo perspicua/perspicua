@@ -42,6 +42,7 @@ static volatile uint32_t *uart_icr = NULL;
 // Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
+static uart_tx_cb_t uart_flush_callback = NULL;
 
 static irq_result_t uart_irq_handler(void *ctx)
 {
@@ -144,6 +145,9 @@ void uart_send(char c)
     }
 
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    if (uart_flush_callback) {
+        uart_flush_callback();
+    }
     uart_send_raw(c);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
@@ -158,6 +162,9 @@ void uart_write_locked(const char *buf, size_t len)
     }
 
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    if (uart_flush_callback) {
+        uart_flush_callback();
+    }
     uart_write_raw(buf, len);
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
@@ -198,6 +205,11 @@ void uart_reg_rx_callback(uart_rx_cb_t f)
 void uart_reg_tx_callback(uart_tx_cb_t f)
 {
     uart_tx_callback = f;
+}
+
+void uart_reg_flush_callback(uart_tx_cb_t f)
+{
+    uart_flush_callback = f;
 }
 
 void uart_handle_irq(void)

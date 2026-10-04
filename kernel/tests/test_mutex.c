@@ -2,7 +2,7 @@
  * test_mutex.c - Tests for the recursive sleeping mutex (kmutex).
  *
  * Only the uncontended and recursive paths are covered here; the blocking
- * path needs a second runnable task and belongs in the scheduler phase.
+ * path needs live tasks and is in test_wait.c.
  */
 
 #include <stddef.h>

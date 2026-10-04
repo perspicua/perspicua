@@ -142,6 +142,9 @@ struct process {
 extern struct process *process_table[PROCESS_TABLE_SIZE];
 extern spinlock_t process_table_lock;
 
+// Successful forks since boot, as /proc/stat's "processes" reports them.
+extern unsigned long process_forks;
+
 /*
  * process_slot - The PCB for a pid, or NULL if the slot is free.
  *

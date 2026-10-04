@@ -220,18 +220,12 @@ static int procfs_gen_stat(char *buf, int size)
         total_ctx += core_sched_stats[i].context_switches;
     }
 
-    int proc_count = 0;
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
-    for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
-        if (process_table[i] && process_table[i]->state != PROCESS_STATE_DEAD) {
-            proc_count++;
-        }
-    }
-    spin_unlock_irqrestore(&process_table_lock, flags);
+    unsigned long forks = __atomic_load_n(&process_forks, __ATOMIC_RELAXED);
+    long btime = (long)timer_get_wall_time() - (long)(timer_get_system_time() / 1000);
 
     int pos = 0;
-    procfs_append(buf, &pos, size, "ctxt %llu\nbtime 0\nprocesses %d\n",
-                  (unsigned long long)total_ctx, proc_count);
+    procfs_append(buf, &pos, size, "ctxt %llu\nbtime %ld\nprocesses %lu\n",
+                  (unsigned long long)total_ctx, btime, forks);
     return pos;
 }
 

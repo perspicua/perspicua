@@ -19,6 +19,7 @@ option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
 # see order.txt Phase 0 item 14.
 option(CONFIG_KDB_ON_PANIC "Drop into the interactive debugger on a kernel panic (blocks on UART input)" ON)
 option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
+option(CONFIG_DEBUG_LOG "Print pr_debug messages, e.g. every fork, exec and exit" OFF)
 set(CONFIG_NR_CPUS 4 CACHE STRING "Number of CPU cores (1-4)")
 set(CONFIG_MAX_PROCESSES 128 CACHE STRING "Process table slots (one pointer each; PCBs allocated on demand)")
 set(CONFIG_MAX_FDS 64 CACHE STRING "Open file descriptors per process")

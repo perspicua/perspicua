@@ -10,6 +10,7 @@
 #include "core/lock.h"
 #include "core/mutex.h"
 #include "core/signals.h"
+#include "core/timer.h"
 #include "core/tty.h"
 #include "driver/block.h"
 #include "driver/sd.h"
@@ -21,11 +22,24 @@
 #include "test.h"
 #include "uapi/errno.h"
 
+// Simulates a scheduler transition; a failed CAS reports instead of overwriting a READY.
+static void test_move_state(struct task *t, enum sched_task_state from, enum sched_task_state to)
+{
+    enum sched_task_state expected = from;
+    TEST_ASSERT("simulated state change starts from the expected state",
+                __atomic_compare_exchange_n(&t->state, &expected, to, 0, __ATOMIC_SEQ_CST,
+                                            __ATOMIC_SEQ_CST));
+}
+
 void test_wait(void)
 {
     TEST_SUITE_BEGIN("WaitQueue");
 
     struct task *self = sched_current_task();
+
+    // A wake that raced an earlier wait can leave this task READY and queued; let that copy run.
+    sched_schedule();
+    TEST_ASSERT_EQ("test task starts RUNNING", (long)self->state, (long)SCHED_TASK_RUNNING);
 
     // 1. Initialisation and static initialiser match
     {
@@ -127,7 +141,6 @@ void test_wait(void)
         wq_finish(&wq, &e1);
         wq_finish(&wq, &e2);
         wq_finish(&wq, &e3);
-        self->state = SCHED_TASK_RUNNING;
         irq_restore(flags);
 
         TEST_ASSERT_EQ("e1 woken preserved after finish", (long)e1.woken, 1);
@@ -167,7 +180,6 @@ void test_wait(void)
 
         // Finish remaining entry e1
         wq_finish(&wq, &e1);
-        self->state = SCHED_TASK_RUNNING;
         irq_restore(flags);
 
         TEST_ASSERT("queue empty after all finishes", wq.head == NULL && wq.tail == NULL);
@@ -189,7 +201,7 @@ void test_wait(void)
         e3.task = NULL;
 
         wq_wake_all(&wq);
-        self->state = SCHED_TASK_RUNNING;
+        test_move_state(self, SCHED_TASK_BLOCKED, SCHED_TASK_RUNNING);
         irq_restore(flags);
 
         TEST_ASSERT("wake_all empties head", wq.head == NULL);
@@ -213,15 +225,15 @@ void test_wait(void)
         // If state was set to READY by a waker, finish leaves it READY
         unsigned long flags = irq_save();
         wq_prepare(&wq, &e);
-        self->state = SCHED_TASK_READY;
+        test_move_state(self, SCHED_TASK_BLOCKED, SCHED_TASK_READY);
         wq_finish(&wq, &e);
         TEST_ASSERT_EQ("finish leaves READY state intact", (long)self->state,
                        (long)SCHED_TASK_READY);
-        self->state = SCHED_TASK_RUNNING;
+        test_move_state(self, SCHED_TASK_READY, SCHED_TASK_RUNNING);
 
         // If state was set to RUNNING, finish leaves it RUNNING
         wq_prepare(&wq, &e);
-        self->state = SCHED_TASK_RUNNING;
+        test_move_state(self, SCHED_TASK_BLOCKED, SCHED_TASK_RUNNING);
         wq_finish(&wq, &e);
         TEST_ASSERT_EQ("finish leaves RUNNING state intact", (long)self->state,
                        (long)SCHED_TASK_RUNNING);
@@ -265,6 +277,20 @@ void test_wait(void)
 /*
  * Multi-task tests running after sched_init and enable_interrupts.
  */
+
+// Polls for up to about two seconds; the asserts that follow report what was reached.
+#define WAIT_UNTIL(cond)                              \
+    do {                                              \
+        for (int _n = 0; _n < 200 && !(cond); _n++) { \
+            sched_sleep_ms(5);                        \
+        }                                             \
+    } while (0)
+
+// True once a spawned task has reached its blocking point.
+static int task_blocked(struct task *t)
+{
+    return t && __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == SCHED_TASK_BLOCKED;
+}
 
 static struct wait_queue sched_test_wq = WAIT_QUEUE_INIT;
 static volatile int sched_test_cond = 0;
@@ -347,8 +373,11 @@ static void task_passon_a(void)
     passon_task_a_done = 1;
 }
 
+static struct task *passon_task_b = NULL;
+
 static void task_passon_b(void)
 {
+    passon_task_b = sched_current_task();
     wq_wait_event(&passon_wq, passon_token != 0);
     passon_task_b_done = 1;
 }
@@ -378,8 +407,12 @@ static void task_contend_holder(void)
     kmutex_unlock(&test_contend_mutex);
 }
 
+static struct task *contender1_task = NULL;
+static struct task *contender2_task = NULL;
+
 static void task_contender1(void)
 {
+    contender1_task = sched_current_task();
     kmutex_lock(&test_contend_mutex);
     mutex_cs_count++;
     if (mutex_cs_count > 1) {
@@ -394,6 +427,7 @@ static void task_contender1(void)
 
 static void task_contender2(void)
 {
+    contender2_task = sched_current_task();
     kmutex_lock(&test_contend_mutex);
     mutex_cs_count++;
     if (mutex_cs_count > 1) {
@@ -471,9 +505,11 @@ static volatile int pipe_test_done = 0;
 static volatile int pipe_test_bytes = 0;
 static char pipe_test_buf[64];
 static int pipe_test_fds[2] = {-1, -1};
+static struct task *pipe_test_reader = NULL;
 
 static void task_pipe_reader(void)
 {
+    pipe_test_reader = sched_current_task();
     memset(pipe_test_buf, 0, sizeof(pipe_test_buf));
     pipe_test_bytes = vfs_read(pipe_test_fds[0], pipe_test_buf, sizeof(pipe_test_buf));
     pipe_test_done = 1;
@@ -483,6 +519,21 @@ static volatile int tty_test_done = 0;
 static volatile int tty_test_bytes = 0;
 static char tty_test_buf[16];
 static struct task *tty_test_reader_task = NULL;
+
+static struct wait_queue timed_wq = WAIT_QUEUE_INIT;
+static volatile int timed_cond = 0;
+static volatile int timed_done = 0;
+static volatile int timed_ret = 0;
+static volatile int timed_left_armed = 0;
+static struct task *timed_task = NULL;
+
+static void task_timed_wait(void)
+{
+    timed_task = sched_current_task();
+    timed_ret = wq_wait_event_timeout(&timed_wq, timed_cond != 0, 2000);
+    timed_left_armed = sched_test_in_sleep_queue(sched_current_task());
+    timed_done = 1;
+}
 
 static void task_tty_reader(void)
 {
@@ -504,7 +555,7 @@ void test_wait_scheduler(void)
         sched_test_task_ptr = NULL;
 
         sched_create_task(task_sleep_wait);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr));
 
         TEST_ASSERT("sleeper task is waiting", sched_test_done == 0);
         TEST_ASSERT("sleeper is in wq", sched_test_wq.head != NULL);
@@ -513,27 +564,27 @@ void test_wait_scheduler(void)
         int woke = wq_wake_one(&sched_test_wq);
         TEST_ASSERT_EQ("wake_one returned 1", (long)woke, 1);
 
-        sched_sleep_ms(30);
+        WAIT_UNTIL(sched_test_done);
         TEST_ASSERT("sleeper woke and finished", sched_test_done == 1);
         TEST_ASSERT("wq is empty after sleep", sched_test_wq.head == NULL);
     }
 
     // 2. Spurious wakeup: condition still false, task goes back to sleep
     {
-        wq_init(&sched_test_wq);
+        TEST_ASSERT("queue empty before reuse", sched_test_wq.head == NULL);
         sched_test_cond = 0;
         sched_test_done = 0;
         sched_test_task_ptr = NULL;
 
         sched_create_task(task_sleep_wait);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr));
 
         TEST_ASSERT("spurious sleeper is waiting", sched_test_done == 0);
         TEST_ASSERT("spurious sleeper in wq", sched_test_wq.head != NULL);
 
         // Wake without setting condition
         wq_wake_one(&sched_test_wq);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr) && sched_test_wq.head != NULL);
 
         TEST_ASSERT("sleeper stayed asleep on spurious wake", sched_test_done == 0);
         TEST_ASSERT("sleeper still in wq after spurious wake", sched_test_wq.head != NULL);
@@ -541,7 +592,7 @@ void test_wait_scheduler(void)
         // Real wake with condition true
         sched_test_cond = 1;
         wq_wake_one(&sched_test_wq);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(sched_test_done);
 
         TEST_ASSERT("sleeper finished after real wake", sched_test_done == 1);
         TEST_ASSERT("wq empty after spurious test", sched_test_wq.head == NULL);
@@ -549,14 +600,14 @@ void test_wait_scheduler(void)
 
     // 3. Signal interrupt in wq_wait_event_interruptible
     {
-        wq_init(&sched_test_wq);
+        TEST_ASSERT("queue empty before reuse", sched_test_wq.head == NULL);
         sched_test_cond = 0;
         sched_test_done = 0;
         sched_test_ret = 0;
         sched_test_task_ptr = NULL;
 
         sched_create_task(task_sleep_interruptible);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr));
 
         TEST_ASSERT("interruptible sleeper is waiting", sched_test_done == 0);
         TEST_ASSERT("sleeper in wq", sched_test_wq.head != NULL);
@@ -572,7 +623,7 @@ void test_wait_scheduler(void)
         if (sched_test_task_ptr) {
             sched_unblock(sched_test_task_ptr);
         }
-        sched_sleep_ms(30);
+        WAIT_UNTIL(sched_test_done);
 
         TEST_ASSERT("interruptible sleeper finished", sched_test_done == 1);
         TEST_ASSERT_EQ("interruptible wait returned -ERESTARTSYS", (long)sched_test_ret,
@@ -586,13 +637,13 @@ void test_wait_scheduler(void)
 
     // 4. An uninterruptible wait that ignores a signal
     {
-        wq_init(&sched_test_wq);
+        TEST_ASSERT("queue empty before reuse", sched_test_wq.head == NULL);
         sched_test_cond = 0;
         sched_test_done = 0;
         sched_test_task_ptr = NULL;
 
         sched_create_task(task_sleep_wait);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr));
 
         TEST_ASSERT("uninterruptible task is waiting", sched_test_done == 0);
 
@@ -606,7 +657,7 @@ void test_wait_scheduler(void)
         if (sched_test_task_ptr) {
             sched_unblock(sched_test_task_ptr);
         }
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(sched_test_task_ptr));
 
         TEST_ASSERT("uninterruptible task ignored signal", sched_test_done == 0);
         TEST_ASSERT("uninterruptible task still in wq", sched_test_wq.head != NULL);
@@ -614,7 +665,7 @@ void test_wait_scheduler(void)
         // Now satisfy condition and wake
         sched_test_cond = 1;
         wq_wake_one(&sched_test_wq);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(sched_test_done);
 
         TEST_ASSERT("uninterruptible task completed on condition", sched_test_done == 1);
         TEST_ASSERT("wq is empty", sched_test_wq.head == NULL);
@@ -628,7 +679,7 @@ void test_wait_scheduler(void)
     {
         regression_done = 0;
         sched_create_task(task_regression_ready_overwrite);
-        sched_sleep_ms(40);
+        WAIT_UNTIL(regression_done);
         TEST_ASSERT("regression test completed without loop", regression_done == 1);
     }
 
@@ -641,15 +692,16 @@ void test_wait_scheduler(void)
         passon_task_a_ret = 0;
         passon_task_b_done = 0;
         passon_task_a = NULL;
+        passon_task_b = NULL;
 
         sched_create_task(task_passon_a);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(passon_task_a));
 
         TEST_ASSERT("task A is waiting", passon_task_a_done == 0);
         TEST_ASSERT("task A is in wq", passon_wq.head != NULL);
 
         sched_create_task(task_passon_b);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(task_blocked(passon_task_b));
 
         TEST_ASSERT("task B is waiting", passon_task_b_done == 0);
         TEST_ASSERT("both tasks in wq", passon_wq.head != passon_wq.tail);
@@ -659,7 +711,7 @@ void test_wait_scheduler(void)
         if (passon_task_a) {
             sched_unblock(passon_task_a);
         }
-        sched_sleep_ms(40);
+        WAIT_UNTIL(passon_task_a_done && passon_task_b_done);
 
         TEST_ASSERT("task A finished", passon_task_a_done == 1);
         TEST_ASSERT_EQ("task A returned -ERESTARTSYS", (long)passon_task_a_ret, (long)-ERESTARTSYS);
@@ -684,22 +736,24 @@ void test_wait_scheduler(void)
         contender_order_idx = 0;
         contender_order[0] = 0;
         contender_order[1] = 0;
+        contender1_task = NULL;
+        contender2_task = NULL;
 
         // i. Holder takes the mutex
         sched_create_task(task_contend_holder);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(test_contend_mutex.depth == 1);
 
         TEST_ASSERT("holder has mutex", test_contend_mutex.depth == 1);
         TEST_ASSERT("holder in progress", holder_done == 0);
 
         // ii. Two contenders block on it
         sched_create_task(task_contender1);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(contender1_task));
         TEST_ASSERT("contender 1 blocked", contender1_done == 0);
         TEST_ASSERT("contender 1 queued in wq", test_contend_mutex.wq.head != NULL);
 
         sched_create_task(task_contender2);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(contender2_task));
         TEST_ASSERT("contender 2 blocked", contender2_done == 0);
         TEST_ASSERT("both contenders queued in wq",
                     test_contend_mutex.wq.head != test_contend_mutex.wq.tail);
@@ -707,16 +761,15 @@ void test_wait_scheduler(void)
         // Signal holder to release mutex
         holder_release = 1;
 
-        // Bounded poll for completion
-        for (int i = 0; i < 100 && !(holder_done && contender1_done && contender2_done); i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(holder_done && contender1_done && contender2_done);
 
         // iii. After the unlock, each contender gets the mutex in turn
         TEST_ASSERT("holder finished", holder_done == 1);
         TEST_ASSERT("contender 1 finished", contender1_done == 1);
         TEST_ASSERT("contender 2 finished", contender2_done == 1);
         TEST_ASSERT("both contenders ran in turn", contender_order_idx == 2);
+        TEST_ASSERT("the mutex was handed over in queue order",
+                    contender_order[0] == 1 && contender_order[1] == 2);
 
         // iv. A counter protected by the mutex never sees two holders at once
         TEST_ASSERT("counter never saw two holders at once", mutex_cs_violation == 0);
@@ -727,7 +780,8 @@ void test_wait_scheduler(void)
 
     // 8. kmutex_lock blocks and succeeds even with a pending signal
     {
-        kmutex_init(&test_contend_mutex);
+        TEST_ASSERT("mutex free before reuse",
+                    test_contend_mutex.depth == 0 && test_contend_mutex.wq.head == NULL);
         sig_holder_done = 0;
         sig_holder_release = 0;
         sig_contender_done = 0;
@@ -735,12 +789,12 @@ void test_wait_scheduler(void)
         sig_contender_task = NULL;
 
         sched_create_task(task_mutex_sig_holder);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(test_contend_mutex.depth == 1);
 
         TEST_ASSERT("sig holder owns mutex", test_contend_mutex.depth == 1);
 
         sched_create_task(task_mutex_sig_contender);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(sig_contender_task));
 
         TEST_ASSERT("contender blocked", sig_contender_done == 0);
         TEST_ASSERT("contender in mutex wq", test_contend_mutex.wq.head != NULL);
@@ -756,7 +810,7 @@ void test_wait_scheduler(void)
         if (sig_contender_task) {
             sched_unblock(sig_contender_task);
         }
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(sig_contender_task));
 
         TEST_ASSERT("contender ignored signal wake, still blocked", sig_contender_done == 0);
         TEST_ASSERT("contender still in mutex wq", test_contend_mutex.wq.head != NULL);
@@ -766,10 +820,7 @@ void test_wait_scheduler(void)
         // Signal holder to release mutex
         sig_holder_release = 1;
 
-        // Bounded poll for completion
-        for (int i = 0; i < 100 && !(sig_holder_done && sig_contender_done); i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(sig_holder_done && sig_contender_done);
 
         TEST_ASSERT("sig holder finished", sig_holder_done == 1);
         TEST_ASSERT("contender succeeded after blocking", sig_contender_done == 1);
@@ -794,13 +845,8 @@ void test_wait_scheduler(void)
             sched_create_task(task_sd_contender);
         }
 
-        // Bounded poll for completion
-        for (int i = 0; i < 200
-                        && !(sd_contend_done[0] && sd_contend_done[1] && sd_contend_done[2]
-                             && sd_contend_done[3]);
-             i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(sd_contend_done[0] && sd_contend_done[1] && sd_contend_done[2]
+                   && sd_contend_done[3]);
 
         TEST_ASSERT("sd task 0 finished", sd_contend_done[0] == 1);
         TEST_ASSERT("sd task 1 finished", sd_contend_done[1] == 1);
@@ -816,20 +862,19 @@ void test_wait_scheduler(void)
     {
         pipe_test_done = 0;
         pipe_test_bytes = -1;
+        pipe_test_reader = NULL;
         TEST_ASSERT_EQ("create pipe for blocked reader", pipe_create(pipe_test_fds), 0);
 
         sched_create_task(task_pipe_reader);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(pipe_test_reader));
 
-        TEST_ASSERT("reader is blocked on empty pipe", pipe_test_done == 0);
+        TEST_ASSERT("reader is blocked on empty pipe", task_blocked(pipe_test_reader));
 
         static const char msg[] = "pipe wakeup test";
         int len = (int)sizeof(msg);
         TEST_ASSERT_EQ("write payload to pipe", vfs_write(pipe_test_fds[1], msg, len), len);
 
-        for (int i = 0; i < 100 && !pipe_test_done; i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(pipe_test_done);
 
         TEST_ASSERT("reader finished", pipe_test_done == 1);
         TEST_ASSERT_EQ("reader read correct byte count", pipe_test_bytes, len);
@@ -843,18 +888,17 @@ void test_wait_scheduler(void)
     {
         pipe_test_done = 0;
         pipe_test_bytes = -1;
+        pipe_test_reader = NULL;
         TEST_ASSERT_EQ("create pipe for EOF test", pipe_create(pipe_test_fds), 0);
 
         sched_create_task(task_pipe_reader);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(pipe_test_reader));
 
-        TEST_ASSERT("reader is blocked before EOF", pipe_test_done == 0);
+        TEST_ASSERT("reader is blocked before EOF", task_blocked(pipe_test_reader));
 
         TEST_ASSERT_EQ("close writer to trigger EOF", vfs_close(pipe_test_fds[1]), 0);
 
-        for (int i = 0; i < 100 && !pipe_test_done; i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(pipe_test_done);
 
         TEST_ASSERT("reader woke on writer close", pipe_test_done == 1);
         TEST_ASSERT_EQ("reader got 0 for EOF", pipe_test_bytes, 0);
@@ -874,16 +918,14 @@ void test_wait_scheduler(void)
         tty_test_reader_task = NULL;
 
         sched_create_task(task_tty_reader);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(tty_test_reader_task) && console_tty.rx_wq.head != NULL);
 
         TEST_ASSERT("tty reader is blocked", tty_test_done == 0);
         TEST_ASSERT("tty reader is in rx_wq", console_tty.rx_wq.head != NULL);
 
         tty_handle_rx(&console_tty, 'a');
 
-        for (int i = 0; i < 100 && !tty_test_done; i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(tty_test_done);
 
         TEST_ASSERT("tty reader woke and finished", tty_test_done == 1);
         TEST_ASSERT_EQ("tty reader returned 1 byte", tty_test_bytes, 1);
@@ -899,7 +941,7 @@ void test_wait_scheduler(void)
         struct process *kproc = process_table[0];
 
         sched_create_task(task_tty_reader);
-        sched_sleep_ms(5);
+        WAIT_UNTIL(task_blocked(tty_test_reader_task) && console_tty.rx_wq.head != NULL);
 
         TEST_ASSERT("tty reader is blocked before signal", tty_test_done == 0);
         TEST_ASSERT("tty reader is in rx_wq", console_tty.rx_wq.head != NULL);
@@ -912,9 +954,7 @@ void test_wait_scheduler(void)
             sched_unblock(tty_test_reader_task);
         }
 
-        for (int i = 0; i < 100 && !tty_test_done; i++) {
-            sched_sleep_ms(5);
-        }
+        WAIT_UNTIL(tty_test_done);
 
         TEST_ASSERT("tty reader woke on signal", tty_test_done == 1);
         TEST_ASSERT_EQ("tty reader returned -ERESTARTSYS", tty_test_bytes, -ERESTARTSYS);
@@ -927,6 +967,41 @@ void test_wait_scheduler(void)
         console_tty.rx_head = 0;
         console_tty.rx_tail = 0;
         spin_unlock_irqrestore(&console_tty.lock, flags);
+    }
+
+    // 14. A timed wait on a condition that never holds gives up at its deadline
+    {
+        struct wait_queue wq = WAIT_QUEUE_INIT;
+        unsigned long start = timer_get_system_time();
+        int r = wq_wait_event_timeout(&wq, 0, 30);
+        unsigned long took = timer_get_system_time() - start;
+
+        TEST_ASSERT_EQ("timed wait returns -ETIMEDOUT", (long)r, (long)-ETIMEDOUT);
+        TEST_ASSERT("timed wait lasted until its deadline", took >= 30);
+        TEST_ASSERT("timed-out waiter left the queue", wq.head == NULL);
+        TEST_ASSERT("timed-out waiter left no timer armed",
+                    !sched_test_in_sleep_queue(sched_current_task()));
+    }
+
+    // 15. A wake before the deadline ends a timed wait with 0 and disarms the timer
+    {
+        timed_cond = 0;
+        timed_done = 0;
+        timed_ret = 1;
+        timed_left_armed = 1;
+        timed_task = NULL;
+
+        sched_create_task(task_timed_wait);
+        WAIT_UNTIL(task_blocked(timed_task));
+        TEST_ASSERT("timed waiter is asleep", timed_done == 0);
+
+        timed_cond = 1;
+        wq_wake_one(&timed_wq);
+        WAIT_UNTIL(timed_done);
+
+        TEST_ASSERT("timed waiter finished", timed_done == 1);
+        TEST_ASSERT_EQ("timed wait woken early returns 0", (long)timed_ret, 0);
+        TEST_ASSERT("woken timed waiter left no timer armed", timed_left_armed == 0);
     }
 
     TEST_SUITE_END("WaitQueue-MultiTask");

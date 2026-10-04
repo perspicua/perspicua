@@ -968,8 +968,8 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
             break;
         }
 
-        irq_restore(irqf);
         sched_schedule();
+        irq_restore(irqf);
     }
 
     // The handler runs after this returns, so restoring the mask here would

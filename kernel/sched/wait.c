@@ -8,6 +8,7 @@
 
 #include "core/lock.h"
 #include "core/signals.h"
+#include "core/timer.h"
 #include "panic.h"
 #include "sched/process.h"
 #include "sched/sched.h"
@@ -24,6 +25,9 @@ void wq_prepare(struct wait_queue *wq, struct wait_entry *e)
     struct task *curr = sched_current_task();
     if (!curr) {
         PANIC("wq_prepare: scheduler not started");
+    }
+    if (sched_task_is_idle(curr)) {
+        PANIC("wq_prepare: the idle task cannot wait");
     }
 
     unsigned long flags = spin_lock_irqsave(&wq->lock);
@@ -138,4 +142,24 @@ int wq_signal_pending(void)
 {
     struct process *p = process_current();
     return p ? signal_pending(p) : 0;
+}
+
+unsigned long wq_deadline(unsigned long timeout_ms)
+{
+    return timeout_ms ? timer_get_system_time() + timeout_ms : 0;
+}
+
+int wq_timed_out(unsigned long deadline)
+{
+    return (long)(timer_get_system_time() - deadline) >= 0;
+}
+
+void wq_timeout_arm(unsigned long deadline)
+{
+    sched_timeout_arm(sched_current_task(), deadline);
+}
+
+void wq_timeout_cancel(void)
+{
+    sched_timeout_cancel(sched_current_task());
 }

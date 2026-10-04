@@ -47,10 +47,20 @@ int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // Kernel-specific logging that prepends a system timestamp.
 int printk(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-    #define pr_info(fmt, ...)  printk(fmt, ##__VA_ARGS__)
-    #define pr_err(fmt, ...)   printk("ERROR: " fmt, ##__VA_ARGS__)
-    #define pr_warn(fmt, ...)  printk("WARNING: " fmt, ##__VA_ARGS__)
-    #define pr_debug(fmt, ...) printk("DEBUG: " fmt, ##__VA_ARGS__)
+    #define pr_info(fmt, ...) printk(fmt, ##__VA_ARGS__)
+    #define pr_err(fmt, ...)  printk("ERROR: " fmt, ##__VA_ARGS__)
+    #define pr_warn(fmt, ...) printk("WARNING: " fmt, ##__VA_ARGS__)
+    #ifdef CONFIG_DEBUG_LOG
+        #define pr_debug(fmt, ...) printk("DEBUG: " fmt, ##__VA_ARGS__)
+    #else
+        // Still type-checks the format and arguments when compiled out.
+        #define pr_debug(fmt, ...)              \
+            do {                                \
+                if (0) {                        \
+                    printk(fmt, ##__VA_ARGS__); \
+                }                               \
+            } while (0)
+    #endif
 #endif
 
 // va_list variant of printf.

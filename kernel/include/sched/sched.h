@@ -96,6 +96,11 @@ void sched_unblock(struct task *t);
 void sched_continue(struct task *t);
 int sched_task_set_blocked(struct task *t);
 int sched_task_set_stopped(struct task *t);
+int sched_task_is_idle(const struct task *t);
+
+// Wakes a BLOCKED task at deadline (ms) unless something wakes it first.
+void sched_timeout_arm(struct task *t, unsigned long deadline);
+void sched_timeout_cancel(struct task *t);
 void sched_exit_current(void) __attribute__((noreturn));
 struct task *sched_current_task(void);
 int sched_get_core_pid(int cpu);
