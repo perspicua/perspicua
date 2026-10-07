@@ -112,6 +112,7 @@ void test_fat32_corrupt(void);
 void test_pipe(void);
 void test_mutex(void);
 void test_semaphore(void);
+void test_completion(void);
 void test_wait(void);
 void test_uaccess(void);
 void test_process(void);
@@ -120,6 +121,7 @@ void test_faultinject(void);
 void test_scheduler(void);
 void test_wait_scheduler(void);
 void test_semaphore_scheduler(void);
+void test_completion_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
