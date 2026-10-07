@@ -84,7 +84,7 @@ them now avoids retrofitting correctness into ten call sites later. This is the
 single highest-leverage phase in the file.
 ================================================================================
 
-   1. Generic wait-queue / condition-variable primitive          (IMP-007, part 1)
+   1. Generic wait-queue / condition-variable primitive [DONE]
       Effort: M | Unlocks: select/poll, futexes, every future blocking driver
       Scope: one struct wait_queue with wq_wait_event{,_interruptible,_timeout,
         _locked}(wq, condition) / wq_wake_one / wq_wake_all, correct
