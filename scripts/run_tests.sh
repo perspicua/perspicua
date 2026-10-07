@@ -51,6 +51,9 @@ LOG="$(mktemp -t perspicua-tests.XXXXXX)"
 FIFO="$(mktemp -u -t perspicua-stdin.XXXXXX)"
 mkfifo "$FIFO"
 
+# Each run boots its own copy, so a build or another run writing the image cannot reach it.
+CARD="$(mktemp -t perspicua-sdcard.XXXXXX)"
+
 qemu_pid=""
 cleanup()
 {
@@ -58,9 +61,14 @@ cleanup()
         kill "$qemu_pid" 2>/dev/null
     fi
     exec 3>&-
-    rm -f "$LOG" "$FIFO"
+    rm -f "$LOG" "$FIFO" "$CARD"
 }
 trap cleanup EXIT
+
+if ! cp "$SDCARD" "$CARD"; then
+    echo "run_tests: cannot copy $SDCARD" >&2
+    exit 1
+fi
 
 timed_out=0
 started=$(date +%s)
@@ -102,7 +110,7 @@ exec 3<>"$FIFO"
 qemu-system-aarch64 \
     -M raspi4b -serial stdio -display none \
     -dtb "$DTB" -kernel "$KERNEL" \
-    -drive file="$SDCARD",format=raw,if=sd <"$FIFO" >"$LOG" 2>&1 &
+    -drive file="$CARD",format=raw,if=sd <"$FIFO" >"$LOG" 2>&1 &
 qemu_pid=$!
 
 for marker in "${KERNEL_MARKERS[@]}"; do
