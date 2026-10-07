@@ -278,20 +278,6 @@ void test_wait(void)
  * Multi-task tests running after sched_init and enable_interrupts.
  */
 
-// Polls for up to about two seconds; the asserts that follow report what was reached.
-#define WAIT_UNTIL(cond)                              \
-    do {                                              \
-        for (int _n = 0; _n < 200 && !(cond); _n++) { \
-            sched_sleep_ms(5);                        \
-        }                                             \
-    } while (0)
-
-// True once a spawned task has reached its blocking point.
-static int task_blocked(struct task *t)
-{
-    return t && __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == SCHED_TASK_BLOCKED;
-}
-
 static struct wait_queue sched_test_wq = WAIT_QUEUE_INIT;
 static volatile int sched_test_cond = 0;
 static volatile int sched_test_done = 0;

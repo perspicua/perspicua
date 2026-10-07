@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include "sched/sched.h"
 #include "stdio.h"
 
 extern int tests_passed;
@@ -61,6 +62,20 @@ extern int _suite_failed;
             pr_err("test: %s: %d failures [FAILED]\n", name, tests_failed - _suite_failed); \
     } while (0)
 
+// Polls for up to about two seconds; the asserts that follow report what was reached.
+#define WAIT_UNTIL(cond)                              \
+    do {                                              \
+        for (int _n = 0; _n < 200 && !(cond); _n++) { \
+            sched_sleep_ms(5);                        \
+        }                                             \
+    } while (0)
+
+// True once a spawned task has reached its blocking point.
+static inline int task_blocked(struct task *t)
+{
+    return t && __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == SCHED_TASK_BLOCKED;
+}
+
 void run_all_tests(void);
 
 // Issues a syscall from the running task, as though trapped from EL0.
@@ -96,6 +111,7 @@ void test_fat32(void);
 void test_fat32_corrupt(void);
 void test_pipe(void);
 void test_mutex(void);
+void test_semaphore(void);
 void test_wait(void);
 void test_uaccess(void);
 void test_process(void);
@@ -103,6 +119,7 @@ void test_syscall_bounds(void);
 void test_faultinject(void);
 void test_scheduler(void);
 void test_wait_scheduler(void);
+void test_semaphore_scheduler(void);
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);
