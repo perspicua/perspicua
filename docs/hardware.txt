@@ -1,0 +1,171 @@
+Perspicua on Real Hardware
+==========================
+
+How to wire a Raspberry Pi 4B to a serial console, prepare the SD card, boot
+the kernel, and optionally reset the board remotely. This is the setup the
+hardware-validation gate in testing.txt runs on.
+
+--------------------------------------------------------------------------------
+WHAT YOU NEED
+--------------------------------------------------------------------------------
+  - A Raspberry Pi 4B and its 5V/3A USB-C power supply.
+  - A microSD card.
+  - A 3.3V serial link to the Pi: a USB-to-TTL adapter (option A below), or an
+    ESP32 running tcpuart for a console over Wi-Fi (option B).
+  - Female-to-female jumper wires: 3 for the console, 1 more for remote reset.
+  - For remote reset only: a 1x3 2.54 mm male header, a soldering iron, and
+    ideally a multimeter.
+
+--------------------------------------------------------------------------------
+THE 40-PIN HEADER
+--------------------------------------------------------------------------------
+Hold the board with the 40-pin header along the top edge and the USB/Ethernet
+ports facing right. Pin 1 is at the LEFT end (farthest from the USB ports), in
+the inner row. Odd pins run along the inner row, even pins along the board
+edge.
+
+    board edge ->   2    4    6    8    10   12  ...
+                   5V   5V  [GND] [TX] [RX]
+                   3V3  ...
+                    1    3    5    7    9   ...
+                    ^ pin 1 end (away from USB/Ethernet)
+
+The console uses three adjacent pins on the edge row:
+
+    pin 6     GND
+    pin 8     GPIO14, the Pi's TX
+    pin 10    GPIO15, the Pi's RX
+
+The kernel's PL011 driver (kernel/driver/uart.c) puts UART0 on GPIO14/15 at
+115200 8N1, and pi4-boot/config.txt sets enable_uart=1 and
+dtoverlay=disable-bt so the firmware leaves those pins to it.
+
+NEVER connect anything to pins 2 or 4. They carry 5V, and neither the Pi's
+GPIOs nor an ESP32's tolerate it. Every signal in this guide is 3.3V logic, so
+no level shifter is needed.
+
+--------------------------------------------------------------------------------
+THE SERIAL CONSOLE
+--------------------------------------------------------------------------------
+TX and RX cross over: each side's transmit goes to the other side's receive.
+Wire with both boards unpowered, and never connect a 5V or 3V3 pin between
+boards: each board is powered from its own USB cable, and GND is the only
+shared wire.
+
+Option A: USB-to-TTL adapter (CP2102, FT232, CH340, ...)
+  The adapter MUST be 3.3V logic. Leave its VCC pin unconnected.
+
+    adapter TX  ->  pin 10 (Pi RX)
+    adapter RX  ->  pin 8  (Pi TX)
+    adapter GND ->  pin 6
+
+  Then: minicom -D /dev/cu.usbserial-XXXX -b 115200   (macOS)
+        minicom -D /dev/ttyUSB0 -b 115200             (Linux)
+
+Option B: tcpuart (ESP32 UART-over-Wi-Fi bridge)
+  tcpuart is written by Robert Chiributa (Sc1pex) https://github.com/Sc1pex/tcpuart
+  (thank you)
+
+  The ESP32 firmware defaults are GPIO17 for TX, GPIO16 for RX and GPIO18 for
+  reset (active low). They are configurable, so confirm them with
+  `idf.py menuconfig` under "TcpUart Server Configuration": UART pins, and
+  Remote Reset with Enable = y and Active Low = y. The ESP32's boot log also
+  prints "Reset GPIO N initialized to level 1".
+
+    ESP32 GPIO17 (TX)  ->  pin 10 (Pi RX)
+    ESP32 GPIO16 (RX)  ->  pin 8  (Pi TX)
+    ESP32 GND          ->  pin 6
+    ESP32 GPIO18       ->  J2 RUN  (see REMOTE RESET; optional)
+
+  Then:
+    tcpuart list                     # if this fails, start tcpuart-daemon
+    tcpuart add <name> <esp32-ip>    # prints the pty path
+    minicom -D <pty> -b 115200
+
+  Keep -b 115200: the bridge sets the ESP32's UART baud rate from the pty's
+  settings, so a pty left at another speed garbles the console.
+
+--------------------------------------------------------------------------------
+REMOTE RESET (J2, OPTIONAL)
+--------------------------------------------------------------------------------
+J2 is a row of three holes next to the USB-C power port, unpopulated on most
+boards. Per the official Pi 4B reduced schematic:
+
+    J2 pin 1   GLOBAL_EN   pulled up to 5V  (powers the PMIC off when low)
+    J2 pin 2   GND
+    J2 pin 3   RUN         pulled up to 3.3V (resets the SoC when low)
+
+Pulling RUN low resets the board, and that is the pin to drive. Do NOT drive
+GLOBAL_EN from a 3.3V GPIO: it sits at 5V.
+
+  1. Solder the 1x3 header into J2.
+  2. Board UNPOWERED, multimeter on continuity: the J2 pin that beeps against
+     header pin 6 is GND.
+  3. Board powered: measure the other two against pin 6. About 3.3V is RUN,
+     about 5V is GLOBAL_EN. Mark RUN.
+  4. Wire the reset line (an active-low, 3.3V output) to RUN.
+
+With tcpuart, `tcpuart reset <name>` should now print a fresh boot log. Without
+J2 wired, reset the board by unplugging its power.
+
+--------------------------------------------------------------------------------
+PREPARING THE SD CARD
+--------------------------------------------------------------------------------
+The card is a single FAT32 partition in an MBR partition table. The firmware
+loads the boot files from its top-level folder, and the kernel mounts the same
+partition as / and runs /bin/init.elf.
+
+On macOS (on Linux, use fdisk and mkfs.vfat). eraseDisk wipes the whole disk
+and cannot be undone: check that diskN really is the SD card in the output of
+`diskutil list` first.
+
+    diskutil list
+    diskutil eraseDisk FAT32 PERSPICUA MBRFormat /dev/diskN
+
+Build, then copy the boot files and the userspace programs:
+
+    just build
+    cd pi4-boot
+    cp config.txt start4.elf fixup4.dat bcm2711-rpi-4-b.dtb kernel8.img \
+       /Volumes/PERSPICUA/
+    cd ..
+    mkdir -p /Volumes/PERSPICUA/bin
+    cp build/user/*.elf /Volumes/PERSPICUA/bin/
+    diskutil eject /Volumes/PERSPICUA
+
+After a code change, only kernel8.img and the changed programs in bin/ need
+copying again.
+
+--------------------------------------------------------------------------------
+BOOTING
+--------------------------------------------------------------------------------
+  1. Connect the serial console (above) and open the terminal first, so the
+     start of the boot log is not missed.
+  2. Insert the card and power the Pi.
+  3. The boot log scrolls past, ending in "Perspicua Shell" and a
+     `perspicua:/$` prompt.
+
+--------------------------------------------------------------------------------
+TROUBLESHOOTING
+--------------------------------------------------------------------------------
+  No output at all
+      TX and RX swapped, the usual mistake: swap the wires on pins 8 and 10.
+      Otherwise GND is missing, or (tcpuart) `tcpuart list` shows the bridge is
+      not connected.
+
+  Garbage characters
+      Baud rate is not 115200, or GND is not connected.
+
+  Green ACT LED flashes in a repeating pattern, no output
+      The firmware cannot boot from the card: check that the card is FAT32
+      with an MBR and that the boot files are in its top-level folder. A board
+      revision newer than the firmware in pi4-boot/ needs fresh start4.elf and
+      fixup4.dat from the raspberrypi/firmware repository.
+
+  Remote reset does nothing
+      Reset not enabled in the bridge firmware, or the wire is on the wrong
+      J2 pin.
+
+  The Pi resets repeatedly, or never boots, with the reset wire attached
+      The reset output's polarity is wrong and it is holding RUN low. Unplug
+      the reset wire to confirm, then fix the active-low setting.

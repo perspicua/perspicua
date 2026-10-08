@@ -132,9 +132,15 @@ docs/       design and process documentation
 
 - [`docs/architecture.txt`](docs/architecture.txt) — how the system fits together
 - [`docs/testing.txt`](docs/testing.txt) — the test harness
+- [`docs/hardware.txt`](docs/hardware.txt) — wiring, SD card, and booting on a real Pi 4B
 - [`docs/coding_style_guidelines.txt`](docs/coding_style_guidelines.txt) — house style
 - [`docs/branch_workflow.txt`](docs/branch_workflow.txt) — branch workflow
 - [`CONTRIBUTING.txt`](CONTRIBUTING.txt) — making a change end to end
+
+## Acknowledgements
+
+  [tcpuart](https://github.com/Sc1pex/tcpuart), the UART-over-Wi-Fi bridge that
+  hardware testing runs on.
 
 ## License
 

@@ -83,7 +83,7 @@ QEMU is the everyday loop, but it is not the whole story: timing, the SD card,
 and interrupt behavior differ on real silicon. Per branch_workflow.txt, the dev
 branch must be tested ON HARDWARE before it is promoted to main. `just test`
 passing in QEMU is necessary, not sufficient — main is meant to be something you
-could flash to a board right now.
+could flash to a board right now. hardware.txt covers the board setup.
 
 --------------------------------------------------------------------------------
 ADDING A SUITE
