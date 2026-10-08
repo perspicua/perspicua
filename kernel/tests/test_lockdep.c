@@ -5,11 +5,27 @@
 #ifdef CONFIG_LOCKDEP
 
     #include "core/lockdep.h"
+    #include "core/completion.h"
     #include "core/lock.h"
+    #include "core/mutex.h"
+    #include "core/semaphore.h"
     #include "sched/sched.h"
     #include "test.h"
 
 static int la, lb, lc;
+
+static struct kmutex km_rec;
+static struct kmutex km_a;
+static struct kmutex km_b;
+static struct kmutex km_spl;
+static struct kmutex km_exit;
+static struct ksem sem_spl;
+static struct completion comp_spl;
+
+static void task_exit_holding_lock(void)
+{
+    kmutex_lock(&km_exit);
+}
 
 void test_lockdep_scheduler(void)
 {
@@ -186,6 +202,130 @@ void test_lockdep_scheduler(void)
         lockdep_assert_no_sleep_locks("exit");
         TEST_ASSERT_EQ("lockdep: assert_no_sleep_locks with empty gave 0 violations",
                        lockdep_test_violations() - v1, 0);
+
+        lockdep_test_quiet(0);
+    }
+
+    // Real primitive tests (Step 3b):
+
+    // 1. Recursion is invisible to lockdep for kmutex
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+        struct task *t = sched_current_task();
+
+        kmutex_init(&km_rec);
+        kmutex_lock(&km_rec);
+        TEST_ASSERT_EQ("lockdep: kmutex first lock depth 1", t->lockdep_depth, 1);
+        TEST_ASSERT("lockdep: kmutex first lock held[0] == &km_rec", t->lockdep_held[0] == &km_rec);
+
+        kmutex_lock(&km_rec);
+        TEST_ASSERT_EQ("lockdep: kmutex recursive lock depth 1", t->lockdep_depth, 1);
+        TEST_ASSERT("lockdep: kmutex recursive lock held[0] == &km_rec",
+                    t->lockdep_held[0] == &km_rec);
+        TEST_ASSERT_EQ("lockdep: kmutex recursive lock violations 0",
+                       lockdep_test_violations() - v0, 0);
+
+        kmutex_unlock(&km_rec);
+        TEST_ASSERT_EQ("lockdep: kmutex first unlock depth still 1", t->lockdep_depth, 1);
+        TEST_ASSERT("lockdep: kmutex first unlock held[0] == &km_rec",
+                    t->lockdep_held[0] == &km_rec);
+
+        kmutex_unlock(&km_rec);
+        TEST_ASSERT_EQ("lockdep: kmutex second unlock depth 0", t->lockdep_depth, 0);
+        TEST_ASSERT_EQ("lockdep: kmutex second unlock violations 0", lockdep_test_violations() - v0,
+                       0);
+
+        lockdep_test_quiet(0);
+    }
+
+    // 2. kmutex order: ma then mb is fine. Then mb then ma gives 1 violation.
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        kmutex_init(&km_a);
+        kmutex_init(&km_b);
+
+        kmutex_lock(&km_a);
+        kmutex_lock(&km_b);
+        TEST_ASSERT_EQ("lockdep: kmutex order A then B violations 0",
+                       lockdep_test_violations() - v0, 0);
+        kmutex_unlock(&km_b);
+        kmutex_unlock(&km_a);
+
+        int v1 = lockdep_test_violations();
+        kmutex_lock(&km_b);
+        kmutex_lock(&km_a);
+        TEST_ASSERT_EQ("lockdep: kmutex order B then A gives 1 violation",
+                       lockdep_test_violations() - v1, 1);
+        kmutex_unlock(&km_a);
+        kmutex_unlock(&km_b);
+
+        lockdep_test_quiet(0);
+    }
+
+    // 3. kmutex under a spinlock: 1 violation
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        kmutex_init(&km_spl);
+        spinlock_t spl = SPINLOCK_INIT;
+        spin_lock(&spl);
+        kmutex_lock(&km_spl);
+        spin_unlock(&spl);
+
+        TEST_ASSERT_EQ("lockdep: kmutex under spinlock gives 1 violation",
+                       lockdep_test_violations() - v0, 1);
+
+        kmutex_unlock(&km_spl);
+        lockdep_test_quiet(0);
+    }
+
+    // 4. Fast path is checked too:
+    // - ksem_down under a spinlock with a unit free gives 1 violation
+    // - completion_wait under a spinlock on an already done completion gives 1 violation
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        ksem_init(&sem_spl, 1);
+        spinlock_t spl1 = SPINLOCK_INIT;
+        spin_lock(&spl1);
+        ksem_down(&sem_spl);
+        spin_unlock(&spl1);
+
+        TEST_ASSERT_EQ("lockdep: ksem_down under spinlock gives 1 violation",
+                       lockdep_test_violations() - v0, 1);
+
+        int v1 = lockdep_test_violations();
+        completion_init(&comp_spl);
+        complete(&comp_spl);
+
+        spinlock_t spl2 = SPINLOCK_INIT;
+        spin_lock(&spl2);
+        completion_wait(&comp_spl);
+        spin_unlock(&spl2);
+
+        TEST_ASSERT_EQ("lockdep: completion_wait under spinlock gives 1 violation",
+                       lockdep_test_violations() - v1, 1);
+
+        lockdep_test_quiet(0);
+    }
+
+    // 5. Task exits holding a lock: gives 1 violation
+    {
+        kmutex_init(&km_exit);
+
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        sched_create_task(task_exit_holding_lock);
+
+        WAIT_UNTIL(lockdep_test_violations() - v0 == 1);
+        TEST_ASSERT_EQ("lockdep: task exit holding lock gives 1 violation",
+                       lockdep_test_violations() - v0, 1);
 
         lockdep_test_quiet(0);
     }

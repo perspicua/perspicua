@@ -298,10 +298,10 @@ void lockdep_acquire_sleep(const void *lock)
     }
 
     if (!violation) {
-        int new_node = get_or_create_node((uintptr_t)lock);
+        int new_node = get_or_create_node((uintptr_t)lock | 1);
         if (new_node >= 0) {
             for (int i = 0; i < t->lockdep_depth; i++) {
-                int held_node = get_or_create_node((uintptr_t)t->lockdep_held[i]);
+                int held_node = get_or_create_node((uintptr_t)t->lockdep_held[i] | 1);
                 if (held_node < 0) {
                     continue;
                 }
