@@ -5,6 +5,7 @@
 #include "core/semaphore.h"
 
 #include <limits.h>
+#include "core/lockdep.h"
 #include "panic.h"
 #include "sched/wait.h"
 
@@ -34,6 +35,8 @@ int ksem_trydown(struct ksem *s)
 
 void ksem_down(struct ksem *s)
 {
+    lockdep_might_sleep();
+
     if (ksem_trydown(s)) {
         return;
     }
@@ -43,6 +46,8 @@ void ksem_down(struct ksem *s)
 
 int ksem_down_interruptible(struct ksem *s)
 {
+    lockdep_might_sleep();
+
     if (ksem_trydown(s)) {
         return 0;
     }
@@ -52,6 +57,8 @@ int ksem_down_interruptible(struct ksem *s)
 
 int ksem_down_timeout(struct ksem *s, unsigned long timeout_ms)
 {
+    lockdep_might_sleep();
+
     if (ksem_trydown(s)) {
         return 0;
     }

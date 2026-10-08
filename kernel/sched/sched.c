@@ -20,6 +20,7 @@
 #include "arch/irq.h"
 #include "core/timer.h"
 #include "core/lock.h"
+#include "core/lockdep.h"
 #include "core/signals.h"
 #include "sched/process.h"
 
@@ -472,6 +473,8 @@ void sched_timeout_cancel(struct task *t)
 
 void sched_exit_current(void)
 {
+    lockdep_assert_no_sleep_locks("task exit");
+
     struct task *self = sched_current_task();
     if (!self) {
         for (;;) {

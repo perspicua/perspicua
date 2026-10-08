@@ -14,6 +14,7 @@
 #include "arch/uaccess.h"
 
 #include "arch/irq.h"
+#include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/signals.h"
 #include "core/syscall.h"
@@ -306,5 +307,9 @@ void exception_sync_handler(struct exception_trap_frame *tf)
 
             PANIC_TF("Unhandled exception class", tf);
         }
+    }
+
+    if ((tf->spsr_el1 & 0xF) == 0) {
+        lockdep_assert_no_sleep_locks("return to user");
     }
 }

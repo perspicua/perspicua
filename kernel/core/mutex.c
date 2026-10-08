@@ -12,6 +12,7 @@
 #include <stddef.h>
 
 #include "core/lock.h"
+#include "core/lockdep.h"
 #include "panic.h"
 #include "sched/sched.h"
 #include "sched/wait.h"
@@ -19,7 +20,7 @@
 void kmutex_init(struct kmutex *m)
 {
     m->guard = (spinlock_t)SPINLOCK_INIT;
-    m->owner = NULL;
+    __atomic_store_n(&m->owner, NULL, __ATOMIC_RELAXED);
     m->depth = 0;
     wq_init(&m->wq);
 }
@@ -28,13 +29,8 @@ static int kmutex_try_lock(struct kmutex *m, struct task *self)
 {
     unsigned long flags = spin_lock_irqsave(&m->guard);
     if (m->depth == 0) {
-        m->owner = self;
+        __atomic_store_n(&m->owner, self, __ATOMIC_RELEASE);
         m->depth = 1;
-        spin_unlock_irqrestore(&m->guard, flags);
-        return 1;
-    }
-    if (m->owner == self) {
-        m->depth++;
         spin_unlock_irqrestore(&m->guard, flags);
         return 1;
     }
@@ -45,6 +41,16 @@ static int kmutex_try_lock(struct kmutex *m, struct task *self)
 void kmutex_lock(struct kmutex *m)
 {
     struct task *self = sched_current_task();
+
+    if (self && __atomic_load_n(&m->owner, __ATOMIC_ACQUIRE) == self) {
+        lockdep_might_sleep();
+        unsigned long flags = spin_lock_irqsave(&m->guard);
+        m->depth++;
+        spin_unlock_irqrestore(&m->guard, flags);
+        return;
+    }
+
+    lockdep_acquire_sleep(m);
 
     if (kmutex_try_lock(m, self)) {
         return;
@@ -78,9 +84,11 @@ void kmutex_unlock(struct kmutex *m)
     }
 
     m->depth = 0;
-    m->owner = NULL;
+    __atomic_store_n(&m->owner, NULL, __ATOMIC_RELEASE);
 
     spin_unlock_irqrestore(&m->guard, flags);
+
+    lockdep_release_sleep(m);
 
     wq_wake_one(&m->wq);
 }

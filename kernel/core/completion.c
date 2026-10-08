@@ -4,6 +4,7 @@
 
 #include "core/completion.h"
 
+#include "core/lockdep.h"
 #include "sched/wait.h"
 #include "panic.h"
 
@@ -54,6 +55,7 @@ int completion_try_wait(struct completion *c)
 
 void completion_wait(struct completion *c)
 {
+    lockdep_might_sleep();
     if (completion_try_wait(c)) {
         return;
     }
@@ -63,6 +65,7 @@ void completion_wait(struct completion *c)
 
 int completion_wait_interruptible(struct completion *c)
 {
+    lockdep_might_sleep();
     if (completion_try_wait(c)) {
         return 0;
     }
@@ -72,6 +75,7 @@ int completion_wait_interruptible(struct completion *c)
 
 int completion_wait_timeout(struct completion *c, unsigned long timeout_ms)
 {
+    lockdep_might_sleep();
     if (completion_try_wait(c)) {
         return 0;
     }
