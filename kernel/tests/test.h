@@ -122,6 +122,11 @@ void test_scheduler(void);
 void test_wait_scheduler(void);
 void test_semaphore_scheduler(void);
 void test_completion_scheduler(void);
+#ifdef CONFIG_LOCKDEP
+void test_lockdep_scheduler(void);
+#else
+static inline void test_lockdep_scheduler(void) {}
+#endif
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
 void run_scheduler_tests(void);

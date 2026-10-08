@@ -63,6 +63,10 @@ struct cpu_context {
     unsigned long sp;
 };
 
+#ifdef CONFIG_LOCKDEP
+    #define LOCKDEP_TASK_HELD 8
+#endif
+
 struct task {
     struct cpu_context context;
     unsigned long ttbr0;
@@ -81,6 +85,11 @@ struct task {
 
     // Deadline a rewound nanosleep resumes; 0 when there is none.
     unsigned long sleep_resume_at;
+
+#ifdef CONFIG_LOCKDEP
+    const void *lockdep_held[LOCKDEP_TASK_HELD];
+    int lockdep_depth;
+#endif
 };
 
 void sched_enqueue(int cpu, struct task *t);
