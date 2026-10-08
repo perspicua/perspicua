@@ -37,6 +37,11 @@ THE MAP  (what to read, and when)
       How the in-kernel test suites are built and run, what a passing run looks
       like, and the hardware-validation gate before anything reaches main.
 
+  hardware.txt
+      Running on a real Raspberry Pi 4B: wiring a serial console (USB-to-TTL
+      adapter or tcpuart over Wi-Fi), the remote-reset pin, preparing the SD
+      card, and what to check when it does not boot.
+
 Process files that live at the repository ROOT (by convention, not here):
 
   ../README.md          Project overview, hardware support, build commands.
