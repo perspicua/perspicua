@@ -194,6 +194,13 @@ void exception_unhandled_vector(void)
     PANIC("Unhandled exception vector");
 }
 
+static int irq_depth[CPU_MAX_CORES] = {0};
+
+int irq_in_handler(void)
+{
+    return irq_depth[cpu_id()] != 0;
+}
+
 /*
  * exception_irq_handler - Top-level IRQ dispatcher.
  *
@@ -229,7 +236,10 @@ void exception_irq_handler(void)
         }
     }
 
+    int cpu = cpu_id();
+    irq_depth[cpu]++;
     irq_result_t res = irq_dispatch(irq_id);
+    irq_depth[cpu]--;
 
     mmio_write(gic_c_eoir, iar);
 

@@ -85,4 +85,9 @@ irq_result_t irq_dispatch(unsigned int irq);
  */
 const struct irq_desc *irq_get_desc(unsigned int irq);
 
+/*
+ * irq_in_handler - Returns non-zero if the current core is handling an IRQ.
+ */
+int irq_in_handler(void);
+
 #endif // PERSPICUA_ARCH_IRQ_H

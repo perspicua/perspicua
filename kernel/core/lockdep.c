@@ -3,9 +3,11 @@
  */
 
 #include "core/lockdep.h"
+#include "arch/irq.h"
 #include "core/lock.h"
-#include "stdio.h"
 #include "panic.h"
+#include "sched/sched.h"
+#include "stdio.h"
 
 #include <stdint.h>
 
@@ -33,6 +35,33 @@ static int num_lock_nodes = 0;
 
 // graph_edges[A][B] == 1 means lock A was acquired before lock B globally
 static uint8_t graph_edges[MAX_LOCK_NODES][MAX_LOCK_NODES / 8];
+
+    #ifdef CONFIG_TESTS
+static int lockdep_quiet_mode = 0;
+static int lockdep_violation_count = 0;
+
+void lockdep_test_quiet(int on)
+{
+    lockdep_quiet_mode = on;
+}
+
+int lockdep_test_violations(void)
+{
+    return lockdep_violation_count;
+}
+    #endif
+
+static void lockdep_violation(const char *msg)
+{
+    #ifdef CONFIG_TESTS
+    if (lockdep_quiet_mode) {
+        lockdep_violation_count++;
+        pr_info("lockdep: violation: %s\n", msg);
+        return;
+    }
+    #endif
+    PANIC(msg);
+}
 
 static inline int get_edge(int a, int b)
 {
@@ -84,9 +113,53 @@ static void raw_spin_unlock(spinlock_t *lock)
                  : "memory");
 }
 
+static int lockdep_order(int held_node, int new_node)
+{
+    if (held_node == new_node) {
+        return 1;
+    }
+
+    if (get_edge(new_node, held_node)) {
+        return 1;
+    }
+
+    if (!get_edge(held_node, new_node)) {
+        set_edge(held_node, new_node);
+
+        // Update transitive closure
+        for (int x = 0; x < num_lock_nodes; x++) {
+            if (get_edge(x, held_node)) {
+                set_edge(x, new_node);
+                for (int y = 0; y < num_lock_nodes; y++) {
+                    if (get_edge(new_node, y)) {
+                        set_edge(x, y);
+                    }
+                }
+            }
+        }
+        for (int y = 0; y < num_lock_nodes; y++) {
+            if (get_edge(new_node, y)) {
+                set_edge(held_node, y);
+            }
+        }
+    }
+
+    return 0;
+}
+
 void lockdep_init(void)
 {
     pr_info("lockdep: initialized kernel lock dependency validator\n");
+}
+
+void lockdep_might_sleep(void)
+{
+    if (preempt_active()) {
+        lockdep_violation("lockdep: sleeping lock taken while holding a spinlock");
+    }
+    if (irq_in_handler()) {
+        lockdep_violation("lockdep: sleeping in an IRQ handler");
+    }
 }
 
 void lockdep_acquire(spinlock_t *lock)
@@ -127,7 +200,7 @@ void lockdep_acquire(spinlock_t *lock)
                 continue;
             }
 
-            if (get_edge(new_node, held_node)) {
+            if (lockdep_order(held_node, new_node)) {
                 raw_spin_unlock(&lockdep_lock);
                 lockdep_disabled[core] = 0;
                 pr_err("\n========================================\n");
@@ -137,27 +210,6 @@ void lockdep_acquire(spinlock_t *lock)
                 pr_err("But this creates a cycle in the globally observed order.\n");
                 pr_err("========================================\n");
                 PANIC("lockdep: deadlock cycle");
-            }
-
-            if (!get_edge(held_node, new_node)) {
-                set_edge(held_node, new_node);
-
-                // Update transitive closure
-                for (int x = 0; x < num_lock_nodes; x++) {
-                    if (get_edge(x, held_node)) {
-                        set_edge(x, new_node);
-                        for (int y = 0; y < num_lock_nodes; y++) {
-                            if (get_edge(new_node, y)) {
-                                set_edge(x, y);
-                            }
-                        }
-                    }
-                }
-                for (int y = 0; y < num_lock_nodes; y++) {
-                    if (get_edge(new_node, y)) {
-                        set_edge(held_node, y);
-                    }
-                }
             }
         }
     }
@@ -211,6 +263,109 @@ void lockdep_release(spinlock_t *lock)
 
     raw_spin_unlock(&lockdep_lock);
     lockdep_disabled[core] = 0;
+}
+
+void lockdep_acquire_sleep(const void *lock)
+{
+    lockdep_might_sleep();
+
+    struct task *t = sched_current_task();
+    if (!t) {
+        return;
+    }
+
+    unsigned long flags = irq_save();
+    int core = cpu_id();
+
+    lockdep_disabled[core] = 1;
+    raw_spin_lock(&lockdep_lock);
+
+    char cycle_msg[80];
+    const char *violation = NULL;
+
+    for (int i = 0; i < t->lockdep_depth; i++) {
+        if (t->lockdep_held[i] == lock) {
+            violation = "recursive sleeping lock";
+            break;
+        }
+    }
+
+    if (t->lockdep_depth == LOCKDEP_TASK_HELD) {
+        raw_spin_unlock(&lockdep_lock);
+        lockdep_disabled[core] = 0;
+        irq_restore(flags);
+        PANIC("lockdep: max held sleeping locks exceeded");
+    }
+
+    if (!violation) {
+        int new_node = get_or_create_node((uintptr_t)lock);
+        if (new_node >= 0) {
+            for (int i = 0; i < t->lockdep_depth; i++) {
+                int held_node = get_or_create_node((uintptr_t)t->lockdep_held[i]);
+                if (held_node < 0) {
+                    continue;
+                }
+                if (lockdep_order(held_node, new_node)) {
+                    if (!violation) {
+                        snprintf(cycle_msg, sizeof(cycle_msg),
+                                 "sleeping lock order cycle: %p held, acquiring %p",
+                                 t->lockdep_held[i], lock);
+                        violation = cycle_msg;
+                    }
+                }
+            }
+        }
+    }
+
+    t->lockdep_held[t->lockdep_depth++] = lock;
+
+    raw_spin_unlock(&lockdep_lock);
+    lockdep_disabled[core] = 0;
+    irq_restore(flags);
+
+    if (violation) {
+        lockdep_violation(violation);
+    }
+}
+
+void lockdep_release_sleep(const void *lock)
+{
+    struct task *t = sched_current_task();
+    if (!t) {
+        return;
+    }
+
+    int found = -1;
+    for (int i = t->lockdep_depth - 1; i >= 0; i--) {
+        if (t->lockdep_held[i] == lock) {
+            found = i;
+            break;
+        }
+    }
+
+    if (found >= 0) {
+        for (int i = found; i < t->lockdep_depth - 1; i++) {
+            t->lockdep_held[i] = t->lockdep_held[i + 1];
+        }
+        t->lockdep_depth--;
+    } else {
+        pr_err("lockdep: attempting to release unheld sleeping lock at %p\n", lock);
+    }
+}
+
+void lockdep_assert_no_sleep_locks(const char *where)
+{
+    struct task *t = sched_current_task();
+    if (!t) {
+        return;
+    }
+
+    if (t->lockdep_depth != 0) {
+        char msg[80];
+        snprintf(msg, sizeof(msg), "sleeping lock %p held at %s",
+                 t->lockdep_held[t->lockdep_depth - 1], where ? where : "exit");
+        lockdep_violation(msg);
+    }
 }
 
 #endif // CONFIG_LOCKDEP

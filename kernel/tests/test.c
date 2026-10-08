@@ -63,6 +63,7 @@ void run_scheduler_tests(void)
     test_wait_scheduler();
     test_semaphore_scheduler();
     test_completion_scheduler();
+    test_lockdep_scheduler();
 
     printk("\n");
 
