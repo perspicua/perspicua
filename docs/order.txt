@@ -101,14 +101,28 @@ single highest-leverage phase in the file.
         since only the caller knows which other queue to wake.
         The ->poll(file, wq) readiness hook rides on this — see Phase 3 item 1.
 
-   2. Sleeping-lock family
+   2. Sleeping-lock family [DONE]
       Effort: M | Unlocks: scalable read-mostly structures; safe long critical sections
-      Scope: rwsem, semaphore, and completion on top of the wait queue; extend
-        lockdep to cover sleeping locks too.
+      Scope: built on the wait queue: ksem (counting semaphore with a lock-free
+        trydown), completion (complete hands out one pass; complete_all latches
+        open through COMPLETION_ALL), and rwsem (writer-preferring). lockdep
+        tracks sleeping locks per task, checks might_sleep at every sleeping
+        entry point, and asserts no sleeping lock is held returning to EL0 or
+        at task exit.
       Done: FAT32's coarse kmutex can be split (e.g. rwsem for lookups) without
-        hand-rolling anything.
-      Note: kmutex (recursive sleeping mutex) already exists in core/mutex.c — build
-        the family around it, don't start from scratch.
+        hand-rolling anything: the primitives are in place, and the FAT32 split
+        itself waits for item 5 (see Note).
+      Note: ksem and completion have no owner, so lockdep only checks might_sleep
+        for them. Sleeping-lock keys in lockdep are tagged with | 1, so a lock
+        never shares a graph node with its own guard spinlock. A recursive
+        down_read counts as a violation, because it deadlocks behind a waiting
+        writer.
+        The FAT32 audit: lookup calls open_track; revalidate writes the vnode on
+        every read; a read can evict a dirty page and call write_page while
+        holding the lock; release can free a cluster chain.
+        The prerequisites for a split: (a) a spinlock for fat32_opens;
+        (b) revalidate kept off the read path; (c) no writeback started while
+        holding the FS lock.
 
    3. preempt_count and a preemptible syscall path                     (IMP-003)
       Effort: M-L | Unlocks: a genuinely preemptive kernel (Phase 5 item 3)
@@ -158,6 +172,8 @@ single highest-leverage phase in the file.
         handed out must not be evictable. The LBA validation matters because
         nothing today checks a cluster number or sector address derived from disk
         content before it becomes a block read; on-disk data is untrusted input.
+        Once this lands, split fat32_lock into an rwsem, with prerequisites
+        (a) to (c) from item 2's note. This item handles (c) itself.
 
    6. VFS inode / dentry cache with refcounted vnodes
       Effort: M-L | Unlocks: hardlinks, safe rename, stable inode identity, perf
