@@ -33,6 +33,7 @@ void run_all_tests(void)
     test_mutex();
     test_semaphore();
     test_completion();
+    test_rwsem();
     test_wait();
     test_uaccess();
     test_process();
@@ -63,6 +64,7 @@ void run_scheduler_tests(void)
     test_wait_scheduler();
     test_semaphore_scheduler();
     test_completion_scheduler();
+    test_rwsem_scheduler();
     test_lockdep_scheduler();
 
     printk("\n");

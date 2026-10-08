@@ -113,6 +113,7 @@ void test_pipe(void);
 void test_mutex(void);
 void test_semaphore(void);
 void test_completion(void);
+void test_rwsem(void);
 void test_wait(void);
 void test_uaccess(void);
 void test_process(void);
@@ -122,6 +123,7 @@ void test_scheduler(void);
 void test_wait_scheduler(void);
 void test_semaphore_scheduler(void);
 void test_completion_scheduler(void);
+void test_rwsem_scheduler(void);
 #ifdef CONFIG_LOCKDEP
 void test_lockdep_scheduler(void);
 #else
