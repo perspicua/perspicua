@@ -137,10 +137,11 @@ docs/       design and process documentation
 - [`docs/branch_workflow.txt`](docs/branch_workflow.txt) — branch workflow
 - [`CONTRIBUTING.txt`](CONTRIBUTING.txt) — making a change end to end
 
-## Acknowledgements
+## Credits
 
-  [tcpuart](https://github.com/Sc1pex/tcpuart), the UART-over-Wi-Fi bridge that
-  hardware testing runs on.
+The people who built Perspicua, and what each of them contributed, are listed
+in [`CREDITS.txt`](CREDITS.txt). Hardware testing runs on
+[tcpuart](https://github.com/Sc1pex/tcpuart), a UART-over-Wi-Fi bridge.
 
 ## License
 

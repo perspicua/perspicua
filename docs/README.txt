@@ -46,11 +46,12 @@ Process files that live at the repository ROOT (by convention, not here):
 
   ../README.md          Project overview, hardware support, build commands.
   ../CONTRIBUTING.txt    The single entry point for making a change end to end.
+  ../CREDITS.txt         Who built Perspicua, and their roles.
   ../LICENSE             Licensing terms.
 
 --------------------------------------------------------------------------------
 NAMING CONVENTION FOR THESE DOCS
 --------------------------------------------------------------------------------
 ALL-CAPS names are reserved for the "meta" files a repository root is expected
-to have (README, LICENSE, CONTRIBUTING, and a future CHANGELOG). Everything
-inside docs/ is lowercase. New docs follow the same rule.
+to have (README, LICENSE, CONTRIBUTING, CREDITS, and a future CHANGELOG).
+Everything inside docs/ is lowercase. New docs follow the same rule.

@@ -1,0 +1,27 @@
+Perspicua Credits
+=================
+
+The people who have contributed to Perspicua, in order of their first
+contribution. Each entry is formatted for easy grepping, one field per line:
+name (N), web address (W), and description (D).
+
+N: Robert Chiributa
+W: https://github.com/Sc1pex
+D: Initial boot code; mailbox and SD card interrupt fixes
+D: Author of tcpuart, the UART-over-Wi-Fi bridge used for hardware testing
+
+N: Eduard Bostina
+W: https://github.com/edybostina
+D: Maintainer; author of most of the kernel
+
+N: Andrei Riciu
+W: https://github.com/andrei-riciu
+D: Memory allocator, FAT32 directory walker, continuous integration
+
+N: Andrei Stefanescu
+W: https://github.com/Mef05
+D: Shell tab completion, ASID pool, tty and UART separation
+
+N: Andreea Stefania Dumitrache
+W: https://github.com/andreea110
+D: Interrupt and page allocator rework, robustness test suites
