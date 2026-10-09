@@ -245,8 +245,19 @@ void exception_irq_handler(void)
 
     mmio_write(gic_c_eoir, iar);
 
-    // A spinlock holder runs on: another core may be spinning for its lock.
-    if (res == IRQ_HANDLED_RESCHED && !preempt_active()) {
+    struct task *t = sched_current_task();
+
+    if (t == NULL) {
+        return;
+    }
+
+    // The reschedule waits while the interrupted task holds a spinlock.
+    if (res == IRQ_HANDLED_RESCHED || t->need_resched) {
+        if (preempt_active()) {
+            t->need_resched = 1;
+            return;
+        }
+
         sched_schedule();
     }
 }

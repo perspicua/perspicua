@@ -94,9 +94,6 @@ static irq_result_t timer_irq_handler(void *ctx)
     (void)ctx;
     timer_interrupt_reset();
 
-    if (preempt_active()) {
-        return IRQ_HANDLED;
-    }
     return IRQ_HANDLED_RESCHED;
 }
 

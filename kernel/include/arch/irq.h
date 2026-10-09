@@ -22,7 +22,8 @@
  *
  * A handler must never call sched_schedule() itself: the dispatcher still owes the
  * GIC its end-of-interrupt write, and sched_schedule() does not return. Returning
- * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed.
+ * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed: the
+ * reschedule waits while the interrupted task holds a spinlock.
  */
 typedef enum {
     IRQ_HANDLED = 0,

@@ -707,6 +707,8 @@ void sched_schedule(void)
 
     task_check_stack_canary(prev);
 
+    prev->need_resched = 0;
+
     switch (prev->state) {
         case SCHED_TASK_RUNNING:
             if (prev != sched_idle[cpu]) {

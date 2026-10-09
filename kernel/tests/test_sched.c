@@ -272,12 +272,13 @@ static void task_race_unblocker(void)
 
 static volatile int resched_sgi_hits = 0;
 static volatile int competitor_done = 0;
+static volatile irq_result_t sgi_result = IRQ_HANDLED_RESCHED;
 
 static irq_result_t resched_sgi_handler(void *ctx)
 {
     (void)ctx;
     resched_sgi_hits++;
-    return IRQ_HANDLED_RESCHED;
+    return sgi_result;
 }
 
 static void task_competitor(void)
@@ -399,34 +400,107 @@ void test_scheduler(void)
         TEST_ASSERT_EQ("spawned task returns to preempt_count 0", spawn_preempt_final, 0);
     }
 
-    // an interrupt asking to reschedule must not switch away from a spinlock holder
+    // preemption deferral and need_resched handling
     {
-        resched_sgi_hits = 0;
-        competitor_done = 0;
         TEST_ASSERT_EQ("resched sgi: handler registered",
                        request_irq(TEST_SGI, resched_sgi_handler, NULL, "test-resched"), 0);
 
-        // Runnable on this core, so a wrongful reschedule has somewhere to switch to.
-        sched_create_task(task_competitor);
-
         spinlock_t lock = SPINLOCK_INIT;
-        spin_lock(&lock);
-        int cpu = cpu_id();
-        uint64_t before = core_sched_stats[cpu].context_switches;
-        gic_send_sgi_self(TEST_SGI);
-        for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
-            asm volatile("" ::: "memory");
-        }
-        uint64_t after = core_sched_stats[cpu].context_switches;
-        spin_unlock(&lock);
+        struct task *t = sched_current_task();
 
-        TEST_ASSERT_EQ("resched sgi: handler ran on this core", resched_sgi_hits, 1);
-        TEST_ASSERT_EQ("resched sgi: no switch while holding a spinlock", (long)(after - before),
-                       0);
+        // 1. A refused request is remembered:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("refused sgi: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("refused sgi: no context switch while locked", (long)(after - before),
+                           0);
+            TEST_ASSERT_EQ("refused sgi: need_resched is 1", t->need_resched, 1);
+
+            unsigned long flags = irq_save();
+            spin_unlock(&lock);
+            TEST_ASSERT_EQ("refused sgi: need_resched still 1 after unlock", t->need_resched, 1);
+            irq_restore(flags);
+        }
+
+        // 2. The next interrupt serves it:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED;
+
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+
+            TEST_ASSERT_EQ("next interrupt: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("next interrupt: need_resched cleared to 0", t->need_resched, 0);
+        }
+
+        // 3. The timer path:
+        {
+            t->need_resched = 0;
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+
+            unsigned long start_ms = timer_get_system_time();
+            while (timer_get_system_time() - start_ms < 30) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("timer path: no context switch while locked", (long)(after - before), 0);
+            TEST_ASSERT_EQ("timer path: need_resched set to 1", t->need_resched, 1);
+
+            spin_unlock(&lock);
+
+            start_ms = timer_get_system_time();
+            while (t->need_resched && (timer_get_system_time() - start_ms < 50)) {
+                asm volatile("" ::: "memory");
+            }
+            TEST_ASSERT_EQ("timer path: need_resched dropped to 0", t->need_resched, 0);
+        }
+
+        // a reschedule request never switches away from a spinlock holder
+        {
+            resched_sgi_hits = 0;
+            competitor_done = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+
+            // Runnable on this core, so a wrongful reschedule has somewhere to switch to.
+            sched_create_task(task_competitor);
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+            spin_unlock(&lock);
+
+            TEST_ASSERT_EQ("resched sgi: handler ran on this core", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("resched sgi: no switch while holding a spinlock",
+                           (long)(after - before), 0);
+
+            WAIT_UNTIL(competitor_done);
+            TEST_ASSERT("resched sgi: competitor ran after the unlock", competitor_done);
+        }
 
         free_irq(TEST_SGI);
-        WAIT_UNTIL(competitor_done);
-        TEST_ASSERT("resched sgi: competitor ran after the unlock", competitor_done);
     }
 
     // unblock-before-schedule race test

@@ -88,6 +88,7 @@ struct task {
 
     // Spinlocks held by this task; non-zero disables preemption.
     int preempt_count;
+    int need_resched;
 
 #ifdef CONFIG_LOCKDEP
     const void *lockdep_held[LOCKDEP_TASK_HELD];
