@@ -10,7 +10,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-24.04
     container:
-      image: ubuntu:25.04
+      # Docker Hub's official image via AWS's mirror: shared runner IPs hit Docker Hub's anonymous pull limit.
+      image: public.ecr.aws/docker/library/ubuntu:25.04
 
     steps:
       - uses: actions/checkout@v4
