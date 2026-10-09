@@ -26,10 +26,11 @@
 #define TERM_WHITE   7
 #define TERM_DEFAULT 9
 
-#define TERM_FG(c)  ((unsigned)(c))
-#define TERM_BG(c)  ((unsigned)(c) << 4)
+// An attribute left out keeps the terminal's default, so TERM_FG(TERM_RED) alone is red on default.
+#define TERM_FG(c)  ((unsigned)(c) + 1)
+#define TERM_BG(c)  (((unsigned)(c) + 1) << 4)
 #define TERM_BOLD   0x100u
-#define TERM_NORMAL (TERM_FG(TERM_DEFAULT) | TERM_BG(TERM_DEFAULT))
+#define TERM_NORMAL 0u
 
 // What term_key() returns besides plain bytes.
 #define TERM_KEY_NONE      (-1)

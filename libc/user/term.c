@@ -416,12 +416,17 @@ int term_print(int row, int col, const char *utf8, unsigned attr)
     return col - start;
 }
 
+static int color_code(unsigned field)
+{
+    return field ? (int)field - 1 : TERM_DEFAULT;
+}
+
 static void emit_attr(unsigned attr)
 {
     emit("\033[0;3", 5);
-    emit_num((int)(attr & 0xf));
+    emit_num(color_code(attr & 0xf));
     emit(";4", 2);
-    emit_num((int)((attr >> 4) & 0xf));
+    emit_num(color_code((attr >> 4) & 0xf));
     if (attr & TERM_BOLD) {
         emit(";1", 2);
     }
