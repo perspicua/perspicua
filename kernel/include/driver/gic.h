@@ -41,4 +41,7 @@ void gic_secondary_init(void);
 
 void gic_send_panic_ipi(void);
 
+// Raises software-generated interrupt sgi (1-15; 0 is the panic IPI) on the calling core.
+void gic_send_sgi_self(unsigned int sgi);
+
 #endif // PERSPICUA_DRIVER_GIC_H

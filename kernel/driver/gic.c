@@ -30,8 +30,14 @@ volatile unsigned int *gic_c_eoir = NULL;
 
 void gic_send_panic_ipi(void)
 {
-    // Target filter 0b10: all cores except self
-    mmio_write(gic_d_sgir, (0b10 << 24) | 0);
+    // Target filter 0b01: all cores except self
+    mmio_write(gic_d_sgir, (0b01 << 24) | 0);
+}
+
+void gic_send_sgi_self(unsigned int sgi)
+{
+    // Target filter 0b10: only the requesting core
+    mmio_write(gic_d_sgir, (0b10 << 24) | (sgi & 0xF));
 }
 
 static int gic_probe(struct device *dev)

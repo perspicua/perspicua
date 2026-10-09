@@ -6,6 +6,7 @@
 #include "core/lock.h"
 #include "arch/irq.h"
 #include "core/timer.h"
+#include "driver/gic.h"
 #include "string.h"
 
 // test constraints:
@@ -267,11 +268,58 @@ static void task_race_unblocker(void)
     sched_unblock(t);
 }
 
+#define TEST_SGI 1
+
+static volatile int resched_sgi_hits = 0;
+static volatile int competitor_done = 0;
+
+static irq_result_t resched_sgi_handler(void *ctx)
+{
+    (void)ctx;
+    resched_sgi_hits++;
+    return IRQ_HANDLED_RESCHED;
+}
+
+static void task_competitor(void)
+{
+    competitor_done = 1;
+}
+
 // test suite
 
 void test_scheduler(void)
 {
     TEST_SUITE_BEGIN("Scheduler");
+
+    // an interrupt asking to reschedule must not switch away from a spinlock holder
+    {
+        resched_sgi_hits = 0;
+        competitor_done = 0;
+        TEST_ASSERT_EQ("resched sgi: handler registered",
+                       request_irq(TEST_SGI, resched_sgi_handler, NULL, "test-resched"), 0);
+
+        // Runnable on this core, so a wrongful reschedule has somewhere to switch to.
+        sched_create_task(task_competitor);
+
+        spinlock_t lock = SPINLOCK_INIT;
+        spin_lock(&lock);
+        int cpu = cpu_id();
+        uint64_t before = core_sched_stats[cpu].context_switches;
+        gic_send_sgi_self(TEST_SGI);
+        for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+            asm volatile("" ::: "memory");
+        }
+        uint64_t after = core_sched_stats[cpu].context_switches;
+        spin_unlock(&lock);
+
+        TEST_ASSERT_EQ("resched sgi: handler ran on this core", resched_sgi_hits, 1);
+        TEST_ASSERT_EQ("resched sgi: no switch while holding a spinlock", (long)(after - before),
+                       0);
+
+        free_irq(TEST_SGI);
+        WAIT_UNTIL(competitor_done);
+        TEST_ASSERT("resched sgi: competitor ran after the unlock", competitor_done);
+    }
 
     // unblock-before-schedule race test
     {

@@ -14,6 +14,7 @@
 #include "arch/uaccess.h"
 
 #include "arch/irq.h"
+#include "core/lock.h"
 #include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/signals.h"
@@ -244,7 +245,8 @@ void exception_irq_handler(void)
 
     mmio_write(gic_c_eoir, iar);
 
-    if (res == IRQ_HANDLED_RESCHED) {
+    // A spinlock holder runs on: another core may be spinning for its lock.
+    if (res == IRQ_HANDLED_RESCHED && !preempt_active()) {
         sched_schedule();
     }
 }
