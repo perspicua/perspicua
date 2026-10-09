@@ -175,7 +175,6 @@ static void run_output_builtin(Command *cmd)
 
 static void run_exec(Command *cmd)
 {
-    char path[256];
     char *name = cmd->argv[0];
 
     /* The shell ignores SIGINT so Ctrl-C doesn't kill it, and exec preserves
@@ -189,32 +188,7 @@ static void run_exec(Command *cmd)
         _exit(127);
     }
 
-    char *path_env = getenv("PATH");
-    if (!path_env) {
-        path_env = "/bin:/";
-    }
-
-    char path_copy[256];
-    strncpy(path_copy, path_env, sizeof(path_copy));
-    path_copy[sizeof(path_copy) - 1] = '\0';
-
-    // dir/name.elf first, then dir/name; a candidate that does not fit is skipped.
-    static const char *const suffixes[] = {".elf", ""};
-
-    char *dir = strtok(path_copy, ":");
-    while (dir) {
-        size_t dlen = strlen(dir);
-        const char *sep = (dlen > 0 && dir[dlen - 1] != '/') ? "/" : "";
-
-        for (size_t k = 0; k < sizeof(suffixes) / sizeof(suffixes[0]); k++) {
-            int n = snprintf(path, sizeof(path), "%s%s%s%s", dir, sep, name, suffixes[k]);
-            if (n > 0 && (size_t)n < sizeof(path)) {
-                execve(path, cmd->argv, environ);
-            }
-        }
-
-        dir = strtok(NULL, ":");
-    }
+    execvp(name, cmd->argv);
 
     printf("sh: command not found: %s\n", name);
     _exit(127);

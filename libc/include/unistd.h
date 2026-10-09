@@ -18,6 +18,9 @@
 __attribute__((noreturn)) void _exit(int status);
 int fork(void);
 int execve(const char *path, char *const argv[], char *const envp[]);
+// Runs file found on PATH (default /bin:/), trying name.elf before name; a name with '/' is used as
+// is.
+int execvp(const char *file, char *const argv[]);
 int getpid(void);
 int getppid(void);
 int setpgid(int pid, int pgid);

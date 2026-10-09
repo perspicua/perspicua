@@ -25,6 +25,7 @@ set(LIBC_SRC_KERNEL
 set(LIBC_SRC_USER
     user/malloc.c
     user/exit.c
+    user/exec.c
     user/term.c
     user/file.c
     user/dirent.c

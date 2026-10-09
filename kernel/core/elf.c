@@ -60,9 +60,9 @@ static int elf_check_header(struct elf64_header *hdr)
 
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 {
+    // A missing file is the caller's to report; execve returns the error to it.
     int fd = vfs_open(path, O_RDONLY);
     if (fd < 0) {
-        pr_err("elf: could not open %s\n", path);
         return fd;
     }
 

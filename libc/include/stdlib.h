@@ -19,6 +19,9 @@ __attribute__((noreturn)) void exit(int status);
 // Runs fn at exit() or a return from main, last registered first; returns -1 when full.
 int atexit(void (*fn)(void));
 
+// Sorts nmemb elements of size bytes; not stable, so ties need a deciding compare.
+void qsort(void *base, size_t nmemb, size_t size, int (*compar)(const void *, const void *));
+
 // Pseudo-random numbers
 #define RAND_MAX 0x7fffffff
 int rand(void);

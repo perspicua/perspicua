@@ -809,6 +809,54 @@ static void test_strerror_nonnull(void)
     CHECK(strerror(0) != NULL);
 }
 
+// qsort
+
+static int int_cmp(const void *a, const void *b)
+{
+    int x = *(const int *)a;
+    int y = *(const int *)b;
+    return x < y ? -1 : x > y;
+}
+
+static int sorted(const int *v, int n)
+{
+    for (int i = 1; i < n; i++) {
+        if (v[i - 1] > v[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void test_qsort(void)
+{
+    int mixed[] = {5, -3, 9, 0, 9, 2, -3, 7, 1, 4};
+    qsort(mixed, 10, sizeof(int), int_cmp);
+    CHECK(sorted(mixed, 10));
+    CHECK(mixed[0] == -3 && mixed[1] == -3 && mixed[9] == 9);
+
+    int down[64];
+    for (int i = 0; i < 64; i++) {
+        down[i] = 64 - i;
+    }
+    qsort(down, 64, sizeof(int), int_cmp);
+    CHECK(sorted(down, 64) && down[0] == 1 && down[63] == 64);
+
+    int one[] = {42};
+    qsort(one, 1, sizeof(int), int_cmp);
+    CHECK(one[0] == 42);
+    qsort(NULL, 0, sizeof(int), int_cmp);
+
+    // Elements wider than a word move whole.
+    struct wide {
+        int key;
+        char tag[12];
+    } w[] = {{3, "three"}, {1, "one"}, {2, "two"}};
+    qsort(w, 3, sizeof(w[0]), int_cmp);
+    CHECK(strcmp(w[0].tag, "one") == 0 && strcmp(w[1].tag, "two") == 0
+          && strcmp(w[2].tag, "three") == 0);
+}
+
 // rand / srand
 
 static void test_rand(void)
@@ -1075,6 +1123,7 @@ int main(int argc, char **argv)
     run_group("strerror non-null", test_strerror_nonnull);
     run_group("strerror keying", test_strerror_keying);
     run_group("strerror end-to-end", test_strerror_end_to_end);
+    run_group("qsort", test_qsort);
     run_group("rand", test_rand);
     run_group("atexit", test_atexit);
     run_group("term_decode", test_term_decode);

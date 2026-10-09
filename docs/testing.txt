@@ -22,7 +22,9 @@ USERSPACE PHASE. Ordinary programs in user/apps/, typed at the shell prompt by
 the harness once the kernel phase finishes. Some behavior is only reachable
 from here: a signal handler runs on the way back to EL0, which a boot-phase
 kernel test task never does, so SA_RESTART, sigaltstack and catchable faults
-(user/apps/test_restart.c) cannot be tested any other way.
+(user/apps/test_restart.c) cannot be tested any other way. test_tools runs the
+command-line tools (head, sort, find, du, ...) on known input through pipes
+and checks their output byte for byte.
 
 --------------------------------------------------------------------------------
 SEPARATE BUILD TREE
