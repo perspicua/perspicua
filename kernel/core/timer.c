@@ -31,6 +31,21 @@ static inline unsigned long read_cntpct(void)
     return val;
 }
 
+uint64_t timer_ticks(void)
+{
+    return read_cntpct();
+}
+
+uint64_t timer_ticks_to_ms(uint64_t ticks)
+{
+    uint64_t freq = read_cntfrq();
+    if (freq == 0) {
+        return 0;
+    }
+    // Split so the multiply cannot overflow for any uptime.
+    return ticks / freq * 1000 + ticks % freq * 1000 / freq;
+}
+
 unsigned long timer_get_system_time(void)
 {
     unsigned long freq = read_cntfrq();

@@ -763,6 +763,7 @@ void process_exit(uint32_t pid, int exit_status)
     flags = spin_lock_irqsave(&process_table_lock);
     p->va.count = 0;
     p->state = PROCESS_STATE_ZOMBIE;
+    p->cpu_ticks = sched_task_cpu_ticks(sched_current_task());
 
     /* cleanup_dead_task frees this task shortly, but the slot lives on until a
      * parent reaps it. Drop the pointer with the same store that publishes the

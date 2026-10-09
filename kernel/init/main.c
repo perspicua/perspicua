@@ -214,10 +214,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     run_post_init_tests();
 #endif
 
-    // Main thread parks while scheduler handles execution
-    while (1) {
-        asm volatile("wfe");
-    }
-
-    return 0;
+    // Nothing is left for the boot thread; a parked one would still take turns on a core.
+    sched_exit_current();
 }

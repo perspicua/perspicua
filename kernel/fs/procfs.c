@@ -226,6 +226,15 @@ static int procfs_gen_stat(char *buf, int size)
     int pos = 0;
     procfs_append(buf, &pos, size, "ctxt %llu\nbtime %ld\nprocesses %lu\n",
                   (unsigned long long)total_ctx, btime, forks);
+    // One line per online core: busy and idle milliseconds since it came up.
+    for (int cpu = 0; cpu < CPU_MAX_CORES; cpu++) {
+        uint64_t busy, idle;
+        if (sched_core_cpu_ticks(cpu, &busy, &idle) == 0) {
+            procfs_append(buf, &pos, size, "cpu%d %lu %lu\n", cpu,
+                          (unsigned long)timer_ticks_to_ms(busy),
+                          (unsigned long)timer_ticks_to_ms(idle));
+        }
+    }
     return pos;
 }
 
@@ -316,15 +325,21 @@ static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t si
         vm_size += process_table[pid]->va.regions[i].pages * 4;
     }
 
+    struct task *main_task = process_table[pid]->main_task;
+    uint64_t cpu_ticks =
+        main_task ? sched_task_cpu_ticks(main_task) : process_table[pid]->cpu_ticks;
+
     snprintf(buf, sizeof(buf),
              "Name:   %s\n"
              "Pid:    %lu\n"
              "PPid:   %u\n"
              "State:  %s\n"
              "VmSize: %lu kB\n"
+             "CpuTime: %lu ms\n"
              "SigPnd: %08x\n"
              "SigBlk: %08x\n",
              process_table[pid]->name, pid, process_table[pid]->parent_pid, state_str, vm_size,
+             (unsigned long)timer_ticks_to_ms(cpu_ticks),
              (unsigned int)process_table[pid]->pending_signals,
              (unsigned int)process_table[pid]->blocked_signals);
     spin_unlock_irqrestore(&process_table_lock, flags);

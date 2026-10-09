@@ -31,6 +31,7 @@ _Static_assert(sizeof(struct cpu_context) == 104, "cpu_context size mismatch —
 // Sentinels to detect BSS corruption.
 static uint64_t s_canary_lo = 0xAAAAAAAAAAAAAAAAULL;
 static struct task sched_boot_tasks[CPU_MAX_CORES];
+static uint64_t core_online_ticks[CPU_MAX_CORES];
 static uint64_t s_canary_hi = 0xBBBBBBBBBBBBBBBBULL;
 
 // Per-core idle tasks and ready queues.
@@ -355,6 +356,8 @@ void sched_init(void)
     boot->stack = NULL; // Uses boot stack
     boot->ttbr0 = mmu_kernel_ttbr0();
     boot->on_core = 0;
+    core_online_ticks[0] = timer_ticks();
+    boot->ran_since = core_online_ticks[0];
 
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
@@ -375,6 +378,8 @@ void sched_secondary_init(void)
     boot->pid = 0;
     boot->ttbr0 = mmu_kernel_ttbr0();
     boot->on_core = core_id;
+    core_online_ticks[core_id] = timer_ticks();
+    boot->ran_since = core_online_ticks[core_id];
 
     asm volatile("msr tpidr_el1, %0" ::"r"(boot));
 
@@ -683,6 +688,49 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 }
 #endif
 
+// Banks prev's slice or starts next's; acct_seq is odd while the pair is inconsistent.
+static void account_switch(struct task *t, uint64_t now, int starting)
+{
+    __atomic_store_n(&t->acct_seq, t->acct_seq + 1, __ATOMIC_RELAXED);
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    if (starting) {
+        t->ran_since = now;
+    } else {
+        t->run_ticks += now - t->ran_since;
+        t->ran_since = 0;
+    }
+    __atomic_store_n(&t->acct_seq, t->acct_seq + 1, __ATOMIC_RELEASE);
+}
+
+uint64_t sched_task_cpu_ticks(struct task *t)
+{
+    for (;;) {
+        unsigned int seq = __atomic_load_n(&t->acct_seq, __ATOMIC_ACQUIRE);
+        if (seq & 1) {
+            continue;
+        }
+        uint64_t ticks = t->run_ticks;
+        uint64_t since = t->ran_since;
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        if (__atomic_load_n(&t->acct_seq, __ATOMIC_RELAXED) != seq) {
+            continue;
+        }
+        uint64_t now = timer_ticks();
+        return since && now > since ? ticks + (now - since) : ticks;
+    }
+}
+
+int sched_core_cpu_ticks(int cpu, uint64_t *busy, uint64_t *idle)
+{
+    if (cpu < 0 || cpu >= CPU_MAX_CORES || !sched_idle[cpu]) {
+        return -1;
+    }
+    uint64_t elapsed = timer_ticks() - core_online_ticks[cpu];
+    *idle = sched_task_cpu_ticks(sched_idle[cpu]);
+    *busy = elapsed > *idle ? elapsed - *idle : 0;
+    return 0;
+}
+
 // Core scheduling logic. Selects next task and context switches.
 void sched_schedule(void)
 {
@@ -711,11 +759,10 @@ void sched_schedule(void)
 
     prev->need_resched = 0;
 
+    int still_runnable = 0;
     switch (prev->state) {
         case SCHED_TASK_RUNNING:
-            if (prev != sched_idle[cpu]) {
-                rq_enqueue(cpu, prev);
-            }
+            still_runnable = prev != sched_idle[cpu];
             break;
         case SCHED_TASK_BLOCKED:
         case SCHED_TASK_STOPPED:
@@ -740,6 +787,15 @@ void sched_schedule(void)
         }
     }
 
+    // Queued only once something else wins the core, or a lone task would idle out the tick.
+    if (still_runnable) {
+        if (next) {
+            rq_enqueue(cpu, prev);
+        } else {
+            next = prev;
+        }
+    }
+
     if (!next) {
         next = sched_idle[cpu];
     }
@@ -759,6 +815,10 @@ void sched_schedule(void)
     asm volatile("isb");
 
     if (prev != next) {
+        uint64_t now = timer_ticks();
+        account_switch(prev, now, 0);
+        account_switch(next, now, 1);
+
         core_sched_stats[cpu].context_switches++;
         if (next == sched_idle[cpu]) {
             core_sched_stats[cpu].idle_count++;

@@ -5,9 +5,15 @@
 #ifndef PERSPICUA_CORE_TIMER_H
 #define PERSPICUA_CORE_TIMER_H
 
+#include <stdint.h>
+
 #include "uapi/types.h"
 
 unsigned long timer_get_system_time(void);
+
+// The generic timer's free-running count, and a span of it in milliseconds.
+uint64_t timer_ticks(void);
+uint64_t timer_ticks_to_ms(uint64_t ticks);
 
 /*
  * Seconds since the Unix epoch, from the build date plus uptime -- there is no

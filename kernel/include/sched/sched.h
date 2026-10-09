@@ -86,6 +86,11 @@ struct task {
     // Deadline a rewound nanosleep resumes; 0 when there is none.
     unsigned long sleep_resume_at;
 
+    // CPU time in ticks, banked at each switch-out; acct_seq is odd while a switch updates it.
+    uint64_t run_ticks;
+    uint64_t ran_since;
+    unsigned int acct_seq;
+
     // Spinlocks held by this task; non-zero disables preemption.
     int preempt_count;
     int need_resched;
@@ -116,6 +121,11 @@ void sched_timeout_arm(struct task *t, unsigned long deadline);
 void sched_timeout_cancel(struct task *t);
 void sched_exit_current(void) __attribute__((noreturn));
 struct task *sched_current_task(void);
+
+// CPU time t has used, in timer ticks, including a slice it is running right now.
+uint64_t sched_task_cpu_ticks(struct task *t);
+// Busy and idle ticks of a core since it came online; -1 if it never did.
+int sched_core_cpu_ticks(int cpu, uint64_t *busy, uint64_t *idle);
 void sched_return_to_user(void);
 int sched_get_core_pid(int cpu);
 

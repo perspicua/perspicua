@@ -307,6 +307,43 @@ static void task_spawn_preempt_check(void)
     spawn_preempt_done = 1;
 }
 
+static volatile uint64_t acct_busy_ms = 0;
+static volatile uint64_t acct_sleep_ms = 0;
+static volatile int acct_done = 0;
+
+// Spins for 50 ms, then sleeps for 50 ms, measuring its own CPU time across each.
+static void task_cpu_accounting(void)
+{
+    struct task *self = sched_current_task();
+
+    uint64_t t0 = sched_task_cpu_ticks(self);
+    unsigned long until = timer_get_system_time() + 50;
+    while ((long)(timer_get_system_time() - until) < 0) {
+        asm volatile("" ::: "memory");
+    }
+    uint64_t t1 = sched_task_cpu_ticks(self);
+    sched_sleep_ms(50);
+    uint64_t t2 = sched_task_cpu_ticks(self);
+
+    acct_busy_ms = timer_ticks_to_ms(t1 - t0);
+    acct_sleep_ms = timer_ticks_to_ms(t2 - t1);
+    acct_done = 1;
+}
+
+static uint64_t total_idle_ticks(int *cores)
+{
+    uint64_t total = 0;
+    *cores = 0;
+    for (int cpu = 0; cpu < CPU_MAX_CORES; cpu++) {
+        uint64_t busy, idle;
+        if (sched_core_cpu_ticks(cpu, &busy, &idle) == 0) {
+            total += idle;
+            (*cores)++;
+        }
+    }
+    return total;
+}
+
 // test suite
 
 void test_scheduler(void)
@@ -868,6 +905,30 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         TEST_ASSERT("phase2 a", counter_a == 3);
         TEST_ASSERT("phase2 b", counter_b == 2);
+    }
+
+    // a task's CPU time grows while it runs and holds still while it sleeps
+    {
+        acct_done = 0;
+        sched_create_task(task_cpu_accounting);
+        WAIT_UNTIL(acct_done);
+        TEST_ASSERT("cpu time: task finished", acct_done);
+        TEST_ASSERT("cpu time: 50 ms of spinning counts at least 30 ms", acct_busy_ms >= 30);
+        TEST_ASSERT("cpu time: 50 ms of spinning counts at most 70 ms", acct_busy_ms <= 70);
+        TEST_ASSERT("cpu time: 50 ms asleep counts under 15 ms", acct_sleep_ms < 15);
+    }
+
+    // with nothing to run, the cores spend a sleep in their idle tasks
+    {
+        int cores;
+        uint64_t before = total_idle_ticks(&cores);
+        sched_sleep_ms(100);
+        uint64_t idle_ms = timer_ticks_to_ms(total_idle_ticks(&cores) - before);
+        TEST_ASSERT("cpu time: every online core reports", cores >= 1);
+        TEST_ASSERT("cpu time: an idle 100 ms is mostly idle on every core",
+                    idle_ms >= (uint64_t)cores * 50);
+        TEST_ASSERT("cpu time: idle never exceeds the time that passed",
+                    idle_ms <= (uint64_t)cores * 120);
     }
 
     TEST_SUITE_END("Scheduler");

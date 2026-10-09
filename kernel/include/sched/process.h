@@ -101,6 +101,7 @@ struct process {
     uint32_t parent_pid;
     struct task *main_task;
     int exit_status;
+    uint64_t cpu_ticks; // the task's CPU time, kept once main_task is gone
 
     uintptr_t paddr_code;
     uintptr_t paddr_user_stack;
