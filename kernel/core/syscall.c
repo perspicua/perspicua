@@ -1531,7 +1531,6 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
             if (!kaddr) {
                 goto mmap_fail;
             }
-            memset(kaddr, 0, PAGE_SIZE);
             if (mmu_user_map_page(proc->user_pgd, new_region + i * PAGE_SIZE, V2P((uintptr_t)kaddr),
                                   mmu_flags)
                 != 0) {

@@ -68,23 +68,19 @@ static inline void tlbi_all_is(void)
     asm volatile("isb" : : : "memory");
 }
 
+// pmm_alloc_page hands back zeroed pages, so a fresh table starts with no entries.
 static unsigned long *alloc_table_page(void)
 {
     unsigned long *page = (unsigned long *)pmm_alloc_page();
     if (!page) {
         PANIC("mmu: table allocation failed");
     }
-    memset(page, 0, PAGE_SIZE);
     return page;
 }
 
 static unsigned long *alloc_user_table_page(void)
 {
-    unsigned long *page = (unsigned long *)pmm_alloc_page();
-    if (page) {
-        memset(page, 0, PAGE_SIZE);
-    }
-    return page;
+    return (unsigned long *)pmm_alloc_page();
 }
 
 /*
