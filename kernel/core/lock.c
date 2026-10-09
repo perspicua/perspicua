@@ -41,6 +41,12 @@ void preempt_enable(void)
     if (t->preempt_count < 0) {
         PANIC("preempt_enable: unbalanced unlock");
     }
+
+    asm volatile("" ::: "memory");
+
+    if (t->preempt_count == 0 && t->need_resched && irqs_enabled() && !irq_in_handler()) {
+        sched_schedule();
+    }
 }
 
 int preempt_active(void)
@@ -70,7 +76,7 @@ void spin_lock(spinlock_t *lock)
                  : "memory");
 }
 
-void spin_unlock(spinlock_t *lock)
+static inline void spin_unlock_raw(spinlock_t *lock)
 {
     lockdep_release(lock);
 
@@ -79,7 +85,11 @@ void spin_unlock(spinlock_t *lock)
                  :
                  : "r"(0), "r"(&lock->locked)
                  : "memory");
+}
 
+void spin_unlock(spinlock_t *lock)
+{
+    spin_unlock_raw(lock);
     preempt_enable();
 }
 
@@ -92,8 +102,9 @@ unsigned long spin_lock_irqsave(spinlock_t *lock)
 
 void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
 {
-    spin_unlock(lock);
+    spin_unlock_raw(lock);
     irq_restore(flags);
+    preempt_enable();
 }
 
 /*

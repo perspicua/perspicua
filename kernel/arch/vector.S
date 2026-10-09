@@ -140,6 +140,7 @@ ret_to_user:
     and x0, x0, #0xf
     cbnz x0, 1f
 
+    bl sched_return_to_user
     mov x0, sp
     bl signal_handle_pending
 1:

@@ -408,7 +408,63 @@ void test_scheduler(void)
         spinlock_t lock = SPINLOCK_INIT;
         struct task *t = sched_current_task();
 
-        // 1. A refused request is remembered:
+        // 1. The unlock serves it immediately with IRQs on:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("refused sgi: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("refused sgi: no context switch while locked", (long)(after - before),
+                           0);
+            TEST_ASSERT_EQ("refused sgi: need_resched is 1", t->need_resched, 1);
+
+            spin_unlock(&lock);
+            TEST_ASSERT_EQ("unlock serves resched: need_resched is 0 immediately", t->need_resched,
+                           0);
+        }
+
+        // 2. The irqsave unlock serves it too:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spinlock_t outer = SPINLOCK_INIT;
+            spinlock_t inner = SPINLOCK_INIT;
+
+            unsigned long flags = spin_lock_irqsave(&outer);
+            spin_lock(&inner);
+            irq_restore(flags);
+
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+
+            TEST_ASSERT_EQ("irqsave test: sgi hit", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("irqsave test: need_resched is 1", t->need_resched, 1);
+
+            unsigned long dummy = irq_save();
+            (void)dummy;
+            spin_unlock(&inner);
+            TEST_ASSERT_EQ("irqsave test: inner unlock with IRQs masked keeps need_resched 1",
+                           t->need_resched, 1);
+
+            spin_unlock_irqrestore(&outer, flags);
+            TEST_ASSERT_EQ("irqsave unlock: need_resched cleared immediately", t->need_resched, 0);
+        }
+
+        // 3. A masked unlock leaves it alone:
         {
             resched_sgi_hits = 0;
             sgi_result = IRQ_HANDLED_RESCHED;
@@ -430,15 +486,13 @@ void test_scheduler(void)
 
             unsigned long flags = irq_save();
             spin_unlock(&lock);
-            TEST_ASSERT_EQ("refused sgi: need_resched still 1 after unlock", t->need_resched, 1);
+            TEST_ASSERT_EQ("refused sgi: need_resched still 1 after masked unlock", t->need_resched,
+                           1);
             irq_restore(flags);
-        }
 
-        // 2. The next interrupt serves it:
-        {
+            // Served once IRQs come back on
             resched_sgi_hits = 0;
             sgi_result = IRQ_HANDLED;
-
             gic_send_sgi_self(TEST_SGI);
             for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
                 asm volatile("" ::: "memory");
@@ -448,7 +502,7 @@ void test_scheduler(void)
             TEST_ASSERT_EQ("next interrupt: need_resched cleared to 0", t->need_resched, 0);
         }
 
-        // 3. The timer path:
+        // 4. The timer path:
         {
             t->need_resched = 0;
             spin_lock(&lock);
@@ -465,15 +519,10 @@ void test_scheduler(void)
             TEST_ASSERT_EQ("timer path: need_resched set to 1", t->need_resched, 1);
 
             spin_unlock(&lock);
-
-            start_ms = timer_get_system_time();
-            while (t->need_resched && (timer_get_system_time() - start_ms < 50)) {
-                asm volatile("" ::: "memory");
-            }
-            TEST_ASSERT_EQ("timer path: need_resched dropped to 0", t->need_resched, 0);
+            TEST_ASSERT_EQ("timer path: need_resched dropped to 0 immediately", t->need_resched, 0);
         }
 
-        // a reschedule request never switches away from a spinlock holder
+        // 5. A reschedule request never switches away from a spinlock holder:
         {
             resched_sgi_hits = 0;
             competitor_done = 0;

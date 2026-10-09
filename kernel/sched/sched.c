@@ -779,3 +779,20 @@ void sched_schedule(void)
 
     irq_restore(flags);
 }
+
+void sched_return_to_user(void)
+{
+    struct task *t = sched_current_task();
+
+    if (!t) {
+        return;
+    }
+
+    if (t->preempt_count != 0) {
+        PANIC("sched: returning to user mode holding a spinlock");
+    }
+
+    while (t->need_resched) {
+        sched_schedule();
+    }
+}

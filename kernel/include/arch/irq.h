@@ -54,6 +54,16 @@ unsigned long irq_save(void);
 void irq_restore(unsigned long flags);
 
 /*
+ * irqs_enabled - True if the I (IRQ) mask bit in DAIF is clear.
+ */
+static inline int irqs_enabled(void)
+{
+    unsigned long daif;
+    asm volatile("mrs %0, daif" : "=r"(daif));
+    return (daif & (1 << 7)) == 0;
+}
+
+/*
  * request_irq - Claims an interrupt line for a driver.
  *
  * ctx is handed back to the handler untouched, and name is what
