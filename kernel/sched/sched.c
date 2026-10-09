@@ -686,6 +686,8 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 // Core scheduling logic. Selects next task and context switches.
 void sched_schedule(void)
 {
+    lockdep_assert_preemptible();
+
     unsigned long flags = irq_save();
     int cpu = cpu_id();
 

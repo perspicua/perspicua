@@ -23,6 +23,7 @@ void lockdep_might_sleep(void);
 void lockdep_acquire_sleep(const void *lock);
 void lockdep_release_sleep(const void *lock);
 void lockdep_assert_no_sleep_locks(const char *where);
+void lockdep_assert_preemptible(void);
 
     #ifdef CONFIG_TESTS
 void lockdep_test_quiet(int on);
@@ -54,6 +55,7 @@ static inline void lockdep_assert_no_sleep_locks(const char *where)
 {
     (void)where;
 }
+static inline void lockdep_assert_preemptible(void) {}
 
     #ifdef CONFIG_TESTS
 static inline void lockdep_test_quiet(int on)
