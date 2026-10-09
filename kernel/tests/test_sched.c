@@ -272,17 +272,39 @@ static void task_race_unblocker(void)
 
 static volatile int resched_sgi_hits = 0;
 static volatile int competitor_done = 0;
+static volatile irq_result_t sgi_result = IRQ_HANDLED_RESCHED;
 
 static irq_result_t resched_sgi_handler(void *ctx)
 {
     (void)ctx;
     resched_sgi_hits++;
-    return IRQ_HANDLED_RESCHED;
+    return sgi_result;
 }
 
 static void task_competitor(void)
 {
     competitor_done = 1;
+}
+
+static volatile int spawn_preempt_initial = -1;
+static volatile int spawn_preempt_locked = -1;
+static volatile int spawn_preempt_active = -1;
+static volatile int spawn_preempt_final = -1;
+static volatile int spawn_preempt_done = 0;
+
+static void task_spawn_preempt_check(void)
+{
+    struct task *self = sched_current_task();
+    spawn_preempt_initial = self ? self->preempt_count : -2;
+
+    spinlock_t lock = SPINLOCK_INIT;
+    spin_lock(&lock);
+    spawn_preempt_locked = self ? self->preempt_count : -2;
+    spawn_preempt_active = preempt_active();
+    spin_unlock(&lock);
+
+    spawn_preempt_final = self ? self->preempt_count : -2;
+    spawn_preempt_done = 1;
 }
 
 // test suite
@@ -291,34 +313,243 @@ void test_scheduler(void)
 {
     TEST_SUITE_BEGIN("Scheduler");
 
-    // an interrupt asking to reschedule must not switch away from a spinlock holder
+    // the count follows nesting, with preempt_active() checked at each step
     {
-        resched_sgi_hits = 0;
-        competitor_done = 0;
+        struct task *self = sched_current_task();
+        TEST_ASSERT_EQ("preempt nesting: initial count", self->preempt_count, 0);
+        TEST_ASSERT("preempt nesting: initial inactive", !preempt_active());
+
+        spinlock_t l1 = SPINLOCK_INIT;
+        spinlock_t l2 = SPINLOCK_INIT;
+        spinlock_t l3 = SPINLOCK_INIT;
+
+        spin_lock(&l1);
+        TEST_ASSERT_EQ("preempt nesting: depth 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt nesting: active at 1", preempt_active());
+
+        spin_lock(&l2);
+        TEST_ASSERT_EQ("preempt nesting: depth 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt nesting: active at 2", preempt_active());
+
+        spin_lock(&l3);
+        TEST_ASSERT_EQ("preempt nesting: depth 3", self->preempt_count, 3);
+        TEST_ASSERT("preempt nesting: active at 3", preempt_active());
+
+        spin_unlock(&l3);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt nesting: active at 2 after unwind", preempt_active());
+
+        spin_unlock(&l2);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt nesting: active at 1 after unwind", preempt_active());
+
+        spin_unlock(&l1);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 0", self->preempt_count, 0);
+        TEST_ASSERT("preempt nesting: inactive at 0", !preempt_active());
+    }
+
+    // the same with irqsave
+    {
+        struct task *self = sched_current_task();
+        TEST_ASSERT_EQ("preempt irqsave: initial count", self->preempt_count, 0);
+        TEST_ASSERT("preempt irqsave: initial inactive", !preempt_active());
+
+        spinlock_t l1 = SPINLOCK_INIT;
+        spinlock_t l2 = SPINLOCK_INIT;
+        spinlock_t l3 = SPINLOCK_INIT;
+
+        unsigned long f1 = spin_lock_irqsave(&l1);
+        TEST_ASSERT_EQ("preempt irqsave: depth 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt irqsave: active at 1", preempt_active());
+
+        unsigned long f2 = spin_lock_irqsave(&l2);
+        TEST_ASSERT_EQ("preempt irqsave: depth 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt irqsave: active at 2", preempt_active());
+
+        unsigned long f3 = spin_lock_irqsave(&l3);
+        TEST_ASSERT_EQ("preempt irqsave: depth 3", self->preempt_count, 3);
+        TEST_ASSERT("preempt irqsave: active at 3", preempt_active());
+
+        spin_unlock_irqrestore(&l3, f3);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt irqsave: active at 2 after unwind", preempt_active());
+
+        spin_unlock_irqrestore(&l2, f2);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt irqsave: active at 1 after unwind", preempt_active());
+
+        spin_unlock_irqrestore(&l1, f1);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 0", self->preempt_count, 0);
+        TEST_ASSERT("preempt irqsave: inactive at 0", !preempt_active());
+    }
+
+    // a newly spawned task starts at 0 and returns to 0 after a lock/unlock pair
+    {
+        spawn_preempt_initial = -1;
+        spawn_preempt_locked = -1;
+        spawn_preempt_active = -1;
+        spawn_preempt_final = -1;
+        spawn_preempt_done = 0;
+
+        sched_create_task(task_spawn_preempt_check);
+        WAIT_UNTIL(spawn_preempt_done);
+
+        TEST_ASSERT_EQ("spawned task starts with preempt_count 0", spawn_preempt_initial, 0);
+        TEST_ASSERT_EQ("spawned task preempt_count 1 while locked", spawn_preempt_locked, 1);
+        TEST_ASSERT("spawned task preempt_active while locked", spawn_preempt_active != 0);
+        TEST_ASSERT_EQ("spawned task returns to preempt_count 0", spawn_preempt_final, 0);
+    }
+
+    // preemption deferral and need_resched handling
+    {
         TEST_ASSERT_EQ("resched sgi: handler registered",
                        request_irq(TEST_SGI, resched_sgi_handler, NULL, "test-resched"), 0);
 
-        // Runnable on this core, so a wrongful reschedule has somewhere to switch to.
-        sched_create_task(task_competitor);
-
         spinlock_t lock = SPINLOCK_INIT;
-        spin_lock(&lock);
-        int cpu = cpu_id();
-        uint64_t before = core_sched_stats[cpu].context_switches;
-        gic_send_sgi_self(TEST_SGI);
-        for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
-            asm volatile("" ::: "memory");
-        }
-        uint64_t after = core_sched_stats[cpu].context_switches;
-        spin_unlock(&lock);
+        struct task *t = sched_current_task();
 
-        TEST_ASSERT_EQ("resched sgi: handler ran on this core", resched_sgi_hits, 1);
-        TEST_ASSERT_EQ("resched sgi: no switch while holding a spinlock", (long)(after - before),
-                       0);
+        // 1. The unlock serves it immediately with IRQs on:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("refused sgi: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("refused sgi: no context switch while locked", (long)(after - before),
+                           0);
+            TEST_ASSERT_EQ("refused sgi: need_resched is 1", t->need_resched, 1);
+
+            spin_unlock(&lock);
+            TEST_ASSERT_EQ("unlock serves resched: need_resched is 0 immediately", t->need_resched,
+                           0);
+        }
+
+        // 2. The irqsave unlock serves it too:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spinlock_t outer = SPINLOCK_INIT;
+            spinlock_t inner = SPINLOCK_INIT;
+
+            unsigned long flags = spin_lock_irqsave(&outer);
+            spin_lock(&inner);
+            irq_restore(flags);
+
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+
+            TEST_ASSERT_EQ("irqsave test: sgi hit", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("irqsave test: need_resched is 1", t->need_resched, 1);
+
+            unsigned long dummy = irq_save();
+            (void)dummy;
+            spin_unlock(&inner);
+            TEST_ASSERT_EQ("irqsave test: inner unlock with IRQs masked keeps need_resched 1",
+                           t->need_resched, 1);
+
+            spin_unlock_irqrestore(&outer, flags);
+            TEST_ASSERT_EQ("irqsave unlock: need_resched cleared immediately", t->need_resched, 0);
+        }
+
+        // 3. A masked unlock leaves it alone:
+        {
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+            t->need_resched = 0;
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("refused sgi: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("refused sgi: no context switch while locked", (long)(after - before),
+                           0);
+            TEST_ASSERT_EQ("refused sgi: need_resched is 1", t->need_resched, 1);
+
+            unsigned long flags = irq_save();
+            spin_unlock(&lock);
+            TEST_ASSERT_EQ("refused sgi: need_resched still 1 after masked unlock", t->need_resched,
+                           1);
+            irq_restore(flags);
+
+            // Served once IRQs come back on
+            resched_sgi_hits = 0;
+            sgi_result = IRQ_HANDLED;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+
+            TEST_ASSERT_EQ("next interrupt: handler ran", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("next interrupt: need_resched cleared to 0", t->need_resched, 0);
+        }
+
+        // 4. The timer path:
+        {
+            t->need_resched = 0;
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+
+            unsigned long start_ms = timer_get_system_time();
+            while (timer_get_system_time() - start_ms < 30) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+
+            TEST_ASSERT_EQ("timer path: no context switch while locked", (long)(after - before), 0);
+            TEST_ASSERT_EQ("timer path: need_resched set to 1", t->need_resched, 1);
+
+            spin_unlock(&lock);
+            TEST_ASSERT_EQ("timer path: need_resched dropped to 0 immediately", t->need_resched, 0);
+        }
+
+        // 5. A reschedule request never switches away from a spinlock holder:
+        {
+            resched_sgi_hits = 0;
+            competitor_done = 0;
+            sgi_result = IRQ_HANDLED_RESCHED;
+
+            // Runnable on this core, so a wrongful reschedule has somewhere to switch to.
+            sched_create_task(task_competitor);
+
+            spin_lock(&lock);
+            int cpu = cpu_id();
+            uint64_t before = core_sched_stats[cpu].context_switches;
+            gic_send_sgi_self(TEST_SGI);
+            for (int i = 0; i < 10000000 && !resched_sgi_hits; i++) {
+                asm volatile("" ::: "memory");
+            }
+            uint64_t after = core_sched_stats[cpu].context_switches;
+            spin_unlock(&lock);
+
+            TEST_ASSERT_EQ("resched sgi: handler ran on this core", resched_sgi_hits, 1);
+            TEST_ASSERT_EQ("resched sgi: no switch while holding a spinlock",
+                           (long)(after - before), 0);
+
+            WAIT_UNTIL(competitor_done);
+            TEST_ASSERT("resched sgi: competitor ran after the unlock", competitor_done);
+        }
 
         free_irq(TEST_SGI);
-        WAIT_UNTIL(competitor_done);
-        TEST_ASSERT("resched sgi: competitor ran after the unlock", competitor_done);
     }
 
     // unblock-before-schedule race test

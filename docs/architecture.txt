@@ -7,7 +7,7 @@ see order.txt.
 
 Perspicua is a 64-bit, multi-core (SMP, up to 4 cores) monolithic kernel for
 the Raspberry Pi 4B (BCM2711, Cortex-A72, AArch64). It boots at EL1 with the
-MMU on, runs a preemptible-ish round-robin scheduler across per-core runqueues,
+MMU on, runs a preemptive round-robin scheduler across per-core runqueues,
 mounts a FAT32 root off the SD card through a VFS layer, and launches an ELF
 init process into userspace. It is developed primarily against QEMU's raspi4b
 machine and validated on real hardware before release.
@@ -128,13 +128,17 @@ Memory
 Scheduling and processes
   Per-core runqueues with round-robin selection; a task can be on a runqueue and
   a sleep queue through SEPARATE links on the task (conflating them was a past
-  source of list corruption). Wait queues (sched/wait.h) link an entry on the
-  waiting task's stack instead, so a task is never linked into one directly.
-  A task never overwrites its own READY: going BLOCKED, STOPPED or DEAD is a
-  CAS from RUNNING, so a wake that lands before the switch is kept. The sleeping
-  locks are built on wait queues. lockdep tracks them per task, because a holder
-  can resume on another core; it refuses a sleeping lock taken under a spinlock
-  or in an IRQ handler, or one still held at return to EL0 or at task exit.
+  source of list corruption). A task can be switched out anywhere except while
+  it holds a spinlock; a reschedule refused then is remembered in need_resched
+  and served at the last unlock, the next interrupt exit, or the return to user
+  mode. lockdep panics if sched_schedule is ever entered with a spinlock held.
+  Wait queues (sched/wait.h) link an entry on the waiting task's stack instead,
+  so a task is never linked into one directly. A task never overwrites its own
+  READY: going BLOCKED, STOPPED or DEAD is a CAS from RUNNING, so a wake that
+  lands before the switch is kept. The sleeping locks are built on wait queues.
+  lockdep tracks them per task, because a holder can resume on another core;
+  it refuses a sleeping lock taken under a spinlock or in an IRQ handler, or
+  one still held at return to EL0 or at task exit.
   A process owns an address space, a file-descriptor table, and signal state;
   exec loads an ELF, exit tears the process down. Signals are POSIX-style;
   job-control stops (SIGSTOP/SIGCONT) are not fully wired yet.

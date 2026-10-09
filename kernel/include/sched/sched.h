@@ -86,6 +86,10 @@ struct task {
     // Deadline a rewound nanosleep resumes; 0 when there is none.
     unsigned long sleep_resume_at;
 
+    // Spinlocks held by this task; non-zero disables preemption.
+    int preempt_count;
+    int need_resched;
+
 #ifdef CONFIG_LOCKDEP
     const void *lockdep_held[LOCKDEP_TASK_HELD];
     int lockdep_depth;
@@ -112,6 +116,7 @@ void sched_timeout_arm(struct task *t, unsigned long deadline);
 void sched_timeout_cancel(struct task *t);
 void sched_exit_current(void) __attribute__((noreturn));
 struct task *sched_current_task(void);
+void sched_return_to_user(void);
 int sched_get_core_pid(int cpu);
 
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);

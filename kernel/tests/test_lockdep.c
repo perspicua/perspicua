@@ -330,6 +330,49 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
+    // 6. lockdep_assert_preemptible checks:
+    // (1) Under one spinlock: 1 violation
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        spinlock_t spl = SPINLOCK_INIT;
+        spin_lock(&spl);
+        lockdep_assert_preemptible();
+        spin_unlock(&spl);
+
+        TEST_ASSERT_EQ("lockdep: assert_preemptible under spinlock gives 1 violation",
+                       lockdep_test_violations() - v0, 1);
+        lockdep_test_quiet(0);
+    }
+
+    // (2) Under spin_lock_irqsave: 1 violation
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        spinlock_t spl = SPINLOCK_INIT;
+        unsigned long flags = spin_lock_irqsave(&spl);
+        lockdep_assert_preemptible();
+        spin_unlock_irqrestore(&spl, flags);
+
+        TEST_ASSERT_EQ("lockdep: assert_preemptible under spin_lock_irqsave gives 1 violation",
+                       lockdep_test_violations() - v0, 1);
+        lockdep_test_quiet(0);
+    }
+
+    // (3) Nothing held: 0 violations
+    {
+        lockdep_test_quiet(1);
+        int v0 = lockdep_test_violations();
+
+        lockdep_assert_preemptible();
+
+        TEST_ASSERT_EQ("lockdep: assert_preemptible with nothing held gives 0 violations",
+                       lockdep_test_violations() - v0, 0);
+        lockdep_test_quiet(0);
+    }
+
     // Case h: At the end of the suite: lockdep_depth == 0.
     {
         struct task *t = sched_current_task();

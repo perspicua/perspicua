@@ -12,7 +12,8 @@ WHAT YOU NEED
   - A microSD card.
   - A 3.3V serial link to the Pi: a USB-to-TTL adapter (option A below), or an
     ESP32 running tcpuart for a console over Wi-Fi (option B).
-  - Female-to-female jumper wires: 3 for the console, 1 more for remote reset.
+  - Female-to-female jumper wires: 3 for the console, 1 more for remote reset,
+    and 1 more to power an ESP32 from the Pi.
   - For remote reset only: a 1x3 2.54 mm male header, a soldering iron, and
     ideally a multimeter.
 
@@ -40,17 +41,18 @@ The kernel's PL011 driver (kernel/driver/uart.c) puts UART0 on GPIO14/15 at
 115200 8N1, and pi4-boot/config.txt sets enable_uart=1 and
 dtoverlay=disable-bt so the firmware leaves those pins to it.
 
-NEVER connect anything to pins 2 or 4. They carry 5V, and neither the Pi's
-GPIOs nor an ESP32's tolerate it. Every signal in this guide is 3.3V logic, so
-no level shifter is needed.
+NEVER connect a signal to pins 2 or 4. They carry 5V, and neither the Pi's
+GPIOs nor an ESP32's tolerate it; the only thing they may feed is another
+board's 5V power input (see Option B). Every signal in this guide is 3.3V
+logic, so no level shifter is needed.
 
 --------------------------------------------------------------------------------
 THE SERIAL CONSOLE
 --------------------------------------------------------------------------------
 TX and RX cross over: each side's transmit goes to the other side's receive.
-Wire with both boards unpowered, and never connect a 5V or 3V3 pin between
-boards: each board is powered from its own USB cable, and GND is the only
-shared wire.
+Wire with both boards unpowered, and never connect a 3V3 pin between boards.
+GND is always shared; power is either a separate USB cable per board, or, for
+an ESP32 bridge, the Pi's 5V pin (see Option B).
 
 Option A: USB-to-TTL adapter (CP2102, FT232, CH340, ...)
   The adapter MUST be 3.3V logic. Leave its VCC pin unconnected.
@@ -59,23 +61,43 @@ Option A: USB-to-TTL adapter (CP2102, FT232, CH340, ...)
     adapter RX  ->  pin 8  (Pi TX)
     adapter GND ->  pin 6
 
-  Then: minicom -D /dev/cu.usbserial-XXXX -b 115200   (macOS)
-        minicom -D /dev/ttyUSB0 -b 115200             (Linux)
+  Then open it at 115200 baud with any serial terminal, for example
+  `minicom -D <port> -b 115200`. The port is /dev/ttyUSB0 or similar on Linux,
+  /dev/cu.usbserial-XXXX on macOS, and COMn on Windows (PuTTY works there).
+  On Linux, your user needs to be in the dialout group (uucp on Arch) to open
+  it.
 
 Option B: tcpuart (ESP32 UART-over-Wi-Fi bridge)
   tcpuart is written by Robert Chiributa (Sc1pex) https://github.com/Sc1pex/tcpuart
   (thank you)
 
-  The ESP32 firmware defaults are GPIO17 for TX, GPIO16 for RX and GPIO18 for
-  reset (active low). They are configurable, so confirm them with
-  `idf.py menuconfig` under "TcpUart Server Configuration": UART pins, and
-  Remote Reset with Enable = y and Active Low = y. The ESP32's boot log also
-  prints "Reset GPIO N initialized to level 1".
+  Flash the ESP32 first (SETTING UP TCPUART, below). Its firmware defaults are
+  GPIO17 for TX, GPIO16 for RX and GPIO18 for reset (active low); they are
+  configurable, so wire to whatever you set there. The ESP32's boot log prints
+  "Reset GPIO N initialized to level 1". On modules with octal PSRAM (N16R8,
+  N8R8), GPIO35-37 belong to the PSRAM; the defaults are clear of them.
 
     ESP32 GPIO17 (TX)  ->  pin 10 (Pi RX)
     ESP32 GPIO16 (RX)  ->  pin 8  (Pi TX)
     ESP32 GND          ->  pin 6
     ESP32 GPIO18       ->  J2 RUN  (see REMOTE RESET; optional)
+
+  Power the ESP32 from its own USB cable, or from the Pi:
+
+    Pi pin 2 or 4 (5V) ->  ESP32 5V pin (also labelled 5Vin or VIN)
+
+  Pins 2 and 4 come straight off the Pi's USB-C input, so a 3A supply has room
+  for the ESP32's few hundred mA. Two cautions:
+    - Never feed it from the Pi's 3.3V pins (1, 17). That rail also runs the
+      SD card and the SoC's I/O, and the ESP32's Wi-Fi bursts dip it.
+    - Do not plug the ESP32 into USB at the same time unless its board has a
+      diode between USB power and the 5V pin. Without one the two 5V sources
+      fight and can back-feed the computer's USB port. Disconnect the 5V wire
+      to reflash.
+  The trade-off: the bridge dies whenever the Pi loses power, and it needs a
+  few seconds to rejoin Wi-Fi, so the start of every cold boot log is lost.
+  `tcpuart reset` drives RUN, which leaves the 5V rail up, so remote resets
+  are unaffected. Use a separate cable to watch boots after power cycles.
 
   Then:
     tcpuart list                     # if this fails, start tcpuart-daemon
@@ -84,6 +106,74 @@ Option B: tcpuart (ESP32 UART-over-Wi-Fi bridge)
 
   Keep -b 115200: the bridge sets the ESP32's UART baud rate from the pty's
   settings, so a pty left at another speed garbles the console.
+
+--------------------------------------------------------------------------------
+SETTING UP TCPUART (OPTION B)
+--------------------------------------------------------------------------------
+tcpuart has two halves: firmware for the ESP32 (an ESP32-S3, or another
+dual-core ESP32), and host tools that turn its TCP stream into a local pty.
+
+1. Install ESP-IDF v5.x; tcpuart is built against 5.5. Espressif's "Get
+   Started" guide is the reference for every OS. On Windows, use its ESP-IDF
+   Tools Installer and run the commands below from the ESP-IDF shell it adds.
+   On Linux and macOS, install the prerequisites:
+
+    # Debian/Ubuntu
+    sudo apt install git wget flex bison gperf python3 python3-pip \
+        python3-venv cmake ninja-build ccache libffi-dev libssl-dev \
+        dfu-util libusb-1.0-0
+    # macOS (Homebrew)
+    brew install cmake ninja dfu-util
+
+   then ESP-IDF itself:
+
+    git clone -b v5.5.4 --recursive https://github.com/espressif/esp-idf.git \
+        ~/esp/esp-idf
+    ~/esp/esp-idf/install.sh esp32s3
+    . ~/esp/esp-idf/export.sh        # in every new shell that builds
+
+2. Configure the firmware:
+
+    git clone https://github.com/Sc1pex/tcpuart
+    cd tcpuart/server
+    idf.py set-target esp32s3
+    idf.py menuconfig
+
+   Under "TcpUart Server Configuration":
+     Wi-Fi           SSID and password (up to 5 networks, tried in order)
+     UART            TX 17, RX 16 by default; flow control off
+     Remote Reset    Enable = y (it is off by default), GPIO 18,
+                     Active Low = y, 100 ms pulse
+     Status LED      optional; the DevKitC-1's RGB LED is GPIO 48 on board
+                     v1.0 and GPIO 38 on v1.1
+   The TCP port defaults to 15113. The Wi-Fi password lands in plain text in
+   server/sdkconfig: keep that file out of version control.
+
+3. Flash it. Plug the ESP32 into the computer by USB, with the Pi's 5V wire
+   disconnected (see Option B). A DevKitC-1 has two USB-C ports; either works.
+   Its port appears as /dev/ttyUSB* or /dev/ttyACM* on Linux, /dev/cu.usb*
+   on macOS, and COMn on Windows; compare the list before and after plugging
+   it in. On Linux it needs the same dialout group as Option A.
+
+    idf.py build
+    idf.py -p <port> flash monitor
+
+   If flashing cannot connect, put the chip in download mode: hold BOOT, tap
+   RST, release BOOT, and run the flash again. In the monitor (Ctrl+] exits),
+   note the IP address it reports once it joins Wi-Fi. A DHCP reservation in
+   the router keeps that address fixed.
+
+4. Install the host tools (needs Rust), from the tcpuart checkout:
+
+    cargo install --path cli
+    cargo install --path daemon
+    tcpuart-daemon &
+
+   tcpuart's README shows how to start the daemon at login, as a systemd user
+   service on Linux or a LaunchAgent on macOS.
+
+5. Connect: `tcpuart add <name> <esp32-ip>` prints the pty path to open with
+   minicom (Option B). `tcpuart reset <name>` pulses the reset GPIO.
 
 --------------------------------------------------------------------------------
 REMOTE RESET (J2, OPTIONAL)
@@ -115,23 +205,41 @@ The card is a single FAT32 partition in an MBR partition table. The firmware
 loads the boot files from its top-level folder, and the kernel mounts the same
 partition as / and runs /bin/init.elf.
 
-On macOS (on Linux, use fdisk and mkfs.vfat). eraseDisk wipes the whole disk
-and cannot be undone: check that diskN really is the SD card in the output of
-`diskutil list` first.
+Formatting wipes the whole disk and cannot be undone: first make sure the
+device you name really is the SD card, not one of your own disks.
 
-    diskutil list
+  Linux: find the card with `lsblk` (e.g. /dev/sdX, or /dev/mmcblk0 for a
+  built-in reader, whose partition is then /dev/mmcblk0p1), then
+
+    sudo parted /dev/sdX --script mklabel msdos mkpart primary fat32 1MiB 100%
+    sudo mkfs.vfat -F 32 -n PERSPICUA /dev/sdX1
+    sudo mount -o uid=$(id -u),gid=$(id -g) /dev/sdX1 /mnt
+
+  macOS: find the card with `diskutil list`, then
+
     diskutil eraseDisk FAT32 PERSPICUA MBRFormat /dev/diskN
 
-Build, then copy the boot files and the userspace programs:
+  and it mounts at /Volumes/PERSPICUA.
+
+  Windows: format it FAT32 with the Raspberry Pi Imager's "Erase" option or
+  any FAT32 formatter; it mounts as a drive letter.
+
+Build, then copy the boot files and the userspace programs to wherever the
+card is mounted (CARD below):
 
     just build
+    CARD=/mnt                         # or /Volumes/PERSPICUA, ...
     cd pi4-boot
-    cp config.txt start4.elf fixup4.dat bcm2711-rpi-4-b.dtb kernel8.img \
-       /Volumes/PERSPICUA/
+    cp config.txt start4.elf fixup4.dat bcm2711-rpi-4-b.dtb kernel8.img $CARD/
     cd ..
-    mkdir -p /Volumes/PERSPICUA/bin
-    cp build/user/*.elf /Volumes/PERSPICUA/bin/
-    diskutil eject /Volumes/PERSPICUA
+    mkdir -p $CARD/bin
+    cp build/user/*.elf $CARD/bin/
+
+On Windows, copy the same files to the card's drive by hand, or run the lines
+above from WSL with the card's drive as CARD (e.g. /mnt/e).
+
+Unmount it before pulling it out: `sudo umount /mnt` on Linux, `diskutil
+eject /Volumes/PERSPICUA` on macOS, Eject on Windows.
 
 After a code change, only kernel8.img and the changed programs in bin/ need
 copying again.
@@ -165,6 +273,10 @@ TROUBLESHOOTING
   Remote reset does nothing
       Reset not enabled in the bridge firmware, or the wire is on the wrong
       J2 pin.
+
+  The console drops, and the boot log starts late, after a power cycle
+      The ESP32 is powered from the Pi's 5V pin, so it reboots with the Pi.
+      Expected; give it its own USB cable if you need those first lines.
 
   The Pi resets repeatedly, or never boots, with the reset wire attached
       The reset output's polarity is wrong and it is holding RUN low. Unplug

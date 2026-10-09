@@ -124,24 +124,30 @@ single highest-leverage phase in the file.
         (b) revalidate kept off the read path; (c) no writeback started while
         holding the FS lock.
 
-   3. preempt_count and a preemptible syscall path                     (IMP-003)
+   3. preempt_count and a preemptible syscall path [DONE]              (IMP-003)
       Effort: M-L | Unlocks: a genuinely preemptive kernel (Phase 5 item 3)
-      Scope: int preempt_count per task; spin_lock/spin_unlock increment and
-        decrement it; the timer IRQ sets a need_resched flag instead of calling
-        schedule() directly, consulted in ret_to_user and on the final
-        preempt_count decrement. Unmask IRQs after save_all in the SVC path so a
-        syscall stops being an unbounded non-preemptible region.
+      Scope: preempt_count belongs to the task, behind preempt_disable and
+        preempt_enable, and an unbalanced unlock panics; TPIDR_EL1 is zeroed
+        at el1_entry; the IRQ dispatcher is the only place that decides whether
+        to reschedule, and a refused request sets need_resched; the request is
+        served at the final preempt_enable (IRQs on, not in a handler), at the
+        next interrupt exit, and in ret_to_user; spin_unlock_irqrestore restores
+        IRQs before enabling preemption.
       Done: holding a plain spinlock across a timer tick can no longer schedule;
-        schedule() asserts preempt_count == 0 on the voluntary paths, wired into
-        the existing lockdep infrastructure so the test suite catches regressions.
-      Note: exception_irq_handler() currently calls schedule() unconditionally on
-        every timer IRQ. Non-irqsave spinlocks (fd_lock, pipe->lock, devfs_lock)
-        are held with IRQs enabled — that is the latent priority-inversion hazard.
-        Scheduling latency is currently bounded by the slowest syscall, today a
-        multi-megabyte SD read. Unmasking early is the delicate half: the abort
-        path must still capture ESR_EL1/FAR_EL1 before it unmasks, because neither
-        register is banked and a preempting task's own abort overwrites both.
-        That exact regression cost a long debugging session already.
+        schedule() asserts preempt_count == 0 across every path, not only the
+        voluntary ones, wired into the existing lockdep infrastructure, and the
+        test suite runs clean with it armed.
+      Note: the SVC path already unmasked IRQs before this item:
+        exception_sync_handler does it once it has read ESR and FAR, which is
+        the delicate ordering the old note warned about, so syscalls were already
+        preemptible outside spinlocks. The old concern that latency was bounded
+        by the slowest syscall (a multi-MB SD read) was also out of date: SD I/O
+        holds a sleeping mutex, not a spinlock. The priority-inversion hazard
+        from non-irqsave locks (fd_lock, pipe->lock, devfs_lock held with IRQs
+        enabled) is gone because such a holder can no longer be switched out
+        (before the hotfix, the SD interrupt's reschedule could do exactly that).
+        What's left: there is no cross-core reschedule IPI; a task woken onto
+        another core waits for that core's next tick.
 
    4. Graceful out-of-memory handling
       Effort: M | Unlocks: a kernel that degrades instead of dying
@@ -468,8 +474,11 @@ Goal: Use the hardware fully and safely.
         queue on every miss (sched.c:574-581) while holding that core's rq_lock —
         pure contention as core count grows. There is also no accounting of how
         long a task has run, so ptop-style tooling has nothing real to display;
-        the accumulated runtime feeds both /proc and ptop. Tickless idle is the
-        remaining piece of this and lives in Phase 7 item 10.
+        the accumulated runtime feeds both /proc and ptop. A wakeup on another
+        core waits up to a tick, because there's no reschedule IPI yet:
+        need_resched belongs to the task, so sending an SGI to the target core
+        would serve it (that's the piece fairness work will want). Tickless idle
+        is the remaining piece of this and lives in Phase 7 item 10.
 
    4. RCU / seqlocks for read-mostly state
       Effort: L | Unlocks: SMP scalability

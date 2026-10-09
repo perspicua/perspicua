@@ -22,7 +22,8 @@
  *
  * A handler must never call sched_schedule() itself: the dispatcher still owes the
  * GIC its end-of-interrupt write, and sched_schedule() does not return. Returning
- * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed.
+ * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed: the
+ * reschedule waits while the interrupted task holds a spinlock.
  */
 typedef enum {
     IRQ_HANDLED = 0,
@@ -51,6 +52,16 @@ void disable_interrupts(void);
 unsigned long irq_save(void);
 
 void irq_restore(unsigned long flags);
+
+/*
+ * irqs_enabled - True if the I (IRQ) mask bit in DAIF is clear.
+ */
+static inline int irqs_enabled(void)
+{
+    unsigned long daif;
+    asm volatile("mrs %0, daif" : "=r"(daif));
+    return (daif & (1 << 7)) == 0;
+}
 
 /*
  * request_irq - Claims an interrupt line for a driver.

@@ -368,4 +368,15 @@ void lockdep_assert_no_sleep_locks(const char *where)
     }
 }
 
+void lockdep_assert_preemptible(void)
+{
+    if (preempt_active()) {
+        struct task *t = sched_current_task();
+        char msg[80];
+        snprintf(msg, sizeof(msg), "sched_schedule with a spinlock held (preempt_count %d)",
+                 t ? t->preempt_count : 0);
+        lockdep_violation(msg);
+    }
+}
+
 #endif // CONFIG_LOCKDEP

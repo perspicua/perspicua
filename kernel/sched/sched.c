@@ -686,6 +686,8 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 // Core scheduling logic. Selects next task and context switches.
 void sched_schedule(void)
 {
+    lockdep_assert_preemptible();
+
     unsigned long flags = irq_save();
     int cpu = cpu_id();
 
@@ -706,6 +708,8 @@ void sched_schedule(void)
     }
 
     task_check_stack_canary(prev);
+
+    prev->need_resched = 0;
 
     switch (prev->state) {
         case SCHED_TASK_RUNNING:
@@ -776,4 +780,21 @@ void sched_schedule(void)
     }
 
     irq_restore(flags);
+}
+
+void sched_return_to_user(void)
+{
+    struct task *t = sched_current_task();
+
+    if (!t) {
+        return;
+    }
+
+    if (t->preempt_count != 0) {
+        PANIC("sched: returning to user mode holding a spinlock");
+    }
+
+    while (t->need_resched) {
+        sched_schedule();
+    }
 }
