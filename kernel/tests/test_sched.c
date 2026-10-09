@@ -285,11 +285,119 @@ static void task_competitor(void)
     competitor_done = 1;
 }
 
+static volatile int spawn_preempt_initial = -1;
+static volatile int spawn_preempt_locked = -1;
+static volatile int spawn_preempt_active = -1;
+static volatile int spawn_preempt_final = -1;
+static volatile int spawn_preempt_done = 0;
+
+static void task_spawn_preempt_check(void)
+{
+    struct task *self = sched_current_task();
+    spawn_preempt_initial = self ? self->preempt_count : -2;
+
+    spinlock_t lock = SPINLOCK_INIT;
+    spin_lock(&lock);
+    spawn_preempt_locked = self ? self->preempt_count : -2;
+    spawn_preempt_active = preempt_active();
+    spin_unlock(&lock);
+
+    spawn_preempt_final = self ? self->preempt_count : -2;
+    spawn_preempt_done = 1;
+}
+
 // test suite
 
 void test_scheduler(void)
 {
     TEST_SUITE_BEGIN("Scheduler");
+
+    // the count follows nesting, with preempt_active() checked at each step
+    {
+        struct task *self = sched_current_task();
+        TEST_ASSERT_EQ("preempt nesting: initial count", self->preempt_count, 0);
+        TEST_ASSERT("preempt nesting: initial inactive", !preempt_active());
+
+        spinlock_t l1 = SPINLOCK_INIT;
+        spinlock_t l2 = SPINLOCK_INIT;
+        spinlock_t l3 = SPINLOCK_INIT;
+
+        spin_lock(&l1);
+        TEST_ASSERT_EQ("preempt nesting: depth 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt nesting: active at 1", preempt_active());
+
+        spin_lock(&l2);
+        TEST_ASSERT_EQ("preempt nesting: depth 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt nesting: active at 2", preempt_active());
+
+        spin_lock(&l3);
+        TEST_ASSERT_EQ("preempt nesting: depth 3", self->preempt_count, 3);
+        TEST_ASSERT("preempt nesting: active at 3", preempt_active());
+
+        spin_unlock(&l3);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt nesting: active at 2 after unwind", preempt_active());
+
+        spin_unlock(&l2);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt nesting: active at 1 after unwind", preempt_active());
+
+        spin_unlock(&l1);
+        TEST_ASSERT_EQ("preempt nesting: unwind to 0", self->preempt_count, 0);
+        TEST_ASSERT("preempt nesting: inactive at 0", !preempt_active());
+    }
+
+    // the same with irqsave
+    {
+        struct task *self = sched_current_task();
+        TEST_ASSERT_EQ("preempt irqsave: initial count", self->preempt_count, 0);
+        TEST_ASSERT("preempt irqsave: initial inactive", !preempt_active());
+
+        spinlock_t l1 = SPINLOCK_INIT;
+        spinlock_t l2 = SPINLOCK_INIT;
+        spinlock_t l3 = SPINLOCK_INIT;
+
+        unsigned long f1 = spin_lock_irqsave(&l1);
+        TEST_ASSERT_EQ("preempt irqsave: depth 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt irqsave: active at 1", preempt_active());
+
+        unsigned long f2 = spin_lock_irqsave(&l2);
+        TEST_ASSERT_EQ("preempt irqsave: depth 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt irqsave: active at 2", preempt_active());
+
+        unsigned long f3 = spin_lock_irqsave(&l3);
+        TEST_ASSERT_EQ("preempt irqsave: depth 3", self->preempt_count, 3);
+        TEST_ASSERT("preempt irqsave: active at 3", preempt_active());
+
+        spin_unlock_irqrestore(&l3, f3);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 2", self->preempt_count, 2);
+        TEST_ASSERT("preempt irqsave: active at 2 after unwind", preempt_active());
+
+        spin_unlock_irqrestore(&l2, f2);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 1", self->preempt_count, 1);
+        TEST_ASSERT("preempt irqsave: active at 1 after unwind", preempt_active());
+
+        spin_unlock_irqrestore(&l1, f1);
+        TEST_ASSERT_EQ("preempt irqsave: unwind to 0", self->preempt_count, 0);
+        TEST_ASSERT("preempt irqsave: inactive at 0", !preempt_active());
+    }
+
+    // a newly spawned task starts at 0 and returns to 0 after a lock/unlock pair
+    {
+        spawn_preempt_initial = -1;
+        spawn_preempt_locked = -1;
+        spawn_preempt_active = -1;
+        spawn_preempt_final = -1;
+        spawn_preempt_done = 0;
+
+        sched_create_task(task_spawn_preempt_check);
+        WAIT_UNTIL(spawn_preempt_done);
+
+        TEST_ASSERT_EQ("spawned task starts with preempt_count 0", spawn_preempt_initial, 0);
+        TEST_ASSERT_EQ("spawned task preempt_count 1 while locked", spawn_preempt_locked, 1);
+        TEST_ASSERT("spawned task preempt_active while locked", spawn_preempt_active != 0);
+        TEST_ASSERT_EQ("spawned task returns to preempt_count 0", spawn_preempt_final, 0);
+    }
 
     // an interrupt asking to reschedule must not switch away from a spinlock holder
     {

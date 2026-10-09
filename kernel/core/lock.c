@@ -10,29 +10,50 @@
 #include "arch/exception.h"
 
 #include "arch/irq.h"
+#include "sched/sched.h"
 
-/*
- * Per-core count of spinlocks held. The timer interrupt consults this before
- * preempting: a task holding a spinlock must run on until it releases, or a
- * core spinning for that lock waits on a task that is no longer scheduled.
- *
- * Raised before the acquire rather than after, so there is no window where the
- * lock is held but the count does not yet say so. Acquire and release always
- * happen on the same core, because preemption is exactly what this prevents.
- */
-static volatile int preempt_count[CPU_MAX_CORES];
+// The count lives in the task, so it follows the task if it moves to another core.
+void preempt_disable(void)
+{
+    struct task *t = sched_current_task();
+
+    if (t == NULL) {
+        return;
+    }
+
+    t->preempt_count++;
+
+    asm volatile("" ::: "memory");
+}
+
+void preempt_enable(void)
+{
+    asm volatile("" ::: "memory");
+
+    struct task *t = sched_current_task();
+
+    if (t == NULL) {
+        return;
+    }
+
+    t->preempt_count--;
+
+    if (t->preempt_count < 0) {
+        PANIC("preempt_enable: unbalanced unlock");
+    }
+}
 
 int preempt_active(void)
 {
-    return preempt_count[cpu_id()] != 0;
+    struct task *t = sched_current_task();
+    return t && t->preempt_count != 0;
 }
 
 void spin_lock(spinlock_t *lock)
 {
-    /* Before lockdep, not after: lockdep_acquire takes a global lock of its
-     * own, and being preempted inside it leaves every other core spinning for
-     * that lock behind a task that is no longer scheduled. */
-    preempt_count[cpu_id()]++;
+    /* Before lockdep, not after: preemption inside lockdep's lock leaves other cores spinning on
+     * it. */
+    preempt_disable();
     lockdep_acquire(lock);
 
     unsigned int tmp;
@@ -59,7 +80,7 @@ void spin_unlock(spinlock_t *lock)
                  : "r"(0), "r"(&lock->locked)
                  : "memory");
 
-    preempt_count[cpu_id()]--;
+    preempt_enable();
 }
 
 unsigned long spin_lock_irqsave(spinlock_t *lock)

@@ -32,12 +32,13 @@ unsigned long spin_lock_irqsave(spinlock_t *lock);
 void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags);
 
 /*
- * preempt_active - True while the calling core holds at least one spinlock.
+ * preempt_active - True while the current task holds at least one spinlock.
  *
- * The timer interrupt must not preempt a lock holder: a core spinning for that
- * lock would then be waiting on a task that is no longer scheduled.
+ * Nothing may switch it out, or a core spinning on its lock waits on a task that isn't running.
  */
 int preempt_active(void);
+void preempt_disable(void);
+void preempt_enable(void);
 
 void atomic_set(atomic_t *a, int value);
 void atomic_inc(atomic_t *a);

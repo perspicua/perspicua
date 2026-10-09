@@ -43,6 +43,8 @@ real_entry:
     eret
 
 el1_entry:
+    // Clear TPIDR_EL1 so sched_current_task() returns NULL until a task is scheduled.
+    msr tpidr_el1, xzr
     // Leave CPACR_EL1.FPEN clear, so FP and SIMD trap at both EL0 and EL1.
     // The trap frame holds general-purpose registers only; an FP instruction
     // running here would use registers nothing saves or restores, and would
