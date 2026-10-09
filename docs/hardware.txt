@@ -12,7 +12,8 @@ WHAT YOU NEED
   - A microSD card.
   - A 3.3V serial link to the Pi: a USB-to-TTL adapter (option A below), or an
     ESP32 running tcpuart for a console over Wi-Fi (option B).
-  - Female-to-female jumper wires: 3 for the console, 1 more for remote reset.
+  - Female-to-female jumper wires: 3 for the console, 1 more for remote reset,
+    and 1 more to power an ESP32 from the Pi.
   - For remote reset only: a 1x3 2.54 mm male header, a soldering iron, and
     ideally a multimeter.
 
@@ -40,17 +41,18 @@ The kernel's PL011 driver (kernel/driver/uart.c) puts UART0 on GPIO14/15 at
 115200 8N1, and pi4-boot/config.txt sets enable_uart=1 and
 dtoverlay=disable-bt so the firmware leaves those pins to it.
 
-NEVER connect anything to pins 2 or 4. They carry 5V, and neither the Pi's
-GPIOs nor an ESP32's tolerate it. Every signal in this guide is 3.3V logic, so
-no level shifter is needed.
+NEVER connect a signal to pins 2 or 4. They carry 5V, and neither the Pi's
+GPIOs nor an ESP32's tolerate it; the only thing they may feed is another
+board's 5V power input (see Option B). Every signal in this guide is 3.3V
+logic, so no level shifter is needed.
 
 --------------------------------------------------------------------------------
 THE SERIAL CONSOLE
 --------------------------------------------------------------------------------
 TX and RX cross over: each side's transmit goes to the other side's receive.
-Wire with both boards unpowered, and never connect a 5V or 3V3 pin between
-boards: each board is powered from its own USB cable, and GND is the only
-shared wire.
+Wire with both boards unpowered, and never connect a 3V3 pin between boards.
+GND is always shared; power is either a separate USB cable per board, or, for
+an ESP32 bridge, the Pi's 5V pin (see Option B).
 
 Option A: USB-to-TTL adapter (CP2102, FT232, CH340, ...)
   The adapter MUST be 3.3V logic. Leave its VCC pin unconnected.
@@ -70,12 +72,30 @@ Option B: tcpuart (ESP32 UART-over-Wi-Fi bridge)
   reset (active low). They are configurable, so confirm them with
   `idf.py menuconfig` under "TcpUart Server Configuration": UART pins, and
   Remote Reset with Enable = y and Active Low = y. The ESP32's boot log also
-  prints "Reset GPIO N initialized to level 1".
+  prints "Reset GPIO N initialized to level 1". On modules with octal PSRAM
+  (N16R8, N8R8), GPIO35-37 belong to the PSRAM; the defaults are clear of them.
 
     ESP32 GPIO17 (TX)  ->  pin 10 (Pi RX)
     ESP32 GPIO16 (RX)  ->  pin 8  (Pi TX)
     ESP32 GND          ->  pin 6
     ESP32 GPIO18       ->  J2 RUN  (see REMOTE RESET; optional)
+
+  Power the ESP32 from its own USB cable, or from the Pi:
+
+    Pi pin 2 or 4 (5V) ->  ESP32 5V pin (also labelled 5Vin or VIN)
+
+  Pins 2 and 4 come straight off the Pi's USB-C input, so a 3A supply has room
+  for the ESP32's few hundred mA. Two cautions:
+    - Never feed it from the Pi's 3.3V pins (1, 17). That rail also runs the
+      SD card and the SoC's I/O, and the ESP32's Wi-Fi bursts dip it.
+    - Do not plug the ESP32 into USB at the same time unless its board has a
+      diode between USB power and the 5V pin. Without one the two 5V sources
+      fight and can back-feed the computer's USB port. Disconnect the 5V wire
+      to reflash.
+  The trade-off: the bridge dies whenever the Pi loses power, and it needs a
+  few seconds to rejoin Wi-Fi, so the start of every cold boot log is lost.
+  `tcpuart reset` drives RUN, which leaves the 5V rail up, so remote resets
+  are unaffected. Use a separate cable to watch boots after power cycles.
 
   Then:
     tcpuart list                     # if this fails, start tcpuart-daemon
@@ -165,6 +185,10 @@ TROUBLESHOOTING
   Remote reset does nothing
       Reset not enabled in the bridge firmware, or the wire is on the wrong
       J2 pin.
+
+  The console drops, and the boot log starts late, after a power cycle
+      The ESP32 is powered from the Pi's 5V pin, so it reboots with the Pi.
+      Expected; give it its own USB cable if you need those first lines.
 
   The Pi resets repeatedly, or never boots, with the reset wire attached
       The reset output's polarity is wrong and it is holding RUN low. Unplug
