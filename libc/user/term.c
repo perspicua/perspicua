@@ -481,3 +481,28 @@ void term_redraw(void)
 {
     repaint = 1;
 }
+
+static int row_end(int r)
+{
+    int end = TERM_COLS;
+    while (end > 0 && (back[r][end - 1].cp == ' ' || back[r][end - 1].cp == 0)) {
+        end--;
+    }
+    return end;
+}
+
+void term_dump(void)
+{
+    int rows = TERM_ROWS;
+    while (rows > 0 && row_end(rows - 1) == 0) {
+        rows--;
+    }
+    for (int r = 0; r < rows; r++) {
+        int end = row_end(r);
+        for (int c = 0; c < end; c++) {
+            emit_utf8(back[r][c].cp ? back[r][c].cp : ' ');
+        }
+        emit("\n", 1);
+    }
+    flush();
+}

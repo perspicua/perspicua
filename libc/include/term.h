@@ -62,6 +62,8 @@ int term_print(int row, int col, const char *utf8, unsigned attr);
 void term_present(void);
 // Makes the next term_present() repaint the whole screen.
 void term_redraw(void);
+// Writes the off-screen buffer to stdout as plain text, for output that is not a screen.
+void term_dump(void);
 
 // Milliseconds on a monotonic clock, for frame timing.
 unsigned long term_ms(void);

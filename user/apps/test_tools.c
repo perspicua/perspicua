@@ -16,7 +16,7 @@
 #include "sys/wait.h"
 #include "unistd.h"
 
-#define OUT_MAX 1024
+#define OUT_MAX 4096
 #define TREE    "/tt_tmp"
 
 static int passed, failed;
@@ -167,6 +167,16 @@ static void test_free_uptime(void)
                         && strstr(out, "process") != NULL);
 }
 
+static void test_ptop(void)
+{
+    char out[OUT_MAX];
+    int status = run(NULL, out, (char *[]){"ptop", "--once", NULL});
+    check("ptop --once", status == 0 && strstr(out, " cpu0 [") != NULL
+                             && strstr(out, "  PID  PPID") != NULL && strstr(out, "ptop") != NULL
+                             && strchr(out, '\033') == NULL);
+    check("ptop refuses unknown flags", run(NULL, out, (char *[]){"ptop", "-x", NULL}) != 0);
+}
+
 static void test_find_du(void)
 {
     mkdir(TREE, 0755);
@@ -204,6 +214,7 @@ int main(void)
     test_sort_uniq();
     test_seq_sleep_clear();
     test_free_uptime();
+    test_ptop();
     test_find_du();
 
     if (failed) {
