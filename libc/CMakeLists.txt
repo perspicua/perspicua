@@ -24,6 +24,8 @@ set(LIBC_SRC_KERNEL
 # Depends on syscalls or on userspace process state.
 set(LIBC_SRC_USER
     user/malloc.c
+    user/exit.c
+    user/term.c
     user/file.c
     user/dirent.c
     user/env.c

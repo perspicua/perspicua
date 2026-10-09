@@ -20,6 +20,7 @@
 #include "stdlib.h"
 #include "string.h"
 #include "syscall.h"
+#include "term.h"
 
 // Minimal test framework
 
@@ -808,10 +809,213 @@ static void test_strerror_nonnull(void)
     CHECK(strerror(0) != NULL);
 }
 
+// rand / srand
+
+static void test_rand(void)
+{
+    int first[8];
+    srand(1);
+    for (int i = 0; i < 8; i++) {
+        first[i] = rand();
+        CHECK(first[i] >= 0 && first[i] <= RAND_MAX);
+    }
+
+    // The same seed replays the same sequence.
+    srand(1);
+    for (int i = 0; i < 8; i++) {
+        CHECK(rand() == first[i]);
+    }
+
+    srand(2);
+    CHECK(rand() != first[0]);
+
+    // Not stuck: the low bit is set about half the time.
+    int odd = 0;
+    for (int i = 0; i < 1000; i++) {
+        odd += rand() & 1;
+    }
+    CHECK(odd > 400 && odd < 600);
+}
+
+// atexit
+
+static void mark_a(void)
+{
+    write(1, "a", 1);
+}
+
+static void mark_b(void)
+{
+    write(1, "b", 1);
+}
+
+// Runs child() with stdout on a pipe and returns what it printed.
+static int capture(void (*child)(void), char *out, int size)
+{
+    int fds[2];
+    if (pipe(fds) != 0) {
+        return -1;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        dup2(fds[1], 1);
+        close(fds[0]);
+        close(fds[1]);
+        child();
+        _exit(127);
+    }
+    close(fds[1]);
+    int n = 0;
+    int r;
+    while (n < size - 1 && (r = read(fds[0], out + n, (size_t)(size - 1 - n))) > 0) {
+        n += r;
+    }
+    out[n] = '\0';
+    close(fds[0]);
+    int status;
+    waitpid(pid, &status, 0);
+    return n;
+}
+
+static void atexit_then_exit(void)
+{
+    atexit(mark_a);
+    atexit(mark_b);
+    exit(0);
+}
+
+// Returning from main must run the handlers too, so this goes through a fresh exec.
+static void atexit_then_return(void)
+{
+    char *argv[] = {"/bin/test_libc.elf", "--atexit-child", NULL};
+    execve(argv[0], argv, environ);
+}
+
+static void test_atexit(void)
+{
+    char out[16];
+    CHECK(capture(atexit_then_exit, out, sizeof(out)) == 2);
+    CHECK(strcmp(out, "ba") == 0);
+
+    CHECK(capture(atexit_then_return, out, sizeof(out)) == 2);
+    CHECK(strcmp(out, "ba") == 0);
+}
+
+// term_decode
+
+static int decode(const char *s, int *used)
+{
+    return term_decode((const unsigned char *)s, (int)strlen(s), used);
+}
+
+static void test_term_decode(void)
+{
+    int u;
+
+    CHECK(decode("a", &u) == 'a' && u == 1);
+    CHECK(decode("\r", &u) == TERM_KEY_ENTER && u == 1);
+    CHECK(decode("\n", &u) == TERM_KEY_ENTER && u == 1);
+    CHECK(decode("\x7f", &u) == TERM_KEY_BACKSPACE && u == 1);
+    CHECK(decode("\b", &u) == TERM_KEY_BACKSPACE && u == 1);
+    CHECK(decode("\xc3\xa9", &u) == 0xc3 && u == 1);
+
+    CHECK(decode("\033[A", &u) == TERM_KEY_UP && u == 3);
+    CHECK(decode("\033[B", &u) == TERM_KEY_DOWN && u == 3);
+    CHECK(decode("\033[C", &u) == TERM_KEY_RIGHT && u == 3);
+    CHECK(decode("\033[D", &u) == TERM_KEY_LEFT && u == 3);
+    CHECK(decode("\033OA", &u) == TERM_KEY_UP && u == 3);
+    CHECK(decode("\033OH", &u) == TERM_KEY_HOME && u == 3);
+    CHECK(decode("\033[H", &u) == TERM_KEY_HOME && u == 3);
+    CHECK(decode("\033[F", &u) == TERM_KEY_END && u == 3);
+    CHECK(decode("\033[1~", &u) == TERM_KEY_HOME && u == 4);
+    CHECK(decode("\033[7~", &u) == TERM_KEY_HOME && u == 4);
+    CHECK(decode("\033[4~", &u) == TERM_KEY_END && u == 4);
+    CHECK(decode("\033[8~", &u) == TERM_KEY_END && u == 4);
+    CHECK(decode("\033[2~", &u) == TERM_KEY_INSERT && u == 4);
+    CHECK(decode("\033[3~", &u) == TERM_KEY_DELETE && u == 4);
+    CHECK(decode("\033[5~", &u) == TERM_KEY_PGUP && u == 4);
+    CHECK(decode("\033[6~", &u) == TERM_KEY_PGDN && u == 4);
+
+    // Modifiers ride in later parameters; the key is still the arrow.
+    CHECK(decode("\033[1;5C", &u) == TERM_KEY_RIGHT && u == 6);
+
+    // Only the start of a sequence: wait for more.
+    CHECK(decode("\033", &u) == TERM_KEY_NONE && u == 0);
+    CHECK(decode("\033[", &u) == TERM_KEY_NONE && u == 0);
+    CHECK(decode("\033[5", &u) == TERM_KEY_NONE && u == 0);
+    CHECK(decode("\033O", &u) == TERM_KEY_NONE && u == 0);
+
+    // ESC before anything that is not a sequence is the Esc key, then that byte.
+    CHECK(decode("\033x", &u) == TERM_KEY_ESC && u == 1);
+    CHECK(decode("\033[\r", &u) == TERM_KEY_ESC && u == 1);
+
+    // A whole sequence nobody maps is consumed, not returned.
+    CHECK(decode("\033[Z", &u) == TERM_KEY_NONE && u == 3);
+
+    // A sequence that never ends is dropped once it fills the buffer.
+    CHECK(decode("\033[12345678901234", &u) == TERM_KEY_NONE && u == 16);
+}
+
+// term_present
+
+static void present_twice(void)
+{
+    term_open();
+    term_print(0, 0, "hi", TERM_NORMAL);
+    term_present();
+    write(1, "|", 1);
+    term_present();
+    write(1, "|", 1);
+    term_put(0, 1, 'o', TERM_NORMAL);
+    term_present();
+    write(1, "|", 1);
+    _exit(0);
+}
+
+static void test_term_present(void)
+{
+    char out[256];
+    capture(present_twice, out, sizeof(out));
+
+    char *first_end = strchr(out, '|');
+    CHECK(first_end != NULL);
+    if (!first_end) {
+        return;
+    }
+    *first_end = '\0';
+    char *second = first_end + 1;
+    char *second_end = strchr(second, '|');
+    CHECK(second_end != NULL);
+    if (!second_end) {
+        return;
+    }
+    *second_end = '\0';
+    char *third = second_end + 1;
+    char *third_end = strchr(third, '|');
+    CHECK(third_end != NULL);
+    if (third_end) {
+        *third_end = '\0';
+    }
+
+    size_t len = strlen(out);
+    CHECK(len >= 8 && strcmp(out + len - 8, "\033[1;1Hhi") == 0);
+    CHECK(strcmp(second, "") == 0);
+    CHECK(strcmp(third, "\033[1;2Ho") == 0);
+
+    CHECK(term_print(0, TERM_COLS - 2, "abc", TERM_NORMAL) == 2);
+}
+
 // Entry point
 
-int main(void)
+int main(int argc, char **argv)
 {
+    // Child of test_atexit: the handlers must run on the return from main.
+    if (argc > 1 && strcmp(argv[1], "--atexit-child") == 0) {
+        atexit(mark_a);
+        atexit(mark_b);
+        return 0;
+    }
+
     printf("[TEST] libc integrity test suite\n");
 
     run_group("assert", test_assert);
@@ -871,6 +1075,10 @@ int main(void)
     run_group("strerror non-null", test_strerror_nonnull);
     run_group("strerror keying", test_strerror_keying);
     run_group("strerror end-to-end", test_strerror_end_to_end);
+    run_group("rand", test_rand);
+    run_group("atexit", test_atexit);
+    run_group("term_decode", test_term_decode);
+    run_group("term_present", test_term_present);
 
     printf("\n[RESULT] %d passed, %d failed\n", g_passed, g_failed);
 

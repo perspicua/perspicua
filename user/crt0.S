@@ -27,6 +27,6 @@ _start:
     mov x2, x21
 
     bl main
-    // If main returns, call exit(0)
-    bl _exit
+    // main's return value is the status; exit() runs the atexit handlers first.
+    bl exit
 1:  b 1b

@@ -16,6 +16,14 @@ void *realloc(void *ptr, size_t size);
 // Process control
 __attribute__((noreturn)) void exit(int status);
 
+// Runs fn at exit() or a return from main, last registered first; returns -1 when full.
+int atexit(void (*fn)(void));
+
+// Pseudo-random numbers
+#define RAND_MAX 0x7fffffff
+int rand(void);
+void srand(unsigned int seed);
+
 // Environment variables
 extern char **environ;
 char *getenv(const char *name);

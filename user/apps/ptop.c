@@ -8,9 +8,9 @@
 #include "stdio.h"
 #include "string.h"
 #include "stdlib.h"
+#include "term.h"
 
 #define REFRESH_MS 1000
-#define POLL_MS    100
 #define INNER_W    76 // columns between the │ borders
 #define BAR_W      22
 #define MAX_CORES  16
@@ -19,10 +19,8 @@
 #define READ_BUF   1024
 #define PATH_BUF   64
 
-#define ESC              "\033["
-#define ANSI_CLEAR       ESC "2J" ESC "H"
-#define ANSI_HIDE_CURSOR ESC "?25l"
-#define ANSI_SHOW_CURSOR ESC "?25h"
+#define ESC        "\033["
+#define ANSI_CLEAR ESC "2J" ESC "H"
 
 // tiny output helpers
 static void out(const char *s)
@@ -346,37 +344,20 @@ static void draw_procs(struct proc_info *procs, int count)
     box_bottom();
 }
 
-// input: non-blocking check for a quit key
-static int stdin_flags_saved;
-
-static void set_nonblock(void)
-{
-    stdin_flags_saved = fcntl(0, F_GETFL, 0);
-    if (stdin_flags_saved >= 0) {
-        fcntl(0, F_SETFL, stdin_flags_saved | O_NONBLOCK);
-    }
-}
-
-static void restore_blocking(void)
-{
-    if (stdin_flags_saved >= 0) {
-        fcntl(0, F_SETFL, stdin_flags_saved);
-    }
-}
-
-// Sleep up to REFRESH_MS, polling for 'q'/ESC. Returns 1 if quit requested.
+// Waits out the refresh interval; returns 1 if q or Esc asked to quit.
 static int wait_or_quit(void)
 {
-    for (int elapsed = 0; elapsed < REFRESH_MS; elapsed += POLL_MS) {
-        char c;
-        while (read(0, &c, 1) == 1) {
-            if (c == 'q' || c == 'Q' || c == 27) {
-                return 1;
-            }
+    unsigned long until = term_ms() + REFRESH_MS;
+    for (;;) {
+        long left = (long)(until - term_ms());
+        if (left <= 0) {
+            return 0;
         }
-        usleep((POLL_MS) * 1000);
+        int key = term_key((int)left);
+        if (key == 'q' || key == 'Q' || key == TERM_KEY_ESC) {
+            return 1;
+        }
     }
-    return 0;
 }
 
 int main(int argc, char **argv)
@@ -394,8 +375,7 @@ int main(int argc, char **argv)
     unsigned long rate[MAX_CORES] = {0};
     int ncores = read_core_ctx(prev_ctx, MAX_CORES); // prime the counters
 
-    set_nonblock();
-    out(ANSI_HIDE_CURSOR);
+    term_open();
 
     for (;;) {
         unsigned long cur_ctx[MAX_CORES] = {0};
@@ -422,8 +402,7 @@ int main(int argc, char **argv)
         }
     }
 
-    out(ANSI_SHOW_CURSOR);
-    restore_blocking();
+    term_close();
     free(procs);
     return 0;
 }

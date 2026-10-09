@@ -151,8 +151,3 @@ void *realloc(void *ptr, size_t size)
     }
     return new_ptr;
 }
-
-void exit(int status)
-{
-    _exit(status);
-}

@@ -597,6 +597,12 @@ int sh_read_line(char *buf, size_t size)
     last_completion.lines = 0;
     last_completion.buffer[0] = '\0';
 
+    // A program that died with stdin non-blocking would leave read_key spinning.
+    int flags = fcntl(0, F_GETFL, 0);
+    if (flags >= 0 && (flags & O_NONBLOCK)) {
+        fcntl(0, F_SETFL, flags & ~O_NONBLOCK);
+    }
+
     while (1) {
         int key = read_key();
         if (key < 0) {
