@@ -75,7 +75,16 @@ build_page_tables:
     orr x2, x1, #3      // pte_valid | pte_table
     str x2, [x0]        
 
-    // pgd[3] maps 3gb to 4gb (peripherals like uart and gpio)
+    // pgd[1] and pgd[2] map 1gb to 3gb as RAM: mmu_init allocates from the top of RAM
+    ldr x5, =0x701      // pte_valid | pte_block | pte_af | Inner-Shareable
+    mov x2, #0x40000000
+    orr x6, x2, x5
+    str x6, [x0, #8]
+    mov x2, #0x80000000
+    orr x6, x2, x5
+    str x6, [x0, #16]
+
+    // pgd[3] maps 3gb to 4gb: RAM below 0xfc000000, peripherals above
     adrp x7, boot_pmd_periph
     orr x2, x7, #3
     str x2, [x0, #24]   // 3 * 8 bytes = offset 24 in pgd
@@ -97,10 +106,14 @@ map_ram_loop:
     mov x2, #0xC0000000 // address start (3gb)
     mov x3, #512
     mov x4, x7
-    ldr x5, =0x705      // pte_valid | pte_block | pte_af | Inner-Shareable | AttrIndx=1 (Device memory)
+    ldr x5, =0x701      // RAM below the peripheral window
+    ldr x8, =0x705      // pte_valid | pte_block | pte_af | Inner-Shareable | AttrIndx=1 (Device memory)
+    mov x9, #0xFC000000 // BCM2711 peripheral window start
 
 map_periph_loop:
-    orr x6, x2, x5
+    cmp x2, x9
+    csel x10, x5, x8, lo
+    orr x6, x2, x10
     str x6, [x4], #8
     add x2, x2, #(2 << 20)
     subs x3, x3, #1

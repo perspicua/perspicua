@@ -1,8 +1,203 @@
 #include <stddef.h>
 
 #include "test.h"
+#include "devicetree/fdt.h"
+#include "mm/addr.h"
 #include "mm/pmm.h"
 #include "string.h"
+#include "uapi/errno.h"
+
+// Devicetree cells are big-endian; the byte swap is its own inverse.
+#define BE(x) fdt32_to_cpu(x)
+
+#define GB (1UL << 30)
+
+static int parse(const uint32_t *reg, unsigned long bytes, uint32_t ac, uint32_t sc,
+                 struct pmm_range *r, int max, unsigned long *ignored)
+{
+    *ignored = 0;
+    return pmm_parse_ram_ranges(reg, bytes, ac, sc, 4 * GB, r, max, ignored);
+}
+
+static void test_pmm_ram_ranges(void)
+{
+    struct pmm_range r[PMM_MAX_RAM_RANGES];
+    unsigned long ignored;
+
+    // a 4 GB Pi 4: the GPU's memory splits RAM below 1 GB
+    {
+        const uint32_t reg[] = {BE(0), BE(0),          BE(0x3b400000),
+                                BE(0), BE(0x40000000), BE(0xbc000000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: 4 GB board has two ranges", n, 2);
+        TEST_ASSERT("ram: first range stops at the GPU's memory",
+                    r[0].start == 0 && r[0].end == 0x3b400000);
+        TEST_ASSERT("ram: second range runs up to the peripherals",
+                    r[1].start == 0x40000000 && r[1].end == 0xfc000000);
+        TEST_ASSERT_EQ("ram: 4 GB board ignores nothing", ignored, 0);
+    }
+
+    // an 8 GB Pi 4: what lies above the limit is counted, not kept
+    {
+        const uint32_t reg[] = {BE(0),          BE(0),          BE(0x3b400000), BE(0),
+                                BE(0x40000000), BE(0xbc000000), BE(1),          BE(0),
+                                BE(0x80000000), BE(1),          BE(0x80000000), BE(0x80000000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: 8 GB board keeps the two low ranges", n, 2);
+        TEST_ASSERT_EQ("ram: 8 GB board ignores 4 GB", ignored, 4 * GB);
+    }
+
+    // a range across the limit is cut there
+    {
+        const uint32_t reg[] = {BE(0), BE(0xf0000000), BE(0x20000000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: straddling range kept", n, 1);
+        TEST_ASSERT("ram: straddling range ends at the limit",
+                    r[0].start == 0xf0000000 && r[0].end == 4 * GB);
+        TEST_ASSERT_EQ("ram: straddling range ignores the part above", ignored, 0x10000000);
+    }
+
+    // entries come back sorted whatever order the devicetree lists them in
+    {
+        const uint32_t reg[] = {BE(0), BE(0x40000000), BE(0x1000000), BE(0), BE(0), BE(0x1000000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: unsorted entries both kept", n, 2);
+        TEST_ASSERT("ram: unsorted entries sorted by start",
+                    r[0].start == 0 && r[1].start == 0x40000000);
+    }
+
+    // partial pages at either end are not RAM the allocator can hand out
+    {
+        const uint32_t reg[] = {BE(0), BE(0x1001), BE(0x3000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: unaligned range kept", n, 1);
+        TEST_ASSERT("ram: unaligned range shrinks to whole pages",
+                    r[0].start == 0x2000 && r[0].end == 0x4000);
+    }
+
+    // an empty entry is skipped
+    {
+        const uint32_t reg[] = {BE(0), BE(0), BE(0), BE(0), BE(0x100000), BE(0x100000)};
+        int n = parse(reg, sizeof(reg), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: empty entry skipped", n, 1);
+    }
+
+    // a 64-bit size reads both cells
+    {
+        const uint32_t reg[] = {BE(0), BE(0), BE(1), BE(0)};
+        int n = parse(reg, sizeof(reg), 2, 2, r, PMM_MAX_RAM_RANGES, &ignored);
+        TEST_ASSERT_EQ("ram: 64-bit size kept", n, 1);
+        TEST_ASSERT("ram: 64-bit size of 4 GB", r[0].start == 0 && r[0].end == 4 * GB);
+    }
+
+    // properties that do not describe disjoint RAM
+    {
+        const uint32_t overlap[] = {BE(0), BE(0),         BE(0x2000000),
+                                    BE(0), BE(0x1000000), BE(0x2000000)};
+        TEST_ASSERT_EQ("ram: overlapping ranges refused",
+                       parse(overlap, sizeof(overlap), 2, 1, r, PMM_MAX_RAM_RANGES, &ignored),
+                       -EINVAL);
+
+        const uint32_t wraps[] = {BE(0xffffffff), BE(0xffff0000), BE(0), BE(0x20000)};
+        TEST_ASSERT_EQ("ram: range wrapping the address space refused",
+                       parse(wraps, sizeof(wraps), 2, 2, r, PMM_MAX_RAM_RANGES, &ignored), -EINVAL);
+
+        const uint32_t one[] = {BE(0), BE(0), BE(0x1000000)};
+        TEST_ASSERT_EQ("ram: reg cut mid-entry refused",
+                       parse(one, sizeof(one) - 4, 2, 1, r, PMM_MAX_RAM_RANGES, &ignored), -EINVAL);
+        TEST_ASSERT_EQ("ram: empty reg refused",
+                       parse(one, 0, 2, 1, r, PMM_MAX_RAM_RANGES, &ignored), -EINVAL);
+        TEST_ASSERT_EQ("ram: zero address cells refused",
+                       parse(one, sizeof(one), 0, 1, r, PMM_MAX_RAM_RANGES, &ignored), -EINVAL);
+        TEST_ASSERT_EQ("ram: three size cells refused",
+                       parse(one, sizeof(one), 2, 3, r, PMM_MAX_RAM_RANGES, &ignored), -EINVAL);
+    }
+
+    // more ranges than the caller has room for
+    {
+        const uint32_t reg[] = {BE(0), BE(0), BE(0x1000000), BE(0), BE(0x40000000), BE(0x1000000)};
+        TEST_ASSERT_EQ("ram: too many ranges refused",
+                       parse(reg, sizeof(reg), 2, 1, r, 1, &ignored), -ENOSPC);
+    }
+
+    // what pmm_init found: sorted, disjoint, page-aligned, below 4 GB
+    {
+        const struct pmm_range *live;
+        int n = pmm_get_ram_ranges(&live);
+        TEST_ASSERT("ram: boot found RAM", n >= 1);
+        for (int i = 0; i < n; i++) {
+            TEST_ASSERT("ram: boot range page-aligned",
+                        (live[i].start | live[i].end) % PAGE_SIZE == 0);
+            TEST_ASSERT("ram: boot range below 4 GB", live[i].end <= 4 * GB);
+            TEST_ASSERT("ram: boot ranges sorted and disjoint",
+                        i == 0 || live[i - 1].end <= live[i].start);
+            if (i > 0 && live[i - 1].end < live[i].start) {
+                TEST_ASSERT("ram: the gap before a range is not managed",
+                            !pmm_is_managed((void *)P2V(live[i - 1].end)));
+            }
+        }
+    }
+}
+
+static int in_ram(unsigned long phys)
+{
+    const struct pmm_range *ram;
+    int n = pmm_get_ram_ranges(&ram);
+    for (int i = 0; i < n; i++) {
+        if (phys >= ram[i].start && phys < ram[i].end) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Stamps every free page with its own address: an unmapped page faults, an aliased one loses its
+// stamp.
+static void test_pmm_every_page(void)
+{
+    unsigned long free_before = pmm_get_free_pages();
+    void *blocks = NULL;
+    unsigned long pages = 0;
+    int outside = 0;
+
+    for (int order = PMM_MAX_ORDER; order >= 0; order--) {
+        unsigned long count = 1UL << order;
+        void *b;
+        while ((b = pmm_alloc_pages_nozero(count)) != NULL) {
+            for (unsigned long i = 0; i < count; i++) {
+                unsigned long *page = (unsigned long *)((char *)b + i * PAGE_SIZE);
+                page[1] = (unsigned long)page;
+                if (!in_ram(V2P(page))) {
+                    outside = 1;
+                }
+            }
+            ((void **)b)[0] = blocks;
+            ((unsigned long *)b)[2] = count;
+            blocks = b;
+            pages += count;
+        }
+    }
+
+    TEST_ASSERT_EQ("every page: the drain took every free page", pages, free_before);
+    TEST_ASSERT("every page: all inside a RAM range", !outside);
+
+    int stamps_ok = 1;
+    while (blocks) {
+        void *next = ((void **)blocks)[0];
+        unsigned long count = ((unsigned long *)blocks)[2];
+        for (unsigned long i = 0; i < count; i++) {
+            unsigned long *page = (unsigned long *)((char *)blocks + i * PAGE_SIZE);
+            if (page[1] != (unsigned long)page) {
+                stamps_ok = 0;
+            }
+        }
+        pmm_free_pages(blocks);
+        blocks = next;
+    }
+
+    TEST_ASSERT("every page: each kept its own stamp", stamps_ok);
+    TEST_ASSERT_EQ("every page: all returned", pmm_get_free_pages(), free_before);
+}
 
 void test_pmm(void)
 {
@@ -757,6 +952,9 @@ void test_pmm(void)
         TEST_ASSERT("lifecycle big alloc", big != NULL);
         pmm_free_pages(big);
     }
+
+    test_pmm_ram_ranges();
+    test_pmm_every_page();
 
     TEST_SUITE_END("Physical Memory Manager");
 }

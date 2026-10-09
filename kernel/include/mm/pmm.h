@@ -5,10 +5,34 @@
 #ifndef PERSPICUA_MM_PMM_H
 #define PERSPICUA_MM_PMM_H
 
+#include <stdint.h>
+
 #define PMM_MAX_ORDER 10
 #define PAGE_SIZE     4096
 
+#define PMM_MAX_RAM_RANGES 8
+
+// A page-aligned span of physical RAM, [start, end).
+struct pmm_range {
+    unsigned long start;
+    unsigned long end;
+};
+
+/*
+ * pmm_parse_ram_ranges - Reads a devicetree /memory reg property into ranges.
+ *
+ * Keeps what lies below limit, page-aligned and sorted by start; the bytes cut
+ * off at limit are added to *ignored. Returns the number of ranges, or a
+ * negative errno for a property that does not describe disjoint RAM.
+ */
+int pmm_parse_ram_ranges(const uint32_t *cells, unsigned long bytes, uint32_t addr_cells,
+                         uint32_t size_cells, unsigned long limit, struct pmm_range *out, int max,
+                         unsigned long *ignored);
+
 void pmm_init(void);
+
+// The RAM ranges pmm_init found, sorted by start; returns how many.
+int pmm_get_ram_ranges(const struct pmm_range **ranges);
 
 void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 

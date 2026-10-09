@@ -46,6 +46,11 @@ void mbox_call(unsigned int *buffer)
     unsigned long size = (unsigned long)buffer[0];
     unsigned long addr = (unsigned long)buffer;
 
+    // The GPU sees only the first GB, through its uncached 0xC0000000 alias.
+    if (V2P(buffer) + size > 0x40000000UL) {
+        PANIC("mailbox: buffer outside the GPU's first GB");
+    }
+
     // Flush request data to RAM so the GPU sees the current buffer contents
     for (unsigned long i = 0; i < size; i += 64) {
         asm volatile("dc cvac, %0" : : "r"(addr + i));

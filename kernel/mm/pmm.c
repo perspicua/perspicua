@@ -15,8 +15,12 @@
 #include "core/lock.h"
 #include "devicetree/fdt.h"
 #include "mm/failinject.h"
+#include "uapi/errno.h"
 
 #define PMM_MAX_RESERVED_RANGES 64
+
+// TCR_EL1.IPS leaves physical addresses at 32 bits, and mmu_init maps 4 GB.
+#define PMM_PHYS_LIMIT 0x100000000UL
 
 #define PMM_PFN_NULL 0xFFFFFFFFU
 
@@ -49,7 +53,8 @@ unsigned long pmm_metadata_end = 0;
 
 extern char __kernel_end[];
 
-static unsigned long pmm_phys_mem_size = 1024UL * 1024 * 1024;
+static struct pmm_range pmm_ram[PMM_MAX_RAM_RANGES];
+static int pmm_ram_count = 0;
 static unsigned long pmm_num_pages = 0;
 static unsigned long pmm_managed_pages = 0;
 static unsigned long pmm_free_pages_count = 0;
@@ -246,23 +251,78 @@ static uint32_t fdt_root_cells(const char *name, uint32_t fallback)
     return fdt32_to_cpu(*(const uint32_t *)prop.value);
 }
 
-/*
- * fdt_memory_size - Total RAM from the devicetree.
- *
- * The width of the address and size fields in `reg` is set by the root node's
- * #address-cells and #size-cells, so the size cannot be read from a fixed
- * index. This board uses 2 and 1; assuming that layout silently misreads any
- * devicetree with 64-bit sizes, where the size's high word lands where the
- * whole size was expected.
- */
-static unsigned long fdt_memory_size(void)
+static unsigned long read_cells(const uint32_t *cells, uint32_t count)
+{
+    unsigned long value = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        value = (value << 32) | fdt32_to_cpu(cells[i]);
+    }
+    return value;
+}
+
+// Field widths come from the root's #address-cells and #size-cells, never a fixed layout.
+int pmm_parse_ram_ranges(const uint32_t *cells, unsigned long bytes, uint32_t addr_cells,
+                         uint32_t size_cells, unsigned long limit, struct pmm_range *out, int max,
+                         unsigned long *ignored)
+{
+    if (addr_cells == 0 || addr_cells > 2 || size_cells == 0 || size_cells > 2) {
+        return -EINVAL;
+    }
+
+    unsigned long entry_bytes = (addr_cells + size_cells) * sizeof(uint32_t);
+    if (bytes == 0 || bytes % entry_bytes != 0) {
+        return -EINVAL;
+    }
+
+    int count = 0;
+    for (unsigned long e = 0; e < bytes / entry_bytes; e++) {
+        const uint32_t *entry = cells + e * (addr_cells + size_cells);
+        unsigned long start = read_cells(entry, addr_cells);
+        unsigned long size = read_cells(entry + addr_cells, size_cells);
+        unsigned long end = start + size;
+
+        if (end < start) {
+            return -EINVAL;
+        }
+        if (end > limit) {
+            unsigned long cut_from = start > limit ? start : limit;
+            if (ignored) {
+                *ignored += end - cut_from;
+            }
+            end = cut_from;
+        }
+
+        start = (start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1UL);
+        end &= ~(PAGE_SIZE - 1UL);
+        if (start >= end) {
+            continue;
+        }
+
+        int at = count;
+        while (at > 0 && out[at - 1].start > start) {
+            at--;
+        }
+        if ((at > 0 && out[at - 1].end > start) || (at < count && end > out[at].start)) {
+            return -EINVAL;
+        }
+        if (count == max) {
+            return -ENOSPC;
+        }
+
+        for (int i = count; i > at; i--) {
+            out[i] = out[i - 1];
+        }
+        out[at].start = start;
+        out[at].end = end;
+        count++;
+    }
+    return count;
+}
+
+static void fdt_memory_ranges(void)
 {
     uint32_t addr_cells = fdt_root_cells("#address-cells", 2);
     uint32_t size_cells = fdt_root_cells("#size-cells", 1);
-
-    if (addr_cells == 0 || addr_cells > 2 || size_cells == 0 || size_cells > 2) {
-        PANIC("pmm: unsupported devicetree cell layout");
-    }
 
     const uint32_t *mem_node = fdt_find_node_by_path("/memory@0");
     if (!mem_node) {
@@ -273,31 +333,32 @@ static unsigned long fdt_memory_size(void)
     if (fdt_get_property(mem_node, "reg", &reg) != 0) {
         PANIC("pmm: memory node has no reg property");
     }
-    if (reg.size < (addr_cells + size_cells) * sizeof(uint32_t)) {
-        PANIC("pmm: memory reg property is shorter than its cell layout");
+
+    unsigned long ignored = 0;
+    pmm_ram_count =
+        pmm_parse_ram_ranges((const uint32_t *)reg.value, reg.size, addr_cells, size_cells,
+                             PMM_PHYS_LIMIT, pmm_ram, PMM_MAX_RAM_RANGES, &ignored);
+    if (pmm_ram_count < 0) {
+        PANIC("pmm: memory reg property does not describe disjoint RAM");
+    }
+    if (pmm_ram_count == 0) {
+        PANIC("pmm: no RAM reported");
     }
 
-    const uint32_t *cells = (const uint32_t *)reg.value;
-    unsigned long size = 0;
-    for (uint32_t i = 0; i < size_cells; i++) {
-        size = (size << 32) | fdt32_to_cpu(cells[addr_cells + i]);
+    for (int i = 0; i < pmm_ram_count; i++) {
+        pr_info("pmm: RAM 0x%lx-0x%lx (%lu MB)\n", pmm_ram[i].start, pmm_ram[i].end,
+                (pmm_ram[i].end - pmm_ram[i].start) / (1024UL * 1024));
     }
-
-    if (size == 0) {
-        PANIC("pmm: zero memory reported");
+    if (ignored) {
+        pr_warn("pmm: ignoring %lu MB above the 4 GB the kernel maps\n", ignored / (1024UL * 1024));
     }
-    return size;
 }
 
 void pmm_init(void)
 {
-    pmm_phys_mem_size = fdt_memory_size();
-    pr_info("pmm: memory from DTB: %lu MB\n", pmm_phys_mem_size / (1024UL * 1024));
+    fdt_memory_ranges();
 
-    pmm_num_pages = pmm_phys_mem_size / PAGE_SIZE;
-    if (pmm_num_pages == 0) {
-        PANIC("pmm: RAM too small");
-    }
+    pmm_num_pages = pmm_ram[pmm_ram_count - 1].end / PAGE_SIZE;
     if (pmm_num_pages >= PMM_PFN_NULL) {
         PANIC("pmm: more pages than a free-list link can address");
     }
@@ -316,10 +377,17 @@ void pmm_init(void)
 
     // Self-reserve: mark kernel and metadata as occupied
     unsigned long usable_start_phys = V2P(usable_start_va);
-    if (usable_start_phys >= pmm_phys_mem_size) {
-        PANIC("pmm: metadata exceeds RAM");
+    if (usable_start_phys >= pmm_ram[0].end) {
+        PANIC("pmm: kernel and metadata overrun the first RAM range");
     }
     pmm_reserve_range(0, usable_start_phys, "kernel+metadata");
+
+    // The gaps between RAM ranges are firmware memory or nothing at all.
+    unsigned long prev_end = 0;
+    for (int i = 0; i < pmm_ram_count; i++) {
+        pmm_reserve_range(prev_end, pmm_ram[i].start - prev_end, "not RAM");
+        prev_end = pmm_ram[i].end;
+    }
 
     for (int i = 0; i <= PMM_MAX_ORDER; i++) {
         pmm_free_lists[i] = PMM_PFN_NULL;
@@ -605,4 +673,10 @@ unsigned long pmm_get_free_pages(void)
 unsigned long pmm_get_total_pages(void)
 {
     return pmm_managed_pages;
+}
+
+int pmm_get_ram_ranges(const struct pmm_range **ranges)
+{
+    *ranges = pmm_ram;
+    return pmm_ram_count;
 }
