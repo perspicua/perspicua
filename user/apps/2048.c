@@ -247,7 +247,7 @@ static void play(struct game *g)
         term_present();
 
         int key = term_key(-1);
-        if (key == 'q' || key == 'Q') {
+        if (key == 'q' || key == 'Q' || key == TERM_KEY_EOF) {
             return;
         }
         if (key == 'r' || key == 'R') {

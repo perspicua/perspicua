@@ -272,7 +272,7 @@ static void play(struct game *g, int level)
         if (key == TERM_KEY_NONE) {
             continue;
         }
-        if (key == 'q' || key == 'Q') {
+        if (key == 'q' || key == 'Q' || key == TERM_KEY_EOF) {
             return;
         }
         if (key == 'r' || key == 'R') {

@@ -249,7 +249,7 @@ static int read_pattern(const char *name)
             }
             return len > 0;
         }
-        if (key == TERM_KEY_ESC) {
+        if (key == TERM_KEY_ESC || key == TERM_KEY_EOF) {
             return 0;
         }
         if (key == TERM_KEY_BACKSPACE) {
@@ -309,6 +309,7 @@ int main(int argc, char **argv)
         switch (key) {
             case 'q':
             case 'Q':
+            case TERM_KEY_EOF:
                 term_close();
                 return 0;
             case 'j':

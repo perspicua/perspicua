@@ -570,6 +570,7 @@ static int handle_key(int key)
         case 'q':
         case 'Q':
         case TERM_KEY_ESC:
+        case TERM_KEY_EOF:
             return 1;
         case 'c':
             sort_key = SORT_CPU;

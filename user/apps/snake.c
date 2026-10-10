@@ -243,6 +243,7 @@ static void play(struct game *g)
         switch (key) {
             case 'q':
             case 'Q':
+            case TERM_KEY_EOF:
                 return;
             case 'r':
             case 'R':

@@ -34,6 +34,7 @@
 
 // What term_key() returns besides plain bytes.
 #define TERM_KEY_NONE      (-1)
+#define TERM_KEY_EOF       (-2) // stdin is closed: no key will ever come
 #define TERM_KEY_ENTER     '\r'
 #define TERM_KEY_ESC       27
 #define TERM_KEY_BACKSPACE 127
@@ -52,7 +53,7 @@
 int term_open(void);
 void term_close(void);
 
-// Waits up to timeout_ms for a key (0 polls, negative waits forever).
+// Waits up to timeout_ms for a key (0 polls, negative waits forever, until a resume needs a redraw).
 int term_key(int timeout_ms);
 
 void term_clear(unsigned attr);
@@ -62,6 +63,8 @@ int term_print(int row, int col, const char *utf8, unsigned attr);
 void term_present(void);
 // Makes the next term_present() repaint the whole screen.
 void term_redraw(void);
+// Shows the terminal's cursor at (row, col) after each term_present(); a row of -1 hides it.
+void term_cursor(int row, int col);
 // Writes the off-screen buffer to stdout as plain text, for output that is not a screen.
 void term_dump(void);
 

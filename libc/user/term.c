@@ -41,6 +41,8 @@ static char out_buf[OUT_MAX];
 static int out_len;
 static int cur_row = -1, cur_col = -1;
 static int cur_attr = -1;
+static int cursor_row = -1, cursor_col;
+static int cursor_shown;
 
 static const int caught[] = {SIGINT, SIGTERM, SIGTSTP, SIGCONT};
 static struct sigaction old_actions[sizeof(caught) / sizeof(caught[0])];
@@ -136,6 +138,7 @@ static void take_terminal(void)
         fcntl(0, F_SETFL, saved_flags | O_NONBLOCK);
     }
     write_str(SCREEN_TAKE);
+    cursor_shown = 0;
     repaint = 1;
 }
 
@@ -181,6 +184,7 @@ int term_open(void)
     klen = 0;
     esc_since = 0;
     out_len = 0;
+    cursor_row = -1;
 
     for (size_t i = 0; i < sizeof(caught) / sizeof(caught[0]); i++) {
         set_handler(caught[i], caught[i] == SIGCONT ? on_continue : on_leave, &old_actions[i]);
@@ -325,6 +329,11 @@ int term_key(int timeout_ms)
     unsigned long start = term_ms();
 
     for (;;) {
+        // After Ctrl-Z and fg the screen is blank; a caller waiting forever would never redraw it.
+        if (repaint && timeout_ms < 0) {
+            return TERM_KEY_NONE;
+        }
+
         while (klen > 0) {
             int used;
             int key = term_decode(kbuf, klen, &used);
@@ -355,6 +364,16 @@ int term_key(int timeout_ms)
         if (n > 0) {
             klen += n;
             continue;
+        }
+        if (n == 0) {
+            // Nothing more will come, so a pending ESC stands alone.
+            if (klen > 0) {
+                memmove(kbuf, kbuf + 1, (size_t)(klen - 1));
+                klen--;
+                esc_since = 0;
+                return TERM_KEY_ESC;
+            }
+            return TERM_KEY_EOF;
         }
 
         if (timeout_ms >= 0 && term_ms() - start >= (unsigned long)timeout_ms) {
@@ -416,6 +435,15 @@ int term_print(int row, int col, const char *utf8, unsigned attr)
     return col - start;
 }
 
+static void emit_move(int row, int col)
+{
+    emit("\033[", 2);
+    emit_num(row + 1);
+    emit(";", 1);
+    emit_num(col + 1);
+    emit("H", 1);
+}
+
 static int color_code(unsigned field)
 {
     return field ? (int)field - 1 : TERM_DEFAULT;
@@ -455,11 +483,7 @@ void term_present(void)
                 continue;
             }
             if (r != cur_row || c != cur_col) {
-                emit("\033[", 2);
-                emit_num(r + 1);
-                emit(";", 1);
-                emit_num(c + 1);
-                emit("H", 1);
+                emit_move(r, c);
             }
             if (want->attr != cur_attr) {
                 emit_attr(want->attr);
@@ -474,12 +498,33 @@ void term_present(void)
             }
         }
     }
+
+    if (cursor_row >= 0 && cursor_row < TERM_ROWS && cursor_col >= 0 && cursor_col < TERM_COLS) {
+        if (cursor_row != cur_row || cursor_col != cur_col) {
+            emit_move(cursor_row, cursor_col);
+            cur_row = cursor_row;
+            cur_col = cursor_col;
+        }
+        if (!cursor_shown) {
+            emit("\033[?25h", 6);
+            cursor_shown = 1;
+        }
+    } else if (cursor_shown) {
+        emit("\033[?25l", 6);
+        cursor_shown = 0;
+    }
     flush();
 }
 
 void term_redraw(void)
 {
     repaint = 1;
+}
+
+void term_cursor(int row, int col)
+{
+    cursor_row = row;
+    cursor_col = col;
 }
 
 static int row_end(int r)

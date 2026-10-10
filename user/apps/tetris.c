@@ -356,7 +356,7 @@ static void play(struct game *g)
             next_fall = term_ms() + (unsigned long)fall_interval_ms(g->level);
             continue;
         }
-        if (key == 'q' || key == 'Q') {
+        if (key == 'q' || key == 'Q' || key == TERM_KEY_EOF) {
             return;
         }
 
