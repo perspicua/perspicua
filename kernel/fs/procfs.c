@@ -26,6 +26,7 @@
 #include "sched/sched.h"
 #include "arch/exception.h"
 #include "arch/irq.h"
+#include "driver/fb.h"
 #include "driver/mailbox.h"
 
 static struct vfs_vnode root_vnode_struct;
@@ -238,6 +239,17 @@ static int procfs_gen_clock(char *buf, int size)
     uint32_t flags[2] = {0, 0};
     if (mbox_query(MBOX_TAG_THROTTLED, flags) == 0) {
         procfs_append(buf, &pos, size, "throttled 0x%x\n", flags[0]);
+    }
+    return pos;
+}
+
+// The framebuffer's geometry; pitch is the bytes per row, which the firmware may pad.
+static int procfs_gen_fb(char *buf, int size)
+{
+    int pos = 0;
+    if (fb_info.ptr) {
+        procfs_append(buf, &pos, size, "width %u\nheight %u\npitch %u\n", fb_info.width,
+                      fb_info.height, fb_info.pitch);
     }
     return pos;
 }
@@ -483,7 +495,7 @@ static const struct procfs_static_file {
     {"meminfo", procfs_gen_meminfo},     {"interrupts", procfs_gen_interrupts},
     {"schedstat", procfs_gen_schedstat}, {"mounts", procfs_gen_mounts},
     {"cpuinfo", procfs_gen_cpuinfo},     {"stat", procfs_gen_stat},
-    {"clock", procfs_gen_clock},
+    {"clock", procfs_gen_clock},         {"fb", procfs_gen_fb},
 };
 
 #define PROCFS_STATIC_COUNT (sizeof(procfs_static_files) / sizeof(procfs_static_files[0]))

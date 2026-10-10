@@ -20,6 +20,7 @@
 static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
+static int console_hidden;
 
 static void fb_console_scroll(void)
 {
@@ -40,6 +41,9 @@ static void fb_console_scroll(void)
 static int ansi_state = 0;
 static void fb_console_putc_unlocked(char c)
 {
+    if (console_hidden) {
+        return;
+    }
     if (ansi_state == 0) {
         if (c == '\033') {
             ansi_state = 1;
@@ -127,5 +131,14 @@ void fb_console_puts(const char *s)
     while (*s) {
         fb_console_putc_unlocked(*s++);
     }
+    spin_unlock_irqrestore(&fb_console_lock, flags);
+}
+
+void fb_console_hide(int hidden)
+{
+    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+    console_hidden = hidden;
+    // A sequence cut off while hidden must not swallow what comes after it.
+    ansi_state = 0;
     spin_unlock_irqrestore(&fb_console_lock, flags);
 }

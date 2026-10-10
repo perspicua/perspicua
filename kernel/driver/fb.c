@@ -11,6 +11,8 @@
 #include "uapi/errno.h"
 #include "uapi/mman.h"
 
+#include "core/lock.h"
+#include "driver/fb_console.h"
 #include "driver/mailbox.h"
 #include "fs/devfs.h"
 #include "mm/addr.h"
@@ -26,9 +28,41 @@ static struct vfs_vnode_ops fb_vfs_ops;
 
 struct fb_info_struct fb_info;
 
+// Open files that have mapped the screen; while any stays open the console keeps off it.
+#define FB_MAX_OWNERS 8
+static struct vfs_file *fb_owners[FB_MAX_OWNERS];
+static spinlock_t fb_owner_lock = SPINLOCK_INIT;
+
+static void fb_track_owner(struct vfs_file *file, int owns)
+{
+    unsigned long flags = spin_lock_irqsave(&fb_owner_lock);
+    int count = 0;
+    struct vfs_file **slot = NULL;
+    for (int i = 0; i < FB_MAX_OWNERS; i++) {
+        if (fb_owners[i] == file) {
+            slot = &fb_owners[i];
+        } else if (!fb_owners[i] && !slot && owns) {
+            slot = &fb_owners[i];
+        }
+    }
+    if (slot) {
+        *slot = owns ? file : NULL;
+    }
+    for (int i = 0; i < FB_MAX_OWNERS; i++) {
+        count += fb_owners[i] != NULL;
+    }
+    fb_console_hide(count > 0);
+    spin_unlock_irqrestore(&fb_owner_lock, flags);
+}
+
+static int fb_close(struct vfs_file *file)
+{
+    fb_track_owner(file, 0);
+    return 0;
+}
+
 static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int prot, int flags)
 {
-    (void)file;
     (void)flags;
 
     if (!fb_info.ptr || fb_info.size == 0) {
@@ -64,12 +98,13 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
         }
     }
 
+    fb_track_owner(file, 1);
     return 0;
 }
 
 void fb_init(void)
 {
-    mbox[0] = 26 * 4;
+    mbox[0] = 30 * 4;
     mbox[1] = 0;
     mbox[2] = 0x48003; // Physical Width/Height
     mbox[3] = 8;
@@ -85,22 +120,26 @@ void fb_init(void)
     mbox[13] = 4;
     mbox[14] = 4;
     mbox[15] = 32;
-    mbox[16] = 0x40001; // Allocate Buffer
-    mbox[17] = 8;
-    mbox[18] = 8;
-    mbox[19] = 4096;    // Request: alignment / Response: address
-    mbox[20] = 0;       // Response: size
-    mbox[21] = 0x40008; // Get Pitch
-    mbox[22] = 4;
-    mbox[23] = 4;
-    mbox[24] = 0;
-    mbox[25] = 0;
+    mbox[16] = 0x48006; // Pixel order: BGR in memory, so a 0x00RRGGBB word shows as written
+    mbox[17] = 4;
+    mbox[18] = 4;
+    mbox[19] = 0;
+    mbox[20] = 0x40001; // Allocate Buffer
+    mbox[21] = 8;
+    mbox[22] = 8;
+    mbox[23] = 4096;    // Request: alignment / Response: address
+    mbox[24] = 0;       // Response: size
+    mbox[25] = 0x40008; // Get Pitch
+    mbox[26] = 4;
+    mbox[27] = 4;
+    mbox[28] = 0;
+    mbox[29] = 0;
 
     mbox_call(mbox);
 
     // Response code 0x80000000 indicates success
-    if (mbox[20] != 0 && mbox[1] == 0x80000000) {
-        uintptr_t phys_addr = mbox[19] & 0x3FFFFFFF;
+    if (mbox[24] != 0 && mbox[1] == 0x80000000) {
+        uintptr_t phys_addr = mbox[23] & 0x3FFFFFFF;
         if (phys_addr == 0) {
             pr_err("fb: GPU returned invalid address\n");
             return;
@@ -108,8 +147,8 @@ void fb_init(void)
 
         fb_info.width = mbox[5];
         fb_info.height = mbox[6];
-        fb_info.size = mbox[20];
-        fb_info.pitch = mbox[24];
+        fb_info.size = mbox[24];
+        fb_info.pitch = mbox[28];
         fb_info.ptr = (unsigned char *)P2V(phys_addr);
 
         // Ensure memory manager knows this region is hardware-owned
@@ -125,6 +164,7 @@ void fb_init(void)
 void fb_register_device(void)
 {
     fb_vfs_ops.mmap = fb_mmap;
+    fb_vfs_ops.close = fb_close;
     devfs_register_device("fb0", &fb_vfs_ops, NULL);
 }
 
