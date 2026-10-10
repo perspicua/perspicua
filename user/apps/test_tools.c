@@ -2,8 +2,9 @@
  * test_tools.c - Runs the command-line tools on known input and checks their output.
  *
  * Each tool is found through execvp, fed stdin through a pipe, and its stdout
- * compared byte for byte. find and du get a small tree under /tt_tmp, removed
- * at the end.
+ * compared byte for byte. find and du get a small tree under /tt_tmp, and edit
+ * is typed at through stdin and judged by the file it saves under /tt_edit;
+ * both are removed at the end.
  */
 
 #include <stddef.h>
@@ -18,6 +19,24 @@
 
 #define OUT_MAX 4096
 #define TREE    "/tt_tmp"
+#define EDIT    "/tt_edit"
+
+// Keys as the console sends them.
+#define UP    "\033[A"
+#define DOWN  "\033[B"
+#define RIGHT "\033[C"
+#define LEFT  "\033[D"
+#define HOME  "\033[H"
+#define END   "\033[F"
+#define PGDN  "\033[6~"
+#define DEL   "\033[3~"
+#define BS    "\177"
+#define ENTER "\r"
+#define ESC   "\033"
+#define SAVE  "\023"
+#define QUIT  "\021"
+#define FIND  "\006"
+#define GOTO  "\007"
 
 static int passed, failed;
 
@@ -56,10 +75,19 @@ static int run(const char *input, char *out, char *const argv[])
     }
     close(in[1]);
 
+    // Output past OUT_MAX is drained and dropped, so a program that draws a lot never blocks.
     int n = 0;
-    int r;
-    while (n < OUT_MAX - 1 && (r = read(outp[0], out + n, (size_t)(OUT_MAX - 1 - n))) > 0) {
-        n += r;
+    char spill[256];
+    for (;;) {
+        int room = OUT_MAX - 1 - n;
+        int r =
+            room > 0 ? read(outp[0], out + n, (size_t)room) : read(outp[0], spill, sizeof(spill));
+        if (r <= 0) {
+            break;
+        }
+        if (room > 0) {
+            n += r;
+        }
     }
     out[n] = '\0';
     close(outp[0]);
@@ -177,6 +205,120 @@ static void test_ptop(void)
     check("ptop refuses unknown flags", run(NULL, out, (char *[]){"ptop", "-x", NULL}) != 0);
 }
 
+// Returns the file's length with its text in out, or -1 if it cannot be read.
+static int read_text(const char *path, char *out, int size)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    int n = 0, r;
+    while (n < size - 1 && (r = read(fd, out + n, (size_t)(size - 1 - n))) > 0) {
+        n += r;
+    }
+    out[n] = '\0';
+    close(fd);
+    return n;
+}
+
+static void write_text(const char *path, const char *text)
+{
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd >= 0) {
+        write(fd, text, strlen(text));
+        close(fd);
+    }
+}
+
+// Types keys into edit on a file holding before (none if NULL) and checks what it leaves behind.
+static int edits(const char *before, const char *keys, const char *after)
+{
+    unlink(EDIT "/f.txt");
+    if (before) {
+        write_text(EDIT "/f.txt", before);
+    }
+    char out[OUT_MAX], got[OUT_MAX];
+    int status = run(keys, out, (char *[]){"edit", EDIT "/f.txt", NULL});
+    int n = read_text(EDIT "/f.txt", got, sizeof(got));
+    struct stat st;
+    int tmp_left = stat(EDIT "/f.txt.tmp", &st) == 0;
+    if (status != 0 || n < 0 || strcmp(got, after) != 0 || tmp_left) {
+        printf("  edit: status %d, got \"%s\"%s\n", status, n < 0 ? "(no file)" : got,
+               tmp_left ? ", f.txt.tmp left behind" : "");
+        return 0;
+    }
+    return 1;
+}
+
+// n copies of line, each ending in a newline, with prefix put in front of the one at index at.
+static void lines_of(char *out, int n, const char *line, int at, const char *prefix)
+{
+    out[0] = '\0';
+    for (int i = 0; i < n; i++) {
+        if (i == at) {
+            strcat(out, prefix);
+        }
+        strcat(out, line);
+        strcat(out, "\n");
+    }
+}
+
+static void test_edit(void)
+{
+    mkdir(EDIT, 0755);
+
+    check("edit types into a new file",
+          edits(NULL, "hello" ENTER "\tworld" SAVE QUIT, "hello\n\tworld\n"));
+    check("edit saves an empty buffer as an empty file", edits(NULL, SAVE QUIT, ""));
+    check("edit joins lines with Backspace and Delete",
+          edits("abc\ndef\nghi\n", DOWN BS "X" END DEL SAVE QUIT, "abcXdefghi\n"));
+    check("edit keeps the column across a short line",
+          edits("abcdefgh\nab\nabcdefgh\n", END DOWN DOWN "X" SAVE QUIT,
+                "abcdefgh\nab\nabcdefghX\n"));
+    check("edit steps over a UTF-8 character",
+          edits("\xc3\xa9\n", RIGHT "y" LEFT LEFT "x" SAVE QUIT, "x\xc3\xa9y\n"));
+    check("edit goes to a line",
+          edits("1\n2\n3\n4\n", GOTO "3" ENTER "X" SAVE QUIT, "1\n2\nX3\n4\n"));
+
+    check("edit finds as it types",
+          edits("one\ntwo\nthree\n", FIND "thr" ENTER "X" SAVE QUIT, "one\ntwo\nXthree\n"));
+    check("edit finds the next match, and Esc goes back",
+          edits("ab ab ab\n", FIND "ab" DOWN ENTER "X" FIND "ab" DOWN ESC "Y" SAVE QUIT,
+                "ab XYab ab\n"));
+    check("edit finds backwards round the end",
+          edits("ab ab ab\n", FIND "ab" UP ENTER "Z" SAVE QUIT, "ab ab Zab\n"));
+
+    check("edit asks before throwing changes away",
+          edits("keep\n", "zz" QUIT SAVE QUIT, "zzkeep\n"));
+    check("edit throws changes away on a second Ctrl-Q", edits("keep\n", "zz" QUIT QUIT, "keep\n"));
+    check("edit asks again after more typing",
+          edits("keep\n", "z" QUIT "y" QUIT SAVE QUIT, "zykeep\n"));
+    check("edit ends without saving when its input does", edits("keep\n", "zz", "keep\n"));
+
+    static char before[OUT_MAX], after[OUT_MAX];
+    char wide[101];
+    memset(wide, 'a', 100);
+    wide[100] = '\0';
+    lines_of(before, 1, wide, -1, "");
+    snprintf(after, sizeof(after), "A%sZ\n", wide);
+    check("edit scrolls along a long line", edits(before, END "Z" HOME "A" SAVE QUIT, after));
+
+    lines_of(before, 30, "x", -1, "");
+    lines_of(after, 30, "x", 22, "Y");
+    check("edit pages down", edits(before, PGDN "Y" SAVE QUIT, after));
+
+    char out[OUT_MAX], got[OUT_MAX];
+    unlink(EDIT "/named.txt");
+    int status = run("hi" SAVE EDIT "/named.txt" ENTER QUIT, out, (char *[]){"edit", NULL});
+    check("edit asks for a name on the first save",
+          status == 0 && read_text(EDIT "/named.txt", got, sizeof(got)) >= 0
+              && strcmp(got, "hi\n") == 0);
+
+    unlink(EDIT "/named.txt");
+    unlink(EDIT "/f.txt");
+    rmdir(EDIT);
+}
+
 static void test_find_du(void)
 {
     mkdir(TREE, 0755);
@@ -215,6 +357,7 @@ int main(void)
     test_seq_sleep_clear();
     test_free_uptime();
     test_ptop();
+    test_edit();
     test_find_du();
 
     if (failed) {
