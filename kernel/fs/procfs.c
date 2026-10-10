@@ -26,6 +26,7 @@
 #include "sched/sched.h"
 #include "arch/exception.h"
 #include "arch/irq.h"
+#include "driver/mailbox.h"
 
 static struct vfs_vnode root_vnode_struct;
 static struct vfs_vnode *procfs_root_vnode = &root_vnode_struct;
@@ -209,6 +210,34 @@ static int procfs_gen_cpuinfo(char *buf, int size)
     for (int i = 0; i < CPU_MAX_CORES; i++) {
         procfs_append(buf, &pos, size,
                       "processor\t: %d\nmodel name\t: ARM Cortex-A72 (BCM2711)\n\n", i);
+    }
+    return pos;
+}
+
+static int arm_clock(uint32_t tag, uint32_t *hz)
+{
+    uint32_t v[2] = {MBOX_CLOCK_ARM, 0};
+    if (mbox_query(tag, v) != 0 || v[1] == 0) {
+        return -1;
+    }
+    *hz = v[1];
+    return 0;
+}
+
+// The ARM clock as the firmware runs it, and the throttling that can hold it below its maximum.
+static int procfs_gen_clock(char *buf, int size)
+{
+    int pos = 0;
+    uint32_t hz;
+    if (arm_clock(MBOX_TAG_MEASURED_RATE, &hz) == 0 || arm_clock(MBOX_TAG_CLOCK_RATE, &hz) == 0) {
+        procfs_append(buf, &pos, size, "arm_mhz %u\n", hz / 1000000);
+    }
+    if (arm_clock(MBOX_TAG_MAX_CLOCK_RATE, &hz) == 0) {
+        procfs_append(buf, &pos, size, "arm_max_mhz %u\n", hz / 1000000);
+    }
+    uint32_t flags[2] = {0, 0};
+    if (mbox_query(MBOX_TAG_THROTTLED, flags) == 0) {
+        procfs_append(buf, &pos, size, "throttled 0x%x\n", flags[0]);
     }
     return pos;
 }
@@ -454,6 +483,7 @@ static const struct procfs_static_file {
     {"meminfo", procfs_gen_meminfo},     {"interrupts", procfs_gen_interrupts},
     {"schedstat", procfs_gen_schedstat}, {"mounts", procfs_gen_mounts},
     {"cpuinfo", procfs_gen_cpuinfo},     {"stat", procfs_gen_stat},
+    {"clock", procfs_gen_clock},
 };
 
 #define PROCFS_STATIC_COUNT (sizeof(procfs_static_files) / sizeof(procfs_static_files[0]))

@@ -11,6 +11,7 @@
 #include "stdio.h"
 #include "panic.h"
 
+#include "core/lock.h"
 #include "mm/addr.h"
 #include "devicetree/fdt.h"
 
@@ -20,6 +21,9 @@
 static volatile unsigned int *mbox_read = NULL;
 static volatile unsigned int *mbox_status = NULL;
 static volatile unsigned int *mbox_write = NULL;
+
+// One request in flight at a time: a reply is matched by its channel alone.
+static spinlock_t mbox_lock = SPINLOCK_INIT;
 
 static int bcm2835_mbox_probe(struct device *dev)
 {
@@ -41,7 +45,7 @@ CORE_DRIVER(bcm2835_mbox) = {
     .probe = bcm2835_mbox_probe,
 };
 
-void mbox_call(unsigned int *buffer)
+static void mbox_exchange(unsigned int *buffer)
 {
     unsigned long size = (unsigned long)buffer[0];
     unsigned long addr = (unsigned long)buffer;
@@ -85,4 +89,34 @@ void mbox_call(unsigned int *buffer)
             return;
         }
     }
+}
+
+void mbox_call(unsigned int *buffer)
+{
+    unsigned long flags = spin_lock_irqsave(&mbox_lock);
+    mbox_exchange(buffer);
+    spin_unlock_irqrestore(&mbox_lock, flags);
+}
+
+int mbox_query(uint32_t tag, uint32_t value[2])
+{
+    // Static, so it lives in the kernel image inside the GPU's first GB; a task's stack may not.
+    static unsigned int __attribute__((aligned(16))) msg[8];
+
+    unsigned long flags = spin_lock_irqsave(&mbox_lock);
+    msg[0] = sizeof(msg);
+    msg[1] = 0;
+    msg[2] = tag;
+    msg[3] = 8;
+    msg[4] = 0;
+    msg[5] = value[0];
+    msg[6] = value[1];
+    msg[7] = 0;
+    mbox_exchange(msg);
+    // The firmware sets bit 31 of a tag's length word once it has answered that tag.
+    int answered = msg[1] == 0x80000000 && (msg[4] & 0x80000000);
+    value[0] = msg[5];
+    value[1] = msg[6];
+    spin_unlock_irqrestore(&mbox_lock, flags);
+    return answered ? 0 : -1;
 }

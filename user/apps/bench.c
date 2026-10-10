@@ -342,6 +342,7 @@ static void measure_isolated(const struct bench *b)
     int pid = fork();
     if (pid == 0) {
         measure(b);
+        fflush(stdout);
         _exit(0);
     }
     if (pid < 0) {
@@ -362,6 +363,83 @@ static const struct bench *find(const char *name)
     return NULL;
 }
 
+// A value from /proc/clock, or -1 if the firmware did not report it.
+static long clock_value(const char *text, const char *key)
+{
+    size_t len = strlen(key);
+    for (const char *line = text; line;) {
+        if (strncmp(line, key, len) == 0 && line[len] == ' ') {
+            const char *p = line + len + 1;
+            int base = 10;
+            if (p[0] == '0' && p[1] == 'x') {
+                base = 16;
+                p += 2;
+            }
+            long v = 0;
+            for (;; p++) {
+                int d = (*p >= '0' && *p <= '9')   ? *p - '0'
+                        : (*p >= 'a' && *p <= 'f') ? *p - 'a' + 10
+                                                   : -1;
+                if (d < 0 || d >= base) {
+                    return v;
+                }
+                v = v * base + d;
+            }
+        }
+        line = strchr(line, '\n');
+        line = line ? line + 1 : NULL;
+    }
+    return -1;
+}
+
+// The firmware's throttle bits: 0-3 hold now, 16-19 have held at some point since boot.
+static void list_throttling(long flags, int shift, const char *label)
+{
+    static const char *const reasons[] = {"under-voltage", "frequency capped", "throttled",
+                                          "soft temperature limit"};
+    const char *sep = label;
+    for (int i = 0; i < 4; i++) {
+        if (flags & (1L << (shift + i))) {
+            printf("%s%s", sep, reasons[i]);
+            sep = ", ";
+        }
+    }
+}
+
+// The CPU clock heads the table, so a run on a slowed-down board shows as one.
+static void print_clock(void)
+{
+    char text[256];
+    int fd = open("/proc/clock", O_RDONLY);
+    if (fd < 0) {
+        return;
+    }
+    int n = read(fd, text, sizeof(text) - 1);
+    close(fd);
+    if (n <= 0) {
+        return;
+    }
+    text[n] = '\0';
+
+    long mhz = clock_value(text, "arm_mhz");
+    long max = clock_value(text, "arm_max_mhz");
+    long flags = clock_value(text, "throttled");
+    if (mhz < 0) {
+        return;
+    }
+    printf("  cpu      %ld MHz", mhz);
+    if (max > 0) {
+        printf(" of %ld", max);
+    }
+    if (flags == 0) {
+        printf(", not throttled");
+    } else if (flags > 0) {
+        list_throttling(flags, 0, "; now: ");
+        list_throttling(flags, 16, "; since boot: ");
+    }
+    printf("\n");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "--noop") == 0) {
@@ -380,6 +458,7 @@ int main(int argc, char **argv)
     }
 
     unsigned long start = now_ms();
+    print_clock();
     printf("  %-8s %9s %11s %12s   %s\n", "test", "runs", "per run", "rate", "what");
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {

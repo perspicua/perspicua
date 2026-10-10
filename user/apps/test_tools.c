@@ -195,6 +195,17 @@ static void test_free_uptime(void)
                         && strstr(out, "process") != NULL);
 }
 
+static void test_clock(void)
+{
+    char out[OUT_MAX];
+    int status = run(NULL, out, (char *[]){"cat", "/proc/clock", NULL});
+    check("/proc/clock",
+          status == 0 && strstr(out, "arm_mhz ") != NULL && strstr(out, "throttled 0x") != NULL);
+    status = run(NULL, out, (char *[]){"bench", "syscall", NULL});
+    check("bench heads its table with the cpu clock",
+          status == 0 && strncmp(out, "  cpu ", 6) == 0 && strstr(out, " MHz") != NULL);
+}
+
 static void test_ptop(void)
 {
     char out[OUT_MAX];
@@ -356,6 +367,7 @@ int main(void)
     test_sort_uniq();
     test_seq_sleep_clear();
     test_free_uptime();
+    test_clock();
     test_ptop();
     test_edit();
     test_find_du();
