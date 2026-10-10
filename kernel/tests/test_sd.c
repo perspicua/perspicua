@@ -4,9 +4,13 @@
 #include "test.h"
 #include "driver/block.h"
 #include "string.h"
+#include "uapi/errno.h"
 
 // Offset of the 0x55AA boot signature within a 512-byte sector.
 #define BOOT_SIG_OFFSET 510
+
+// The multi-block checks use the card's last sectors, saved first and restored after.
+#define SCRATCH_BLOCKS 16
 
 void test_sd(void)
 {
@@ -81,10 +85,13 @@ void test_sd(void)
 
         wr = dev->write_blocks(dev, pattern, scratch, 1);
 
+        // The write went through the cache too; only a dropped cache proves the card has it.
+        block_cache_invalidate();
         memset(readback, 0, sizeof(readback));
         rd_back = dev->read_blocks(dev, readback, scratch, 1);
 
         restore = dev->write_blocks(dev, orig, scratch, 1);
+        block_cache_invalidate();
 
         static uint8_t verify[512];
         memset(verify, 0, sizeof(verify));
@@ -99,6 +106,63 @@ void test_sd(void)
     TEST_ASSERT("written data reads back", memcmp(readback, pattern, 512) == 0);
     TEST_ASSERT_EQ("restore scratch block", restore, 0);
     TEST_ASSERT("scratch block restored", restore_ok != 0);
+
+    /*
+     * Multi-block transfers, in shapes of 1, 13 and 2 blocks across the
+     * scratch range. Every block of the pattern differs, so a block landing
+     * in the wrong place shows. Everything is put back before any assert.
+     */
+    size_t base = dev->block_count - SCRATCH_BLOCKS;
+    static uint8_t saved[SCRATCH_BLOCKS * 512];
+    static uint8_t blocks[SCRATCH_BLOCKS * 512];
+    static uint8_t got[SCRATCH_BLOCKS * 512];
+    int saved_rc = dev->read_blocks(dev, saved, base, SCRATCH_BLOCKS);
+    int w1 = -1, w13 = -1, w2 = -1, whole_rc = -1, whole_ok = 0, singles_ok = 0;
+    int back_rc = -1, back_ok = 0;
+
+    if (saved_rc == 0) {
+        for (size_t i = 0; i < sizeof(blocks); i++) {
+            blocks[i] = (uint8_t)((i / 512) * 31 + (i % 512) * 7 + 1);
+        }
+        w1 = dev->write_blocks(dev, blocks, base, 1);
+        w13 = dev->write_blocks(dev, blocks + 512, base + 1, 13);
+        w2 = dev->write_blocks(dev, blocks + 14 * 512, base + 14, 2);
+
+        block_cache_invalidate();
+        memset(got, 0, sizeof(got));
+        whole_rc = dev->read_blocks(dev, got, base, SCRATCH_BLOCKS);
+        whole_ok = memcmp(got, blocks, sizeof(blocks)) == 0;
+
+        block_cache_invalidate();
+        singles_ok = 1;
+        for (size_t b = 0; b < SCRATCH_BLOCKS; b++) {
+            memset(got, 0, 512);
+            if (dev->read_blocks(dev, got, base + b, 1) != 0
+                || memcmp(got, blocks + b * 512, 512) != 0) {
+                singles_ok = 0;
+            }
+        }
+
+        back_rc = dev->write_blocks(dev, saved, base, SCRATCH_BLOCKS);
+        block_cache_invalidate();
+        if (back_rc == 0 && dev->read_blocks(dev, got, base, SCRATCH_BLOCKS) == 0) {
+            back_ok = memcmp(got, saved, sizeof(saved)) == 0;
+        }
+    }
+
+    TEST_ASSERT_EQ("read the multi-block scratch range", saved_rc, 0);
+    TEST_ASSERT_EQ("one-block write", w1, 0);
+    TEST_ASSERT_EQ("13-block write", w13, 0);
+    TEST_ASSERT_EQ("2-block write", w2, 0);
+    TEST_ASSERT_EQ("16-block read", whole_rc, 0);
+    TEST_ASSERT("multi-block writes read back whole", whole_ok);
+    TEST_ASSERT("multi-block writes read back block by block", singles_ok);
+    TEST_ASSERT_EQ("restore the scratch range", back_rc, 0);
+    TEST_ASSERT("scratch range restored", back_ok);
+
+    static uint8_t spill[1024];
+    TEST_ASSERT_EQ("a read running off the end is refused",
+                   dev->read_blocks(dev, spill, dev->block_count - 1, 2), -EINVAL);
 
     TEST_SUITE_END("SD Driver");
 }

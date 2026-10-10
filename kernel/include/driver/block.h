@@ -33,4 +33,9 @@ struct block_device *block_device_lookup(const char *name);
 
 int block_cache_sync(void);
 
+#ifdef CONFIG_TESTS
+// Drops every clean cached block, so the next read of it reaches the device.
+void block_cache_invalidate(void);
+#endif
+
 #endif // PERSPICUA_DRIVER_BLOCK_H

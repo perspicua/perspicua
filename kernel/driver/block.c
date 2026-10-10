@@ -96,131 +96,137 @@ struct block_ops_wrapper {
                              size_t num_blocks);
 };
 
+// Caches a copy of a block just read; a failure only sends the next read of it to the device.
+static void cache_fill(struct block_device *dev, size_t block_nr, const void *src)
+{
+    void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
+    if (!temp_buf) {
+        return;
+    }
+    memcpy(temp_buf, src, dev->block_size);
+
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
+    struct block_cache_entry *entry = cache_lookup(dev, block_nr);
+    if (entry) {
+        spin_unlock_irqrestore(&cache_lock, flags);
+        pmm_free_pages(temp_buf);
+        return;
+    }
+
+    // Evict if needed
+    size_t pages_needed = (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (cache_count >= BLOCK_CACHE_SIZE) {
+        struct block_cache_entry *evict = lru_tail;
+
+        /* Re-tested after every unlock: the tail can be a different entry
+         * by then, and evicting that one unflushed would lose its write.
+         * Nothing sets dirty while the cache is write-through. */
+        while (evict && evict->dirty) {
+            // Must release lock during I/O
+            void *evict_data = evict->data;
+            size_t evict_block_nr = evict->block_nr;
+            struct block_device *evict_dev = evict->dev;
+            spin_unlock_irqrestore(&cache_lock, flags);
+
+            struct block_ops_wrapper *evict_ops =
+                (struct block_ops_wrapper *)evict_dev->private_data;
+            int wres = evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
+
+            flags = spin_lock_irqsave(&cache_lock);
+
+            if (wres != 0) {
+                pmm_free_pages(temp_buf);
+                spin_unlock_irqrestore(&cache_lock, flags);
+                return;
+            }
+
+            // Only clean entries are ever freed, so this one stays valid.
+            evict->dirty = 0;
+            evict = lru_tail;
+        }
+
+        if (!evict) {
+            pmm_free_pages(temp_buf);
+            spin_unlock_irqrestore(&cache_lock, flags);
+            return;
+        }
+
+        lru_remove(evict);
+        size_t eh = block_hash(evict->dev, evict->block_nr);
+        struct block_cache_entry **pp = &hash_table[eh];
+        while (*pp && *pp != evict) {
+            pp = &((*pp)->next);
+        }
+        if (*pp == evict) {
+            *pp = evict->next;
+        }
+
+        // If the evicted entry's buffer size doesn't match, reallocate
+        size_t old_pages = (evict->dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
+        if (old_pages != pages_needed) {
+            pmm_free_pages(evict->data);
+            evict->data = temp_buf;
+        } else {
+            memcpy(evict->data, temp_buf, dev->block_size);
+            pmm_free_pages(temp_buf);
+        }
+        entry = evict;
+    } else {
+        entry = slab_alloc(sizeof(struct block_cache_entry));
+        if (!entry) {
+            pmm_free_pages(temp_buf);
+            spin_unlock_irqrestore(&cache_lock, flags);
+            return;
+        }
+        entry->data = temp_buf;
+        cache_count++;
+    }
+
+    entry->dev = dev;
+    entry->block_nr = block_nr;
+    entry->dirty = 0;
+
+    size_t h = block_hash(dev, block_nr);
+    entry->next = hash_table[h];
+    hash_table[h] = entry;
+    lru_add_head(entry);
+
+    spin_unlock_irqrestore(&cache_lock, flags);
+}
+
 static int cached_read_blocks(struct block_device *dev, void *buffer, size_t start_block,
                               size_t num_blocks)
 {
     struct block_ops_wrapper *ops = (struct block_ops_wrapper *)dev->private_data;
-    unsigned long flags = spin_lock_irqsave(&cache_lock);
+    uint8_t *out = buffer;
+    size_t bs = dev->block_size;
 
-    for (size_t i = 0; i < num_blocks; i++) {
-        size_t block_nr = start_block + i;
-        struct block_cache_entry *entry = cache_lookup(dev, block_nr);
-
+    for (size_t i = 0; i < num_blocks;) {
+        unsigned long flags = spin_lock_irqsave(&cache_lock);
+        struct block_cache_entry *entry = cache_lookup(dev, start_block + i);
         if (entry) {
-            memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
+            memcpy(out + i * bs, entry->data, bs);
+            spin_unlock_irqrestore(&cache_lock, flags);
+            i++;
             continue;
         }
 
-        // Miss: Must read from disk - release lock first to avoid holding it during I/O
+        // Misses that follow each other go to the device as one request.
+        size_t run = 1;
+        while (i + run < num_blocks && !cache_lookup(dev, start_block + i + run)) {
+            run++;
+        }
         spin_unlock_irqrestore(&cache_lock, flags);
 
-        void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
-        if (!temp_buf) {
-            return -ENOMEM;
-        }
-
-        int res = ops->orig_read_blocks(dev, temp_buf, block_nr, 1);
+        int res = ops->orig_read_blocks(dev, out + i * bs, start_block + i, run);
         if (res != 0) {
-            pmm_free_pages(temp_buf);
             return res;
         }
-
-        // Re-acquire lock to update cache
-        flags = spin_lock_irqsave(&cache_lock);
-
-        // Check if another thread cached it while we were reading
-        entry = cache_lookup(dev, block_nr);
-        if (entry) {
-            memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
-            pmm_free_pages(temp_buf);
-            continue;
+        for (size_t k = 0; k < run; k++) {
+            cache_fill(dev, start_block + i + k, out + (i + k) * bs);
         }
-
-        // Evict if needed
-        size_t pages_needed = (dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
-        if (cache_count >= BLOCK_CACHE_SIZE) {
-            struct block_cache_entry *evict = lru_tail;
-
-            /* Re-tested after every unlock: the tail can be a different entry
-             * by then, and evicting that one unflushed would lose its write.
-             * Nothing sets dirty while the cache is write-through. */
-            while (evict && evict->dirty) {
-                // Must release lock during I/O
-                void *evict_data = evict->data;
-                size_t evict_block_nr = evict->block_nr;
-                struct block_device *evict_dev = evict->dev;
-                spin_unlock_irqrestore(&cache_lock, flags);
-
-                struct block_ops_wrapper *evict_ops =
-                    (struct block_ops_wrapper *)evict_dev->private_data;
-                int wres = evict_ops->orig_write_blocks(evict_dev, evict_data, evict_block_nr, 1);
-
-                flags = spin_lock_irqsave(&cache_lock);
-
-                if (wres != 0) {
-                    pmm_free_pages(temp_buf);
-                    spin_unlock_irqrestore(&cache_lock, flags);
-                    return wres;
-                }
-
-                // Entries are recycled, never freed, so this stays valid.
-                evict->dirty = 0;
-                evict = lru_tail;
-            }
-
-            if (!evict) {
-                pmm_free_pages(temp_buf);
-                spin_unlock_irqrestore(&cache_lock, flags);
-                return -EIO;
-            }
-
-            lru_remove(evict);
-            size_t eh = block_hash(evict->dev, evict->block_nr);
-            struct block_cache_entry **pp = &hash_table[eh];
-            while (*pp && *pp != evict) {
-                pp = &((*pp)->next);
-            }
-            if (*pp == evict) {
-                *pp = evict->next;
-            }
-
-            // If the evicted entry's buffer size doesn't match, reallocate
-            size_t old_pages = (evict->dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE;
-            if (old_pages != pages_needed) {
-                pmm_free_pages(evict->data);
-                evict->data = temp_buf;
-            } else {
-                memcpy(evict->data, temp_buf, dev->block_size);
-                pmm_free_pages(temp_buf);
-            }
-            entry = evict;
-        } else {
-            entry = slab_alloc(sizeof(struct block_cache_entry));
-            if (!entry) {
-                pmm_free_pages(temp_buf);
-                spin_unlock_irqrestore(&cache_lock, flags);
-                return -ENOMEM;
-            }
-            entry->data = temp_buf;
-            cache_count++;
-        }
-
-        entry->dev = dev;
-        entry->block_nr = block_nr;
-        entry->dirty = 0;
-        if (entry->data != temp_buf) {
-            // Data was copied to existing buffer
-        }
-
-        size_t h = block_hash(dev, block_nr);
-        entry->next = hash_table[h];
-        hash_table[h] = entry;
-        lru_add_head(entry);
-
-        memcpy((uint8_t *)buffer + i * dev->block_size, entry->data, dev->block_size);
+        i += run;
     }
-
-    spin_unlock_irqrestore(&cache_lock, flags);
     return 0;
 }
 
@@ -387,6 +393,32 @@ void block_device_register(struct block_device *dev)
 
     pr_info("block: registered /dev/%s with LRU cache (%d entries)\n", dev->name, BLOCK_CACHE_SIZE);
 }
+
+#ifdef CONFIG_TESTS
+void block_cache_invalidate(void)
+{
+    unsigned long flags = spin_lock_irqsave(&cache_lock);
+    struct block_cache_entry *entry = lru_head;
+    while (entry) {
+        struct block_cache_entry *next = entry->lru_next;
+        if (!entry->dirty) {
+            lru_remove(entry);
+            struct block_cache_entry **pp = &hash_table[block_hash(entry->dev, entry->block_nr)];
+            while (*pp && *pp != entry) {
+                pp = &((*pp)->next);
+            }
+            if (*pp == entry) {
+                *pp = entry->next;
+            }
+            pmm_free_pages(entry->data);
+            slab_free(entry);
+            cache_count--;
+        }
+        entry = next;
+    }
+    spin_unlock_irqrestore(&cache_lock, flags);
+}
+#endif
 
 struct block_device *block_device_lookup(const char *name)
 {

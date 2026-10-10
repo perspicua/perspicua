@@ -85,24 +85,32 @@ typedef struct {
 #define CMD_IDX_CHECK_EN (1 << 20)
 #define CMD_HAS_DATA     (1 << 21)
 #define CMD_IDX(i)       ((i & 0x3F) << 24)
+#define CMD_TYPE_ABORT   (3 << 22)
 
 // Transfer Mode Register Bits (Lower 16 bits of xfer_mode_cmd)
 #define XFER_BLOCK_COUNT_EN (1 << 1)
+#define XFER_AUTO_CMD12     (1 << 2)
 #define XFER_READ           (1 << 4)
 #define XFER_MULTI_BLOCK    (1 << 5)
 
+// The controller counts the blocks down and sends the closing CMD12 itself.
+#define XFER_MULTI (XFER_MULTI_BLOCK | XFER_BLOCK_COUNT_EN | XFER_AUTO_CMD12)
+
 // SD Commands
-#define CMD0   (CMD_IDX(0) | CMD_RESP_NONE)
-#define CMD2   (CMD_IDX(2) | CMD_RESP_136 | CMD_CRC_CHECK_EN)
-#define CMD3   (CMD_IDX(3) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
-#define CMD7   (CMD_IDX(7) | CMD_RESP_48_BUSY | CMD_CRC_CHECK_EN)
-#define CMD8   (CMD_IDX(8) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_IDX_CHECK_EN)
-#define CMD9   (CMD_IDX(9) | CMD_RESP_136 | CMD_CRC_CHECK_EN)
-#define CMD16  (CMD_IDX(16) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
-#define CMD17  (CMD_IDX(17) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA | XFER_READ)
-#define CMD24  (CMD_IDX(24) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA)
-#define CMD55  (CMD_IDX(55) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
-#define ACMD6  (CMD_IDX(6) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
+#define CMD0  (CMD_IDX(0) | CMD_RESP_NONE)
+#define CMD2  (CMD_IDX(2) | CMD_RESP_136 | CMD_CRC_CHECK_EN)
+#define CMD3  (CMD_IDX(3) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
+#define CMD7  (CMD_IDX(7) | CMD_RESP_48_BUSY | CMD_CRC_CHECK_EN)
+#define CMD8  (CMD_IDX(8) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_IDX_CHECK_EN)
+#define CMD9  (CMD_IDX(9) | CMD_RESP_136 | CMD_CRC_CHECK_EN)
+#define CMD12 (CMD_IDX(12) | CMD_RESP_48_BUSY | CMD_CRC_CHECK_EN | CMD_TYPE_ABORT)
+#define CMD16 (CMD_IDX(16) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
+#define CMD17 (CMD_IDX(17) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA | XFER_READ)
+#define CMD18 (CMD_IDX(18) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA | XFER_READ | XFER_MULTI)
+#define CMD24 (CMD_IDX(24) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA)
+#define CMD25 (CMD_IDX(25) | CMD_RESP_48 | CMD_CRC_CHECK_EN | CMD_HAS_DATA | XFER_MULTI)
+#define CMD55 (CMD_IDX(55) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
+#define ACMD6 (CMD_IDX(6) | CMD_RESP_48 | CMD_CRC_CHECK_EN)
 #define ACMD41 (CMD_IDX(41) | CMD_RESP_48)
 
 #define HOST_DATA_4BIT      (1 << 1)
@@ -118,6 +126,9 @@ typedef struct {
 #define SD_DEFAULT_HZ     25000000
 #define SD_IRQ_TIMEOUT_MS 1000
 #define INT_STALE_MASK    (INT_CMD_DONE | INT_DATA_DONE | INT_ERROR_MASK)
+
+// Blocks per command: under the 16-bit count register, and short enough to finish inside one timeout.
+#define SD_MAX_BLOCKS 128
 
 static sdhci_regs_t *regs = NULL;
 static struct block_device sd_block_dev;
@@ -413,58 +424,72 @@ static int sd_init_card(void)
     return 0;
 }
 
+/*
+ * sd_transfer - Moves count blocks starting at block through the data port.
+ *
+ * One block is CMD17 or CMD24; more are CMD18 or CMD25, which the controller
+ * closes with CMD12 once the count runs out. in receives a read, out supplies
+ * a write; exactly one of them is set.
+ */
+static int sd_transfer(size_t block, size_t count, uint32_t *in, const uint32_t *out)
+{
+    uint32_t addr = sd_is_sdhc ? (uint32_t)block : (uint32_t)block * 512;
+    uint32_t cmd = count == 1 ? (in ? CMD17 : CMD24) : (in ? CMD18 : CMD25);
+    uint32_t ready = in ? STATUS_READ_READY : STATUS_WRITE_READY;
+
+    regs->blk_size_cnt = ((uint32_t)count << 16) | 512;
+    int res = sd_send_cmd(cmd, addr);
+    for (size_t i = 0; res == 0 && i < count; i++) {
+        res = sd_wait_status(ready, ready, 500);
+        if (res != 0) {
+            break;
+        }
+        for (int j = 0; j < 128; j++) {
+            if (in) {
+                in[i * 128 + j] = regs->data;
+            } else {
+                regs->data = out[i * 128 + j];
+            }
+        }
+    }
+    if (res == 0) {
+        res = sd_wait_interrupt(INT_DATA_DONE);
+    }
+
+    if (res != 0) {
+        sd_reset_lines();
+        // The controller does not close a transfer it gave up on; the card would wait in it forever.
+        if (count > 1 && sd_send_cmd(CMD12, 0) != 0) {
+            sd_reset_lines();
+        }
+    }
+    return res;
+}
+
 static int sd_read_locked(uint32_t *buf, size_t start_block, size_t num_blocks)
 {
-    for (size_t i = 0; i < num_blocks; i++) {
-        uint32_t addr = (uint32_t)(start_block + i);
-        if (!sd_is_sdhc) {
-            addr *= 512;
-        }
-
-        regs->blk_size_cnt = (1 << 16) | 512;
-        int res = sd_send_cmd(CMD17, addr);
-        if (res == 0) {
-            res = sd_wait_status(STATUS_READ_READY, STATUS_READ_READY, 500);
-        }
-        if (res == 0) {
-            for (int j = 0; j < 128; j++) {
-                buf[i * 128 + j] = regs->data;
-            }
-            res = sd_wait_interrupt(INT_DATA_DONE);
-        }
+    for (size_t done = 0; done < num_blocks;) {
+        size_t n = num_blocks - done < SD_MAX_BLOCKS ? num_blocks - done : SD_MAX_BLOCKS;
+        int res = sd_transfer(start_block + done, n, buf + done * 128, NULL);
         if (res != 0) {
-            pr_err("sd: read failed at block %lu (%d)\n", start_block + i, res);
-            sd_reset_lines();
+            pr_err("sd: read of %lu blocks at %lu failed (%d)\n", n, start_block + done, res);
             return res;
         }
+        done += n;
     }
     return 0;
 }
 
 static int sd_write_locked(const uint32_t *buf, size_t start_block, size_t num_blocks)
 {
-    for (size_t i = 0; i < num_blocks; i++) {
-        uint32_t addr = (uint32_t)(start_block + i);
-        if (!sd_is_sdhc) {
-            addr *= 512;
-        }
-
-        regs->blk_size_cnt = (1 << 16) | 512;
-        int res = sd_send_cmd(CMD24, addr);
-        if (res == 0) {
-            res = sd_wait_status(STATUS_WRITE_READY, STATUS_WRITE_READY, 500);
-        }
-        if (res == 0) {
-            for (int j = 0; j < 128; j++) {
-                regs->data = buf[i * 128 + j];
-            }
-            res = sd_wait_interrupt(INT_DATA_DONE);
-        }
+    for (size_t done = 0; done < num_blocks;) {
+        size_t n = num_blocks - done < SD_MAX_BLOCKS ? num_blocks - done : SD_MAX_BLOCKS;
+        int res = sd_transfer(start_block + done, n, NULL, buf + done * 128);
         if (res != 0) {
-            pr_err("sd: write failed at block %lu (%d)\n", start_block + i, res);
-            sd_reset_lines();
+            pr_err("sd: write of %lu blocks at %lu failed (%d)\n", n, start_block + done, res);
             return res;
         }
+        done += n;
     }
     return 0;
 }

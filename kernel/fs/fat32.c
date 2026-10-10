@@ -310,11 +310,6 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
 }
 
 /*
- * allocate_cluster - Finds a free cluster in the FAT and marks it as end-of-chain.
- *
- * Returns the cluster number on success, or 0 on failure.
- */
-/*
  * Where the last search left off. Restarting from cluster 2 on every call
  * makes filling a disk quadratic: each allocation re-reads and re-scans every
  * FAT sector already known to be full. The hint is advisory -- a wrong value
@@ -327,7 +322,8 @@ static int set_fat_entry(uint32_t cluster, uint32_t value)
  */
 static uint32_t next_free_hint = 2;
 
-static uint32_t allocate_cluster(void)
+// Finds a free cluster without claiming it; 0 if none is left or the FAT cannot be read.
+static uint32_t find_free_cluster(void)
 {
     uint32_t fat_buffer[128];
     uint32_t last_sector = (uint32_t)-1;
@@ -356,14 +352,50 @@ static uint32_t allocate_cluster(void)
 
         uint32_t entry = fat_buffer[fat_offset] & FAT32_CLUSTER_MASK;
         if (entry == 0) {
-            if (set_fat_entry(cluster, FAT32_CLUSTER_EOC) != 0) {
-                return 0;
-            }
             next_free_hint = (cluster < current_fs.max_cluster) ? cluster + 1 : 2;
             return cluster;
         }
     }
 
+    return 0;
+}
+
+/*
+ * allocate_cluster - Finds a free cluster in the FAT and marks it as end-of-chain.
+ *
+ * Returns the cluster number on success, or 0 on failure.
+ */
+static uint32_t allocate_cluster(void)
+{
+    uint32_t cluster = find_free_cluster();
+    if (cluster == 0 || set_fat_entry(cluster, FAT32_CLUSTER_EOC) != 0) {
+        return 0;
+    }
+    return cluster;
+}
+
+// Sets a, then b; when both live in one FAT sector each copy takes a single write holding both.
+static int set_fat_entries(uint32_t a, uint32_t a_value, uint32_t b, uint32_t b_value)
+{
+    if (!cluster_valid(a) || !cluster_valid(b)) {
+        return -EINVAL;
+    }
+    if (a / 128 != b / 128) {
+        return set_fat_entry(a, a_value) != 0 ? -EIO : set_fat_entry(b, b_value);
+    }
+
+    uint32_t fat_buffer[128];
+    for (uint32_t i = 0; i < current_fs.num_fats; i++) {
+        uint32_t fat_sector = current_fs.fat_lba_start + (i * current_fs.sectors_per_fat) + a / 128;
+        if (current_fs.dev->read_blocks(current_fs.dev, fat_buffer, fat_sector, 1) != 0) {
+            return -EIO;
+        }
+        fat_buffer[a % 128] = a_value & FAT32_CLUSTER_MASK;
+        fat_buffer[b % 128] = b_value & FAT32_CLUSTER_MASK;
+        if (current_fs.dev->write_blocks(current_fs.dev, fat_buffer, fat_sector, 1) != 0) {
+            return -EIO;
+        }
+    }
     return 0;
 }
 
@@ -401,16 +433,19 @@ static uint32_t dotdot_cluster(uint32_t parent_cluster)
 
 static uint32_t extend_cluster_chain(uint32_t last_cluster)
 {
-    uint32_t new_cluster = allocate_cluster();
+    if (last_cluster == 0) {
+        return allocate_cluster();
+    }
+
+    uint32_t new_cluster = find_free_cluster();
     if (new_cluster == 0) {
         return 0;
     }
 
-    if (last_cluster != 0) {
-        if (set_fat_entry(last_cluster, new_cluster) != 0) {
-            set_fat_entry(new_cluster, 0);
-            return 0;
-        }
+    // The new cluster ends the chain before anything links to it.
+    if (set_fat_entries(new_cluster, FAT32_CLUSTER_EOC, last_cluster, new_cluster) != 0) {
+        set_fat_entry(new_cluster, 0);
+        return 0;
     }
 
     return new_cluster;
@@ -634,6 +669,61 @@ static int fat32_revalidate(struct vfs_vnode *node)
     return 0;
 }
 
+#define PAGE_SECTORS (PAGE_SIZE / 512)
+
+// Sectors that sit back to back on the disk, moved in one request.
+struct sector_run {
+    uint32_t lba;
+    uint32_t count;
+};
+
+/*
+ * page_runs - Maps a page's sectors to runs, starting at sector first of cluster.
+ *
+ * Clusters that follow each other on the disk share a run. With grow set, a
+ * chain that ends before the page does is extended; without it that is -EIO.
+ * Returns the number of runs, or a negative errno.
+ */
+static int page_runs(uint32_t cluster, uint32_t first, uint32_t sectors, int grow,
+                     struct sector_run runs[PAGE_SECTORS])
+{
+    int n = 0;
+    for (uint32_t s = 0; s < sectors;) {
+        uint32_t take = current_fs.sectors_per_cluster - first;
+        if (take > sectors - s) {
+            take = sectors - s;
+        }
+        uint32_t lba = cluster_to_lba(cluster) + first;
+        if (n > 0 && runs[n - 1].lba + runs[n - 1].count == lba) {
+            runs[n - 1].count += take;
+        } else {
+            runs[n].lba = lba;
+            runs[n].count = take;
+            n++;
+        }
+        s += take;
+        first = 0;
+
+        if (s < sectors) {
+            uint32_t next = get_next_cluster(cluster);
+            if (next == FAT32_CLUSTER_IOERR) {
+                return -EIO;
+            }
+            if (next >= FAT32_CLUSTER_EOC_MIN) {
+                if (!grow) {
+                    return -EIO;
+                }
+                next = extend_cluster_chain(cluster);
+                if (next == 0) {
+                    return -ENOSPC;
+                }
+            }
+            cluster = next;
+        }
+    }
+    return n;
+}
+
 static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page_buffer)
 {
     memset(page_buffer, 0, PAGE_SIZE);
@@ -656,43 +746,29 @@ static int fat32_read_page(struct vfs_vnode *node, size_t page_index, void *page
         }
     }
 
-    uint32_t bytes_read = 0;
     uint32_t to_read = PAGE_SIZE;
     if (start_offset + to_read > node->file_size) {
         to_read = node->file_size - start_offset;
     }
 
-    uint8_t sector_buffer[512];
-    uint32_t current_offset = start_offset;
+    struct sector_run runs[PAGE_SECTORS];
+    uint32_t sectors = (to_read + 511) / 512;
+    int n = page_runs(cluster, (start_offset % bytes_per_cluster) / 512, sectors, 0, runs);
+    if (n < 0) {
+        return n;
+    }
 
-    while (bytes_read < to_read) {
-        uint32_t offset_in_cluster = current_offset % bytes_per_cluster;
-        uint32_t sector_in_cluster = offset_in_cluster / 512;
-        uint32_t offset_in_sector = offset_in_cluster % 512;
-
-        uint32_t lba = cluster_to_lba(cluster) + sector_in_cluster;
-
-        int rerr = current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1);
+    uint8_t *dst = page_buffer;
+    for (int i = 0; i < n; i++) {
+        int rerr = current_fs.dev->read_blocks(current_fs.dev, dst, runs[i].lba, runs[i].count);
         if (rerr != 0) {
             return rerr < 0 ? rerr : -EIO;
         }
-
-        uint32_t can_read = 512 - offset_in_sector;
-        uint32_t remaining = to_read - bytes_read;
-        uint32_t to_copy = (can_read < remaining) ? can_read : remaining;
-
-        memcpy((uint8_t *)page_buffer + bytes_read, sector_buffer + offset_in_sector, to_copy);
-
-        bytes_read += to_copy;
-        current_offset += to_copy;
-
-        if (current_offset % bytes_per_cluster == 0) {
-            cluster = get_next_cluster(cluster);
-            if (cluster >= FAT32_CLUSTER_EOC_MIN && bytes_read < to_read) {
-                return -EIO;
-            }
-        }
+        dst += runs[i].count * 512;
     }
+
+    // The last sector's bytes past the end of the file are not the file's.
+    memset((uint8_t *)page_buffer + to_read, 0, sectors * 512 - to_read);
     return 0;
 }
 
@@ -739,53 +815,38 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
         cluster_index++;
     }
 
-    uint32_t bytes_written = 0;
-    uint32_t current_offset = start_offset;
-    uint8_t sector_buffer[512];
+    uint32_t full = valid_bytes / 512;
+    uint32_t tail = valid_bytes % 512;
+    struct sector_run runs[PAGE_SECTORS];
+    int n = page_runs(cluster, (start_offset % bytes_per_cluster) / 512, full + (tail ? 1 : 0), 1,
+                      runs);
+    if (n < 0) {
+        return n;
+    }
 
-    while (bytes_written < valid_bytes) {
-        uint32_t offset_in_cluster = current_offset % bytes_per_cluster;
-        uint32_t sector_in_cluster = offset_in_cluster / 512;
-        uint32_t offset_in_sector = offset_in_cluster % 512;
-
-        uint32_t lba = cluster_to_lba(cluster) + sector_in_cluster;
-
-        // Read-modify-write for partial sector updates
-        if (offset_in_sector != 0 || (valid_bytes - bytes_written) < 512) {
-            if (current_fs.dev->read_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
-                memset(sector_buffer, 0, 512);
-            }
+    const uint8_t *src = page_buffer;
+    for (int i = 0; i < n; i++) {
+        // Only the page's last sector can be partial, and it keeps the disk's bytes past valid_bytes.
+        uint32_t whole = (tail && i == n - 1) ? runs[i].count - 1 : runs[i].count;
+        if (whole && current_fs.dev->write_blocks(current_fs.dev, src, runs[i].lba, whole) != 0) {
+            return -EIO;
         }
+        src += whole * 512;
 
-        uint32_t can_write = 512 - offset_in_sector;
-        uint32_t remaining = valid_bytes - bytes_written;
-        uint32_t to_copy = (can_write < remaining) ? can_write : remaining;
-
-        memcpy(sector_buffer + offset_in_sector, (uint8_t *)page_buffer + bytes_written, to_copy);
-
-        if (current_fs.dev->write_blocks(current_fs.dev, sector_buffer, lba, 1) != 0) {
-            return bytes_written > 0 ? (int)bytes_written : -EIO;
-        }
-
-        bytes_written += to_copy;
-        current_offset += to_copy;
-
-        if (current_offset % bytes_per_cluster == 0 && bytes_written < valid_bytes) {
-            uint32_t next = get_next_cluster(cluster);
-            if (next == FAT32_CLUSTER_IOERR) {
-                return bytes_written > 0 ? (int)bytes_written : -EIO;
+        if (whole < runs[i].count) {
+            uint8_t sector[512];
+            uint32_t lba = runs[i].lba + whole;
+            if (current_fs.dev->read_blocks(current_fs.dev, sector, lba, 1) != 0) {
+                memset(sector, 0, sizeof(sector));
             }
-            if (next >= FAT32_CLUSTER_EOC_MIN) {
-                next = extend_cluster_chain(cluster);
-                if (next == 0) {
-                    return (int)bytes_written;
-                }
+            memcpy(sector, src, tail);
+            if (current_fs.dev->write_blocks(current_fs.dev, sector, lba, 1) != 0) {
+                return -EIO;
             }
-            cluster = next;
         }
     }
 
-    return (int)bytes_written;
+    return (int)valid_bytes;
 }
 
 static int fat32_vfs_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *pos)

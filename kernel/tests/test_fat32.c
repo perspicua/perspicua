@@ -11,12 +11,15 @@
 
 #include "uapi/errno.h"
 
+#include "driver/block.h"
 #include "fs/fat32.h"
+#include "fs/pagecache.h"
 #include "fs/vfs.h"
 #include "mm/pmm.h"
 #include "mm/slab.h"
 
 #define BIG_FILE  "/tfatbig.tmp"
+#define RUN_FILE  "/tfatrun.tmp"
 #define NEST_DIR  "/tfatd"
 #define NEST_SUB  "/tfatd/sub"
 #define NEST_FILE "/tfatd/sub/deep.txt"
@@ -303,6 +306,41 @@ void test_fat32(void)
         TEST_ASSERT("seeked data correct", memcmp(chunk, big_pattern + offset, sizeof(chunk)) == 0);
 
         vfs_close(fd);
+    }
+
+    /*
+     * Read back from the card itself, past both caches: whole sectors travel
+     * as runs, and a write ending inside a sector keeps the bytes the disk
+     * already had after it. 13000 bytes ends the last page in a partial sector,
+     * and every sector of the pattern differs so one out of place shows.
+     */
+    {
+        static uint8_t odd[13000], back[13000];
+        for (size_t i = 0; i < sizeof(odd); i++) {
+            odd[i] = (uint8_t)((i / 512) * 31 + i * 13 + 7);
+        }
+
+        int fd = vfs_open(RUN_FILE, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create run file", fd >= 0);
+        TEST_ASSERT_EQ("write run file", vfs_write(fd, odd, sizeof(odd)), (int)sizeof(odd));
+
+        memset(odd + 12500, 0xEE, 100);
+        TEST_ASSERT_EQ("seek into the last page", (int)vfs_lseek(fd, 12500, SEEK_SET), 12500);
+        TEST_ASSERT_EQ("patch short of the end", vfs_write(fd, odd + 12500, 100), 100);
+
+        struct vfs_file *f = vfs_test_file_at(fd);
+        TEST_ASSERT("run file has an open-file object", f != NULL);
+        pagecache_invalidate(f->node);
+        block_cache_invalidate();
+
+        memset(back, 0, sizeof(back));
+        TEST_ASSERT_EQ("rewind run file", (int)vfs_lseek(fd, 0, SEEK_SET), 0);
+        TEST_ASSERT_EQ("read run file off the card", vfs_read(fd, back, sizeof(back)),
+                       (int)sizeof(back));
+        TEST_ASSERT("run file on the card matches", memcmp(back, odd, sizeof(odd)) == 0);
+
+        vfs_close(fd);
+        TEST_ASSERT_EQ("unlink run file", vfs_unlink(RUN_FILE), 0);
     }
 
     // reopening with O_TRUNC must release the chain and report size 0
