@@ -9,7 +9,11 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "sys/stat.h"
 #include "syscall.h"
+
+// stdout holds data back when it is a pipe or a file; a terminal gets every write at once.
+#define STDOUT_BUF 4096
 
 static FILE _stdin = {.fd = 0, .error = 0, .eof = 0};
 static FILE _stdout = {.fd = 1, .error = 0, .eof = 0};
@@ -18,6 +22,48 @@ static FILE _stderr = {.fd = 2, .error = 0, .eof = 0};
 FILE *stdin = &_stdin;
 FILE *stdout = &_stdout;
 FILE *stderr = &_stderr;
+
+static char stdout_buf[STDOUT_BUF];
+static size_t stdout_len;
+static int stdout_mode = -1; // decided at the first write: 1 buffered, 0 not
+
+static int write_all(int fd, const char *s, size_t n)
+{
+    while (n > 0) {
+        int w = write(fd, s, n);
+        if (w <= 0) {
+            return -1;
+        }
+        s += w;
+        n -= (size_t)w;
+    }
+    return 0;
+}
+
+static int stdout_buffered(void)
+{
+    if (stdout_mode < 0) {
+        struct stat st;
+        stdout_mode = fstat(1, &st) == 0 && !S_ISCHR(st.st_mode);
+    }
+    return stdout_mode;
+}
+
+static int stdout_put(const char *s, size_t n)
+{
+    if (!stdout_buffered()) {
+        return write_all(1, s, n);
+    }
+    if (stdout_len + n > STDOUT_BUF && fflush(stdout) != 0) {
+        return -1;
+    }
+    if (n >= STDOUT_BUF) {
+        return write_all(1, s, n);
+    }
+    memcpy(stdout_buf + stdout_len, s, n);
+    stdout_len += n;
+    return 0;
+}
 
 FILE *fopen(const char *pathname, const char *mode)
 {
@@ -104,6 +150,14 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
         return 0;
     }
 
+    if (stream == stdout) {
+        if (stdout_put(ptr, size * nmemb) != 0) {
+            stream->error = 1;
+            return 0;
+        }
+        return nmemb;
+    }
+
     int bytes_written = write(stream->fd, ptr, size * nmemb);
     if (bytes_written < 0) {
         stream->error = 1;
@@ -175,23 +229,44 @@ int ferror(FILE *stream)
 
 int fflush(FILE *stream)
 {
-    /* In this simple implementation, writes are unbuffered, so fflush is a no-op.
-     * If stream is NULL, we would flush all open streams, but we don't track them.
-     * Returns 0 on success, EOF on error.
-     */
-    (void)stream;
+    // Only stdout ever holds data back, and NULL means every stream.
+    if ((stream == stdout || stream == NULL) && stdout_len > 0) {
+        size_t n = stdout_len;
+        stdout_len = 0;
+        if (write_all(1, stdout_buf, n) != 0) {
+            stdout->error = 1;
+            return EOF;
+        }
+    }
     return 0;
 }
 
 int vfprintf(FILE *stream, const char *fmt, va_list args)
 {
-    char buf[256];
-    int len = vsnprintf(buf, sizeof(buf), fmt, args);
-    if (len > 0) {
-        size_t write_len = (size_t)len < sizeof(buf) ? (size_t)len : sizeof(buf) - 1;
-        fwrite(buf, 1, write_len, stream);
+    char small[256];
+    va_list again;
+    va_copy(again, args);
+    int len = vsnprintf(small, sizeof(small), fmt, args);
+
+    char *text = small;
+    // Too long for the stack buffer: format it again into one that fits.
+    if (len >= (int)sizeof(small)) {
+        text = malloc((size_t)len + 1);
+        if (text) {
+            vsnprintf(text, (size_t)len + 1, fmt, again);
+        }
     }
-    return len;
+    va_end(again);
+
+    if (len < 0 || !text) {
+        stream->error = 1;
+        return -1;
+    }
+    size_t written = len > 0 ? fwrite(text, 1, (size_t)len, stream) : 0;
+    if (text != small) {
+        free(text);
+    }
+    return written == (size_t)len ? len : -1;
 }
 
 int fprintf(FILE *stream, const char *fmt, ...)

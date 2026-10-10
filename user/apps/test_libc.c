@@ -2,7 +2,7 @@
  * test_libc.c - User-space libc integrity test suite.
  *
  * Covers: string functions, malloc/free/realloc, printf/snprintf, ctype
- * classification/case-conversion, and errno.
+ * classification/case-conversion, errno, and when stdout holds output back.
  * Each test group prints a PASS/FAIL summary line. Individual check failures
  * print the source location so regressions are easy to pinpoint.
  *
@@ -949,6 +949,72 @@ static void test_atexit(void)
     CHECK(strcmp(out, "ba") == 0);
 }
 
+// stdout buffering
+
+// Run as a fresh process with stdout on a pipe, which is how a program in a pipeline starts.
+static int stdout_child(const char *name)
+{
+    if (strcmp(name, "held") == 0) {
+        printf("x");
+        write(1, "y", 1);
+    } else if (strcmp(name, "fflush") == 0) {
+        printf("x");
+        fflush(stdout);
+        write(1, "y", 1);
+    } else if (strcmp(name, "_exit") == 0) {
+        printf("x");
+        _exit(0);
+    } else if (strcmp(name, "fork") == 0) {
+        printf("x");
+        int pid = fork();
+        if (pid == 0) {
+            exit(0);
+        }
+        int status;
+        waitpid(pid, &status, 0);
+    } else if (strcmp(name, "exec") == 0) {
+        printf("x");
+        char *argv[] = {"/bin/seq.elf", "1", NULL};
+        execve(argv[0], argv, environ);
+    } else if (strcmp(name, "long") == 0) {
+        static char line[601];
+        memset(line, 'z', 600);
+        fprintf(stdout, "%s", line);
+    }
+    return 0;
+}
+
+static const char *stdout_case;
+
+static void exec_stdout_case(void)
+{
+    char *argv[] = {"/bin/test_libc.elf", "--stdout-child", (char *)stdout_case, NULL};
+    execve(argv[0], argv, environ);
+}
+
+static int prints(const char *name, char *out, int size)
+{
+    stdout_case = name;
+    return capture(exec_stdout_case, out, size);
+}
+
+static void test_stdout_buffering(void)
+{
+    char out[1024];
+    CHECK(prints("held", out, sizeof(out)) == 2 && strcmp(out, "yx") == 0);
+    CHECK(prints("fflush", out, sizeof(out)) == 2 && strcmp(out, "xy") == 0);
+    CHECK(prints("_exit", out, sizeof(out)) == 0);
+    CHECK(prints("fork", out, sizeof(out)) == 1 && strcmp(out, "x") == 0);
+    CHECK(prints("exec", out, sizeof(out)) == 3 && strcmp(out, "x1\n") == 0);
+
+    int n = prints("long", out, sizeof(out));
+    int all_z = n == 600;
+    for (int i = 0; all_z && i < n; i++) {
+        all_z = out[i] == 'z';
+    }
+    CHECK(all_z);
+}
+
 // term_decode
 
 static int decode(const char *s, int *used)
@@ -1063,6 +1129,9 @@ int main(int argc, char **argv)
         atexit(mark_b);
         return 0;
     }
+    if (argc > 2 && strcmp(argv[1], "--stdout-child") == 0) {
+        return stdout_child(argv[2]);
+    }
 
     printf("[TEST] libc integrity test suite\n");
 
@@ -1126,10 +1195,14 @@ int main(int argc, char **argv)
     run_group("qsort", test_qsort);
     run_group("rand", test_rand);
     run_group("atexit", test_atexit);
+    run_group("stdout buffering", test_stdout_buffering);
     run_group("term_decode", test_term_decode);
     run_group("term_present", test_term_present);
 
-    printf("\n[RESULT] %d passed, %d failed\n", g_passed, g_failed);
-
-    return g_failed > 0 ? 1 : 0;
+    if (g_failed) {
+        printf("test_libc: %d of %d tests failed\n", g_failed, g_passed + g_failed);
+        return 1;
+    }
+    printf("test_libc: all %d tests passed\n", g_passed);
+    return 0;
 }

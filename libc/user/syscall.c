@@ -4,6 +4,7 @@
 
 #include "syscall.h"
 #include "errno.h"
+#include "stdio.h"
 
 #include "uapi/syscalls.h"
 #include "uapi/mman.h"
@@ -140,11 +141,15 @@ __attribute__((noreturn)) void _exit(int status)
 
 int fork(void)
 {
+    // A child copying output not yet written would print it a second time.
+    fflush(stdout);
     return __syscall_ret(__syscall0(SYS_FORK));
 }
 
 int execve(const char *path, char *const argv[], char *const envp[])
 {
+    // The new image starts with an empty buffer, so anything still held here would be lost.
+    fflush(stdout);
     return __syscall_ret(__syscall3(SYS_EXEC, (long)path, (long)argv, (long)envp));
 }
 

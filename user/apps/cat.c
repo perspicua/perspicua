@@ -14,7 +14,7 @@ static void cat_file(int fd)
     }
     int bytes_read;
     while ((bytes_read = read(fd, buf, 4096)) > 0) {
-        write(1, buf, (size_t)bytes_read);
+        fwrite(buf, 1, (size_t)bytes_read, stdout);
     }
     free(buf);
 }
@@ -24,7 +24,7 @@ int main(int argc, char **argv)
     if (argc < 2) {
         // No arguments: read from stdin
         cat_file(0);
-        _exit(0);
+        return 0;
     }
 
     for (int i = 1; i < argc; i++) {
@@ -45,6 +45,5 @@ int main(int argc, char **argv)
         }
     }
 
-    _exit(0);
     return 0;
 }

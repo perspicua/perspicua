@@ -3,12 +3,12 @@
  */
 
 #include <stddef.h>
-#include "syscall.h"
+#include "stdio.h"
 
 // Public API Implementations
 
-// Routes string data to the standard output file descriptor.
+// Routes printf's output into stdout, which buffers it when stdout is not a terminal.
 void __libc_write(const char *buf, size_t len)
 {
-    write(1, buf, len);
+    fwrite(buf, 1, len, stdout);
 }

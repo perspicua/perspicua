@@ -2,6 +2,7 @@
  * exit.c - Process exit and the handlers registered to run at it.
  */
 
+#include "stdio.h"
 #include "stdlib.h"
 
 #include "unistd.h"
@@ -27,5 +28,6 @@ void exit(int status)
         void (*fn)(void) = atexit_handlers[--atexit_count];
         fn();
     }
+    fflush(stdout);
     _exit(status);
 }

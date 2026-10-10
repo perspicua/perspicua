@@ -22,7 +22,7 @@ static int head_fd(int fd, long lines)
                 seen++;
             }
         }
-        write(STDOUT_FILENO, buf, upto);
+        fwrite(buf, 1, (size_t)upto, stdout);
     }
     return n < 0 ? -1 : 0;
 }

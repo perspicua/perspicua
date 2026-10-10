@@ -59,7 +59,7 @@ static int tail_fd(int fd, long lines)
         }
         i--;
     }
-    write(STDOUT_FILENO, buf + i, len - i);
+    fwrite(buf + i, 1, len - i, stdout);
     free(buf);
     return 0;
 }

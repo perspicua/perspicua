@@ -184,13 +184,13 @@ static void run_exec(Command *cmd)
     // A name containing a slash is a path: exec it directly, never via PATH.
     if (strchr(name, '/')) {
         execve(name, cmd->argv, environ);
-        printf("sh: %s : no such file or directory\n", name);
+        fprintf(stderr, "sh: %s : no such file or directory\n", name);
         _exit(127);
     }
 
     execvp(name, cmd->argv);
 
-    printf("sh: command not found: %s\n", name);
+    fprintf(stderr, "sh: command not found: %s\n", name);
     _exit(127);
 }
 
@@ -311,6 +311,7 @@ static void execute_pipeline(char *pipe_string)
             }
             if (is_output_builtin(cmds[i].argv[0])) {
                 run_output_builtin(&cmds[i]);
+                fflush(stdout);
                 _exit(0);
             }
             run_exec(&cmds[i]);

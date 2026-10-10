@@ -35,7 +35,7 @@ PANIC_MARKER="KERNEL PANIC"
 
 # Userspace suites, run in order at the shell prompt. Each must print
 # "<name>: all N tests passed"; add a program here to have it gated.
-USER_SUITES=(test_restart test_tools)
+USER_SUITES=(test_restart test_tools test_libc)
 
 # Lines typed at the shell WITHOUT waiting for each echo, so they overlap in
 # the UART FIFO -- a drained FIFO is exactly when a late interrupt acknowledge

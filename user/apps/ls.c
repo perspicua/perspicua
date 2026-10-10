@@ -74,7 +74,7 @@ static void print_header(void)
 {
     printf(" TYPE   PERMISSIONS  LNK  OWNER:GROUP      SIZE  MODIFIED      NAME\n");
     for (int i = 0; i < 76; i++) {
-        write(1, "─", 3);
+        fwrite("─", 1, 3, stdout);
     }
     printf("\n");
 }
