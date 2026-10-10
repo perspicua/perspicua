@@ -206,6 +206,16 @@ static void test_clock(void)
           status == 0 && strncmp(out, "  cpu ", 6) == 0 && strstr(out, " MHz") != NULL);
 }
 
+static void test_mandel(void)
+{
+    char out[OUT_MAX];
+    check("mandel: 1 worker and 4 draw the same screen",
+          run(NULL, out, (char *[]){"mandel", "--check", NULL}) == 0
+              && strstr(out, "check passed") != NULL);
+    check("/proc/fb", run(NULL, out, (char *[]){"cat", "/proc/fb", NULL}) == 0
+                          && strstr(out, "width ") != NULL && strstr(out, "pitch ") != NULL);
+}
+
 static void test_ptop(void)
 {
     char out[OUT_MAX];
@@ -368,6 +378,7 @@ int main(void)
     test_seq_sleep_clear();
     test_free_uptime();
     test_clock();
+    test_mandel();
     test_ptop();
     test_edit();
     test_find_du();
