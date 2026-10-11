@@ -89,7 +89,10 @@ void *kstack_alloc(void)
         return NULL;
     }
 
-    mmu_unmap_page((unsigned long)base); // Guard page traps a stack underflow
+    if (mmu_unmap_page((unsigned long)base) != 0) {
+        pmm_free_pages(base);
+        return NULL;
+    }
     *(unsigned long *)(base + PAGE_SIZE) = SCHED_STACK_CANARY;
     return base;
 }
@@ -105,7 +108,10 @@ void kstack_free(void *stack_base)
     }
 
     // Remap the guard page so the PMM can zero the whole block safely.
-    mmu_map_page((unsigned long)stack_base, V2P(stack_base), MMU_FLAGS_KERNEL_RW);
+    if (mmu_map_page((unsigned long)stack_base, V2P(stack_base), MMU_FLAGS_KERNEL_RW) != 0) {
+        pr_err("sched: guard page remap failed, leaking stack at %p\n", stack_base);
+        return;
+    }
     pmm_free_pages(stack_base);
 }
 
@@ -392,17 +398,18 @@ void sched_secondary_init(void)
     PANIC("sched_secondary_init: sched_schedule() returned unexpectedly");
 }
 
-void sched_create_task(void (*entry)(void))
+int sched_create_task(void (*entry)(void))
 {
     struct task *t = (struct task *)heap_malloc(sizeof(struct task));
     if (!t) {
-        PANIC("sched_create_task: OOM for task struct");
+        return -ENOMEM;
     }
     memset(t, 0, sizeof(*t));
 
     unsigned char *stack = kstack_alloc();
     if (!stack) {
-        PANIC("sched_create_task: OOM for stack");
+        heap_free(t);
+        return -ENOMEM;
     }
 
     init_task_stack_context(t, stack, entry);
@@ -413,6 +420,7 @@ void sched_create_task(void (*entry)(void))
     t->on_core = -1;
 
     rq_enqueue(cpu_id(), t);
+    return 0;
 }
 
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,

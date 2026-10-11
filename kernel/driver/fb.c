@@ -18,6 +18,7 @@
 #include "mm/addr.h"
 #include "mm/pmm.h"
 #include "mm/mmu.h"
+#include "panic.h"
 #include "sched/process.h"
 
 // Mailbox message buffer for GPU requests (must be 16-byte aligned)
@@ -181,6 +182,8 @@ void fb_remap_pages(void)
     fb_end = (fb_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
     for (unsigned long va = fb_start; va < fb_end; va += PAGE_SIZE) {
-        mmu_map_page(va, V2P(va), MMU_FLAGS_FRAMEBUFFER);
+        if (mmu_map_page(va, V2P(va), MMU_FLAGS_FRAMEBUFFER) != 0) {
+            PANIC("fb: failed to remap framebuffer page");
+        }
     }
 }

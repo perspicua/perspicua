@@ -63,8 +63,8 @@
 void mmu_init(void);
 void mmu_secondary_init(void);
 
-void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags);
-void mmu_unmap_page(unsigned long vaddr);
+int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags);
+int mmu_unmap_page(unsigned long vaddr);
 int mmu_query(unsigned long vaddr, unsigned long *out_paddr, unsigned long *out_flags);
 
 unsigned long *mmu_create_user_pgd(void);
@@ -74,7 +74,7 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd);
 // -ENOMEM leaves the mapping absent; the caller still owns the page it passed.
 int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long paddr,
                       unsigned long flags);
-void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
+int mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr);
 int mmu_user_query(unsigned long *pgd, unsigned long vaddr, unsigned long *out_paddr,
                    unsigned long *out_flags);
 
@@ -89,5 +89,9 @@ void mmu_leave_user(void);
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 
 unsigned long mmu_kernel_ttbr0(void);
+
+#ifdef CONFIG_TESTS
+int mmu_test_is_block_entry(unsigned long vaddr);
+#endif
 
 #endif // PERSPICUA_MM_MMU_H

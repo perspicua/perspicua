@@ -15,13 +15,17 @@
 
 #include "uapi/errno.h"
 #include "uapi/fcntl.h"
+#include "uapi/mman.h"
 #include "uapi/syscalls.h"
 
 #include "core/elf.h"
 #include "fs/vfs.h"
+#include "mm/addr.h"
 #include "mm/heap.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
+#include "mm/slab.h"
+#include "sched/sched.h"
 
 // Where the path handed to the syscall probe below lives.
 #define OOM_USER_VA 0x0000000051000000UL
@@ -29,6 +33,9 @@
 
 // Past the last allocation open makes, so the tail of the walk succeeds.
 #define OOM_OPEN_MAX_NTH 16
+#define OOM_PIPE_MAX_NTH 16
+
+static void dummy_task_entry(void) {}
 
 void test_faultinject(void)
 {
@@ -190,6 +197,186 @@ void test_faultinject(void)
 
         TEST_ASSERT("every refusal fails the load without blaming the image", ok);
         TEST_ASSERT("the walk reaches a load that succeeds", loaded);
+    }
+
+    // a refused block split leaves the block intact; where RAM backs it, it may already be split
+    if (!mmu_test_is_block_entry(P2V(0x80000000UL))) {
+        pr_info("test: no unsplit 2 MB block at 0x80000000; refused split skipped\n");
+    } else {
+        unsigned long block_va = P2V(0x80000000UL);
+
+        unsigned long query_pa = 0, query_flags = 0;
+        TEST_ASSERT("block query succeeds before split attempt",
+                    mmu_query(block_va, &query_pa, &query_flags));
+
+        pmm_test_fail_nth(1);
+        int unmap_ret = mmu_unmap_page(block_va);
+        pmm_test_fail_nth(0);
+
+        TEST_ASSERT_EQ("refused block split returns -ENOMEM", unmap_ret, -ENOMEM);
+        TEST_ASSERT("block remains intact after refused split", mmu_test_is_block_entry(block_va));
+
+        unsigned long after_pa = 0, after_flags = 0;
+        TEST_ASSERT("block query succeeds after refused split",
+                    mmu_query(block_va, &after_pa, &after_flags));
+        TEST_ASSERT_EQ("block mapping unchanged after refused split", after_pa, query_pa);
+    }
+
+    // task creation fails with -ENOMEM without leaking pages or slab objects
+    {
+        unsigned long before_pages = pmm_get_free_pages();
+        unsigned long before_slab = slab_get_used();
+
+        heap_test_fail_nth(1);
+        int ret = sched_create_task(dummy_task_entry);
+        heap_test_fail_nth(0);
+        TEST_ASSERT_EQ("refused task allocation reports -ENOMEM", ret, -ENOMEM);
+        TEST_ASSERT_EQ("refused heap allocation leaves no slab objects", slab_get_used(),
+                       before_slab);
+
+        // warm up the task slab cache so PMM refusal targets the kernel stack
+        void *warmup = heap_malloc(sizeof(struct task));
+        heap_free(warmup);
+
+        pmm_test_fail_nth(1);
+        ret = sched_create_task(dummy_task_entry);
+        pmm_test_fail_nth(0);
+        TEST_ASSERT_EQ("refused stack allocation reports -ENOMEM", ret, -ENOMEM);
+        TEST_ASSERT_EQ("refused stack allocation leaves no pages behind", pmm_get_free_pages(),
+                       before_pages);
+        TEST_ASSERT_EQ("refused stack allocation leaves no slab objects", slab_get_used(),
+                       before_slab);
+    }
+
+    // copy-on-write fault resolution reports -ENOMEM when page allocation fails
+    {
+        unsigned long cow_before = pmm_get_free_pages();
+        unsigned long *pgd = mmu_create_user_pgd();
+        TEST_ASSERT("probe pgd for cow created", pgd != NULL);
+
+        if (pgd) {
+            void *page = pmm_alloc_page();
+            TEST_ASSERT("source page allocated", page != NULL);
+            if (page) {
+                // A second reference makes the fault copy instead of taking the page over.
+                pmm_hold_page(page);
+                int mapped = mmu_user_map_page(pgd, OOM_USER_VA, V2P(page),
+                                               MMU_PAGE_USER_DATA | MMU_PTE_COW | MMU_AP_RO);
+
+                pmm_test_fail_nth(1);
+                int cow_res = mmu_handle_cow(pgd, OOM_USER_VA);
+                pmm_test_fail_nth(0);
+
+                unsigned long pa = 0, flags = 0;
+                int still_cow = mmu_user_query(pgd, OOM_USER_VA, &pa, &flags) && pa == V2P(page)
+                                && (flags & MMU_PTE_COW);
+                pmm_free_page(page);
+
+                TEST_ASSERT_EQ("cow probe page mapped", mapped, 0);
+                TEST_ASSERT_EQ("refused cow allocation reports -ENOMEM", cow_res, -ENOMEM);
+                TEST_ASSERT("a refused cow fault leaves the shared page in place", still_cow);
+            }
+            mmu_destroy_user_pgd(pgd);
+        }
+        TEST_ASSERT_EQ("a refused cow fault leaks no pages", pmm_get_free_pages(), cow_before);
+    }
+
+    // each allocation pipe makes, refused in turn, is -ENOMEM and leaves no descriptor behind
+    {
+        unsigned long *pgd = test_borrow_user_pgd();
+        int *pipefd = pgd ? (int *)test_map_user_page(pgd, OOM_USER_VA, MMU_PAGE_USER_DATA) : NULL;
+        TEST_ASSERT("probe address space for pipe built", pipefd != NULL);
+
+        if (pipefd) {
+            uint64_t args[6] = {OOM_USER_VA, 0, 0, 0, 0, 0};
+            int64_t ok_pipe = test_syscall(SYS_PIPE, args);
+            int first_fd = ok_pipe == 0 ? pipefd[0] : -1;
+            if (ok_pipe == 0) {
+                vfs_close(pipefd[0]);
+                vfs_close(pipefd[1]);
+            }
+
+            void (*const arm[])(unsigned long) = {heap_test_fail_nth, pmm_test_fail_nth};
+            int enomem_ok = 1;
+            int refusals = 0;
+            int walked_past = 0;
+
+            for (size_t a = 0; a < sizeof(arm) / sizeof(arm[0]); a++) {
+                for (unsigned long nth = 1; nth <= OOM_PIPE_MAX_NTH; nth++) {
+                    arm[a](nth);
+                    int64_t ret = test_syscall(SYS_PIPE, args);
+                    arm[a](0);
+
+                    if (ret == 0) {
+                        vfs_close(pipefd[0]);
+                        vfs_close(pipefd[1]);
+                        walked_past = 1;
+                    } else if (ret == -ENOMEM) {
+                        refusals++;
+                    } else {
+                        enomem_ok = 0;
+                    }
+                }
+            }
+
+            int64_t last_pipe = test_syscall(SYS_PIPE, args);
+            int last_fd = last_pipe == 0 ? pipefd[0] : -1;
+            if (last_pipe == 0) {
+                vfs_close(pipefd[0]);
+                vfs_close(pipefd[1]);
+            }
+
+            TEST_ASSERT("pipe succeeds unarmed", ok_pipe == 0);
+            TEST_ASSERT("pipe's allocations can be refused", refusals > 0);
+            TEST_ASSERT("the walk reaches past pipe's last allocation", walked_past);
+            TEST_ASSERT("every pipe refusal is reported as -ENOMEM", enomem_ok);
+            TEST_ASSERT_EQ("a refused pipe leaves no descriptor behind", last_fd, first_fd);
+        }
+
+        if (pgd) {
+            test_release_user_pgd(pgd);
+        }
+    }
+
+    // mmap under page refusal reports -ENOMEM and releases all reserved resources
+    {
+        unsigned long *pgd = test_borrow_user_pgd();
+        TEST_ASSERT("probe address space for mmap built", pgd != NULL);
+
+        if (pgd) {
+            unsigned long before = pmm_get_free_pages();
+            uint64_t args[6] = {
+                0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, (uint64_t)-1, 0};
+
+            pmm_test_fail_nth(1);
+            int64_t ret = test_syscall(SYS_MMAP, args);
+            pmm_test_fail_nth(0);
+
+            TEST_ASSERT_EQ("refused mmap page allocation returns -ENOMEM", ret, -ENOMEM);
+            TEST_ASSERT_EQ("refused mmap leaks no pages", pmm_get_free_pages(), before);
+
+            test_release_user_pgd(pgd);
+        }
+    }
+
+    // fork under page refusal reports -ENOMEM and releases the claimed slot
+    {
+        unsigned long *pgd = test_borrow_user_pgd();
+        TEST_ASSERT("probe address space for fork built", pgd != NULL);
+
+        if (pgd) {
+            unsigned long before = pmm_get_free_pages();
+            uint64_t args[6] = {0, 0, 0, 0, 0, 0};
+
+            pmm_test_fail_nth(1);
+            int64_t ret = test_syscall(SYS_FORK, args);
+            pmm_test_fail_nth(0);
+
+            TEST_ASSERT_EQ("refused fork allocation returns -ENOMEM", ret, -ENOMEM);
+            TEST_ASSERT_EQ("refused fork leaks no pages", pmm_get_free_pages(), before);
+
+            test_release_user_pgd(pgd);
+        }
     }
 
     // nothing above may leave an arming behind for the suites that follow
