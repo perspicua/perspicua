@@ -33,6 +33,7 @@
 
 // Past the last allocation open makes, so the tail of the walk succeeds.
 #define OOM_OPEN_MAX_NTH 16
+#define OOM_PIPE_MAX_NTH 16
 
 static void dummy_task_entry(void) {}
 
@@ -198,10 +199,11 @@ void test_faultinject(void)
         TEST_ASSERT("the walk reaches a load that succeeds", loaded);
     }
 
-    // a refused block split leaves the block intact and reports -ENOMEM
-    {
+    // a refused block split leaves the block intact; where RAM backs it, it may already be split
+    if (!mmu_test_is_block_entry(P2V(0x80000000UL))) {
+        pr_info("test: no unsplit 2 MB block at 0x80000000; refused split skipped\n");
+    } else {
         unsigned long block_va = P2V(0x80000000UL);
-        TEST_ASSERT("probe target is a 2 MB block", mmu_test_is_block_entry(block_va));
 
         unsigned long query_pa = 0, query_flags = 0;
         TEST_ASSERT("block query succeeds before split attempt",
@@ -248,6 +250,7 @@ void test_faultinject(void)
 
     // copy-on-write fault resolution reports -ENOMEM when page allocation fails
     {
+        unsigned long cow_before = pmm_get_free_pages();
         unsigned long *pgd = mmu_create_user_pgd();
         TEST_ASSERT("probe pgd for cow created", pgd != NULL);
 
@@ -255,22 +258,30 @@ void test_faultinject(void)
             void *page = pmm_alloc_page();
             TEST_ASSERT("source page allocated", page != NULL);
             if (page) {
+                // A second reference makes the fault copy instead of taking the page over.
                 pmm_hold_page(page);
-                mmu_user_map_page(pgd, OOM_USER_VA, V2P(page),
-                                  MMU_PAGE_USER_DATA | MMU_PTE_COW | MMU_AP_RO);
+                int mapped = mmu_user_map_page(pgd, OOM_USER_VA, V2P(page),
+                                               MMU_PAGE_USER_DATA | MMU_PTE_COW | MMU_AP_RO);
 
                 pmm_test_fail_nth(1);
                 int cow_res = mmu_handle_cow(pgd, OOM_USER_VA);
                 pmm_test_fail_nth(0);
 
-                TEST_ASSERT_EQ("refused cow allocation reports -ENOMEM", cow_res, -ENOMEM);
+                unsigned long pa = 0, flags = 0;
+                int still_cow = mmu_user_query(pgd, OOM_USER_VA, &pa, &flags) && pa == V2P(page)
+                                && (flags & MMU_PTE_COW);
                 pmm_free_page(page);
+
+                TEST_ASSERT_EQ("cow probe page mapped", mapped, 0);
+                TEST_ASSERT_EQ("refused cow allocation reports -ENOMEM", cow_res, -ENOMEM);
+                TEST_ASSERT("a refused cow fault leaves the shared page in place", still_cow);
             }
             mmu_destroy_user_pgd(pgd);
         }
+        TEST_ASSERT_EQ("a refused cow fault leaks no pages", pmm_get_free_pages(), cow_before);
     }
 
-    // pipe creation under allocation refusal reports -ENOMEM and leaves no descriptors
+    // each allocation pipe makes, refused in turn, is -ENOMEM and leaves no descriptor behind
     {
         unsigned long *pgd = test_borrow_user_pgd();
         int *pipefd = pgd ? (int *)test_map_user_page(pgd, OOM_USER_VA, MMU_PAGE_USER_DATA) : NULL;
@@ -279,16 +290,47 @@ void test_faultinject(void)
         if (pipefd) {
             uint64_t args[6] = {OOM_USER_VA, 0, 0, 0, 0, 0};
             int64_t ok_pipe = test_syscall(SYS_PIPE, args);
-            TEST_ASSERT("pipe succeeds unarmed", ok_pipe == 0);
+            int first_fd = ok_pipe == 0 ? pipefd[0] : -1;
             if (ok_pipe == 0) {
                 vfs_close(pipefd[0]);
                 vfs_close(pipefd[1]);
             }
 
-            heap_test_fail_nth(1);
-            int64_t fail_pipe = test_syscall(SYS_PIPE, args);
-            heap_test_fail_nth(0);
-            TEST_ASSERT_EQ("refused pipe allocation returns -ENOMEM", fail_pipe, -ENOMEM);
+            void (*const arm[])(unsigned long) = {heap_test_fail_nth, pmm_test_fail_nth};
+            int enomem_ok = 1;
+            int refusals = 0;
+            int walked_past = 0;
+
+            for (size_t a = 0; a < sizeof(arm) / sizeof(arm[0]); a++) {
+                for (unsigned long nth = 1; nth <= OOM_PIPE_MAX_NTH; nth++) {
+                    arm[a](nth);
+                    int64_t ret = test_syscall(SYS_PIPE, args);
+                    arm[a](0);
+
+                    if (ret == 0) {
+                        vfs_close(pipefd[0]);
+                        vfs_close(pipefd[1]);
+                        walked_past = 1;
+                    } else if (ret == -ENOMEM) {
+                        refusals++;
+                    } else {
+                        enomem_ok = 0;
+                    }
+                }
+            }
+
+            int64_t last_pipe = test_syscall(SYS_PIPE, args);
+            int last_fd = last_pipe == 0 ? pipefd[0] : -1;
+            if (last_pipe == 0) {
+                vfs_close(pipefd[0]);
+                vfs_close(pipefd[1]);
+            }
+
+            TEST_ASSERT("pipe succeeds unarmed", ok_pipe == 0);
+            TEST_ASSERT("pipe's allocations can be refused", refusals > 0);
+            TEST_ASSERT("the walk reaches past pipe's last allocation", walked_past);
+            TEST_ASSERT("every pipe refusal is reported as -ENOMEM", enomem_ok);
+            TEST_ASSERT_EQ("a refused pipe leaves no descriptor behind", last_fd, first_fd);
         }
 
         if (pgd) {

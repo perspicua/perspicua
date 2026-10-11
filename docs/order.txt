@@ -158,7 +158,7 @@ single highest-leverage phase in the file.
       Note: runtime sites that must unwind: mmu alloc_table_page(),
         process_create() user-stack and kernel-stack paths, elf_load() ("ELF: Out
         of memory during loading"), sched_create_task(). Boot-time init PANICs
-        (heap_init, slab_init, idle-task allocation) are fine to keep - don't
+        (heap_init, slab_init, idle-task allocation) are fine to keep — don't
         spend effort unwinding code that runs before userspace exists.
         CoW allocation failure terminates the faulting process via SIGKILL
         instead of looping on SIGSEGV.

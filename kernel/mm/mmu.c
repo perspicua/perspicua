@@ -236,9 +236,6 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
-                if (new_l2) {
-                    pmm_free_page(l2t);
-                }
                 spin_unlock_irqrestore(&mmu_lock, irq);
                 return -ENOMEM;
             }
@@ -542,7 +539,6 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
     return child_pgd;
 
 oom:
-    tlbi_all_is();
     spin_unlock_irqrestore(&mmu_lock, irq);
     mmu_destroy_user_pgd(child_pgd);
     return NULL;
@@ -581,9 +577,6 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
-                if (new_l2) {
-                    pmm_free_page(l2t);
-                }
                 spin_unlock_irqrestore(&mmu_lock, irq);
                 return -ENOMEM;
             }

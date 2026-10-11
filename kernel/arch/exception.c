@@ -131,16 +131,18 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
             if (cow_ret == 0) {
                 return;
             }
-            if (cow_ret == -ENOMEM && is_user_fault) {
-                int pid = process_current_pid();
-                printk(
-                    "\n[OOM] Out of memory handling copy-on-write abort in user process (PID %d)\n",
-                    pid);
+            int pid = process_current_pid();
+            if (cow_ret == -ENOMEM && pid > 0) {
+                printk("\n[OOM] Out of memory for a copy-on-write page in PID %d (%s)\n", pid,
+                       p->name);
                 printk("  FAR_EL1  : 0x%016lx\n", far);
                 printk("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
                 printk("  Action   : SIGKILL to PID %d\n", pid);
                 signal_raise_fault(SIGKILL);
-                return;
+                // A kernel access still unwinds through its fixup; the kill lands on return to EL0.
+                if (is_user_fault) {
+                    return;
+                }
             }
         }
     }
