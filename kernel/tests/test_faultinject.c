@@ -22,6 +22,7 @@
 #include "mm/heap.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
+#include "sched/sched.h"
 
 // Where the path handed to the syscall probe below lives.
 #define OOM_USER_VA 0x0000000051000000UL
@@ -29,6 +30,10 @@
 
 // Past the last allocation open makes, so the tail of the walk succeeds.
 #define OOM_OPEN_MAX_NTH 16
+
+static void dummy_task_entry(void)
+{
+}
 
 void test_faultinject(void)
 {
@@ -190,6 +195,48 @@ void test_faultinject(void)
 
         TEST_ASSERT("every refusal fails the load without blaming the image", ok);
         TEST_ASSERT("the walk reaches a load that succeeds", loaded);
+    }
+
+    // mapping a user page returns -ENOMEM when table allocation is refused
+    {
+        unsigned long *pgd = mmu_create_user_pgd();
+        TEST_ASSERT("probe pgd created", pgd != NULL);
+
+        if (pgd) {
+            pmm_test_fail_nth(1);
+            int ret = mmu_user_map_page(pgd, OOM_USER_VA, 0, MMU_PAGE_USER_DATA);
+            pmm_test_fail_nth(0);
+
+            TEST_ASSERT_EQ("refused table allocation reports -ENOMEM", ret, -ENOMEM);
+            mmu_destroy_user_pgd(pgd);
+        }
+    }
+
+    // task creation fails gracefully without leaking memory when the task struct
+    // or its kernel stack cannot be allocated
+    {
+        // 1. Refusal of task struct allocation from heap
+        heap_test_fail_nth(1);
+        struct task *t1 = sched_create_task(dummy_task_entry);
+        heap_test_fail_nth(0);
+        TEST_ASSERT("task creation fails when task struct allocation is refused", t1 == NULL);
+
+        // Ensure a free slot in the task slab class so the PMM refusal reliably targets kstack_alloc
+        void *warmup = heap_malloc(sizeof(struct task));
+        heap_free(warmup);
+
+        // 2. Refusal of kernel stack allocation from PMM
+        unsigned long before_pages = pmm_get_free_pages();
+        pmm_test_fail_nth(1);
+        struct task *t2 = sched_create_task(dummy_task_entry);
+        pmm_test_fail_nth(0);
+        TEST_ASSERT("task creation fails when stack allocation is refused", t2 == NULL);
+        TEST_ASSERT_EQ("refused task creation leaves no pages behind", pmm_get_free_pages(), before_pages);
+
+        // Verify heap remains intact
+        void *probe = heap_malloc(sizeof(struct task));
+        TEST_ASSERT("heap is intact after task allocation failure", probe != NULL);
+        heap_free(probe);
     }
 
     // nothing above may leave an arming behind for the suites that follow

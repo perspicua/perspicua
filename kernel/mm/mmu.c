@@ -95,7 +95,10 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
     unsigned long block_phys = block_entry & PTE_ADDR;
     unsigned long block_attr = block_entry & ~PTE_ADDR & ~PTE_TABLE;
 
-    unsigned long *l3 = alloc_table_page();
+    unsigned long *l3 = alloc_user_table_page();
+    if (!l3) {
+        return NULL;
+    }
 
     for (unsigned long i = 0; i < PT_ENTRIES; i++) {
         unsigned long page_phys = block_phys + i * PAGE_SIZE;
@@ -224,6 +227,9 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
         if (!(l2e & PTE_TABLE)) {
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
+            if (!l3t) {
+                goto out;
+            }
         } else {
             l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
         }
@@ -240,6 +246,7 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     l3t[l3] = paddr | PTE_VALID | PTE_PAGE | flags;
     tlbi_va_is(vaddr);
 
+out:
     spin_unlock_irqrestore(&mmu_lock, irq);
 }
 
@@ -266,6 +273,9 @@ void mmu_unmap_page(unsigned long vaddr)
     if (!(l2e & PTE_TABLE)) {
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
+        if (!l3t) {
+            goto out;
+        }
     } else {
         l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     }
@@ -515,6 +525,10 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
         if (!(l2t[l2] & PTE_TABLE)) {
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
+            if (!l3t) {
+                spin_unlock_irqrestore(&mmu_lock, irq);
+                return -ENOMEM;
+            }
         } else {
             l3t = (unsigned long *)P2V(l2t[l2] & PTE_ADDR);
         }
@@ -571,6 +585,9 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
     if (!(l2e & PTE_TABLE)) {
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
+        if (!l3t) {
+            goto out;
+        }
     } else {
         l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
     }

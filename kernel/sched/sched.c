@@ -392,17 +392,18 @@ void sched_secondary_init(void)
     PANIC("sched_secondary_init: sched_schedule() returned unexpectedly");
 }
 
-void sched_create_task(void (*entry)(void))
+struct task *sched_create_task(void (*entry)(void))
 {
     struct task *t = (struct task *)heap_malloc(sizeof(struct task));
     if (!t) {
-        PANIC("sched_create_task: OOM for task struct");
+        return NULL;
     }
     memset(t, 0, sizeof(*t));
 
     unsigned char *stack = kstack_alloc();
     if (!stack) {
-        PANIC("sched_create_task: OOM for stack");
+        heap_free(t);
+        return NULL;
     }
 
     init_task_stack_context(t, stack, entry);
@@ -413,6 +414,7 @@ void sched_create_task(void (*entry)(void))
     t->on_core = -1;
 
     rq_enqueue(cpu_id(), t);
+    return t;
 }
 
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
