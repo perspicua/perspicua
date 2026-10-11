@@ -149,7 +149,7 @@ single highest-leverage phase in the file.
         What's left: there is no cross-core reschedule IPI; a task woken onto
         another core waits for that core's next tick.
 
-   4. Graceful out-of-memory handling
+   4. Graceful out-of-memory handling [DONE]
       Effort: M | Unlocks: a kernel that degrades instead of dying
       Scope: replace PANIC-on-allocation-failure with unwinding error returns;
         define an OOM policy for user allocations.
@@ -158,8 +158,10 @@ single highest-leverage phase in the file.
       Note: runtime sites that must unwind: mmu alloc_table_page(),
         process_create() user-stack and kernel-stack paths, elf_load() ("ELF: Out
         of memory during loading"), sched_create_task(). Boot-time init PANICs
-        (heap_init, slab_init, idle-task allocation) are fine to keep — don't
+        (heap_init, slab_init, idle-task allocation) are fine to keep - don't
         spend effort unwinding code that runs before userspace exists.
+        CoW allocation failure terminates the faulting process via SIGKILL
+        instead of looping on SIGSEGV.
 
    5. Unified buffer cache                                        (IMP-009, part 1)
       Effort: M-L | Unlocks: demand paging; halves cache memory

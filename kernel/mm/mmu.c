@@ -68,17 +68,18 @@ static inline void tlbi_all_is(void)
     asm volatile("isb" : : : "memory");
 }
 
-// pmm_alloc_page hands back zeroed pages, so a fresh table starts with no entries.
-static unsigned long *alloc_table_page(void)
+// Table allocation for early boot initialization; panics if memory is exhausted.
+static unsigned long *boot_table_page(void)
 {
     unsigned long *page = (unsigned long *)pmm_alloc_page();
     if (!page) {
-        PANIC("mmu: table allocation failed");
+        PANIC("mmu: boot table allocation failed");
     }
     return page;
 }
 
-static unsigned long *alloc_user_table_page(void)
+// Runtime table allocation; returns NULL on allocation failure.
+static unsigned long *alloc_table_page(void)
 {
     return (unsigned long *)pmm_alloc_page();
 }
@@ -95,7 +96,7 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
     unsigned long block_phys = block_entry & PTE_ADDR;
     unsigned long block_attr = block_entry & ~PTE_ADDR & ~PTE_TABLE;
 
-    unsigned long *l3 = alloc_user_table_page();
+    unsigned long *l3 = alloc_table_page();
     if (!l3) {
         return NULL;
     }
@@ -121,11 +122,11 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
 
 void mmu_init(void)
 {
-    unsigned long *pgd = alloc_table_page();
-    unsigned long *pmd_0 = alloc_table_page();
-    unsigned long *pmd_1 = alloc_table_page();
-    unsigned long *pmd_2 = alloc_table_page();
-    unsigned long *pmd_3 = alloc_table_page();
+    unsigned long *pgd = boot_table_page();
+    unsigned long *pmd_0 = boot_table_page();
+    unsigned long *pmd_1 = boot_table_page();
+    unsigned long *pmd_2 = boot_table_page();
+    unsigned long *pmd_3 = boot_table_page();
 
     pgd[0] = V2P((uintptr_t)pmd_0) | PTE_VALID | PTE_TABLE;
     pgd[1] = V2P((uintptr_t)pmd_1) | PTE_VALID | PTE_TABLE;
@@ -134,7 +135,7 @@ void mmu_init(void)
 
     // Identity map first GB with 4 KB pages for fine-grained kernel control
     for (unsigned long i = 0; i < PT_ENTRIES; i++) {
-        unsigned long *l3 = alloc_table_page();
+        unsigned long *l3 = boot_table_page();
         pmd_0[i] = V2P((uintptr_t)l3) | PTE_VALID | PTE_TABLE;
 
         for (unsigned long j = 0; j < PT_ENTRIES; j++) {
@@ -182,10 +183,12 @@ void mmu_init(void)
             attr |= PTE_AP_RW | PTE_PXN | PTE_UXN;
         }
 
-        mmu_map_page(va, pa, attr);
+        if (mmu_map_page(va, pa, attr) != 0) {
+            PANIC("mmu: failed to map kernel segment page");
+        }
     }
 
-    unsigned long *empty_pgd = alloc_table_page();
+    unsigned long *empty_pgd = boot_table_page();
     empty_pgd_phys = V2P((uintptr_t)empty_pgd);
 
     asm volatile("msr ttbr1_el1, %0" : : "r"(kernel_pgd_phys) : "memory");
@@ -203,7 +206,7 @@ void mmu_secondary_init(void)
     tlbi_all_is();
 }
 
-void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
+int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
 {
     paddr &= PTE_ADDR;
     unsigned long irq = spin_lock_irqsave(&mmu_lock);
@@ -217,6 +220,10 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
         l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
     } else {
         l2t = alloc_table_page();
+        if (!l2t) {
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            return -ENOMEM;
+        }
         kernel_pgd_virt[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
 
@@ -228,13 +235,18 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
-                goto out;
+                spin_unlock_irqrestore(&mmu_lock, irq);
+                return -ENOMEM;
             }
         } else {
             l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
         }
     } else {
         l3t = alloc_table_page();
+        if (!l3t) {
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            return -ENOMEM;
+        }
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
     }
 
@@ -246,11 +258,11 @@ void mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     l3t[l3] = paddr | PTE_VALID | PTE_PAGE | flags;
     tlbi_va_is(vaddr);
 
-out:
     spin_unlock_irqrestore(&mmu_lock, irq);
+    return 0;
 }
 
-void mmu_unmap_page(unsigned long vaddr)
+int mmu_unmap_page(unsigned long vaddr)
 {
     unsigned long irq = spin_lock_irqsave(&mmu_lock);
 
@@ -259,14 +271,16 @@ void mmu_unmap_page(unsigned long vaddr)
     unsigned long l3 = L3_IDX(vaddr);
 
     if (!(kernel_pgd_virt[l1] & PTE_VALID)) {
-        goto out;
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        return 0;
     }
 
     unsigned long *l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID)) {
-        goto out;
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        return 0;
     }
 
     unsigned long *l3t;
@@ -274,7 +288,8 @@ void mmu_unmap_page(unsigned long vaddr)
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
         if (!l3t) {
-            goto out;
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            return -ENOMEM;
         }
     } else {
         l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
@@ -285,8 +300,8 @@ void mmu_unmap_page(unsigned long vaddr)
         tlbi_va_is(vaddr);
     }
 
-out:
     spin_unlock_irqrestore(&mmu_lock, irq);
+    return 0;
 }
 
 int mmu_query(unsigned long vaddr, unsigned long *out_paddr, unsigned long *out_flags)
@@ -342,7 +357,7 @@ out:
 
 unsigned long *mmu_create_user_pgd(void)
 {
-    return alloc_user_table_page();
+    return alloc_table_page();
 }
 
 /*
@@ -428,7 +443,7 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
         }
 
         unsigned long *parent_pmd = (unsigned long *)P2V(l1e & PTE_ADDR);
-        unsigned long *child_pmd = alloc_user_table_page();
+        unsigned long *child_pmd = alloc_table_page();
         if (!child_pmd) {
             goto oom;
         }
@@ -444,9 +459,7 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
             if (!(l2e & MMU_PTE_TABLE)) {
                 unsigned long pte = l2e;
                 if (!(pte & MMU_AP_RO)) {
-                    pte &= ~MMU_AP_RO;
-                    pte |= MMU_AP_RO | MMU_PTE_COW;
-                    parent_pmd[j] = pte;
+                    pte = (pte & ~MMU_AP_RO) | MMU_AP_RO | MMU_PTE_COW;
                 }
                 child_pmd[j] = pte;
                 void *v_pa = (void *)P2V(pte & PTE_ADDR);
@@ -457,7 +470,7 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
             }
 
             unsigned long *parent_pte = (unsigned long *)P2V(l2e & PTE_ADDR);
-            unsigned long *child_pte = alloc_user_table_page();
+            unsigned long *child_pte = alloc_table_page();
             if (!child_pte) {
                 goto oom;
             }
@@ -471,9 +484,7 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
                 }
 
                 if (!(pte & MMU_AP_RO)) {
-                    pte &= ~MMU_AP_RO;
-                    pte |= MMU_AP_RO | MMU_PTE_COW;
-                    parent_pte[k] = pte;
+                    pte = (pte & ~MMU_AP_RO) | MMU_AP_RO | MMU_PTE_COW;
                 }
                 child_pte[k] = pte;
                 void *v_pa = (void *)P2V(pte & PTE_ADDR);
@@ -484,11 +495,43 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
         }
     }
 
+    // Mark parent writable pages as copy-on-write once all child tables exist
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
+        unsigned long l1e = parent_pgd[i];
+        if (!(l1e & MMU_PTE_VALID)) {
+            continue;
+        }
+
+        unsigned long *parent_pmd = (unsigned long *)P2V(l1e & PTE_ADDR);
+        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
+            unsigned long l2e = parent_pmd[j];
+            if (!(l2e & MMU_PTE_VALID)) {
+                continue;
+            }
+
+            if (!(l2e & MMU_PTE_TABLE)) {
+                if (!(l2e & MMU_AP_RO)) {
+                    parent_pmd[j] = (l2e & ~MMU_AP_RO) | MMU_AP_RO | MMU_PTE_COW;
+                }
+                continue;
+            }
+
+            unsigned long *parent_pte = (unsigned long *)P2V(l2e & PTE_ADDR);
+            for (unsigned long k = 0; k < PT_ENTRIES; k++) {
+                unsigned long pte = parent_pte[k];
+                if ((pte & MMU_PTE_VALID) && !(pte & MMU_AP_RO)) {
+                    parent_pte[k] = (pte & ~MMU_AP_RO) | MMU_AP_RO | MMU_PTE_COW;
+                }
+            }
+        }
+    }
+
     tlbi_all_is();
     spin_unlock_irqrestore(&mmu_lock, irq);
     return child_pgd;
 
 oom:
+    tlbi_all_is();
     spin_unlock_irqrestore(&mmu_lock, irq);
     mmu_destroy_user_pgd(child_pgd);
     return NULL;
@@ -512,7 +555,7 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
     if (pgd[l1] & PTE_VALID) {
         l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
     } else {
-        l2t = alloc_user_table_page();
+        l2t = alloc_table_page();
         if (!l2t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
@@ -533,7 +576,7 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
             l3t = (unsigned long *)P2V(l2t[l2] & PTE_ADDR);
         }
     } else {
-        l3t = alloc_user_table_page();
+        l3t = alloc_table_page();
         if (!l3t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
@@ -558,10 +601,10 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
     return 0;
 }
 
-void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
+int mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
 {
     if (!pgd) {
-        return;
+        return 0;
     }
 
     unsigned long irq = spin_lock_irqsave(&mmu_lock);
@@ -571,14 +614,16 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
     unsigned long l3 = L3_IDX(vaddr);
 
     if (!(pgd[l1] & PTE_VALID)) {
-        goto out;
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        return 0;
     }
 
     unsigned long *l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
     unsigned long l2e = l2t[l2];
 
     if (!(l2e & PTE_VALID)) {
-        goto out;
+        spin_unlock_irqrestore(&mmu_lock, irq);
+        return 0;
     }
 
     unsigned long *l3t;
@@ -586,7 +631,8 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
         unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
         l3t = split_block_to_pages(l2t, l2, base);
         if (!l3t) {
-            goto out;
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            return -ENOMEM;
         }
     } else {
         l3t = (unsigned long *)P2V(l2e & PTE_ADDR);
@@ -602,8 +648,8 @@ void mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
         }
     }
 
-out:
     spin_unlock_irqrestore(&mmu_lock, irq);
+    return 0;
 }
 
 void mmu_switch_user(unsigned long *pgd, unsigned long asid)
@@ -819,7 +865,7 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
     void *new_page = pmm_alloc_pages_nozero(1);
     if (!new_page) {
         pmm_free_page(old_va);
-        return -1;
+        return -ENOMEM;
     }
     memcpy(new_page, old_va, PAGE_SIZE);
 
@@ -847,3 +893,28 @@ unsigned long mmu_kernel_ttbr0(void)
 {
     return empty_pgd_phys;
 }
+
+#ifdef CONFIG_TESTS
+int mmu_test_is_block_entry(unsigned long vaddr)
+{
+    unsigned long irq = spin_lock_irqsave(&mmu_lock);
+
+    unsigned long l1 = L1_IDX(vaddr);
+    unsigned long l2 = L2_IDX(vaddr);
+    int result = 0;
+
+    if (!(kernel_pgd_virt[l1] & PTE_VALID)) {
+        goto out;
+    }
+    unsigned long *l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
+    unsigned long l2e = l2t[l2];
+    if (!(l2e & PTE_VALID)) {
+        goto out;
+    }
+    result = !(l2e & PTE_TABLE);
+
+out:
+    spin_unlock_irqrestore(&mmu_lock, irq);
+    return result;
+}
+#endif

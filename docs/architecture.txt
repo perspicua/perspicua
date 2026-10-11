@@ -124,6 +124,10 @@ Memory
   fixed-size objects) and the heap (general purpose). Each address space carries
   an ASID from a small pool so TLB entries don't have to be flushed wholesale on
   every switch.
+  Kernel allocations at runtime unwind on failure and return -ENOMEM rather than
+  panicking (boot allocations before userspace still panic). When memory is
+  exhausted during a copy-on-write page fault, the kernel logs an OOM diagnostic
+  and terminates the faulting process with SIGKILL to avoid unbounded fault loops.
 
 Scheduling and processes
   Per-core runqueues with round-robin selection; a task can be on a runqueue and

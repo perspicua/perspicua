@@ -104,7 +104,7 @@ struct task {
 void sched_enqueue(int cpu, struct task *t);
 void sched_init(void);
 void sched_secondary_init(void);
-struct task *sched_create_task(void (*entry)(void));
+int sched_create_task(void (*entry)(void));
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid);
 void sched_sleep_ms(unsigned long ms);

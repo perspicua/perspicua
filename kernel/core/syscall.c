@@ -1545,7 +1545,7 @@ mmap_fail:
     /* Unmap anything mapped so far (frees those pages) and release the
      * reserved VA region so a failed mmap leaks neither. */
     for (size_t j = 0; j < pages_needed; j++) {
-        mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
+        (void)mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
     }
     process_va_free(&proc->va, new_region);
     return fail_err;

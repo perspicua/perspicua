@@ -10,6 +10,7 @@
 #include "stdio.h"
 #include "io.h"
 #include "panic.h"
+#include "uapi/errno.h"
 
 #include "arch/uaccess.h"
 
@@ -126,7 +127,19 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
     if (is_write && (fsc >= FSC_PERMISSION_L1 && fsc <= FSC_PERMISSION_L3) && (far < KERNEL_VMA)) {
         struct process *p = process_current();
         if (p && p->user_pgd) {
-            if (mmu_handle_cow(p->user_pgd, far) == 0) {
+            int cow_ret = mmu_handle_cow(p->user_pgd, far);
+            if (cow_ret == 0) {
+                return;
+            }
+            if (cow_ret == -ENOMEM && is_user_fault) {
+                int pid = process_current_pid();
+                printk(
+                    "\n[OOM] Out of memory handling copy-on-write abort in user process (PID %d)\n",
+                    pid);
+                printk("  FAR_EL1  : 0x%016lx\n", far);
+                printk("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+                printk("  Action   : SIGKILL to PID %d\n", pid);
+                signal_raise_fault(SIGKILL);
                 return;
             }
         }
