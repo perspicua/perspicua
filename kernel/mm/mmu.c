@@ -215,6 +215,7 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     unsigned long l2 = L2_IDX(vaddr);
     unsigned long l3 = L3_IDX(vaddr);
 
+    int new_l2 = 0;
     unsigned long *l2t;
     if (kernel_pgd_virt[l1] & PTE_VALID) {
         l2t = (unsigned long *)P2V(kernel_pgd_virt[l1] & PTE_ADDR);
@@ -224,7 +225,7 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
         }
-        kernel_pgd_virt[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
+        new_l2 = 1;
     }
 
     unsigned long *l3t;
@@ -235,6 +236,9 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
+                if (new_l2) {
+                    pmm_free_page(l2t);
+                }
                 spin_unlock_irqrestore(&mmu_lock, irq);
                 return -ENOMEM;
             }
@@ -244,10 +248,17 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
     } else {
         l3t = alloc_table_page();
         if (!l3t) {
+            if (new_l2) {
+                pmm_free_page(l2t);
+            }
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
         }
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
+    }
+
+    if (new_l2) {
+        kernel_pgd_virt[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
 
     if (l3t[l3] & PTE_VALID) {
@@ -551,6 +562,7 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
     unsigned long l2 = L2_IDX(vaddr);
     unsigned long l3 = L3_IDX(vaddr);
 
+    int new_l2 = 0;
     unsigned long *l2t;
     if (pgd[l1] & PTE_VALID) {
         l2t = (unsigned long *)P2V(pgd[l1] & PTE_ADDR);
@@ -560,7 +572,7 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
         }
-        pgd[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
+        new_l2 = 1;
     }
 
     unsigned long *l3t;
@@ -569,6 +581,9 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
             unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
+                if (new_l2) {
+                    pmm_free_page(l2t);
+                }
                 spin_unlock_irqrestore(&mmu_lock, irq);
                 return -ENOMEM;
             }
@@ -578,10 +593,17 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
     } else {
         l3t = alloc_table_page();
         if (!l3t) {
+            if (new_l2) {
+                pmm_free_page(l2t);
+            }
             spin_unlock_irqrestore(&mmu_lock, irq);
             return -ENOMEM;
         }
         l2t[l2] = V2P((uintptr_t)l3t) | PTE_VALID | PTE_TABLE;
+    }
+
+    if (new_l2) {
+        pgd[l1] = V2P((uintptr_t)l2t) | PTE_VALID | PTE_TABLE;
     }
 
     if (l3t[l3] & PTE_VALID) {
