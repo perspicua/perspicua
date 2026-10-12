@@ -20,7 +20,7 @@ int main(int argc, char *argv[], char *envp[])
     print_string("[ INIT ] Userspace started\n");
 
     // Default environment if none provided
-    char *default_env[] = {"PATH=/bin:/", NULL};
+    char *default_env[] = {"PATH=/bin:/", "USER=root", "HOME=/", "SHELL=/bin/sh.elf", NULL};
     char **current_env = (envp && envp[0]) ? envp : default_env;
 
     while (1) {

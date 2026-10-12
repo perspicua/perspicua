@@ -206,6 +206,23 @@ static void test_clock(void)
           status == 0 && strncmp(out, "  cpu ", 6) == 0 && strstr(out, " MHz") != NULL);
 }
 
+static void test_kfetch(void)
+{
+    char out[OUT_MAX];
+    int status = run(NULL, out, (char *[]){"kfetch", NULL});
+    check("kfetch prints plain lines through a pipe",
+          status == 0 && strncmp(out, "root@perspicua\n", 15) == 0
+              && strstr(out, "\nOS: Perspicua ") != NULL && strstr(out, "\nKernel: ") != NULL
+              && strstr(out, "\nCPU: ") != NULL && strstr(out, "\nMemory: ") != NULL
+              && strchr(out, '\033') == NULL);
+    check("/proc/cpuinfo names the board",
+          run(NULL, out, (char *[]){"cat", "/proc/cpuinfo", NULL}) == 0
+              && strstr(out, "\nModel\t\t: ") != NULL);
+    check("/proc/version names the build",
+          run(NULL, out, (char *[]){"cat", "/proc/version", NULL}) == 0
+              && strncmp(out, "Perspicua version ", 18) == 0 && strstr(out, " built ") != NULL);
+}
+
 static void test_mandel(void)
 {
     char out[OUT_MAX];
@@ -378,6 +395,7 @@ int main(void)
     test_seq_sleep_clear();
     test_free_uptime();
     test_clock();
+    test_kfetch();
     test_mandel();
     test_ptop();
     test_edit();

@@ -44,6 +44,14 @@ target_include_directories(kernel_objs PUBLIC
 )
 
 target_compile_definitions(kernel_objs PUBLIC __KERNEL__)
+
+# /proc/version names the commit a kernel was built from; refreshed on every build.
+add_custom_target(build_info
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR} -DOUT=${KERNEL_CONFIG_INCLUDE}/build_info.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/build_info.cmake
+    BYPRODUCTS ${KERNEL_CONFIG_INCLUDE}/build_info.h
+)
+add_dependencies(kernel_objs build_info)
 target_compile_options(kernel_objs PUBLIC ${KERNEL_CONFIG_FORCE_INCLUDE})
 target_link_libraries(kernel_objs PUBLIC libk)
 

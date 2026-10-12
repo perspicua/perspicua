@@ -26,6 +26,8 @@
 #include "sched/sched.h"
 #include "arch/exception.h"
 #include "arch/irq.h"
+#include "build_info.h"
+#include "devicetree/fdt.h"
 #include "driver/fb.h"
 #include "driver/mailbox.h"
 
@@ -130,7 +132,8 @@ typedef int (*procfs_generate_fn)(char *buf, int size);
 static int procfs_gen_version(char *buf, int size)
 {
     int pos = 0;
-    procfs_append(buf, &pos, size, "perspicua kernel v0.1\n");
+    procfs_append(buf, &pos, size, "Perspicua version %s (gcc %s) built %s\n", PERSPICUA_VERSION,
+                  __VERSION__, PERSPICUA_BUILD_DATE);
     return pos;
 }
 
@@ -212,6 +215,19 @@ static int procfs_gen_cpuinfo(char *buf, int size)
         procfs_append(buf, &pos, size,
                       "processor\t: %d\nmodel name\t: ARM Cortex-A72 (BCM2711)\n\n", i);
     }
+
+    // The board, as Linux reports it on a Pi: the firmware's revision code and the devicetree's name.
+    procfs_append(buf, &pos, size, "Hardware\t: BCM2711\n");
+    uint32_t rev[2] = {0, 0};
+    if (mbox_query(MBOX_TAG_BOARD_REVISION, rev) == 0) {
+        procfs_append(buf, &pos, size, "Revision\t: %06x\n", rev[0]);
+    }
+    struct fdt_property model;
+    const uint32_t *root = fdt_find_node_by_path("/");
+    if (root && fdt_get_property(root, "model", &model) == 0 && model.size > 1) {
+        procfs_append(buf, &pos, size, "Model\t\t: %.*s\n", (int)model.size - 1,
+                      (const char *)model.value);
+    }
     return pos;
 }
 
@@ -239,6 +255,10 @@ static int procfs_gen_clock(char *buf, int size)
     uint32_t flags[2] = {0, 0};
     if (mbox_query(MBOX_TAG_THROTTLED, flags) == 0) {
         procfs_append(buf, &pos, size, "throttled 0x%x\n", flags[0]);
+    }
+    uint32_t temp[2] = {0, 0};
+    if (mbox_query(MBOX_TAG_TEMPERATURE, temp) == 0 && temp[1] != 0) {
+        procfs_append(buf, &pos, size, "temp_mc %u\n", temp[1]);
     }
     return pos;
 }

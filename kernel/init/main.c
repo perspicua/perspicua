@@ -2,6 +2,7 @@
  * kernel/init/main.c - Kernel entry point and system initialization sequence.
  */
 
+#include "build_info.h"
 #include "mm/asid.h"
 #include "uapi/errno.h"
 
@@ -46,9 +47,6 @@
 #ifdef CONFIG_TESTS
     #include "test.h"
 #endif
-
-// Kernel metadata and versioning
-#define KERNEL_VERSION "0.1.1"
 
 // Defined in arch/boot.S
 extern void _entry(void);
@@ -136,7 +134,7 @@ static void smp_init(void)
 
 static void print_banner(void)
 {
-    pr_info("perspicua kernel v%s (" __DATE__ " " __TIME__ ")\n", KERNEL_VERSION);
+    pr_info("perspicua kernel v%s (built %s)\n", PERSPICUA_VERSION, PERSPICUA_BUILD_DATE);
 }
 
 __attribute__((used)) int main(uintptr_t global_dtb_ptr)
