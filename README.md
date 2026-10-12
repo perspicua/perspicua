@@ -8,16 +8,16 @@
 Perspicua is a 64-bit, multi-core, UNIX-like operating system kernel for the
 Raspberry Pi 4B (BCM2711, Cortex-A72), written for AArch64.
 
-It boots at EL1 with the MMU enabled, runs a round-robin scheduler across
-per-core runqueues, mounts a FAT32 root filesystem from the SD card through a
-VFS layer, and execs an ELF init process into userspace. Development happens
-against QEMU's `raspi4b` machine; changes are validated on real hardware before
-release.
+It boots at EL1 with the MMU enabled, runs a preemptive round-robin scheduler
+across per-core runqueues, mounts a FAT32 root filesystem from the SD card
+through a VFS layer, and execs an ELF init process into userspace. Development
+happens against QEMU's `raspi4b` machine; changes are validated on real
+hardware before release.
 
 <p align="center">
   <img src="docs/img/boot.png" alt="Perspicua booting to a shell" width="760">
   <br>
-  <sub>Booting to the shell under QEMU (<code>just run</code>)</sub>
+  <sub>Booting under QEMU (<code>just run</code>), then <code>kfetch</code></sub>
 </p>
 
 ## Status
@@ -29,17 +29,23 @@ This describes what exists today. For planned work see
 - AArch64 (Cortex-A72), 4 cores via SMP
 - Flattened-devicetree (FDT) parsing at boot
 - Secondary cores released from the spin table
+- Each build names its version, taken from the release tags, in the boot
+  banner and `/proc/version`
 
 **Memory**
-- Physical page allocator (4KB pages)
+- Physical page allocator (4KB pages) over all RAM below 4 GB
 - 39-bit virtual address spaces, kernel high-half plus per-process user map
 - Copy-on-write faults
 - Slab and heap allocators; ASID pool
+- Out of memory, allocations fail with `-ENOMEM` instead of panicking, and a
+  copy-on-write fault that cannot get a page kills only that process
 
 **Processes and scheduling**
 - Per-core runqueues, round-robin selection; sleep and wait queues
+- Preemptible kernel: a task can be switched out anywhere outside a spinlock
+- Sleeping locks: mutex, semaphore, completion, and reader-writer semaphore
 - `fork`, `exec` (ELF loader), `exit`, `waitpid`
-- Per-process address space, file-descriptor table, and signal state
+- Per-process address space, file-descriptor table, signal state, and CPU time
 - POSIX-style signals, including job-control stops (SIGTSTP/SIGTTIN/SIGTTOU)
 
 **Filesystems**
@@ -48,7 +54,8 @@ This describes what exists today. For planned work see
 - Page cache for file data; block cache in the sd/block drivers
 
 **Drivers**
-- UART, GIC, GPIO, mailbox, SD card and block layer
+- UART, GIC, GPIO, mailbox, SD card (4-bit bus, multi-block transfers) and
+  block layer
 - Framebuffer: `fb` -> `graphics` -> `fb_console` (8x8 font)
 - Devicetree-driven device and probe model
 
@@ -56,11 +63,16 @@ This describes what exists today. For planned work see
 - 46 syscalls defined in [`uapi/syscalls.h`](uapi/syscalls.h)
 - `uaccess` helpers copy across the boundary with fault fixup, so a bad user
   pointer returns an error rather than faulting the kernel
-- In-tree freestanding libc shared by kernel and userspace
-- Userspace: `init`, `sh`, `ls`, `cat`, `hd`, `ptop`, `kfetch`, and test programs
+- In-tree freestanding libc shared by kernel and userspace, with buffered
+  stdio and a full-screen terminal helper (`term.h`)
+- Userspace: `init` and the `sh` shell; the usual command-line tools (`ls`,
+  `cat`, `cp`, `grep`, `find`, `sort`, `less`, ...); an editor (`edit`);
+  `ptop`, `kfetch` and `bench`; `mandel` and `gfx_demo` on the framebuffer;
+  the games `tetris`, `snake`, `2048` and `mines`; and the test programs
 
 **Debugging**
 - In-kernel debugger (kdb), lockdep, KASAN
+- Fault injection that refuses a chosen heap or page allocation
 - Generated symbol tables and GDB helper scripts
 
 ## Boot sequence
@@ -78,8 +90,8 @@ before it:
 | 4 | SMP and filesystems — wake secondary cores, VFS, processes, devfs, mount FAT32 at `/`, procfs |
 
 The kernel then enables interrupts, optionally runs the test suites under
-`CONFIG_TESTS`, and execs `/bin/init.elf`. The boot thread parks in a `wfe`
-loop; the scheduler runs everything from that point.
+`CONFIG_TESTS`, and execs `/bin/init.elf`. The boot thread then exits; the
+scheduler runs everything from that point.
 
 Full detail is in [`docs/architecture.txt`](docs/architecture.txt).
 
@@ -89,11 +101,14 @@ Requires an AArch64 cross-compiler, CMake, [just](https://github.com/casey/just)
 and mtools.
 
 ```
-just build [type]   Build the project (default: debug)
+just build [type]   Build the project (default: RelWithDebInfo)
 just run            Compile and run in QEMU
 just run-gui        Run in QEMU with GUI (serial vc)
+just test           Build the test kernel and run every suite headless
+just test-shell     Build the test kernel and drop to its shell in QEMU
 just debug          Compile and start in debug mode (waits for GDB)
 just gdb            Connect GDB to the QEMU debug instance
+just format         Format the sources (just check-format only checks)
 just disasm         Show disassembled kernel
 just clean          Remove build artifacts
 ```
@@ -101,8 +116,9 @@ just clean          Remove build artifacts
 Examples:
 
 ```sh
-just build            # builds Debug
-just build release    # builds Release (optimized)
+just build            # builds RelWithDebInfo (-O2 -g)
+just build Debug      # unoptimized, for stepping through in GDB
+just build Release    # optimized, no debug info
 ```
 
 The output image is `pi4-boot/kernel8.img`.
@@ -110,9 +126,13 @@ The output image is `pi4-boot/kernel8.img`.
 ## Testing
 
 In-kernel test suites live in `kernel/tests/` and are compiled in only under
-`CONFIG_TESTS`: pmm, mmu, mmu_user, slab, heap, kasan, spinlock, mutex, sched,
-process, signals, pipe, vfs, fat32, sd, uaccess, timer, string, and types.
-`scripts/run_tests.sh` runs them headlessly. See
+`CONFIG_TESTS`. They cover memory (pmm, mmu, slab, heap, KASAN), scheduling and
+locking (the scheduler, spinlocks, sleeping locks, wait queues, lockdep),
+processes and signals, filesystems (VFS, FAT32 including corrupt media, pipes),
+the SD driver, user-memory access, syscall bounds, and fault injection. The
+userspace suites `test_restart`, `test_tools` and `test_libc` then run at the
+shell. `just test` runs everything headless through `scripts/run_tests.sh` and
+fails on any assertion, panic, or timeout. See
 [`docs/testing.txt`](docs/testing.txt).
 
 ## Source tree
@@ -122,7 +142,7 @@ kernel/     arch/ core/ mm/ sched/ fs/ driver/ devicetree/ init/ tests/ include/
 libc/       freestanding C library (kernel/, user/, src/, arch/, include/)
 uapi/       user/kernel ABI: syscall numbers, error codes, struct layouts
 user/       crt0.S and userspace applications (apps/, one file or one directory each)
-cmake/      cross-compilation toolchain file
+cmake/      toolchain file, config header template, build-version generator
 scripts/    symbol-table generation, GDB helpers, test harness
 pi4-boot/   firmware, devicetree blob, and the final kernel8.img
 docs/       design and process documentation
