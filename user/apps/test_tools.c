@@ -237,8 +237,9 @@ static void test_ptop(void)
 {
     char out[OUT_MAX];
     int status = run(NULL, out, (char *[]){"ptop", "--once", NULL});
-    check("ptop --once", status == 0 && strstr(out, " cpu0 [") != NULL
-                             && strstr(out, "  PID  PPID") != NULL && strstr(out, "ptop") != NULL
+    check("ptop --once", status == 0 && strstr(out, "\u256d\u2500 cpu ") != NULL
+                             && strstr(out, " mem ") != NULL && strstr(out, " proc ") != NULL
+                             && strstr(out, "PID") != NULL && strstr(out, "ptop") != NULL
                              && strchr(out, '\033') == NULL);
     check("ptop refuses unknown flags", run(NULL, out, (char *[]){"ptop", "-x", NULL}) != 0);
 }

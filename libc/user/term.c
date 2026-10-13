@@ -20,8 +20,9 @@
 #define SIZE_WAIT_MS 300 // a terminal over a network bridge answers in tens of ms
 #define OUT_MAX      4096
 
-#define SCREEN_TAKE    "\033[0m\033[2J\033[H\033[?25l"
-#define SCREEN_RELEASE "\033[0m\033[2J\033[H\033[?25h"
+// Autowrap off while the screen is ours, so the last cell can be written without scrolling.
+#define SCREEN_TAKE    "\033[0m\033[2J\033[H\033[?25l\033[?7l"
+#define SCREEN_RELEASE "\033[0m\033[2J\033[H\033[?25h\033[?7h"
 // The cursor goes as far as the screen allows, and the terminal reports where that is.
 #define SIZE_QUERY "\0337\033[999;999H\033[6n\0338"
 
@@ -653,10 +654,6 @@ void term_present(void)
 
     for (int r = 0; r < rows; r++) {
         for (int c = 0; c < cols; c++) {
-            // The last cell is left alone: writing it can scroll the whole screen.
-            if (r == rows - 1 && c == cols - 1) {
-                continue;
-            }
             struct cell *want = &back[r * cols + c];
             struct cell *have = &front[r * cols + c];
             if (want->cp == have->cp && want->attr == have->attr) {

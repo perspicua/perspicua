@@ -1,10 +1,11 @@
 /*
- * ptop.c - btop-style system monitor: per-core load, memory and a process list.
+ * ptop.c - A btop-style system monitor: CPU, memory, system and process panels.
  *
  * Every figure is a delta between two samples of /proc: per-core busy and idle
  * milliseconds from /proc/stat, interrupt counts from /proc/interrupts, and
- * each process's CpuTime from its status file. `ptop --once` takes two samples,
- * prints one frame as plain text and exits.
+ * each process's CpuTime from its status file. The panels share out whatever
+ * size the terminal reports, 80x24 at the least. `ptop --once` takes two
+ * samples, prints one frame as plain text and exits.
  */
 
 #include <stdarg.h>
@@ -24,18 +25,35 @@
 #define MESSAGE_MS   3000
 #define MAX_CORES    8
 #define MAX_PROCS    128
-#define HISTORY      20
-#define BAR_W        20
+#define HIST_MAX     TERM_MAX_COLS // one sample per graph column, at the widest
 #define READ_BUF     1024
-#define VALUE_COL    29 // where the text after a bar starts
-#define GRAPH_COL    35
 
-#define ATTR_TITLE    (TERM_BG(TERM_BLUE) | TERM_FG(TERM_WHITE) | TERM_BOLD)
-#define ATTR_HEAD     (TERM_BG(TERM_GREEN) | TERM_FG(TERM_BLACK))
-#define ATTR_SORTED   (TERM_BG(TERM_CYAN) | TERM_FG(TERM_BLACK) | TERM_BOLD)
-#define ATTR_SELECTED (TERM_BG(TERM_CYAN) | TERM_FG(TERM_BLACK))
-#define ATTR_GRAPH    TERM_FG(TERM_CYAN)
-#define ATTR_PROMPT   (TERM_FG(TERM_YELLOW) | TERM_BOLD)
+// As in btop: + and - add or take 100 ms from the update timer.
+#define SIZE_ASK_MS     2000
+#define REFRESH_STEP_MS 100
+#define REFRESH_MAX_MS  10000
+
+#define CPU_COLOUR  TERM_GREEN
+#define MEM_COLOUR  TERM_YELLOW
+#define SYS_COLOUR  TERM_MAGENTA
+#define PROC_COLOUR TERM_RED
+#define KILL_COLOUR TERM_RED
+
+#define ATTR_TITLE    (TERM_FG(TERM_WHITE) | TERM_BOLD)
+#define ATTR_DIM      (TERM_FG(TERM_BLACK) | TERM_BOLD)
+#define ATTR_SELECTED (TERM_BG(TERM_BLUE) | TERM_FG(TERM_WHITE) | TERM_BOLD)
+#define ATTR_WARN     (TERM_FG(TERM_YELLOW) | TERM_BOLD)
+#define ATTR_ALERT    (TERM_FG(TERM_RED) | TERM_BOLD)
+
+#define CTRL(c) ((c) & 0x1f)
+
+#define BOX_H  0x2500
+#define BOX_V  0x2502
+#define BOX_TL 0x256d
+#define BOX_TR 0x256e
+#define BOX_BL 0x2570
+#define BOX_BR 0x256f
+#define SQUARE 0x25a0
 
 struct proc {
     int pid, ppid;
@@ -51,7 +69,7 @@ struct sample {
     int ncores;
     int core_id[MAX_CORES];
     unsigned long busy[MAX_CORES], idle[MAX_CORES];
-    unsigned long irqs, ctxt;
+    unsigned long irqs, ctxt, forks;
     unsigned long mem_total, mem_free, slab_used, slab_total;
     unsigned long uptime_s;
     int nprocs;
@@ -61,33 +79,31 @@ struct sample {
 enum {
     SORT_CPU,
     SORT_MEM,
-    SORT_PID
+    SORT_PID,
+    SORT_KEYS
 };
 
 static struct sample samples[2];
 static struct sample *cur = &samples[0], *prev = &samples[1];
 static int sampled;
 
-static int core_pct[MAX_CORES];
-static unsigned char history[MAX_CORES][HISTORY];
-static unsigned long irq_rate, ctxt_rate;
+static int core_pct[MAX_CORES], total_pct;
+static unsigned long irq_rate, ctxt_rate, fork_rate;
+static long arm_mhz = -1, temp_mc = -1, throttled = -1;
 
-// As in btop: + and - add or take 100 ms from the update timer.
-#define SIZE_ASK_MS     2000
-#define REFRESH_STEP_MS 100
-#define REFRESH_MAX_MS  10000
+// Newest last; every ring takes one entry per sample, so they share a count.
+static unsigned char total_hist[HIST_MAX], mem_hist[HIST_MAX], core_hist[MAX_CORES][HIST_MAX];
+static int hist_count;
 
 static unsigned long refresh_ms = 1000;
 static unsigned long size_asked;
 
-#define CTRL(c) ((c) & 0x1f)
-
 static int sort_key = SORT_CPU;
-static int sel, sel_pid = -1, top, list_rows;
+static int sel, sel_pid = -1, scroll, list_rows;
 
 static int pending_sig, pending_pid;
 static char pending_name[32];
-static char message[TERM_COLS + 1];
+static char message[TERM_MAX_COLS + 1];
 static unsigned long message_until;
 
 static void set_message(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -183,6 +199,33 @@ static void field_str(const char *buf, const char *key, char *out, size_t size)
     out[n] = '\0';
 }
 
+// The number on a "key value" line, as /proc/clock writes them; -1 if missing.
+static long clock_value(const char *text, const char *key)
+{
+    size_t len = strlen(key);
+    for (const char *line = text; *line; line = next_line(line)) {
+        if (strncmp(line, key, len) == 0 && line[len] == ' ') {
+            const char *p = line + len + 1;
+            int base = 10;
+            if (p[0] == '0' && p[1] == 'x') {
+                base = 16;
+                p += 2;
+            }
+            long v = 0;
+            for (;; p++) {
+                int d = (*p >= '0' && *p <= '9')   ? *p - '0'
+                        : (*p >= 'a' && *p <= 'f') ? *p - 'a' + 10
+                                                   : -1;
+                if (d < 0 || d >= base) {
+                    return v;
+                }
+                v = v * base + d;
+            }
+        }
+    }
+    return -1;
+}
+
 static unsigned long delta(unsigned long now, unsigned long then)
 {
     return now > then ? now - then : 0;
@@ -193,6 +236,7 @@ static void read_stat(struct sample *s)
     char buf[READ_BUF];
     s->ncores = 0;
     s->ctxt = 0;
+    s->forks = 0;
     if (read_file("/proc/stat", buf, sizeof(buf)) < 0) {
         return;
     }
@@ -201,6 +245,9 @@ static void read_stat(struct sample *s)
         if (strncmp(line, "ctxt ", 5) == 0) {
             p += 5;
             s->ctxt = number(&p);
+        } else if (strncmp(line, "processes ", 10) == 0) {
+            p += 10;
+            s->forks = number(&p);
         } else if (strncmp(line, "cpu", 3) == 0 && s->ncores < MAX_CORES) {
             p += 3;
             int i = s->ncores++;
@@ -249,6 +296,16 @@ static void read_mem(struct sample *s)
     }
 }
 
+static void read_clock(void)
+{
+    char buf[256];
+    if (read_file("/proc/clock", buf, sizeof(buf)) > 0) {
+        arm_mhz = clock_value(buf, "arm_mhz");
+        temp_mc = clock_value(buf, "temp_mc");
+        throttled = clock_value(buf, "throttled");
+    }
+}
+
 static void read_procs(struct sample *s)
 {
     s->nprocs = 0;
@@ -280,8 +337,20 @@ static void read_procs(struct sample *s)
         pr->pct10 = 0;
         field_str(buf, "Name", pr->name, sizeof(pr->name));
         field_str(buf, "State", pr->state, sizeof(pr->state));
+        size_t len = strlen(pr->name);
+        if (len > 4 && strcmp(pr->name + len - 4, ".elf") == 0) {
+            pr->name[len - 4] = '\0';
+        }
     }
     closedir(dir);
+}
+
+static void push(unsigned char *ring, int value)
+{
+    if (hist_count == HIST_MAX) {
+        memmove(ring, ring + 1, HIST_MAX - 1);
+    }
+    ring[hist_count == HIST_MAX ? HIST_MAX - 1 : hist_count] = (unsigned char)value;
 }
 
 static void derive_rates(void)
@@ -292,14 +361,23 @@ static void derive_rates(void)
     }
     irq_rate = delta(cur->irqs, prev->irqs) * 1000 / dt;
     ctxt_rate = delta(cur->ctxt, prev->ctxt) * 1000 / dt;
+    fork_rate = delta(cur->forks, prev->forks) * 1000 / dt;
 
+    unsigned long all_busy = 0, all = 0;
     for (int i = 0; i < cur->ncores; i++) {
         unsigned long busy = i < prev->ncores ? delta(cur->busy[i], prev->busy[i]) : 0;
         unsigned long idle = i < prev->ncores ? delta(cur->idle[i], prev->idle[i]) : 0;
-        int pct = busy + idle ? (int)(busy * 100 / (busy + idle)) : 0;
-        core_pct[i] = pct;
-        memmove(history[i], history[i] + 1, HISTORY - 1);
-        history[i][HISTORY - 1] = (unsigned char)pct;
+        core_pct[i] = busy + idle ? (int)(busy * 100 / (busy + idle)) : 0;
+        all_busy += busy;
+        all += busy + idle;
+        push(core_hist[i], core_pct[i]);
+    }
+    total_pct = all ? (int)(all_busy * 100 / all) : 0;
+    push(total_hist, total_pct);
+    unsigned long used = delta(cur->mem_total, cur->mem_free);
+    push(mem_hist, cur->mem_total ? (int)(used * 100 / cur->mem_total) : 0);
+    if (hist_count < HIST_MAX) {
+        hist_count++;
     }
 
     for (int i = 0; i < cur->nprocs; i++) {
@@ -365,6 +443,7 @@ static void take_sample(void)
     cur->irqs = read_irqs();
     read_mem(cur);
     read_procs(cur);
+    read_clock();
 
     // The first sample has nothing to compare against and is never shown.
     if (sampled) {
@@ -374,170 +453,434 @@ static void take_sample(void)
     sampled = 1;
 }
 
-static void fill_row(int row, unsigned attr)
+// Drawing
+
+static int text_width(const char *s)
 {
-    for (int c = 0; c < term_cols(); c++) {
-        term_put(row, c, ' ', attr);
+    int w = 0;
+    for (; *s; s++) {
+        w += ((unsigned char)*s & 0xc0) != 0x80;
+    }
+    return w;
+}
+
+// Prints at most width columns of s.
+static int put_text(int row, int col, int width, const char *s, unsigned attr)
+{
+    char clipped[TERM_MAX_COLS * 4 + 1];
+    size_t n = 0;
+    int w = 0;
+    for (const char *p = s; *p && n < sizeof(clipped) - 1; p++) {
+        int starts = ((unsigned char)*p & 0xc0) != 0x80;
+        if (starts && w == width) {
+            break;
+        }
+        w += starts;
+        clipped[n++] = *p;
+    }
+    clipped[n] = '\0';
+    return term_print(row, col, clipped, attr);
+}
+
+static void fill(int row, int col, int width, unsigned attr)
+{
+    for (int c = 0; c < width; c++) {
+        term_put(row, col + c, ' ', attr);
     }
 }
 
-static unsigned load_attr(unsigned long pct)
+// Green through yellow to red as a share of something climbs.
+static unsigned heat(int pct)
 {
-    return TERM_FG(pct >= 80 ? TERM_RED : pct >= 50 ? TERM_YELLOW : TERM_GREEN);
+    return TERM_FG(pct > 80 ? TERM_RED : pct > 50 ? TERM_YELLOW : TERM_GREEN);
 }
 
-static void draw_bar(int row, unsigned long used, unsigned long total)
+static void box(int y, int x, int h, int w, int colour, const char *title)
 {
-    unsigned long pct = total ? used * 100 / total : 0;
-    int filled = total ? (int)(used * BAR_W / total) : 0;
-    term_put(row, 6, '[', TERM_NORMAL);
-    for (int i = 0; i < BAR_W; i++) {
-        term_put(row, 7 + i, i < filled ? '|' : ' ', load_attr(pct));
+    unsigned a = TERM_FG(colour);
+    for (int c = 1; c < w - 1; c++) {
+        term_put(y, x + c, BOX_H, a);
+        term_put(y + h - 1, x + c, BOX_H, a);
     }
-    term_put(row, 7 + BAR_W, ']', TERM_NORMAL);
+    for (int r = 1; r < h - 1; r++) {
+        term_put(y + r, x, BOX_V, a);
+        term_put(y + r, x + w - 1, BOX_V, a);
+    }
+    term_put(y, x, BOX_TL, a);
+    term_put(y, x + w - 1, BOX_TR, a);
+    term_put(y + h - 1, x, BOX_BL, a);
+    term_put(y + h - 1, x + w - 1, BOX_BR, a);
+    term_put(y, x + 2, ' ', a);
+    int n = term_print(y, x + 3, title, ATTR_TITLE);
+    term_put(y, x + 3 + n, ' ', a);
 }
 
-static void draw_title(void)
+// Sets labels into a border, right-aligned and a line apart, the last one rightmost.
+static void border_right(int row, int right, const char *const *labels, int n, unsigned attr)
 {
-    char line[TERM_COLS + 1];
-    unsigned long up = cur->uptime_s;
-    snprintf(line, sizeof(line),
-             " ptop  every %lums  up %lu:%02lu:%02lu  %d processes  %lu irq/s  %lu switches/s",
-             refresh_ms, up / 3600, up / 60 % 60, up % 60, cur->nprocs, irq_rate, ctxt_rate);
-    fill_row(0, ATTR_TITLE);
-    term_print(0, 0, line, ATTR_TITLE);
+    int col = right - 1;
+    for (int i = n - 1; i >= 0; i--) {
+        int w = text_width(labels[i]);
+        col -= w + 2;
+        term_put(row, col, ' ', TERM_NORMAL);
+        term_print(row, col + 1, labels[i], attr);
+        term_put(row, col + 1 + w, ' ', TERM_NORMAL);
+        col--;
+    }
 }
 
-static void draw_cpus(void)
+// Squares lit along the scale, as btop's meters are; a scale meter also shows the unlit rest.
+static void meter(int row, int col, int width, int pct, int scale, unsigned bg)
 {
-    static const char *const levels[] = {" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"};
-    char text[16];
-    for (int i = 0; i < cur->ncores; i++) {
-        int row = 1 + i;
-        snprintf(text, sizeof(text), " cpu%d", cur->core_id[i]);
-        term_print(row, 0, text, TERM_BOLD);
-        draw_bar(row, (unsigned long)core_pct[i], 100);
-        snprintf(text, sizeof(text), "%3d%%", core_pct[i]);
-        term_print(row, VALUE_COL, text, TERM_NORMAL);
-        for (int h = 0; h < HISTORY; h++) {
-            term_print(row, GRAPH_COL + h, levels[(history[i][h] * 8 + 99) / 100], ATTR_GRAPH);
+    int lit = (pct * width + 50) / 100;
+    for (int i = 0; i < width; i++) {
+        if (i < lit) {
+            term_put(row, col + i, SQUARE, heat((i + 1) * 100 / width) | bg);
+        } else {
+            term_put(row, col + i, scale ? SQUARE : ' ', (scale ? ATTR_DIM : TERM_NORMAL) | bg);
         }
     }
 }
 
-static void draw_mem(int row)
+// Newest sample in the rightmost column; each row adds eight levels of height.
+static void graph(int y, int x, int h, int w, const unsigned char *ring)
 {
-    char text[TERM_COLS + 1];
+    static const uint32_t levels[] = {' ',    0x2581, 0x2582, 0x2583, 0x2584,
+                                      0x2585, 0x2586, 0x2587, 0x2588};
+    for (int c = 0; c < w; c++) {
+        int i = hist_count - w + c;
+        int eighths = i >= 0 ? ring[i] * h * 8 / 100 : 0;
+        for (int r = 0; r < h; r++) {
+            int level = eighths - r * 8;
+            level = level < 0 ? 0 : level > 8 ? 8 : level;
+            term_put(y + h - 1 - r, x + c, levels[level], heat((r + 1) * 100 / h));
+        }
+    }
+}
+
+static void draw_cpu(int y, int h, int cols)
+{
+    char up[32], every[24], text[32];
+    unsigned long s = cur->uptime_s;
+    snprintf(up, sizeof(up), "up %lu:%02lu:%02lu", s / 3600, s / 60 % 60, s % 60);
+    snprintf(every, sizeof(every), "- %lums +", refresh_ms);
+    const char *labels[] = {up, every};
+
+    box(y, 0, h, cols, CPU_COLOUR, "cpu");
+    border_right(y, cols - 1, labels, 2, TERM_FG(TERM_WHITE));
+
+    // Wide enough, and each core also gets its own history.
+    int spark = cols >= 120 ? 20 : 0;
+    int core_w = 19 + (spark ? spark + 1 : 0);
+    int inner = h - 2;
+    int graph_w = cols - 2 - core_w - 2;
+    graph(y + 1, 1, inner, graph_w, total_hist);
+    for (int r = 0; r < inner; r++) {
+        term_put(y + 1 + r, 1 + graph_w, BOX_V, TERM_FG(CPU_COLOUR));
+    }
+
+    // The whole machine first, then each core.
+    int x = graph_w + 3;
+    for (int i = -1; i < cur->ncores && i + 2 < inner; i++) {
+        int row = y + 2 + i;
+        int pct = i < 0 ? total_pct : core_pct[i];
+        if (i < 0) {
+            term_print(row, x, "CPU", ATTR_TITLE);
+        } else {
+            snprintf(text, sizeof(text), "C%d", cur->core_id[i]);
+            term_print(row, x, text, TERM_FG(CPU_COLOUR) | TERM_BOLD);
+        }
+        meter(row, x + 4, 10, pct, 1, 0);
+        snprintf(text, sizeof(text), "%3d%%", pct);
+        term_print(row, x + 15, text, TERM_NORMAL);
+        if (spark) {
+            graph(row, x + 20, 1, spark, i < 0 ? total_hist : core_hist[i]);
+        }
+    }
+
+    int info = y + 2 + cur->ncores;
+    if (info >= y + h - 1) {
+        return;
+    }
+    int col = x;
+    if (arm_mhz > 0) {
+        snprintf(text, sizeof(text), "%ld.%02ld GHz", arm_mhz / 1000, arm_mhz % 1000 / 10);
+        col += term_print(info, col, text, TERM_NORMAL) + 2;
+    }
+    if (temp_mc > 0) {
+        int celsius = (int)((temp_mc + 500) / 1000);
+        snprintf(text, sizeof(text), "%d°C", celsius);
+        unsigned a = celsius >= 80 ? ATTR_ALERT : celsius >= 70 ? ATTR_WARN : TERM_NORMAL;
+        col += term_print(info, col, text, a) + 2;
+    }
+    if (spark) {
+        snprintf(text, sizeof(text), "%lu irq/s", irq_rate);
+        term_print(info, col, text, TERM_NORMAL);
+    }
+}
+
+static void mem_line(int row, int col, int width, const char *label, unsigned long used,
+                     unsigned long total, const char *unit)
+{
+    char value[40];
+    snprintf(value, sizeof(value), "%lu/%lu %s", used, total, unit);
+    int vw = text_width(value);
+    int mw = width - 5 - vw - 1;
+    term_print(row, col, label, TERM_FG(MEM_COLOUR) | TERM_BOLD);
+    if (mw > 0) {
+        meter(row, col + 5, mw, total ? (int)(used * 100 / total) : 0, 1, 0);
+    }
+    term_print(row, col + width - vw, value, TERM_NORMAL);
+}
+
+static void draw_mem(int y, int h, int x, int w)
+{
+    box(y, x, h, w, MEM_COLOUR, "mem");
     unsigned long used = delta(cur->mem_total, cur->mem_free);
-    term_print(row, 0, " mem", TERM_BOLD);
-    draw_bar(row, used, cur->mem_total);
-    snprintf(text, sizeof(text), "%3lu%%  %lu / %lu MB   slab %lu / %lu kB",
-             cur->mem_total ? used * 100 / cur->mem_total : 0, used / 1024, cur->mem_total / 1024,
-             cur->slab_used, cur->slab_total);
-    term_print(row, VALUE_COL, text, TERM_NORMAL);
+    mem_line(y + 1, x + 2, w - 4, "used", used / 1024, cur->mem_total / 1024, "MiB");
+    if (h - 2 >= 2) {
+        mem_line(y + 2, x + 2, w - 4, "slab", cur->slab_used, cur->slab_total, "KiB");
+    }
+    if (h - 2 >= 4) {
+        graph(y + 3, x + 1, h - 4, w - 2, mem_hist);
+    }
 }
 
-#define ROW_FORMAT " %5s %5s  %-8s %5s %8s %9s  %s"
-
-static void draw_head(int row)
+static void throttle_text(char *out, size_t size, unsigned long bits)
 {
-    static const struct {
-        int col, width;
-        const char *label;
-    } sorted[] = {
-        [SORT_CPU] = {23, 5, "CPU%"},
-        [SORT_MEM] = {29, 8, "MEM"},
-        [SORT_PID] = {1, 5, "PID"},
-    };
-    char text[TERM_COLS + 1];
-    fill_row(row, ATTR_HEAD);
-    snprintf(text, sizeof(text), ROW_FORMAT, "PID", "PPID", "STATE", "CPU%", "MEM", "TIME", "NAME");
-    term_print(row, 0, text, ATTR_HEAD);
-    snprintf(text, sizeof(text), "%*s", sorted[sort_key].width, sorted[sort_key].label);
-    term_print(row, sorted[sort_key].col, text, ATTR_SORTED);
+    static const char *const reasons[] = {"under-voltage", "capped", "throttled", "hot"};
+    out[0] = '\0';
+    for (int i = 0; i < 4; i++) {
+        if (bits & (1ul << i)) {
+            snprintf(out + strlen(out), size - strlen(out), "%s%s", out[0] ? ", " : "", reasons[i]);
+        }
+    }
 }
 
-static void draw_proc(int row, const struct proc *p, unsigned attr)
+static void draw_system(int y, int h, int x, int w)
 {
-    char pid[8], ppid[8], cpu[8], mem[16], time[16], text[TERM_MAX_COLS + 1];
-    snprintf(pid, sizeof(pid), "%d", p->pid);
-    snprintf(ppid, sizeof(ppid), "%d", p->ppid);
-    snprintf(cpu, sizeof(cpu), "%lu.%lu", p->pct10 / 10, p->pct10 % 10);
-    if (p->mem_kb < 10240) {
-        snprintf(mem, sizeof(mem), "%lu K", p->mem_kb);
+    box(y, x, h, w, SYS_COLOUR, "system");
+
+    int zombies = 0;
+    for (int i = 0; i < cur->nprocs; i++) {
+        zombies += strcmp(cur->procs[i].state, "zombie") == 0;
+    }
+    char items[5][32];
+    unsigned attrs[5];
+    int n = 0;
+    snprintf(items[n], 32, "%d procs", cur->nprocs);
+    attrs[n++] = TERM_NORMAL;
+    if (zombies) {
+        snprintf(items[n], 32, "%d zombie%s", zombies, zombies == 1 ? "" : "s");
+        attrs[n++] = ATTR_WARN;
+    }
+    snprintf(items[n], 32, "%lu forks/s", fork_rate);
+    attrs[n++] = TERM_NORMAL;
+    snprintf(items[n], 32, "%lu ctx/s", ctxt_rate);
+    attrs[n++] = TERM_NORMAL;
+    snprintf(items[n], 32, "%lu irq/s", irq_rate);
+    attrs[n++] = TERM_NORMAL;
+
+    // Packed onto as many lines as fit, the last row kept for throttling.
+    int width = w - 4, row = y + 1, last = y + h - 2, col = 0;
+    for (int i = 0; i < n; i++) {
+        int iw = text_width(items[i]);
+        if (col && col + 2 + iw > width) {
+            row++;
+            col = 0;
+        }
+        if (row > last || (row == last && throttled >= 0)) {
+            break;
+        }
+        col += col ? 2 : 0;
+        term_print(row, x + 2 + col, items[i], attrs[i]);
+        col += iw;
+    }
+
+    if (throttled < 0) {
+        return;
+    }
+    char why[64], text[96];
+    if (throttled & 0xf) {
+        throttle_text(why, sizeof(why), (unsigned long)throttled & 0xf);
+        snprintf(text, sizeof(text), "throttled: %s", why);
+        put_text(last, x + 2, width, text, ATTR_ALERT);
+    } else if ((throttled >> 16) & 0xf) {
+        throttle_text(why, sizeof(why), ((unsigned long)throttled >> 16) & 0xf);
+        snprintf(text, sizeof(text), "was throttled: %s", why);
+        put_text(last, x + 2, width, text, ATTR_WARN);
     } else {
-        snprintf(mem, sizeof(mem), "%lu.%lu M", p->mem_kb / 1024, p->mem_kb % 1024 * 10 / 1024);
+        put_text(last, x + 2, width, "not throttled", TERM_FG(TERM_GREEN));
     }
-    snprintf(time, sizeof(time), "%lu:%02lu.%02lu", p->cpu_ms / 60000, p->cpu_ms / 1000 % 60,
+}
+
+struct columns {
+    int width, pid, name, name_w, state, bar, bar_w, pct, mem, time;
+};
+
+// Name and CPU bar share whatever the fixed columns leave.
+static struct columns columns_for(int width)
+{
+    struct columns c;
+    int rest = width - 41;
+    c.width = width;
+    c.name_w = rest / 2 < 16 ? 16 : rest / 2 > 32 ? 32 : rest / 2;
+    c.bar_w = rest - c.name_w;
+    c.pid = 1;
+    c.name = c.pid + 7;
+    c.state = c.name + c.name_w + 1;
+    c.bar = c.state + 8;
+    c.pct = c.bar + c.bar_w;
+    c.mem = c.pct + 7;
+    c.time = c.mem + 8;
+    return c;
+}
+
+static void draw_proc_row(int row, const struct columns *c, const struct proc *p, int selected)
+{
+    char text[40];
+    unsigned base = selected                          ? ATTR_SELECTED
+                    : strcmp(p->state, "zombie") == 0 ? TERM_FG(TERM_YELLOW)
+                                                      : TERM_NORMAL;
+    if (selected) {
+        fill(row, 1, c->width, base);
+    }
+    snprintf(text, sizeof(text), "%5d", p->pid);
+    term_print(row, c->pid, text, base);
+    put_text(row, c->name, c->name_w, p->name, base);
+    put_text(row, c->state, 7, p->state, base);
+
+    int pct = (int)(p->pct10 / 10);
+    meter(row, c->bar, c->bar_w - 1, pct > 100 ? 100 : pct, 0, selected ? TERM_BG(TERM_BLUE) : 0);
+    snprintf(text, sizeof(text), "%5lu.%lu", p->pct10 / 10, p->pct10 % 10);
+    term_print(row, c->pct, text, base);
+    if (p->mem_kb < 10240) {
+        snprintf(text, sizeof(text), "%6luK", p->mem_kb);
+    } else {
+        snprintf(text, sizeof(text), "%4lu.%luM", p->mem_kb / 1024, p->mem_kb % 1024 * 10 / 1024);
+    }
+    term_print(row, c->mem, text, base);
+    snprintf(text, sizeof(text), "%4lu:%02lu.%02lu", p->cpu_ms / 60000, p->cpu_ms / 1000 % 60,
              p->cpu_ms % 1000 / 10);
-    snprintf(text, sizeof(text), ROW_FORMAT, pid, ppid, p->state, cpu, mem, time, p->name);
-    if (attr != TERM_NORMAL) {
-        fill_row(row, attr);
-    }
-    term_print(row, 0, text, attr);
+    term_print(row, c->time, text, base);
 }
 
-static void draw_list(int first, int rows, int highlight)
+// Key hints in the bottom border, or the latest message while it lasts.
+static void draw_hints(int row, int col, int width)
 {
-    int n = cur->nprocs;
-    list_rows = rows;
-    if (sel < top) {
-        top = sel;
-    }
-    if (sel >= top + rows) {
-        top = sel - rows + 1;
-    }
-    if (top > n - rows) {
-        top = n - rows;
-    }
-    if (top < 0) {
-        top = 0;
-    }
-    for (int i = 0; i < rows && top + i < n; i++) {
-        int selected = highlight && top + i == sel;
-        draw_proc(first + i, &cur->procs[top + i], selected ? ATTR_SELECTED : TERM_NORMAL);
-    }
-}
-
-static void draw_status(void)
-{
-    static const char *const help[][2] = {
-        {"q", " quit  "},       {"c m p", " sort  "},
-        {"+ -", " interval  "}, {"↑↓ PgUp PgDn", " select  "},
-        {"k", " SIGTERM  "},    {"K", " SIGKILL"},
+    static const char *const hints[][2] = {
+        {"↑↓", "select"},    {"← →", "sort"},  {"k", "kill"},
+        {"- +", "interval"}, {"^L", "redraw"}, {"q", "quit"},
     };
-    int row = term_rows() - 1;
-    if (pending_sig) {
-        char text[TERM_COLS + 1];
-        snprintf(text, sizeof(text), " send %s to %d (%s)? y/n",
-                 pending_sig == SIGKILL ? "SIGKILL" : "SIGTERM", pending_pid, pending_name);
-        term_print(row, 0, text, ATTR_PROMPT);
-        return;
-    }
+    term_put(row, col - 1, ' ', TERM_NORMAL);
     if (message[0] && term_ms() < message_until) {
-        term_print(row, 0, message, ATTR_PROMPT);
+        int n = put_text(row, col, width, message, ATTR_WARN);
+        term_put(row, col + n, ' ', TERM_NORMAL);
         return;
     }
-    int col = 1;
-    for (size_t i = 0; i < sizeof(help) / sizeof(help[0]); i++) {
-        col += term_print(row, col, help[i][0], TERM_BOLD);
-        col += term_print(row, col, help[i][1], TERM_NORMAL);
+    int x = col;
+    for (size_t i = 0; i < sizeof(hints) / sizeof(hints[0]); i++) {
+        int need = text_width(hints[i][0]) + 1 + text_width(hints[i][1]) + 2;
+        if (x - col + need > width) {
+            break;
+        }
+        x += term_print(row, x, hints[i][0], TERM_FG(PROC_COLOUR) | TERM_BOLD);
+        x += term_print(row, x, " ", TERM_NORMAL);
+        x += term_print(row, x, hints[i][1], TERM_NORMAL);
+        x += term_print(row, x, "  ", TERM_NORMAL);
     }
+}
+
+static void draw_procs(int y, int h, int cols, int interactive)
+{
+    static const char *const sort_names[] = {"cpu ↓", "mem ↓", "pid ↑"};
+    char tasks[24];
+    snprintf(tasks, sizeof(tasks), "%d tasks", cur->nprocs);
+    const char *labels[] = {sort_names[sort_key], tasks};
+
+    box(y, 0, h, cols, PROC_COLOUR, "proc");
+    border_right(y, cols - 1, labels, 2, TERM_FG(TERM_WHITE));
+
+    struct columns c = columns_for(cols - 2);
+    int head = y + 1;
+    unsigned plain = ATTR_TITLE, sorted = TERM_FG(PROC_COLOUR) | TERM_BOLD;
+    term_print(head, c.pid + 2, "PID", sort_key == SORT_PID ? sorted : plain);
+    term_print(head, c.name, "NAME", plain);
+    term_print(head, c.state, "STATE", plain);
+    term_print(head, c.pct + 3, "CPU%", sort_key == SORT_CPU ? sorted : plain);
+    term_print(head, c.mem + 4, "MEM", sort_key == SORT_MEM ? sorted : plain);
+    term_print(head, c.time + 6, "TIME", plain);
+
+    int rows = h - 3, n = cur->nprocs;
+    list_rows = rows;
+    if (sel < scroll) {
+        scroll = sel;
+    }
+    if (sel >= scroll + rows) {
+        scroll = sel - rows + 1;
+    }
+    if (scroll > n - rows) {
+        scroll = n - rows;
+    }
+    if (scroll < 0) {
+        scroll = 0;
+    }
+    for (int i = 0; i < rows && scroll + i < n; i++) {
+        draw_proc_row(head + 1 + i, &c, &cur->procs[scroll + i], interactive && scroll + i == sel);
+    }
+    if (interactive) {
+        draw_hints(y + h - 1, 2, cols - 6);
+    }
+}
+
+static void draw_kill_dialog(int rows, int cols)
+{
+    char question[80];
+    snprintf(question, sizeof(question), "send %s to %d (%s)?",
+             pending_sig == SIGKILL ? "SIGKILL" : "SIGTERM", pending_pid, pending_name);
+    int qw = text_width(question);
+    int w = qw + 8 < 34 ? 34 : qw + 8;
+    int h = 5, x = (cols - w) / 2, y = (rows - h) / 2;
+    for (int r = 0; r < h; r++) {
+        fill(y + r, x, w, TERM_NORMAL);
+    }
+    box(y, x, h, w, KILL_COLOUR, "kill");
+    term_print(y + 1, x + (w - qw) / 2, question, ATTR_TITLE);
+    int col = x + (w - 13) / 2;
+    col += term_print(y + 3, col, "y", ATTR_ALERT);
+    col += term_print(y + 3, col, " yes    ", TERM_NORMAL);
+    col += term_print(y + 3, col, "n", TERM_FG(TERM_GREEN) | TERM_BOLD);
+    term_print(y + 3, col, " no", TERM_NORMAL);
+}
+
+static void draw_too_small(int rows, int cols)
+{
+    char text[64];
+    snprintf(text, sizeof(text), "terminal %dx%d, ptop needs %dx%d", cols, rows, TERM_COLS,
+             TERM_ROWS);
+    int x = (cols - text_width(text)) / 2;
+    put_text(rows / 2, x < 0 ? 0 : x, cols, text, ATTR_WARN);
 }
 
 static void draw(int once)
 {
+    int rows = term_rows(), cols = term_cols();
     term_clear(TERM_NORMAL);
-    draw_title();
-    draw_cpus();
-    int row = 1 + cur->ncores;
-    draw_mem(row++);
-    draw_head(row++);
-    if (once) {
-        draw_list(row, term_rows() - row, 0);
-    } else {
-        draw_list(row, term_rows() - 1 - row, 1);
-        draw_status();
+    if (rows < TERM_ROWS || cols < TERM_COLS) {
+        draw_too_small(rows, cols);
+        return;
+    }
+
+    // The CPU panel takes about a third of the height, memory and system a fifth, processes the rest.
+    int cores = cur->ncores > 0 ? cur->ncores : 1;
+    int cpu_h = rows * 30 / 100 < cores + 4 ? cores + 4 : rows * 30 / 100;
+    int mid_h = rows * 20 / 100 < 4 ? 4 : rows * 20 / 100;
+    draw_cpu(0, cpu_h, cols);
+    draw_mem(cpu_h, mid_h, 0, cols / 2);
+    draw_system(cpu_h, mid_h, cols / 2, cols - cols / 2);
+    draw_procs(cpu_h + mid_h, rows - cpu_h - mid_h, cols, !once);
+    if (pending_sig && !once) {
+        draw_kill_dialog(rows, cols);
     }
 }
 
@@ -573,19 +916,26 @@ static void answer_kill(int key)
     if (key != 'y' && key != 'Y') {
         message[0] = '\0';
     } else if (kill(pending_pid, pending_sig) == 0) {
-        snprintf(message, sizeof(message), " sent %s to %d (%s)", name, pending_pid, pending_name);
+        set_message("sent %s to %d (%s)", name, pending_pid, pending_name);
     } else {
-        snprintf(message, sizeof(message), " kill %d: %s", pending_pid, strerror(errno));
+        set_message("kill %d: %s", pending_pid, strerror(errno));
     }
-    message_until = term_ms() + MESSAGE_MS;
     pending_sig = 0;
+}
+
+static void set_sort(int key)
+{
+    sort_key = (key + SORT_KEYS) % SORT_KEYS;
+    resort();
 }
 
 // Returns 1 when the key asks to quit.
 static int handle_key(int key)
 {
     if (pending_sig) {
-        answer_kill(key);
+        if (key != TERM_KEY_RESIZE) {
+            answer_kill(key);
+        }
         return 0;
     }
     switch (key) {
@@ -595,17 +945,24 @@ static int handle_key(int key)
         case TERM_KEY_EOF:
             return 1;
         case 'c':
-            sort_key = SORT_CPU;
-            resort();
+            set_sort(SORT_CPU);
             break;
         case 'm':
-            sort_key = SORT_MEM;
-            resort();
+            set_sort(SORT_MEM);
+            break;
+        case 'p':
+            set_sort(SORT_PID);
+            break;
+        case TERM_KEY_RIGHT:
+            set_sort(sort_key + 1);
+            break;
+        case TERM_KEY_LEFT:
+            set_sort(sort_key - 1);
             break;
         case '+':
         case '=':
             if (refresh_ms + REFRESH_STEP_MS > REFRESH_MAX_MS) {
-                set_message(" the longest interval is %dms", REFRESH_MAX_MS);
+                set_message("the longest interval is %dms", REFRESH_MAX_MS);
             } else {
                 refresh_ms += REFRESH_STEP_MS;
             }
@@ -613,17 +970,13 @@ static int handle_key(int key)
         case '-':
         case '_':
             if (refresh_ms <= REFRESH_STEP_MS) {
-                set_message(" the shortest interval is %dms", REFRESH_STEP_MS);
+                set_message("the shortest interval is %dms", REFRESH_STEP_MS);
             } else {
                 refresh_ms -= REFRESH_STEP_MS;
             }
             break;
         case CTRL('l'):
             term_redraw();
-            break;
-        case 'p':
-            sort_key = SORT_PID;
-            resort();
             break;
         case TERM_KEY_UP:
             move_selection(-1);
