@@ -15,6 +15,7 @@
 #include "stdlib.h"
 #include "string.h"
 #include "sys/stat.h"
+#include "term.h"
 #include "unistd.h"
 
 #define TEXT_MAX  2048
@@ -292,8 +293,11 @@ static void gather(int terminal)
         add("Programs", "%d (/bin)", programs);
     }
     add_shell();
-    if (terminal) {
-        add("Terminal", "console, 80x24");
+    int rows, cols;
+    if (terminal && term_query_size(&rows, &cols) == 0) {
+        add("Terminal", "console, %dx%d", cols, rows);
+    } else if (terminal) {
+        add("Terminal", "console");
     }
     long w = number(fb, "width"), h = number(fb, "height");
     if (w > 0 && h > 0) {

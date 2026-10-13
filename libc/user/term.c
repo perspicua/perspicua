@@ -10,30 +10,36 @@
 #include "signal.h"
 #include "stdlib.h"
 #include "string.h"
+#include "sys/stat.h"
 #include "time.h"
 #include "unistd.h"
 
-#define ESC_WAIT_MS 50 // how long a lone ESC waits for the rest of a sequence
-#define CSI_MAX     16 // longest escape sequence kept whole; longer ones are dropped
-#define OUT_MAX     4096
+#define ESC_WAIT_MS  50  // how long a lone ESC waits for the rest of a sequence
+#define CSI_MAX      16  // longest escape sequence kept whole; longer ones are dropped
+#define KBUF_MAX     64  // room for a size report behind whatever was typed meanwhile
+#define SIZE_WAIT_MS 300 // a terminal over a network bridge answers in tens of ms
+#define OUT_MAX      4096
 
 #define SCREEN_TAKE    "\033[0m\033[2J\033[H\033[?25l"
 #define SCREEN_RELEASE "\033[0m\033[2J\033[H\033[?25h"
+// The cursor goes as far as the screen allows, and the terminal reports where that is.
+#define SIZE_QUERY "\0337\033[999;999H\033[6n\0338"
 
 struct cell {
     uint32_t cp;
     uint16_t attr;
 };
 
-static struct cell back[TERM_ROWS][TERM_COLS];
-static struct cell front[TERM_ROWS][TERM_COLS];
+static struct cell *back, *front;
+static int rows = TERM_ROWS, cols = TERM_COLS;
+static int can_ask; // stdin and stdout are a terminal, which can answer a size query
 
 static int is_open;
 static int atexit_done;
 static int saved_flags = -1;
 static int repaint;
 
-static unsigned char kbuf[CSI_MAX];
+static unsigned char kbuf[KBUF_MAX];
 static int klen;
 static unsigned long esc_since;
 
@@ -122,14 +128,54 @@ static void emit_utf8(uint32_t cp)
     emit(b, n);
 }
 
-static void blank(struct cell grid[TERM_ROWS][TERM_COLS], unsigned attr)
+static void blank(struct cell *grid, unsigned attr)
 {
-    for (int r = 0; r < TERM_ROWS; r++) {
-        for (int c = 0; c < TERM_COLS; c++) {
-            grid[r][c].cp = ' ';
-            grid[r][c].attr = (uint16_t)attr;
-        }
+    for (int i = 0; i < rows * cols; i++) {
+        grid[i].cp = ' ';
+        grid[i].attr = (uint16_t)attr;
     }
+}
+
+static int ensure_screen(void)
+{
+    if (!back) {
+        back = malloc((size_t)rows * (size_t)cols * sizeof(struct cell));
+        front = malloc((size_t)rows * (size_t)cols * sizeof(struct cell));
+        if (!back || !front) {
+            free(back);
+            free(front);
+            back = front = NULL;
+            return 0;
+        }
+        blank(back, TERM_NORMAL);
+        blank(front, TERM_NORMAL);
+    }
+    return 1;
+}
+
+// Returns 1 if the size changed; the screen then starts blank and repaints whole.
+static int set_size(int r, int c)
+{
+    r = r > TERM_MAX_ROWS ? TERM_MAX_ROWS : r;
+    c = c > TERM_MAX_COLS ? TERM_MAX_COLS : c;
+    if (r == rows && c == cols && back) {
+        return 0;
+    }
+    free(back);
+    free(front);
+    back = front = NULL;
+    rows = r;
+    cols = c;
+    ensure_screen();
+    repaint = 1;
+    cur_row = -1;
+    return 1;
+}
+
+static int is_terminal(int fd)
+{
+    struct stat st;
+    return fstat(fd, &st) == 0 && S_ISCHR(st.st_mode);
 }
 
 static void take_terminal(void)
@@ -140,6 +186,10 @@ static void take_terminal(void)
     write_str(SCREEN_TAKE);
     cursor_shown = 0;
     repaint = 1;
+    // The window may have changed while the program was stopped.
+    if (can_ask) {
+        write_str(SIZE_QUERY);
+    }
 }
 
 static void release_terminal(void)
@@ -173,6 +223,62 @@ static void on_continue(int sig)
     take_terminal();
 }
 
+int term_parse_size(const unsigned char *buf, int len, int *out_rows, int *out_cols)
+{
+    if (len < 1 || buf[0] != 27) {
+        return -1;
+    }
+    if (len < 2) {
+        return 0;
+    }
+    if (buf[1] != '[') {
+        return -1;
+    }
+
+    int i = 2;
+    int v[2] = {0, 0};
+    for (int k = 0; k < 2; k++) {
+        int digits = 0;
+        while (i < len && buf[i] >= '0' && buf[i] <= '9') {
+            if (++digits > 5) {
+                return -1;
+            }
+            v[k] = v[k] * 10 + (buf[i++] - '0');
+        }
+        if (i == len) {
+            return 0;
+        }
+        if (digits == 0 || buf[i] != (k == 0 ? ';' : 'R')) {
+            return -1;
+        }
+        i++;
+    }
+
+    // One row is not a screen: "ESC[1;2R" is Shift-F3 on many terminals.
+    if (v[0] < 2 || v[1] < 2) {
+        return -1;
+    }
+    *out_rows = v[0];
+    *out_cols = v[1];
+    return i;
+}
+
+// Takes a size report from anywhere in the input; the bytes around it stay queued as keys.
+static int take_size_report(void)
+{
+    for (int p = 0; p < klen; p++) {
+        int r, c;
+        int used = kbuf[p] == 27 ? term_parse_size(kbuf + p, klen - p, &r, &c) : -1;
+        if (used > 0) {
+            memmove(kbuf + p, kbuf + p + used, (size_t)(klen - p - used));
+            klen -= used;
+            set_size(r, c);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int term_open(void)
 {
     if (is_open) {
@@ -180,7 +286,10 @@ int term_open(void)
     }
 
     saved_flags = fcntl(0, F_GETFL, 0);
-    blank(back, TERM_NORMAL);
+    can_ask = is_terminal(0) && is_terminal(1);
+    if (ensure_screen()) {
+        blank(back, TERM_NORMAL);
+    }
     klen = 0;
     esc_since = 0;
     out_len = 0;
@@ -196,6 +305,17 @@ int term_open(void)
 
     take_terminal();
     is_open = 1;
+
+    // The first answer sizes the screen before anything is drawn; keys typed meanwhile stay queued.
+    unsigned long asked = term_ms();
+    while (can_ask && term_ms() - asked < SIZE_WAIT_MS && !take_size_report()) {
+        int n = read(0, kbuf + klen, (size_t)(KBUF_MAX - klen));
+        if (n > 0) {
+            klen += n;
+        } else {
+            usleep(2000);
+        }
+    }
     return 0;
 }
 
@@ -335,8 +455,17 @@ int term_key(int timeout_ms)
         }
 
         while (klen > 0) {
-            int used;
-            int key = term_decode(kbuf, klen, &used);
+            int used, r, c;
+            int report = term_parse_size(kbuf, klen, &r, &c);
+            if (report > 0) {
+                memmove(kbuf, kbuf + report, (size_t)(klen - report));
+                klen -= report;
+                if (set_size(r, c)) {
+                    return TERM_KEY_RESIZE;
+                }
+                continue;
+            }
+            int key = term_decode(kbuf, klen < CSI_MAX ? klen : CSI_MAX, &used);
             if (used == 0) {
                 break;
             }
@@ -360,7 +489,7 @@ int term_key(int timeout_ms)
             }
         }
 
-        int n = read(0, kbuf + klen, (size_t)(CSI_MAX - klen));
+        int n = read(0, kbuf + klen, (size_t)(KBUF_MAX - klen));
         if (n > 0) {
             klen += n;
             continue;
@@ -383,18 +512,66 @@ int term_key(int timeout_ms)
     }
 }
 
+int term_query_size(int *out_rows, int *out_cols)
+{
+    if (!is_terminal(0) || !is_terminal(1)) {
+        return -1;
+    }
+    int flags = fcntl(0, F_GETFL, 0);
+    fcntl(0, F_SETFL, flags | O_NONBLOCK);
+    write_str(SIZE_QUERY);
+
+    unsigned long asked = term_ms();
+    int found = 0;
+    while (term_ms() - asked < SIZE_WAIT_MS && !(found = take_size_report())) {
+        int n = read(0, kbuf + klen, (size_t)(KBUF_MAX - klen));
+        if (n > 0) {
+            klen += n;
+        } else {
+            usleep(2000);
+        }
+    }
+    fcntl(0, F_SETFL, flags);
+    if (!found) {
+        return -1;
+    }
+    *out_rows = rows;
+    *out_cols = cols;
+    return 0;
+}
+
+int term_rows(void)
+{
+    return rows;
+}
+
+int term_cols(void)
+{
+    return cols;
+}
+
+void term_request_size(void)
+{
+    if (is_open && can_ask) {
+        flush();
+        write_str(SIZE_QUERY);
+    }
+}
+
 void term_clear(unsigned attr)
 {
-    blank(back, attr);
+    if (ensure_screen()) {
+        blank(back, attr);
+    }
 }
 
 void term_put(int row, int col, uint32_t codepoint, unsigned attr)
 {
-    if (row < 0 || row >= TERM_ROWS || col < 0 || col >= TERM_COLS) {
+    if (row < 0 || row >= rows || col < 0 || col >= cols || !ensure_screen()) {
         return;
     }
-    back[row][col].cp = codepoint;
-    back[row][col].attr = (uint16_t)attr;
+    back[row * cols + col].cp = codepoint;
+    back[row * cols + col].attr = (uint16_t)attr;
 }
 
 int term_print(int row, int col, const char *utf8, unsigned attr)
@@ -402,7 +579,7 @@ int term_print(int row, int col, const char *utf8, unsigned attr)
     const unsigned char *s = (const unsigned char *)utf8;
     int start = col;
 
-    while (*s && col < TERM_COLS) {
+    while (*s && col < cols) {
         uint32_t cp;
         int extra;
         if (*s < 0x80) {
@@ -463,6 +640,9 @@ static void emit_attr(unsigned attr)
 
 void term_present(void)
 {
+    if (!ensure_screen()) {
+        return;
+    }
     if (repaint) {
         emit("\033[0m\033[2J", 8);
         blank(front, TERM_NORMAL);
@@ -471,14 +651,14 @@ void term_present(void)
         repaint = 0;
     }
 
-    for (int r = 0; r < TERM_ROWS; r++) {
-        for (int c = 0; c < TERM_COLS; c++) {
+    for (int r = 0; r < rows; r++) {
+        for (int c = 0; c < cols; c++) {
             // The last cell is left alone: writing it can scroll the whole screen.
-            if (r == TERM_ROWS - 1 && c == TERM_COLS - 1) {
+            if (r == rows - 1 && c == cols - 1) {
                 continue;
             }
-            struct cell *want = &back[r][c];
-            struct cell *have = &front[r][c];
+            struct cell *want = &back[r * cols + c];
+            struct cell *have = &front[r * cols + c];
             if (want->cp == have->cp && want->attr == have->attr) {
                 continue;
             }
@@ -493,13 +673,13 @@ void term_present(void)
             *have = *want;
             cur_row = r;
             cur_col = c + 1;
-            if (cur_col == TERM_COLS) {
+            if (cur_col == cols) {
                 cur_row = -1;
             }
         }
     }
 
-    if (cursor_row >= 0 && cursor_row < TERM_ROWS && cursor_col >= 0 && cursor_col < TERM_COLS) {
+    if (cursor_row >= 0 && cursor_row < rows && cursor_col >= 0 && cursor_col < cols) {
         if (cursor_row != cur_row || cursor_col != cur_col) {
             emit_move(cursor_row, cursor_col);
             cur_row = cursor_row;
@@ -519,6 +699,7 @@ void term_present(void)
 void term_redraw(void)
 {
     repaint = 1;
+    term_request_size();
 }
 
 void term_cursor(int row, int col)
@@ -529,8 +710,9 @@ void term_cursor(int row, int col)
 
 static int row_end(int r)
 {
-    int end = TERM_COLS;
-    while (end > 0 && (back[r][end - 1].cp == ' ' || back[r][end - 1].cp == 0)) {
+    const struct cell *row = &back[r * cols];
+    int end = cols;
+    while (end > 0 && (row[end - 1].cp == ' ' || row[end - 1].cp == 0)) {
         end--;
     }
     return end;
@@ -538,14 +720,18 @@ static int row_end(int r)
 
 void term_dump(void)
 {
-    int rows = TERM_ROWS;
-    while (rows > 0 && row_end(rows - 1) == 0) {
-        rows--;
+    if (!ensure_screen()) {
+        return;
     }
-    for (int r = 0; r < rows; r++) {
+    int used = rows;
+    while (used > 0 && row_end(used - 1) == 0) {
+        used--;
+    }
+    for (int r = 0; r < used; r++) {
         int end = row_end(r);
         for (int c = 0; c < end; c++) {
-            emit_utf8(back[r][c].cp ? back[r][c].cp : ' ');
+            uint32_t cp = back[r * cols + c].cp;
+            emit_utf8(cp ? cp : ' ');
         }
         emit("\n", 1);
     }

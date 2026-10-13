@@ -7,6 +7,7 @@
  * prints one frame as plain text and exits.
  */
 
+#include <stdarg.h>
 #include <stddef.h>
 
 #include "dirent.h"
@@ -19,7 +20,6 @@
 #include "term.h"
 #include "unistd.h"
 
-#define REFRESH_MS   1000
 #define FIRST_GAP_MS 300 // between the two samples the first frame is drawn from
 #define MESSAGE_MS   3000
 #define MAX_CORES    8
@@ -72,6 +72,16 @@ static int core_pct[MAX_CORES];
 static unsigned char history[MAX_CORES][HISTORY];
 static unsigned long irq_rate, ctxt_rate;
 
+// As in btop: + and - add or take 100 ms from the update timer.
+#define SIZE_ASK_MS     2000
+#define REFRESH_STEP_MS 100
+#define REFRESH_MAX_MS  10000
+
+static unsigned long refresh_ms = 1000;
+static unsigned long size_asked;
+
+#define CTRL(c) ((c) & 0x1f)
+
 static int sort_key = SORT_CPU;
 static int sel, sel_pid = -1, top, list_rows;
 
@@ -79,6 +89,17 @@ static int pending_sig, pending_pid;
 static char pending_name[32];
 static char message[TERM_COLS + 1];
 static unsigned long message_until;
+
+static void set_message(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+static void set_message(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(message, sizeof(message), fmt, ap);
+    va_end(ap);
+    message_until = term_ms() + MESSAGE_MS;
+}
 
 static int read_file(const char *path, char *buf, size_t size)
 {
@@ -355,7 +376,7 @@ static void take_sample(void)
 
 static void fill_row(int row, unsigned attr)
 {
-    for (int c = 0; c < TERM_COLS; c++) {
+    for (int c = 0; c < term_cols(); c++) {
         term_put(row, c, ' ', attr);
     }
 }
@@ -381,8 +402,8 @@ static void draw_title(void)
     char line[TERM_COLS + 1];
     unsigned long up = cur->uptime_s;
     snprintf(line, sizeof(line),
-             " ptop   up %lu:%02lu:%02lu   %d processes   %lu irq/s   %lu switches/s", up / 3600,
-             up / 60 % 60, up % 60, cur->nprocs, irq_rate, ctxt_rate);
+             " ptop  every %lums  up %lu:%02lu:%02lu  %d processes  %lu irq/s  %lu switches/s",
+             refresh_ms, up / 3600, up / 60 % 60, up % 60, cur->nprocs, irq_rate, ctxt_rate);
     fill_row(0, ATTR_TITLE);
     term_print(0, 0, line, ATTR_TITLE);
 }
@@ -438,7 +459,7 @@ static void draw_head(int row)
 
 static void draw_proc(int row, const struct proc *p, unsigned attr)
 {
-    char pid[8], ppid[8], cpu[8], mem[16], time[16], text[TERM_COLS + 1];
+    char pid[8], ppid[8], cpu[8], mem[16], time[16], text[TERM_MAX_COLS + 1];
     snprintf(pid, sizeof(pid), "%d", p->pid);
     snprintf(ppid, sizeof(ppid), "%d", p->ppid);
     snprintf(cpu, sizeof(cpu), "%lu.%lu", p->pct10 / 10, p->pct10 % 10);
@@ -481,10 +502,11 @@ static void draw_list(int first, int rows, int highlight)
 static void draw_status(void)
 {
     static const char *const help[][2] = {
-        {"q", " quit  "},    {"c m p", " sort  "}, {"↑↓ PgUp PgDn", " select  "},
-        {"k", " SIGTERM  "}, {"K", " SIGKILL"},
+        {"q", " quit  "},       {"c m p", " sort  "},
+        {"+ -", " interval  "}, {"↑↓ PgUp PgDn", " select  "},
+        {"k", " SIGTERM  "},    {"K", " SIGKILL"},
     };
-    int row = TERM_ROWS - 1;
+    int row = term_rows() - 1;
     if (pending_sig) {
         char text[TERM_COLS + 1];
         snprintf(text, sizeof(text), " send %s to %d (%s)? y/n",
@@ -512,9 +534,9 @@ static void draw(int once)
     draw_mem(row++);
     draw_head(row++);
     if (once) {
-        draw_list(row, TERM_ROWS - row, 0);
+        draw_list(row, term_rows() - row, 0);
     } else {
-        draw_list(row, TERM_ROWS - 1 - row, 1);
+        draw_list(row, term_rows() - 1 - row, 1);
         draw_status();
     }
 }
@@ -580,6 +602,25 @@ static int handle_key(int key)
             sort_key = SORT_MEM;
             resort();
             break;
+        case '+':
+        case '=':
+            if (refresh_ms + REFRESH_STEP_MS > REFRESH_MAX_MS) {
+                set_message(" the longest interval is %dms", REFRESH_MAX_MS);
+            } else {
+                refresh_ms += REFRESH_STEP_MS;
+            }
+            break;
+        case '-':
+        case '_':
+            if (refresh_ms <= REFRESH_STEP_MS) {
+                set_message(" the shortest interval is %dms", REFRESH_STEP_MS);
+            } else {
+                refresh_ms -= REFRESH_STEP_MS;
+            }
+            break;
+        case CTRL('l'):
+            term_redraw();
+            break;
         case 'p':
             sort_key = SORT_PID;
             resort();
@@ -633,18 +674,22 @@ int main(int argc, char **argv)
     if (term_open() != 0) {
         return 1;
     }
-    unsigned long next = term_ms() + REFRESH_MS;
+    // The next sample is due one interval after the last, so a new interval applies at once.
     for (;;) {
         draw(0);
         term_present();
-        long left = (long)(next - term_ms());
+        long left = (long)(cur->at_ms + refresh_ms - term_ms());
         int key = left > 0 ? term_key((int)left) : TERM_KEY_NONE;
         if (key != TERM_KEY_NONE && handle_key(key)) {
             break;
         }
-        if ((long)(next - term_ms()) <= 0) {
+        if ((long)(cur->at_ms + refresh_ms - term_ms()) <= 0) {
             take_sample();
-            next = term_ms() + REFRESH_MS;
+            // Nothing announces a resized window over a serial line, so ask now and then.
+            if (cur->at_ms - size_asked >= SIZE_ASK_MS) {
+                term_request_size();
+                size_asked = cur->at_ms;
+            }
         }
     }
     term_close();

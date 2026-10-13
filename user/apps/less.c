@@ -16,7 +16,7 @@
 #include "term.h"
 #include "unistd.h"
 
-#define VIEW_ROWS  (TERM_ROWS - 1)
+#define VIEW_ROWS  (term_rows() - 1)
 #define SEARCH_MAX 64
 #define TAB_WIDTH  8
 
@@ -107,7 +107,7 @@ static int build_rows(void)
             continue;
         }
         int width = c == '\t' ? TAB_WIDTH - col % TAB_WIDTH : 1;
-        if (col + width > TERM_COLS) {
+        if (col + width > term_cols()) {
             if (add_row(start, i, nlines) < 0) {
                 return -1;
             }
@@ -122,6 +122,22 @@ static int build_rows(void)
             return -1;
         }
         nlines++;
+    }
+    return 0;
+}
+
+// Cuts the text again at a new width, keeping the line at the top in view.
+static int rewrap(void)
+{
+    int line = nrows ? rows[top].line : 0;
+    nrows = 0;
+    nlines = 0;
+    if (build_rows() < 0) {
+        return -1;
+    }
+    top = 0;
+    while (top < nrows && rows[top].line < line) {
+        top++;
     }
     return 0;
 }
@@ -171,7 +187,7 @@ static void draw_row(int screen_row, const struct row *row)
     size_t highlight_until = 0;
     int col = 0;
 
-    for (size_t p = row->start; p < row->end && col < TERM_COLS;) {
+    for (size_t p = row->start; p < row->end && col < term_cols();) {
         if (len && p + len <= row->end && memcmp(text + p, search, len) == 0) {
             highlight_until = p + len;
         }
@@ -181,7 +197,7 @@ static void draw_row(int screen_row, const struct row *row)
         if (c == '\t') {
             do {
                 term_put(screen_row, col++, ' ', attr);
-            } while (col % TAB_WIDTH && col < TERM_COLS);
+            } while (col % TAB_WIDTH && col < term_cols());
             p++;
             continue;
         }
@@ -201,8 +217,8 @@ static void draw_row(int screen_row, const struct row *row)
 
 static void draw_status(const char *name, const char *prompt)
 {
-    char line[TERM_COLS + 1];
-    for (int c = 0; c < TERM_COLS; c++) {
+    char line[TERM_MAX_COLS + 1];
+    for (int c = 0; c < term_cols(); c++) {
         term_put(VIEW_ROWS, c, ' ', STATUS_ATTR);
     }
 
@@ -295,12 +311,14 @@ int main(int argc, char **argv)
         close(fd);
     }
 
+    // Rows are cut at the window's width, which the terminal reports when it is opened.
+    term_open();
     if (build_rows() < 0) {
+        term_close();
         fprintf(stderr, "less: out of memory\n");
         return 1;
     }
 
-    term_open();
     for (;;) {
         draw(name, NULL);
         message = NULL;
@@ -312,6 +330,17 @@ int main(int argc, char **argv)
             case TERM_KEY_EOF:
                 term_close();
                 return 0;
+            case TERM_KEY_RESIZE:
+                if (rewrap() < 0) {
+                    term_close();
+                    fprintf(stderr, "less: out of memory\n");
+                    return 1;
+                }
+                set_top(top);
+                break;
+            case 'L' & 0x1f:
+                term_redraw();
+                break;
             case 'j':
             case TERM_KEY_DOWN:
             case TERM_KEY_ENTER:

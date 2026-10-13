@@ -1119,6 +1119,79 @@ static void test_term_present(void)
     CHECK(term_print(0, TERM_COLS - 2, "abc", TERM_NORMAL) == 2);
 }
 
+// term size reports
+
+static int size_parse(const char *s, int *rows, int *cols)
+{
+    return term_parse_size((const unsigned char *)s, (int)strlen(s), rows, cols);
+}
+
+// Runs child() with input on its stdin and its screen output in a pipe; 0 if it exited 0.
+static int with_keys(const char *input, int (*child)(void))
+{
+    int in[2], out[2];
+    if (pipe(in) != 0 || pipe(out) != 0) {
+        return -1;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        dup2(in[0], 0);
+        dup2(out[1], 1);
+        close(in[0]);
+        close(in[1]);
+        close(out[0]);
+        close(out[1]);
+        _exit(child());
+    }
+    close(in[0]);
+    close(out[1]);
+    write(in[1], input, strlen(input));
+    close(in[1]);
+    int status = -1;
+    waitpid(pid, &status, 0);
+    close(out[0]);
+    return status;
+}
+
+static int size_reports_child(void)
+{
+    term_open();
+    // Not a terminal, so nothing is asked and the screen keeps the default size.
+    int ok = term_rows() == TERM_ROWS && term_cols() == TERM_COLS;
+    ok = ok && term_key(500) == TERM_KEY_RESIZE && term_rows() == 30 && term_cols() == 100;
+    ok = ok && term_key(500) == 'x';
+    // The same size again changes nothing, so it never surfaces as a key.
+    ok = ok && term_key(500) == TERM_KEY_EOF;
+    term_close();
+    return ok ? 0 : 1;
+}
+
+static void test_term_size_report(void)
+{
+    int r = 0, c = 0;
+    CHECK(size_parse("\033[24;80R", &r, &c) == 8 && r == 24 && c == 80);
+    CHECK(size_parse("\033[40;120Rx", &r, &c) == 9 && r == 40 && c == 120);
+
+    // Only the start of one: wait for the rest.
+    CHECK(size_parse("\033", &r, &c) == 0);
+    CHECK(size_parse("\033[", &r, &c) == 0);
+    CHECK(size_parse("\033[24", &r, &c) == 0);
+    CHECK(size_parse("\033[24;8", &r, &c) == 0);
+
+    // Not one at all.
+    CHECK(size_parse("x", &r, &c) == -1);
+    CHECK(size_parse("\033[A", &r, &c) == -1);
+    CHECK(size_parse("\033[24R", &r, &c) == -1);
+    CHECK(size_parse("\033[;80R", &r, &c) == -1);
+    CHECK(size_parse("\033[24;R", &r, &c) == -1);
+    CHECK(size_parse("\033[2a;3R", &r, &c) == -1);
+    CHECK(size_parse("\033[123456;80R", &r, &c) == -1);
+    // Shift-F3 has the same shape, but a screen is never one row tall.
+    CHECK(size_parse("\033[1;2R", &r, &c) == -1);
+
+    CHECK(with_keys("\033[30;100Rx\033[30;100R", size_reports_child) == 0);
+}
+
 // Entry point
 
 int main(int argc, char **argv)
@@ -1198,6 +1271,7 @@ int main(int argc, char **argv)
     run_group("stdout buffering", test_stdout_buffering);
     run_group("term_decode", test_term_decode);
     run_group("term_present", test_term_present);
+    run_group("term size reports", test_term_size_report);
 
     if (g_failed) {
         printf("test_libc: %d of %d tests failed\n", g_failed, g_passed + g_failed);

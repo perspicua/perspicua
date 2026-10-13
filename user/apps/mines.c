@@ -181,7 +181,7 @@ static void game_init(struct game *g, const struct level *lv)
 
 static int field_col(const struct game *g)
 {
-    return (TERM_COLS - 2 * g->w) / 2;
+    return (term_cols() - 2 * g->w) / 2;
 }
 
 static const int number_colors[9] = {0,           TERM_BLUE, TERM_GREEN, TERM_RED,  TERM_MAGENTA,

@@ -20,9 +20,9 @@
 #include "term.h"
 #include "unistd.h"
 
-#define TEXT_ROWS   (TERM_ROWS - 2)
-#define STATUS_ROW  (TERM_ROWS - 2)
-#define MESSAGE_ROW (TERM_ROWS - 1)
+#define TEXT_ROWS   (term_rows() - 2)
+#define STATUS_ROW  (term_rows() - 2)
+#define MESSAGE_ROW (term_rows() - 1)
 #define TAB_WIDTH   8
 #define PATH_LEN    256
 #define INPUT_LEN   128
@@ -51,7 +51,7 @@ static int row_off, col_off;
 
 static char filename[PATH_LEN];
 static int dirty;
-static char message[TERM_COLS + 1];
+static char message[TERM_MAX_COLS + 1];
 static int prompt_col = -1; // the cursor's column on the message row while a prompt is open
 
 static const char *highlight; // the search text, while a search is open
@@ -342,8 +342,8 @@ static void scroll(void)
     if (col < col_off) {
         col_off = col;
     }
-    if (col >= col_off + TERM_COLS) {
-        col_off = col - TERM_COLS + 1;
+    if (col >= col_off + term_cols()) {
+        col_off = col - term_cols() + 1;
     }
 }
 
@@ -360,7 +360,7 @@ static void draw_line(int row, const struct line *l)
     size_t lit_until = 0;
     int col = 0;
 
-    for (size_t p = 0; p < l->len && col < col_off + TERM_COLS;) {
+    for (size_t p = 0; p < l->len && col < col_off + term_cols();) {
         if (n && p + n <= l->len && memcmp(l->s + p, highlight, n) == 0) {
             lit_until = p + n;
         }
@@ -391,8 +391,8 @@ static void draw_line(int row, const struct line *l)
 
 static void draw_status(void)
 {
-    char left[TERM_COLS + 1], right[48];
-    for (int c = 0; c < TERM_COLS; c++) {
+    char left[TERM_MAX_COLS + 1], right[48];
+    for (int c = 0; c < term_cols(); c++) {
         term_put(STATUS_ROW, c, ' ', STATUS_ATTR);
     }
     snprintf(left, sizeof(left), " %s%s", filename[0] ? filename : "[no name]",
@@ -400,7 +400,7 @@ static void draw_status(void)
     snprintf(right, sizeof(right), "line %d/%d  col %d ", cy + 1, nlines,
              column_of(&lines[cy], cx) + 1);
     term_print(STATUS_ROW, 0, left, STATUS_ATTR);
-    term_print(STATUS_ROW, TERM_COLS - (int)strlen(right), right, STATUS_ATTR);
+    term_print(STATUS_ROW, term_cols() - (int)strlen(right), right, STATUS_ATTR);
 }
 
 static void refresh(void)
@@ -434,7 +434,8 @@ static int prompt(const char *label, char *buf, size_t size, void (*on_key)(cons
         refresh();
 
         int key = term_key(-1);
-        if (key == TERM_KEY_NONE) {
+        // A resize only needs the redraw the loop does anyway.
+        if (key == TERM_KEY_NONE || key == TERM_KEY_RESIZE) {
             continue;
         }
         int result = 1;
@@ -678,6 +679,9 @@ static int handle_key(int key)
         case CTRL('g'):
             go_to_line();
             break;
+        case CTRL('l'):
+            term_redraw();
+            break;
         case CTRL('c'):
             set_message("Ctrl-Q quits");
             break;
@@ -767,7 +771,8 @@ int main(int argc, char **argv)
     for (;;) {
         refresh();
         int key = term_key(-1);
-        if (key == TERM_KEY_NONE) {
+        // A resize only needs the redraw the loop does anyway.
+        if (key == TERM_KEY_NONE || key == TERM_KEY_RESIZE) {
             continue;
         }
         message[0] = '\0';

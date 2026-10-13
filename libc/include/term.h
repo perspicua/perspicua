@@ -1,8 +1,9 @@
 /*
  * term.h - Full-screen terminal programs: decoded keys and a diffed screen.
  *
- * The console is a raw 80x24 terminal. term_open() takes it over, and
- * term_close(), exit(), Ctrl-C and Ctrl-Z all hand it back as they found it.
+ * The console is a raw terminal of whatever size it reports when asked, 80x24
+ * if it never answers. term_open() takes it over, and term_close(), exit(),
+ * Ctrl-C and Ctrl-Z all hand it back as they found it.
  * Drawing goes to an off-screen buffer; term_present() sends only the cells
  * that changed, which is what keeps a game playable over a 115200 baud line.
  */
@@ -12,8 +13,13 @@
 
 #include <stdint.h>
 
+// The size until the terminal reports its own, and the smallest a fixed layout may assume.
 #define TERM_ROWS 24
 #define TERM_COLS 80
+
+// Larger windows are drawn in their top-left corner.
+#define TERM_MAX_ROWS 100
+#define TERM_MAX_COLS 300
 
 // Colors for TERM_FG and TERM_BG; TERM_DEFAULT is the terminal's own.
 #define TERM_BLACK   0
@@ -48,8 +54,9 @@
 #define TERM_KEY_PGDN      0x107
 #define TERM_KEY_DELETE    0x108
 #define TERM_KEY_INSERT    0x109
+#define TERM_KEY_RESIZE    0x10a // the terminal reported a new size: lay out again
 
-// Takes over the terminal; -1 if this program already has it.
+// Takes over the terminal, asking it for its size; -1 if this program already has it.
 int term_open(void);
 void term_close(void);
 
@@ -61,8 +68,18 @@ void term_put(int row, int col, uint32_t codepoint, unsigned attr);
 // Writes UTF-8 text from (row, col), clipped at the right edge; returns the columns used.
 int term_print(int row, int col, const char *utf8, unsigned attr);
 void term_present(void);
-// Makes the next term_present() repaint the whole screen.
+// Makes the next term_present() repaint the whole screen, and asks the terminal for its size again.
 void term_redraw(void);
+
+// The screen size as the terminal last reported it, or TERM_ROWS x TERM_COLS.
+int term_rows(void);
+int term_cols(void);
+// Asks the terminal for its size; a change comes back from term_key() as TERM_KEY_RESIZE.
+void term_request_size(void);
+// Asks and waits for the answer, without taking the screen over; 0 if the terminal answered.
+int term_query_size(int *rows, int *cols);
+// Parses a size report "ESC[rows;colsR" at buf: its length, 0 if incomplete, -1 if it is not one.
+int term_parse_size(const unsigned char *buf, int len, int *rows, int *cols);
 // Shows the terminal's cursor at (row, col) after each term_present(); a row of -1 hides it.
 void term_cursor(int row, int col);
 // Writes the off-screen buffer to stdout as plain text, for output that is not a screen.
