@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include "fcntl.h"
+#include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -389,6 +390,130 @@ static void test_find_du(void)
     rmdir(TREE);
 }
 
+#define FS "/tt_fs"
+
+static int status_of(char *const argv[])
+{
+    char out[OUT_MAX];
+    return run(NULL, out, argv);
+}
+
+static int holds(const char *path, const char *text)
+{
+    char buf[256];
+    return read_text(path, buf, sizeof(buf)) >= 0 && strcmp(buf, text) == 0;
+}
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void test_cp_mv(void)
+{
+    mkdir(FS, 0755);
+    write_text(FS "/a", "hello\n");
+
+    // cp truncates its destination, so one that is the source must be refused untouched.
+    check("cp a a refused", status_of((char *[]){"cp", FS "/a", FS "/a", NULL}) == 1);
+    check("cp a a keeps a", holds(FS "/a", "hello\n"));
+    check("cp a A refused on FAT", status_of((char *[]){"cp", FS "/a", FS "/A", NULL}) == 1);
+    check("cp a into its own dir refused", status_of((char *[]){"cp", FS "/a", FS, NULL}) == 1);
+    check("cp a through .. refused",
+          status_of((char *[]){"cp", FS "/a", FS "/../" FS "/a", NULL}) == 1);
+    check("a survives every refusal", holds(FS "/a", "hello\n"));
+    check("cp a b", status_of((char *[]){"cp", FS "/a", FS "/b", NULL}) == 0);
+    check("cp a b copies", holds(FS "/b", "hello\n"));
+
+    check("mv b b", status_of((char *[]){"mv", FS "/b", FS "/b", NULL}) == 0);
+    check("mv b b keeps b", holds(FS "/b", "hello\n"));
+
+    unlink(FS "/b");
+}
+
+static void test_failure_status(void)
+{
+    char out[OUT_MAX];
+
+    check("cat of a missing file fails",
+          run(NULL, out, (char *[]){"cat", FS "/missing", NULL}) == 1 && out[0] == '\0');
+    check("cat goes on past a missing file",
+          run(NULL, out, (char *[]){"cat", FS "/missing", FS "/a", NULL}) == 1
+              && strcmp(out, "hello\n") == 0);
+    check("ls of a missing path fails", status_of((char *[]){"ls", FS "/missing", NULL}) == 1);
+
+    // Each "/." adds two bytes, so the entries' paths overrun ls's 512-byte buffer.
+    char deep[600] = FS;
+    for (int i = 0; i < 260; i++) {
+        strcat(deep, "/.");
+    }
+    check("ls -l on a path too long for its buffer fails cleanly",
+          status_of((char *[]){"ls", "-l", deep, NULL}) == 1);
+
+    check("mkdir -p under a file fails",
+          status_of((char *[]){"mkdir", "-p", FS "/a/x", NULL}) == 1);
+    check("mkdir -p", status_of((char *[]){"mkdir", "-p", FS "/d1/d2", NULL}) == 0);
+    check("mkdir -p made the tree", is_dir(FS "/d1/d2"));
+    check("mkdir -p of an existing tree",
+          status_of((char *[]){"mkdir", "-p", FS "/d1/d2", NULL}) == 0);
+
+    check("rm -r refuses .", status_of((char *[]){"rm", "-r", FS "/d1/.", NULL}) == 1);
+    check("rm -r refuses ..", status_of((char *[]){"rm", "-r", FS "/d1/d2/..", NULL}) == 1);
+    check("rm -r refuses ../", status_of((char *[]){"rm", "-r", FS "/d1/d2/../", NULL}) == 1);
+    check("the refusals left d1 alone", is_dir(FS "/d1/d2"));
+    check("rm -r", status_of((char *[]){"rm", "-r", FS "/d1", NULL}) == 0);
+    check("rm -r removed d1", !is_dir(FS "/d1"));
+}
+
+static void test_grep(void)
+{
+    char out[OUT_MAX];
+
+    check("grep rejects an unknown option",
+          run("a\n", out, (char *[]){"grep", "-v", "zzz", NULL}) == 2 && out[0] == '\0');
+    check("grep of a missing file is an error",
+          status_of((char *[]){"grep", "x", FS "/missing", NULL}) == 2);
+    check("grep with no match", status_of((char *[]){"grep", "zzz", FS "/a", NULL}) == 1);
+
+    static char longline[2100];
+    memset(longline, 'a', 2000);
+    strcpy(longline + 2000, "NEEDLE\n");
+    check("grep finds a match past 1 KB into a line",
+          outputs(longline, longline, (char *[]){"grep", "NEEDLE", NULL}));
+    check("grep -i finds it too",
+          outputs(longline, longline, (char *[]){"grep", "-i", "needle", NULL}));
+}
+
+static void test_kill(void)
+{
+    char pid[16];
+
+    int victim = fork();
+    if (victim == 0) {
+        for (;;) {
+            usleep(50 * 1000);
+        }
+    }
+    snprintf(pid, sizeof(pid), "%d", victim);
+    check("kill -NOPE is refused", status_of((char *[]){"kill", "-NOPE", pid, NULL}) == 1);
+    check("kill abc is refused", status_of((char *[]){"kill", "abc", NULL}) == 1);
+    int st = -1;
+    check("the refusals sent nothing", waitpid(victim, &st, WNOHANG) == 0);
+    check("kill -TERM by name", status_of((char *[]){"kill", "-TERM", pid, NULL}) == 0);
+    check("SIGTERM arrived", waitpid(victim, &st, 0) == victim && st == 128 + SIGTERM);
+
+    victim = fork();
+    if (victim == 0) {
+        for (;;) {
+            usleep(50 * 1000);
+        }
+    }
+    snprintf(pid, sizeof(pid), "%d", victim);
+    check("kill -s SIGKILL", status_of((char *[]){"kill", "-s", "SIGKILL", pid, NULL}) == 0);
+    check("SIGKILL arrived", waitpid(victim, &st, 0) == victim && st == 128 + SIGKILL);
+}
+
 // Each game checks its own rules with --selftest, without touching the terminal.
 static void test_game_selftests(void)
 {
@@ -415,6 +540,13 @@ int main(void)
     test_edit();
     test_find_du();
     test_game_selftests();
+    test_cp_mv();
+    test_failure_status();
+    test_grep();
+    test_kill();
+
+    unlink(FS "/a");
+    rmdir(FS);
 
     if (failed) {
         printf("test_tools: %d of %d tests failed\n", failed, passed + failed);

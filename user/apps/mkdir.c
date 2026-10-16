@@ -1,8 +1,14 @@
+/*
+ * mkdir.c - Creates directories, and with -p every missing parent too.
+ */
+
+#include "errno.h"
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
+#include "uapi/stat.h"
 
-// Create every missing parent of path, ignoring components that already exist.
+// Create every missing parent of path; the final mkdir reports any that could not be made.
 static void make_parents(char *path)
 {
     for (char *p = path + 1; *p; p++) {
@@ -12,6 +18,12 @@ static void make_parents(char *path)
             *p = '/';
         }
     }
+}
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 int main(int argc, char **argv)
@@ -29,7 +41,7 @@ int main(int argc, char **argv)
     }
 
     if (start >= argc) {
-        printf("usage: mkdir [-p] DIR...\n");
+        fprintf(stderr, "usage: mkdir [-p] DIR...\n");
         return 1;
     }
 
@@ -37,12 +49,17 @@ int main(int argc, char **argv)
     for (int i = start; i < argc; i++) {
         if (parents) {
             make_parents(argv[i]);
-            // -p tolerates an already-existing final directory.
-            mkdir(argv[i], 0755);
-        } else if (mkdir(argv[i], 0755) < 0) {
-            printf("mkdir: cannot create directory '%s'\n", argv[i]);
-            rc = 1;
         }
+        if (mkdir(argv[i], 0755) == 0) {
+            continue;
+        }
+        // -p is satisfied by a directory that already exists, and only by a directory.
+        int err = errno;
+        if (parents && err == EEXIST && is_dir(argv[i])) {
+            continue;
+        }
+        fprintf(stderr, "mkdir: cannot create directory '%s': %s\n", argv[i], strerror(err));
+        rc = 1;
     }
     return rc;
 }

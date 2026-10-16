@@ -1,3 +1,7 @@
+/*
+ * rm.c - Removes files, and with -r whole directory trees.
+ */
+
 #include <stddef.h>
 
 #include "syscall.h"
@@ -28,14 +32,16 @@ static int remove_dir(const char *path)
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
             continue;
         }
+        // A truncated child path could name a different file.
         char child[512];
-        int n = strlen(path);
-        strncpy(child, path, sizeof(child) - 1);
-        child[sizeof(child) - 1] = '\0';
-        if (n > 0 && path[n - 1] != '/') {
-            strncat(child, "/", sizeof(child) - strlen(child) - 1);
+        size_t n = strlen(path);
+        const char *sep = (n > 0 && path[n - 1] == '/') ? "" : "/";
+        int len = snprintf(child, sizeof(child), "%s%s%s", path, sep, ent->d_name);
+        if (len < 0 || len >= (int)sizeof(child)) {
+            fprintf(stderr, "rm: path too long: '%s%s%s'\n", path, sep, ent->d_name);
+            rc = 1;
+            continue;
         }
-        strncat(child, ent->d_name, sizeof(child) - strlen(child) - 1);
         rc |= remove_path(child);
     }
     closedir(dirp);
@@ -47,6 +53,25 @@ static int remove_dir(const char *path)
         rc = 1;
     }
     return rc;
+}
+
+// "/" and any path ending in "." or ".." (trailing slashes aside) name a tree rm must not take.
+static int is_protected(const char *path)
+{
+    size_t end = strlen(path);
+    while (end > 0 && path[end - 1] == '/') {
+        end--;
+    }
+    if (end == 0) {
+        return path[0] == '/';
+    }
+    size_t start = end;
+    while (start > 0 && path[start - 1] != '/') {
+        start--;
+    }
+    size_t len = end - start;
+    return (len == 1 && path[start] == '.')
+           || (len == 2 && path[start] == '.' && path[start + 1] == '.');
 }
 
 static int remove_path(const char *path)
@@ -104,6 +129,11 @@ int main(int argc, char **argv)
 
     int rc = 0;
     for (int i = start; i < argc; i++) {
+        if (is_protected(argv[i])) {
+            fprintf(stderr, "rm: refusing to remove '%s'\n", argv[i]);
+            rc = 1;
+            continue;
+        }
         rc |= remove_path(argv[i]);
     }
     return rc;

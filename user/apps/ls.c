@@ -1,3 +1,7 @@
+/*
+ * ls.c - Lists directories, in columns at a terminal and with -l in long form.
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -145,7 +149,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
 {
     struct stat st;
     if (stat(path, &st) < 0) {
-        printf("ls: cannot stat '%s'\n", path);
+        fprintf(stderr, "ls: cannot stat '%s'\n", path);
         return 1;
     }
 
@@ -159,7 +163,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
 
     DIR *dirp = opendir(path);
     if (!dirp) {
-        printf("ls: cannot open directory '%s'\n", path);
+        fprintf(stderr, "ls: cannot open directory '%s'\n", path);
         return 1;
     }
 
@@ -178,6 +182,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
     struct dirent *ent;
     char full_path[512];
     int path_len = strlen(path);
+    int rc = 0;
 
     while ((ent = readdir(dirp)) != NULL) {
         if (ent->d_name[0] == '.' && !show_all) {
@@ -186,14 +191,17 @@ static int list_path_with_options(const char *path, int long_format, int show_al
 
         if (long_format) {
             struct stat entry_st;
+            int len;
             if (strcmp(path, ".") == 0) {
-                strncpy(full_path, ent->d_name, sizeof(full_path));
+                len = snprintf(full_path, sizeof(full_path), "%s", ent->d_name);
             } else {
-                strncpy(full_path, path, sizeof(full_path));
-                if (path[path_len - 1] != '/') {
-                    strncat(full_path, "/", sizeof(full_path) - strlen(full_path) - 1);
-                }
-                strncat(full_path, ent->d_name, sizeof(full_path) - strlen(full_path) - 1);
+                const char *sep = (path[path_len - 1] == '/') ? "" : "/";
+                len = snprintf(full_path, sizeof(full_path), "%s%s%s", path, sep, ent->d_name);
+            }
+            if (len < 0 || len >= (int)sizeof(full_path)) {
+                fprintf(stderr, "ls: path too long: '%s'\n", ent->d_name);
+                rc = 1;
+                continue;
             }
 
             if (stat(full_path, &entry_st) < 0) {
@@ -222,7 +230,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         free(names);
     }
 
-    return 0;
+    return rc;
 }
 
 int main(int argc, char **argv)
@@ -248,18 +256,18 @@ int main(int argc, char **argv)
     }
 
     if (start_idx == argc) {
-        list_path_with_options(".", long_format, show_all);
-    } else {
-        for (int i = start_idx; i < argc; i++) {
-            if (argc > start_idx + 1) {
-                printf("%s:\n", argv[i]);
-            }
-            list_path_with_options(argv[i], long_format, show_all);
-            if (i < argc - 1) {
-                printf("\n");
-            }
-        }
+        return list_path_with_options(".", long_format, show_all);
     }
 
-    return 0;
+    int rc = 0;
+    for (int i = start_idx; i < argc; i++) {
+        if (argc > start_idx + 1) {
+            printf("%s:\n", argv[i]);
+        }
+        rc |= list_path_with_options(argv[i], long_format, show_all);
+        if (i < argc - 1) {
+            printf("\n");
+        }
+    }
+    return rc;
 }

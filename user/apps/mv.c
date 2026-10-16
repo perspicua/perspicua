@@ -1,3 +1,7 @@
+/*
+ * mv.c - Renames a file, into a directory under its own name when the destination is one.
+ */
+
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
@@ -18,7 +22,7 @@ static int is_dir(const char *path)
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        printf("usage: mv SRC DST\n");
+        fprintf(stderr, "usage: mv SRC DST\n");
         return 1;
     }
 
@@ -26,20 +30,21 @@ int main(int argc, char **argv)
     const char *dst = argv[2];
 
     // mv SRC DIR moves into DIR under SRC's basename.
+    // A truncated target would rename the file to a name nobody asked for.
     char target[512];
     if (is_dir(dst)) {
-        int n = strlen(dst);
-        strncpy(target, dst, sizeof(target) - 1);
-        target[sizeof(target) - 1] = '\0';
-        if (n > 0 && dst[n - 1] != '/') {
-            strncat(target, "/", sizeof(target) - strlen(target) - 1);
+        size_t n = strlen(dst);
+        const char *sep = (n > 0 && dst[n - 1] == '/') ? "" : "/";
+        int len = snprintf(target, sizeof(target), "%s%s%s", dst, sep, basename_of(src));
+        if (len < 0 || len >= (int)sizeof(target)) {
+            fprintf(stderr, "mv: path too long: '%s'\n", dst);
+            return 1;
         }
-        strncat(target, basename_of(src), sizeof(target) - strlen(target) - 1);
         dst = target;
     }
 
     if (rename(src, dst) < 0) {
-        printf("mv: cannot move '%s' to '%s'\n", src, dst);
+        fprintf(stderr, "mv: cannot move '%s' to '%s'\n", src, dst);
         return 1;
     }
     return 0;

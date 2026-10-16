@@ -1,5 +1,8 @@
+/*
+ * kill.c - Sends a signal, by number or name, to processes or process groups.
+ */
+
 #include "syscall.h"
-#include "stdlib.h"
 #include "string.h"
 #include "stdio.h"
 #include "signal.h"
@@ -28,6 +31,51 @@ static void list_signals(void)
     }
 }
 
+// All digits after an optional '-'; writes the value to *out.
+static int parse_int(const char *s, int *out)
+{
+    int neg = (*s == '-');
+    if (neg) {
+        s++;
+    }
+    if (*s == '\0') {
+        return 0;
+    }
+    int v = 0;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9' || v > 100000000) {
+            return 0;
+        }
+        v = v * 10 + (*s - '0');
+    }
+    *out = neg ? -v : v;
+    return 1;
+}
+
+// A number, a name, or a name with SIG in front: "9", "KILL" and "SIGKILL" alike. -1 if none.
+static int parse_signal(const char *s)
+{
+    int n;
+    if (parse_int(s, &n)) {
+        return (n >= 0 && n < NSIG) ? n : -1;
+    }
+    if (strncmp(s, "SIG", 3) == 0) {
+        s += 3;
+    }
+    for (int i = 1; i < NSIG; i++) {
+        if (strcmp(s, signames[i]) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int usage(void)
+{
+    fprintf(stderr, "usage: kill [-SIGNAL | -s SIGNAL] PID...   (kill -l lists signals)\n");
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     int sig = SIGTERM;
@@ -38,26 +86,40 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    // Optional leading -SIGNUM selects the signal (e.g. kill -9 3).
-    if (argc > 1 && argv[1][0] == '-' && argv[1][1] != '\0') {
-        sig = atoi(argv[1] + 1);
+    const char *name = NULL;
+    if (argc > 2 && strcmp(argv[1], "-s") == 0) {
+        name = argv[2];
+        start = 3;
+    } else if (argc > 1 && argv[1][0] == '-' && argv[1][1] != '\0' && strcmp(argv[1], "--") != 0) {
+        name = argv[1] + 1;
         start = 2;
+    }
+    if (name) {
+        sig = parse_signal(name);
+        if (sig < 0) {
+            fprintf(stderr, "kill: invalid signal '%s'\n", name);
+            return 1;
+        }
+    }
+    if (start < argc && strcmp(argv[start], "--") == 0) {
+        start++;
     }
 
     if (start >= argc) {
-        printf("usage: kill [-SIGNUM] PID...   (kill -l lists signals)\n");
-        return 1;
+        return usage();
     }
 
     int rc = 0;
     for (int i = start; i < argc; i++) {
-        int pid = atoi(argv[i]);
+        // A negative pid names a process group; anything else that is not a number is an error.
+        int pid;
+        if (!parse_int(argv[i], &pid)) {
+            fprintf(stderr, "kill: invalid pid '%s'\n", argv[i]);
+            rc = 1;
+            continue;
+        }
         if (kill(pid, sig) < 0) {
-            if (errno == EPERM) {
-                printf("kill: (%d) - operation not permitted\n", pid);
-            } else {
-                printf("kill: (%d) - no such process\n", pid);
-            }
+            fprintf(stderr, "kill: (%d) - %s\n", pid, strerror(errno));
             rc = 1;
         }
     }

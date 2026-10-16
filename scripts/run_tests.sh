@@ -91,7 +91,7 @@ LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
 # command's first word names the suite: it must print "<name>: all N tests passed" and exit 0.
 USER_SUITES=(
     "test_restart:20"
-    "test_tools:58"
+    "test_tools:94"
     "test_libc:352"
     "test_syscall:142"
     "test_fcntl:8"
