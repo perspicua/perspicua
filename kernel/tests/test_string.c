@@ -302,5 +302,38 @@ void test_string(void)
         TEST_ASSERT("memmove returns dst", ret == rv_dst);
     }
 
+    // overlaps long enough for the 8-byte word path, in both directions
+    {
+        char buf[80], want[80];
+        for (int i = 0; i < 80; i++) {
+            buf[i] = (char)i;
+        }
+        memmove(buf + 3, buf, 64);
+        for (int i = 0; i < 80; i++) {
+            want[i] = (char)(i < 3 ? i : (i < 67 ? i - 3 : i));
+        }
+        TEST_ASSERT("memmove long forward overlap", memcmp(buf, want, 80) == 0);
+
+        for (int i = 0; i < 80; i++) {
+            buf[i] = (char)i;
+        }
+        memmove(buf, buf + 5, 64);
+        for (int i = 0; i < 80; i++) {
+            want[i] = (char)(i < 64 ? i + 5 : i);
+        }
+        TEST_ASSERT("memmove long backward overlap", memcmp(buf, want, 80) == 0);
+    }
+
+    // snprintf is the kernel's too: procfs and every log line go through it
+    {
+        char b[48];
+        TEST_ASSERT_EQ("snprintf sizes with nowhere to write", snprintf(NULL, 0, "pid %d", 1234),
+                       8);
+        snprintf(b, sizeof(b), "%.3d|%#x|%hhd|%-4s|", 7, 255, 300, "ab");
+        TEST_ASSERT("snprintf precision, #, hh and -", strcmp(b, "007|0xff|44|ab  |") == 0);
+        snprintf(b, sizeof(b), "%08lx %5zu", 0xbeefUL, (size_t)42);
+        TEST_ASSERT("snprintf zero pad and z", strcmp(b, "0000beef    42") == 0);
+    }
+
     TEST_SUITE_END("String");
 }

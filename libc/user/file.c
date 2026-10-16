@@ -6,6 +6,7 @@
 
 #include "uapi/types.h"
 
+#include "errno.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
@@ -27,17 +28,26 @@ static char stdout_buf[STDOUT_BUF];
 static size_t stdout_len;
 static int stdout_mode = -1; // decided at the first write: 1 buffered, 0 not
 
+// Returns how many bytes went out; fewer than n only on a real error, never on EINTR.
+static size_t write_most(int fd, const char *s, size_t n)
+{
+    size_t done = 0;
+    while (done < n) {
+        int w = write(fd, s + done, n - done);
+        if (w < 0 && errno == EINTR) {
+            continue;
+        }
+        if (w <= 0) {
+            break;
+        }
+        done += (size_t)w;
+    }
+    return done;
+}
+
 static int write_all(int fd, const char *s, size_t n)
 {
-    while (n > 0) {
-        int w = write(fd, s, n);
-        if (w <= 0) {
-            return -1;
-        }
-        s += w;
-        n -= (size_t)w;
-    }
-    return 0;
+    return write_most(fd, s, n) == n ? 0 : -1;
 }
 
 static int stdout_buffered(void)
@@ -116,8 +126,9 @@ int fclose(FILE *stream)
         return EOF;
     }
 
+    // The standard streams stay open, but what stdout holds back still has to go out.
     if (stream == stdin || stream == stdout || stream == stderr) {
-        return 0;
+        return fflush(stream) == 0 ? 0 : EOF;
     }
 
     int res = close(stream->fd);
@@ -132,16 +143,29 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
         return 0;
     }
 
-    int bytes_read = read(stream->fd, ptr, size * nmemb);
-    if (bytes_read < 0) {
+    if (nmemb > (size_t)-1 / size) {
         stream->error = 1;
-        return 0;
-    } else if (bytes_read == 0) {
-        stream->eof = 1;
         return 0;
     }
 
-    return (size_t)bytes_read / size;
+    // A short count must mean end of file or an error, so a pipe is read until either.
+    size_t want = size * nmemb, got = 0;
+    while (got < want) {
+        int r = read(stream->fd, (char *)ptr + got, want - got);
+        if (r < 0 && errno == EINTR) {
+            continue;
+        }
+        if (r < 0) {
+            stream->error = 1;
+            break;
+        }
+        if (r == 0) {
+            stream->eof = 1;
+            break;
+        }
+        got += (size_t)r;
+    }
+    return got / size;
 }
 
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
@@ -158,13 +182,17 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
         return nmemb;
     }
 
-    int bytes_written = write(stream->fd, ptr, size * nmemb);
-    if (bytes_written < 0) {
+    if (nmemb > (size_t)-1 / size) {
         stream->error = 1;
         return 0;
     }
 
-    return (size_t)bytes_written / size;
+    size_t want = size * nmemb;
+    size_t done = write_most(stream->fd, ptr, want);
+    if (done < want) {
+        stream->error = 1;
+    }
+    return done / size;
 }
 
 int fseek(FILE *stream, off_t offset, int whence)
@@ -231,9 +259,11 @@ int fflush(FILE *stream)
 {
     // Only stdout ever holds data back, and NULL means every stream.
     if ((stream == stdout || stream == NULL) && stdout_len > 0) {
-        size_t n = stdout_len;
-        stdout_len = 0;
-        if (write_all(1, stdout_buf, n) != 0) {
+        // Only what went out leaves the buffer; the rest waits for the next flush.
+        size_t done = write_most(1, stdout_buf, stdout_len);
+        memmove(stdout_buf, stdout_buf + done, stdout_len - done);
+        stdout_len -= done;
+        if (stdout_len > 0) {
             stdout->error = 1;
             return EOF;
         }

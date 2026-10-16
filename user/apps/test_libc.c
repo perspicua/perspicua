@@ -11,16 +11,19 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "assert.h"
 #include "ctype.h"
 #include "errno.h"
 #include "setjmp.h"
+#include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
 #include "syscall.h"
 #include "term.h"
+#include "wait.h"
 
 // Minimal test framework
 
@@ -427,6 +430,100 @@ static void test_snprintf_percent(void)
     char buf[16];
     snprintf(buf, sizeof(buf), "100%%");
     CHECK(strcmp(buf, "100%") == 0);
+}
+
+// The C99 sizing idiom: with nowhere to write, snprintf still reports the full length.
+static void test_snprintf_sizing(void)
+{
+    CHECK(snprintf(NULL, 0, "hello %d", 12345) == 11);
+    char z[4] = "xyz";
+    CHECK(snprintf(z, 0, "hello") == 5);
+    CHECK(strcmp(z, "xyz") == 0);
+}
+
+static int formats(const char *got, const char *want)
+{
+    if (strcmp(got, want) != 0) {
+        fprintf(stderr, "  got \"%s\", want \"%s\"\n", got, want);
+        return 0;
+    }
+    return 1;
+}
+
+static void test_snprintf_precision(void)
+{
+    char b[32];
+    snprintf(b, sizeof(b), "%.3d", 5);
+    CHECK(formats(b, "005"));
+    snprintf(b, sizeof(b), "[%.0d]", 0);
+    CHECK(formats(b, "[]"));
+    snprintf(b, sizeof(b), "%5.3d", 7);
+    CHECK(formats(b, "  007"));
+    snprintf(b, sizeof(b), "%-6.2x|", 15);
+    CHECK(formats(b, "0f    |"));
+    // GCC rejects this pairing in a literal, so it goes in through a runtime format.
+    char zero_and_precision[] = "%08.3d";
+    snprintf(b, sizeof(b), zero_and_precision, 5);
+    CHECK(formats(b, "     005"));
+    snprintf(b, sizeof(b), "%+.2d", 3);
+    CHECK(formats(b, "+03"));
+    snprintf(b, sizeof(b), "%.4d", -42);
+    CHECK(formats(b, "-0042"));
+    snprintf(b, sizeof(b), "%-5d|%05d", -3, -3);
+    CHECK(formats(b, "-3   |-0003"));
+}
+
+static void test_snprintf_hash(void)
+{
+    char b[32];
+    snprintf(b, sizeof(b), "%#x %#X", 255, 255);
+    CHECK(formats(b, "0xff 0XFF"));
+    snprintf(b, sizeof(b), "%#o %#o", 8, 0);
+    CHECK(formats(b, "010 0"));
+    snprintf(b, sizeof(b), "%#x", 0);
+    CHECK(formats(b, "0"));
+    snprintf(b, sizeof(b), "%#08x", 255);
+    CHECK(formats(b, "0x0000ff"));
+}
+
+static void test_snprintf_lengths(void)
+{
+    char b[48];
+    snprintf(b, sizeof(b), "%hhd %hd %hhu %hu", 300, 70000, 257, 65537);
+    CHECK(formats(b, "44 4464 1 1"));
+    snprintf(b, sizeof(b), "%jd %td %zu", (intmax_t)-5, (ptrdiff_t)7, (size_t)123);
+    CHECK(formats(b, "-5 7 123"));
+    snprintf(b, sizeof(b), "%d %lld", -2147483647 - 1, -9223372036854775807LL - 1);
+    CHECK(formats(b, "-2147483648 -9223372036854775808"));
+    snprintf(b, sizeof(b), "%lu %lx", 18446744073709551615UL, 0xdeadbeefcafeUL);
+    CHECK(formats(b, "18446744073709551615 deadbeefcafe"));
+}
+
+// fread returns short only at end of file or on an error, so it waits for a slow pipe.
+static void test_fread_waits_for_pipe(void)
+{
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    int reader = fork();
+    if (reader == 0) {
+        dup2(fds[0], 0);
+        close(fds[0]);
+        close(fds[1]);
+        char buf[8] = {0};
+        size_t n = fread(buf, 1, 6, stdin);
+        _exit(n == 6 && memcmp(buf, "abcdef", 6) == 0 && !feof(stdin) ? 0 : 1);
+    }
+    close(fds[0]);
+    // A reader that gave up early would otherwise kill this suite with SIGPIPE.
+    sighandler_t old_pipe = signal(SIGPIPE, SIG_IGN);
+    write(fds[1], "abc", 3);
+    usleep(200 * 1000);
+    write(fds[1], "def", 3);
+    close(fds[1]);
+    signal(SIGPIPE, old_pipe);
+    int status = -1;
+    waitpid(reader, &status, 0);
+    CHECK(status == 0);
 }
 
 // ctype.h
@@ -952,6 +1049,11 @@ static void test_atexit(void)
 // stdout buffering
 
 // Run as a fresh process with stdout on a pipe, which is how a program in a pipeline starts.
+static void on_usr1(int sig)
+{
+    (void)sig;
+}
+
 static int stdout_child(const char *name)
 {
     if (strcmp(name, "held") == 0) {
@@ -980,6 +1082,21 @@ static int stdout_child(const char *name)
         static char line[601];
         memset(line, 'z', 600);
         fprintf(stdout, "%s", line);
+    } else if (strcmp(name, "fclose") == 0) {
+        printf("x");
+        fclose(stdout);
+        _exit(0);
+    } else if (strcmp(name, "eintr") == 0) {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = on_usr1;
+        sigaction(SIGUSR1, &sa, NULL);
+        static char block[1024];
+        memset(block, 'x', sizeof(block));
+        for (int i = 0; i < 16; i++) {
+            fwrite(block, 1, sizeof(block), stdout);
+        }
+        _exit(fflush(stdout) == 0 && !ferror(stdout) ? 0 : 1);
     }
     return 0;
 }
@@ -1013,6 +1130,47 @@ static void test_stdout_buffering(void)
         all_z = out[i] == 'z';
     }
     CHECK(all_z);
+}
+
+static void test_fclose_flushes_stdout(void)
+{
+    char out[16];
+    CHECK(prints("fclose", out, sizeof(out)) == 1 && strcmp(out, "x") == 0);
+}
+
+/*
+ * A signal that interrupts a flush to a full pipe must not cost any output: POSIX
+ * sigaction defaults to no SA_RESTART, so the blocked write comes back with EINTR.
+ */
+static void test_stdout_survives_eintr(void)
+{
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    stdout_case = "eintr";
+    int writer = fork();
+    if (writer == 0) {
+        dup2(fds[1], 1);
+        close(fds[0]);
+        close(fds[1]);
+        exec_stdout_case();
+        _exit(127);
+    }
+    close(fds[1]);
+
+    usleep(300 * 1000);
+    kill(writer, SIGUSR1);
+    usleep(300 * 1000);
+
+    static char sink[4096];
+    int total = 0, n;
+    while ((n = read(fds[0], sink, sizeof(sink))) > 0) {
+        total += n;
+    }
+    close(fds[0]);
+    int status = -1;
+    waitpid(writer, &status, 0);
+    CHECK(total == 16 * 1024);
+    CHECK(status == 0);
 }
 
 // term_decode
@@ -1250,6 +1408,13 @@ int main(int argc, char **argv)
     run_group("snprintf basic", test_snprintf_basic);
     run_group("snprintf bounds", test_snprintf_bounds);
     run_group("snprintf %%", test_snprintf_percent);
+    run_group("snprintf sizing", test_snprintf_sizing);
+    run_group("snprintf precision", test_snprintf_precision);
+    run_group("snprintf #", test_snprintf_hash);
+    run_group("snprintf length modifiers", test_snprintf_lengths);
+    run_group("stdout survives EINTR", test_stdout_survives_eintr);
+    run_group("fread waits for a pipe", test_fread_waits_for_pipe);
+    run_group("fclose flushes stdout", test_fclose_flushes_stdout);
     run_group("setjmp direct", test_setjmp_direct);
     run_group("longjmp value", test_longjmp_value);
     run_group("longjmp zero", test_longjmp_zero);

@@ -31,6 +31,19 @@ struct fmt_buf {
     size_t total; // Characters produced; this is what the printf family returns
     int crlf;     // 1 = translate \n to \r\n, 0 = pass through
     int sink;     // 1 = buf is a scratch sink: flush when full instead of truncating
+    int count;    // 1 = only count: snprintf with size 0 sizes its output
+};
+
+// Length modifiers, which say what type the argument was passed as.
+enum fmt_len {
+    LEN_INT,
+    LEN_CHAR,
+    LEN_SHORT,
+    LEN_LONG,
+    LEN_LLONG,
+    LEN_SIZE,
+    LEN_MAX,
+    LEN_PTRDIFF,
 };
 
 // Private Helper Functions
@@ -48,6 +61,10 @@ static inline void fb_flush(struct fmt_buf *fb)
 static inline void fb_putc(struct fmt_buf *fb, char c)
 {
     fb->total++;
+
+    if (fb->count) {
+        return;
+    }
 
     if (!fb->buf) {
         __libc_write(&c, 1);
@@ -113,9 +130,13 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
         int flag_zero = 0;
         int flag_plus = 0;
         int flag_space = 0;
+        int flag_hash = 0;
 
         for (;;) {
-            if (*p == '-') {
+            if (*p == '#') {
+                flag_hash = 1;
+                p++;
+            } else if (*p == '-') {
                 flag_left = 1;
                 p++;
             } else if (*p == '0') {
@@ -168,26 +189,39 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
             }
         }
 
-        int is_long = 0;
-        int is_longlong = 0;
-        int is_size = 0;
-
-        if (*p == 'l') {
+        enum fmt_len len = LEN_INT;
+        if (*p == 'h') {
             p++;
-            if (*p == 'l') {
-                is_longlong = 1;
+            len = LEN_SHORT;
+            if (*p == 'h') {
+                len = LEN_CHAR;
                 p++;
-            } else {
-                is_long = 1;
+            }
+        } else if (*p == 'l') {
+            p++;
+            len = LEN_LONG;
+            if (*p == 'l') {
+                len = LEN_LLONG;
+                p++;
             }
         } else if (*p == 'z') {
-            is_size = 1;
+            len = LEN_SIZE;
+            p++;
+        } else if (*p == 'j') {
+            len = LEN_MAX;
+            p++;
+        } else if (*p == 't') {
+            len = LEN_PTRDIFF;
+            p++;
+        } else if (*p == 'L') {
+            // long double: nothing here formats floating point.
             p++;
         }
 
         char num_buf[72];
         int num_len = 0;
         char sign_char = 0;
+        const char *prefix = "";
         int base = 10;
         int uppercase = 0;
 
@@ -195,14 +229,31 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
             case 'd':
             case 'i': {
                 int64_t val;
-                if (is_longlong) {
-                    val = (int64_t)va_arg(args, long long);
-                } else if (is_long) {
-                    val = (int64_t)va_arg(args, long);
-                } else if (is_size) {
-                    val = (int64_t)va_arg(args, ssize_t);
-                } else {
-                    val = (int64_t)va_arg(args, int);
+                switch (len) {
+                    case LEN_CHAR:
+                        val = (signed char)va_arg(args, int);
+                        break;
+                    case LEN_SHORT:
+                        val = (short)va_arg(args, int);
+                        break;
+                    case LEN_LONG:
+                        val = va_arg(args, long);
+                        break;
+                    case LEN_LLONG:
+                        val = va_arg(args, long long);
+                        break;
+                    case LEN_SIZE:
+                        val = va_arg(args, ssize_t);
+                        break;
+                    case LEN_MAX:
+                        val = va_arg(args, intmax_t);
+                        break;
+                    case LEN_PTRDIFF:
+                        val = va_arg(args, ptrdiff_t);
+                        break;
+                    default:
+                        val = va_arg(args, int);
+                        break;
                 }
 
                 uint64_t uval;
@@ -217,7 +268,8 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
                     }
                     uval = (uint64_t)val;
                 }
-                num_len = fmt_uint(uval, 10, 0, num_buf);
+                // A precision of 0 prints nothing at all for 0.
+                num_len = (prec == 0 && uval == 0) ? 0 : fmt_uint(uval, 10, 0, num_buf);
                 goto emit_number;
             }
 
@@ -241,24 +293,52 @@ static int fmt_core(struct fmt_buf *fb, const char *fmt, va_list args)
 
 unsigned_common: {
     uint64_t uval;
-    if (is_longlong) {
-        uval = (uint64_t)va_arg(args, unsigned long long);
-    } else if (is_long) {
-        uval = (uint64_t)va_arg(args, unsigned long);
-    } else if (is_size) {
-        uval = (uint64_t)va_arg(args, size_t);
-    } else {
-        uval = (uint64_t)va_arg(args, unsigned int);
+    switch (len) {
+        case LEN_CHAR:
+            uval = (unsigned char)va_arg(args, unsigned int);
+            break;
+        case LEN_SHORT:
+            uval = (unsigned short)va_arg(args, unsigned int);
+            break;
+        case LEN_LONG:
+            uval = va_arg(args, unsigned long);
+            break;
+        case LEN_LLONG:
+            uval = va_arg(args, unsigned long long);
+            break;
+        case LEN_SIZE:
+            uval = va_arg(args, size_t);
+            break;
+        case LEN_MAX:
+            uval = va_arg(args, uintmax_t);
+            break;
+        case LEN_PTRDIFF:
+            uval = (uint64_t)va_arg(args, ptrdiff_t);
+            break;
+        default:
+            uval = va_arg(args, unsigned int);
+            break;
     }
-    num_len = fmt_uint(uval, base, uppercase, num_buf);
+    num_len = (prec == 0 && uval == 0) ? 0 : fmt_uint(uval, base, uppercase, num_buf);
+
+    // '#' marks the base: 0x for a nonzero hex value, and a leading 0 for octal.
+    if (flag_hash && base == 16 && uval != 0) {
+        prefix = uppercase ? "0X" : "0x";
+    } else if (flag_hash && base == 8 && (num_len == 0 || num_buf[0] != '0') && prec <= num_len) {
+        prec = num_len + 1;
+    }
     goto emit_number;
 }
 
 emit_number: {
-    int field = num_len + (sign_char ? 1 : 0);
+    // Precision is a minimum digit count, and once given it overrides the '0' flag.
+    int zeros = (prec > num_len) ? prec - num_len : 0;
+    int prefix_len = prefix[0] ? 2 : 0;
+    int field = (sign_char ? 1 : 0) + prefix_len + zeros + num_len;
     int pad = (width > field) ? width - field : 0;
+    int zero_pad = !flag_left && flag_zero && prec < 0;
 
-    if (!flag_left && !flag_zero) {
+    if (!flag_left && !zero_pad) {
         for (int i = 0; i < pad; i++) {
             fb_putc(fb, ' ');
         }
@@ -266,10 +346,16 @@ emit_number: {
     if (sign_char) {
         fb_putc(fb, sign_char);
     }
-    if (!flag_left && flag_zero) {
+    for (int i = 0; i < prefix_len; i++) {
+        fb_putc(fb, prefix[i]);
+    }
+    if (zero_pad) {
         for (int i = 0; i < pad; i++) {
             fb_putc(fb, '0');
         }
+    }
+    for (int i = 0; i < zeros; i++) {
+        fb_putc(fb, '0');
     }
     for (int i = 0; i < num_len; i++) {
         fb_putc(fb, num_buf[i]);
@@ -378,8 +464,10 @@ emit_number: {
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
+    // Nothing to write into: count what would have been written, as the C99 sizing idiom needs.
     if (!buf || size == 0) {
-        return 0;
+        struct fmt_buf counter = {.count = 1};
+        return fmt_core(&counter, fmt, args);
     }
 
     struct fmt_buf fb = {

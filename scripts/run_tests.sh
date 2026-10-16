@@ -48,7 +48,7 @@ FAIL_MARKERS=(
 # with N at least that; raise a minimum when a suite grows, never lower one to pass.
 KERNEL_SUITES=(
     "Types:24"
-    "String:99"
+    "String:104"
     "Symbols:8"
     "Spinlock:233"
     "Physical Memory Manager:789"
@@ -92,7 +92,7 @@ LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
 USER_SUITES=(
     "test_restart:20"
     "test_tools:94"
-    "test_libc:352"
+    "test_libc:377"
     "test_syscall:162"
     "test_fcntl:8"
     "test_stop_cont:39"

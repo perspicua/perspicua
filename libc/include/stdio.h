@@ -66,7 +66,7 @@ int printk(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // va_list variant of printf.
 int vprintf(const char *fmt, va_list args);
 
-// Formatted output into a size-bounded buffer. Always NUL-terminates.
+// Formatted output into a size-bounded buffer, NUL-terminated when size > 0; returns the full length.
 int snprintf(char *buf, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
 // va_list variant of snprintf.
