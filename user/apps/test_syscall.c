@@ -597,8 +597,10 @@ static void test_wait_and_kill(void)
     }
     CHECK(waitpid(0, &st, 0) == same && WEXITSTATUS(st) == 4);
 
+    // The child joins its group itself: it may exit before the parent's setpgid runs.
     int other = fork();
     if (other == 0) {
+        setpgid(0, 0);
         _exit(5);
     }
     setpgid(other, other);
@@ -633,8 +635,14 @@ static void test_wait_and_kill(void)
     close(fds[1]);
 
     // A group outlives its leader, so the leader's pid is not handed out while it has members.
+    // The leader waits to be told to go, so the member can join a group that exists.
+    int go[2];
+    CHECK(pipe(go) == 0);
     int leader = fork();
     if (leader == 0) {
+        setpgid(0, 0);
+        char c;
+        read(go[0], &c, 1);
         _exit(0);
     }
     setpgid(leader, leader);
@@ -644,7 +652,10 @@ static void test_wait_and_kill(void)
             usleep(50 * 1000);
         }
     }
-    setpgid(member, leader);
+    CHECK(setpgid(member, leader) == 0);
+    write(go[1], "x", 1);
+    close(go[0]);
+    close(go[1]);
     waitpid(leader, &st, 0);
     int next = fork();
     if (next == 0) {

@@ -93,7 +93,7 @@ USER_SUITES=(
     "test_restart:20"
     "test_tools:94"
     "test_libc:377"
-    "test_syscall:162"
+    "test_syscall:164"
     "test_fcntl:8"
     "test_stop_cont:39"
     "test_sh:15"
@@ -230,10 +230,18 @@ if [ "$suites_finished" -eq 1 ]; then
     printf 'echo JC-BGSH\n' >&3
     wait_briefly '^JC-BGSH$' 10 || job_control_failures+=("a background sh took the terminal")
 
-    printf 'sleep 1 | sleep 2\n' >&3
-    sleep 0.7
-    printf '\032' >&3
-    if wait_briefly '^\[stopped\]' 10; then
+    # Ctrl-Z reaches the job only once the shell has handed it the terminal, so it is repeated.
+    printf 'sleep 2 | sleep 4\n' >&3
+    stopped=0
+    for _ in $(seq 1 12); do
+        sleep 0.3
+        printf '\032' >&3
+        if wait_briefly '^\[stopped\]' 0; then
+            stopped=1
+            break
+        fi
+    done
+    if [ "$stopped" -eq 1 ] || wait_briefly '^\[stopped\]' 2; then
         # grep finds no sleep, and says so with status 1, only once fg has waited for both.
         printf 'fg; ps | grep sleep; echo JC-FG-$?\n' >&3
         if ! wait_briefly '^JC-FG-1$' 15; then
