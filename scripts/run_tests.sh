@@ -93,7 +93,7 @@ USER_SUITES=(
     "test_restart:20"
     "test_tools:94"
     "test_libc:352"
-    "test_syscall:144"
+    "test_syscall:152"
     "test_fcntl:8"
     "test_stop_cont:39"
     "test_sh:15"

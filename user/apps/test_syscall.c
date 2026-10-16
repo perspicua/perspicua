@@ -10,6 +10,7 @@
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
+#include <stdlib.h>
 #include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
@@ -484,6 +485,89 @@ void test_audit_fixes(void)
     unlink(plain);
 }
 
+static int read_proc(const char *path, char *buf, int size)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        return -1;
+    }
+    int n = read(fd, buf, (size_t)(size - 1));
+    close(fd);
+    buf[n > 0 ? n : 0] = '\0';
+    return n;
+}
+
+// Reads a child's cwd and fd files until it is gone; exits 1 if one ever read as garbage.
+static void hammer_proc(int pid)
+{
+    char cwd_path[32], fd_path[32], buf[64];
+    snprintf(cwd_path, sizeof(cwd_path), "/proc/%d/cwd", pid);
+    snprintf(fd_path, sizeof(fd_path), "/proc/%d/fd", pid);
+    for (int i = 0; i < 200; i++) {
+        int n = read_proc(cwd_path, buf, sizeof(buf));
+        if (n < 0) {
+            break;
+        }
+        if (n > 0 && strcmp(buf, "/\n") != 0 && strcmp(buf, "/bin\n") != 0) {
+            _exit(1);
+        }
+        DIR *d = opendir(fd_path);
+        if (d) {
+            while (readdir(d)) {}
+            closedir(d);
+        }
+    }
+    _exit(0);
+}
+
+// The per-pid procfs files read a process's cwd and descriptors, even while it exits.
+static void test_procfs_pid_files(void)
+{
+    printf("[ TEST ] Running /proc/<pid> cwd and fd tests...\n");
+
+    CHECK(chdir("/") == 0);
+    char buf[64];
+    CHECK(read_proc("/proc/self/cwd", buf, sizeof(buf)) > 0 && strcmp(buf, "/\n") == 0);
+
+    int fd = open("procfd.txt", O_CREAT | O_RDWR | O_TRUNC);
+    CHECK(fd >= 0);
+    char path[32];
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", fd);
+    CHECK(read_proc(path, buf, sizeof(buf)) > 0 && strcmp(buf, "/procfd.txt\n") == 0);
+
+    int listed = 0;
+    DIR *d = opendir("/proc/self/fd");
+    CHECK(d != NULL);
+    struct dirent *ent;
+    while (d && (ent = readdir(d)) != NULL) {
+        listed |= atoi(ent->d_name) == fd;
+    }
+    if (d) {
+        closedir(d);
+    }
+    CHECK(listed);
+    close(fd);
+    unlink("procfd.txt");
+
+    int garbled = 0, unreaped = 0;
+    for (int round = 0; round < 50; round++) {
+        int child = fork();
+        if (child == 0) {
+            chdir("/bin");
+            _exit(0);
+        }
+        int reader = fork();
+        if (reader == 0) {
+            hammer_proc(child);
+        }
+        int status = -1;
+        unreaped += waitpid(child, &status, 0) != child;
+        garbled += waitpid(reader, &status, 0) != reader || status != 0;
+    }
+    CHECK(unreaped == 0);
+    CHECK(garbled == 0);
+}
+
 // Bad descriptors, pointers, pids and signals are refused rather than acted on.
 static void test_bad_arguments(void)
 {
@@ -550,6 +634,7 @@ int main(void)
     test_review_bugfixes();
     test_audit_fixes();
     test_bad_arguments();
+    test_procfs_pid_files();
 
     return utest_summary("test_syscall");
 }

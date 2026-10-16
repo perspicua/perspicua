@@ -791,9 +791,14 @@ void process_exit(uint32_t pid, int exit_status)
     }
 
     close_all_fds(p);
-    if (p->cwd) {
-        vfs_vnode_put(p->cwd);
-        p->cwd = NULL;
+
+    // procfs takes its cwd reference under fd_lock, so the pointer is cleared under it too.
+    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
+    struct vfs_vnode *cwd = p->cwd;
+    p->cwd = NULL;
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+    if (cwd) {
+        vfs_vnode_put(cwd);
     }
 
     unsigned long *pgd = p->user_pgd;

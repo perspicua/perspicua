@@ -427,22 +427,43 @@ static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t s
     return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
+/*
+ * Locks pid's cwd and descriptor table, or returns NULL holding nothing. Holding
+ * process_table_lock as well keeps a reaper from freeing the PCB underneath.
+ */
+static struct process *pid_lock_fds(uint32_t pid, unsigned long *flags, unsigned long *fdflags)
+{
+    *flags = spin_lock_irqsave(&process_table_lock);
+    struct process *p = process_slot(pid);
+    if (!p) {
+        spin_unlock_irqrestore(&process_table_lock, *flags);
+        return NULL;
+    }
+    *fdflags = spin_lock_irqsave(&p->fd_lock);
+    return p;
+}
+
+static void pid_unlock_fds(struct process *p, unsigned long flags, unsigned long fdflags)
+{
+    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+    spin_unlock_irqrestore(&process_table_lock, flags);
+}
+
 static int procfs_pid_cwd_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
-    uintptr_t pid = (uintptr_t)file->node->internal_info;
-    struct process *p = process_slot((uint32_t)pid);
+    uint32_t pid = (uint32_t)(uintptr_t)file->node->internal_info;
     struct vfs_vnode *cwd_node = NULL;
 
+    unsigned long flags, fdflags;
+    struct process *p = pid_lock_fds(pid, &flags, &fdflags);
     if (!p) {
         return 0;
     }
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     if (p->cwd) {
         cwd_node = p->cwd;
         atomic_inc(&cwd_node->refcount);
     }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+    pid_unlock_fds(p, flags, fdflags);
 
     if (!cwd_node) {
         return 0;
@@ -471,19 +492,18 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
         return -EINVAL;
     }
 
-    struct process *p = process_slot(pid);
+    struct vfs_vnode *target_node = NULL;
+
+    unsigned long flags, fdflags;
+    struct process *p = pid_lock_fds(pid, &flags, &fdflags);
     if (!p) {
         return 0;
     }
-
-    struct vfs_vnode *target_node = NULL;
-
-    unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
     if (p->fd_table[fd]) {
         target_node = p->fd_table[fd]->node;
         atomic_inc(&target_node->refcount);
     }
-    spin_unlock_irqrestore(&p->fd_lock, fdflags);
+    pid_unlock_fds(p, flags, fdflags);
 
     if (!target_node) {
         return 0;
@@ -539,24 +559,23 @@ static int procfs_pid_fd_readdir(struct vfs_file *file, void *buffer, size_t cou
         int fd_idx = (int)file->offset;
         int found = 0;
 
-        struct process *p = process_slot(pid);
+        unsigned long flags, fdflags;
+        struct process *p = pid_lock_fds(pid, &flags, &fdflags);
         if (!p) {
             break;
         }
 
         for (int i = fd_idx; i < VFS_MAX_FDS; i++) {
-            unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
             if (p->fd_table[i]) {
                 vfs_buffer[entries_written].d_ino = (ino_t)(1000 + i);
                 snprintf(vfs_buffer[entries_written].d_name,
                          sizeof(vfs_buffer[entries_written].d_name), "%d", i);
-                spin_unlock_irqrestore(&p->fd_lock, fdflags);
                 file->offset = (vfs_off_t)(i + 1);
                 found = 1;
                 break;
             }
-            spin_unlock_irqrestore(&p->fd_lock, fdflags);
         }
+        pid_unlock_fds(p, flags, fdflags);
 
         if (!found) {
             file->offset = (vfs_off_t)(VFS_MAX_FDS);
