@@ -670,12 +670,14 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     process_set_name(p, path);
 
-    mmu_switch_user(new_pgd, p->asid);
+    // The ASID is flushed while no TTBR0 names it, so old and new tables never meet in the TLB.
+    mmu_leave_user();
     unsigned long asid_field = asid_ttbr_field(p->asid);
     asm volatile("dsb ish" ::: "memory");
     asm volatile("tlbi aside1is, %0" : : "r"(asid_field));
     asm volatile("dsb ish" ::: "memory");
     asm volatile("isb");
+    mmu_switch_user(new_pgd, p->asid);
 
     if (old_pgd) {
         mmu_destroy_user_pgd(old_pgd);

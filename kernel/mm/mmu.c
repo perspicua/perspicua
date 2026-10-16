@@ -36,7 +36,9 @@
 #define L3_IDX(va) (((va) >> 12) & 0x1FFUL)
 #define PG_OFF(va) ((va) & 0xFFFUL)
 
-#define PT_ENTRIES 512UL
+#define PT_ENTRIES    512UL
+#define L2_BLOCK_SIZE (2UL * 1024 * 1024)
+#define GB_SIZE       (1024UL * 1024 * 1024)
 
 extern char __text_start[], __text_end[];
 extern char __rodata_start[], __rodata_end[];
@@ -84,10 +86,53 @@ static unsigned long *alloc_table_page(void)
     return (unsigned long *)pmm_alloc_page();
 }
 
+static int overlaps_ram(unsigned long start, unsigned long end, const struct pmm_range *ram,
+                        int ram_count)
+{
+    for (int i = 0; i < ram_count; i++) {
+        if (start < ram[i].end && ram[i].start < end) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Linear-map descriptor bits for pa, without the block/page type bit.
+static unsigned long linear_attr(unsigned long pa)
+{
+    unsigned long attr = PTE_VALID | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW;
+
+    // The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF
+    if (pa >= 0xFC000000UL && pa < 0x100000000UL) {
+        return attr | PTE_ATTR_D;
+    }
+    return attr | PTE_ATTR_N | PTE_SH_INNER;
+}
+
+// RAM gets 4 KB pages, so no block with RAM behind it is ever split under live cores.
+static void map_linear_gb(unsigned long *l2t, unsigned long gb_base, const struct pmm_range *ram,
+                          int ram_count)
+{
+    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
+        unsigned long base = gb_base + i * L2_BLOCK_SIZE;
+        if (!overlaps_ram(base, base + L2_BLOCK_SIZE, ram, ram_count)) {
+            l2t[i] = base | PTE_BLOCK | linear_attr(base);
+            continue;
+        }
+
+        unsigned long *l3 = boot_table_page();
+        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
+            unsigned long pa = base + j * PAGE_SIZE;
+            l3[j] = pa | PTE_PAGE | linear_attr(pa);
+        }
+        l2t[i] = V2P((uintptr_t)l3) | PTE_VALID | PTE_TABLE;
+    }
+}
+
 /*
  * split_block_to_pages - Converts a 2 MB block entry into a 4 KB page table.
  *
- * Implements the Break-Before-Make (BBM) sequence to avoid TLB conflicts.
+ * Every core touching the block faults during the break, so it must have no RAM behind it.
  */
 static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned long l2_idx,
                                            unsigned long vaddr_base)
@@ -95,6 +140,12 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
     unsigned long block_entry = l2_table[l2_idx];
     unsigned long block_phys = block_entry & PTE_ADDR;
     unsigned long block_attr = block_entry & ~PTE_ADDR & ~PTE_TABLE;
+
+    const struct pmm_range *ram;
+    int ram_count = pmm_get_ram_ranges(&ram);
+    if (overlaps_ram(block_phys, block_phys + L2_BLOCK_SIZE, ram, ram_count)) {
+        PANIC("mmu: refusing to split a 2 MB block with RAM behind it");
+    }
 
     unsigned long *l3 = alloc_table_page();
     if (!l3) {
@@ -109,7 +160,7 @@ static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned lon
     l2_table[l2_idx] = 0;
     asm volatile("dsb ishst" : : : "memory");
 
-    for (unsigned long v = vaddr_base; v < vaddr_base + (2UL * 1024 * 1024); v += PAGE_SIZE) {
+    for (unsigned long v = vaddr_base; v < vaddr_base + L2_BLOCK_SIZE; v += PAGE_SIZE) {
         tlbi_va_is(v);
     }
 
@@ -133,35 +184,15 @@ void mmu_init(void)
     pgd[2] = V2P((uintptr_t)pmd_2) | PTE_VALID | PTE_TABLE;
     pgd[3] = V2P((uintptr_t)pmd_3) | PTE_VALID | PTE_TABLE;
 
-    // Identity map first GB with 4 KB pages for fine-grained kernel control
-    for (unsigned long i = 0; i < PT_ENTRIES; i++) {
-        unsigned long *l3 = boot_table_page();
-        pmd_0[i] = V2P((uintptr_t)l3) | PTE_VALID | PTE_TABLE;
+    // The first GB is all 4 KB pages, for per-page kernel and framebuffer attributes.
+    const struct pmm_range first_gb = {0, GB_SIZE};
+    map_linear_gb(pmd_0, 0, &first_gb, 1);
 
-        for (unsigned long j = 0; j < PT_ENTRIES; j++) {
-            unsigned long pa = (i * (2UL * 1024 * 1024)) + (j * PAGE_SIZE);
-            l3[j] = pa | PTE_VALID | PTE_PAGE | PTE_AF | PTE_SH_INNER | PTE_ATTR_N | PTE_AP_RW
-                    | PTE_PXN | PTE_UXN;
-        }
-    }
-
-    // Map remaining 3 GB of the 4 GB address space. Mark Peripheral range as Device
+    const struct pmm_range *ram;
+    int ram_count = pmm_get_ram_ranges(&ram);
     unsigned long *pmd_others[3] = {pmd_1, pmd_2, pmd_3};
     for (unsigned long p = 0; p < 3; p++) {
-        for (unsigned long i = 0; i < PT_ENTRIES; i++) {
-            unsigned long pa = ((p + 1) * (1024UL * 1024 * 1024)) + (i * (2UL * 1024 * 1024));
-            unsigned long attr;
-
-            // The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF
-            if (pa >= 0xFC000000 && pa < 0x100000000ULL) {
-                attr = PTE_ATTR_D;
-            } else {
-                attr = PTE_ATTR_N | PTE_SH_INNER;
-            }
-
-            pmd_others[p][i] =
-                pa | PTE_VALID | PTE_BLOCK | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW | attr;
-        }
+        map_linear_gb(pmd_others[p], (p + 1) * GB_SIZE, ram, ram_count);
     }
 
     kernel_pgd_virt = pgd;
@@ -233,7 +264,7 @@ int mmu_map_page(unsigned long vaddr, unsigned long paddr, unsigned long flags)
 
     if (l2e & PTE_VALID) {
         if (!(l2e & PTE_TABLE)) {
-            unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
+            unsigned long base = vaddr & ~(L2_BLOCK_SIZE - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
                 spin_unlock_irqrestore(&mmu_lock, irq);
@@ -293,7 +324,7 @@ int mmu_unmap_page(unsigned long vaddr)
 
     unsigned long *l3t;
     if (!(l2e & PTE_TABLE)) {
-        unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
+        unsigned long base = vaddr & ~(L2_BLOCK_SIZE - 1);
         l3t = split_block_to_pages(l2t, l2, base);
         if (!l3t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
@@ -574,7 +605,7 @@ int mmu_user_map_page(unsigned long *pgd, unsigned long vaddr, unsigned long pad
     unsigned long *l3t;
     if (l2t[l2] & PTE_VALID) {
         if (!(l2t[l2] & PTE_TABLE)) {
-            unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
+            unsigned long base = vaddr & ~(L2_BLOCK_SIZE - 1);
             l3t = split_block_to_pages(l2t, l2, base);
             if (!l3t) {
                 spin_unlock_irqrestore(&mmu_lock, irq);
@@ -643,7 +674,7 @@ int mmu_user_unmap_page(unsigned long *pgd, unsigned long vaddr)
 
     unsigned long *l3t;
     if (!(l2e & PTE_TABLE)) {
-        unsigned long base = vaddr & ~((2UL * 1024 * 1024) - 1);
+        unsigned long base = vaddr & ~(L2_BLOCK_SIZE - 1);
         l3t = split_block_to_pages(l2t, l2, base);
         if (!l3t) {
             spin_unlock_irqrestore(&mmu_lock, irq);
@@ -894,7 +925,10 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
         return 0;
     }
 
+    // A new output address on a live entry needs break-before-make.
     unsigned long new_flags = (*pte & ~PTE_ADDR & ~MMU_PTE_COW & ~MMU_AP_RO) | MMU_AP_RW;
+    *pte = 0;
+    tlbi_va_is(vaddr);
     *pte = V2P((uintptr_t)new_page) | new_flags;
     tlbi_va_is(vaddr);
     spin_unlock_irqrestore(&mmu_lock, irq);
@@ -910,6 +944,12 @@ unsigned long mmu_kernel_ttbr0(void)
 }
 
 #ifdef CONFIG_TESTS
+void mmu_test_map_linear_gb(unsigned long *l2t, unsigned long gb_base, const struct pmm_range *ram,
+                            int ram_count)
+{
+    map_linear_gb(l2t, gb_base, ram, ram_count);
+}
+
 int mmu_test_is_block_entry(unsigned long vaddr)
 {
     unsigned long irq = spin_lock_irqsave(&mmu_lock);

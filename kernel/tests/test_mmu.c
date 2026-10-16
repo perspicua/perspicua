@@ -132,14 +132,61 @@ void test_mmu(void)
         pmm_free_page(p2);
     }
 
-    // query existing 2MB block mapping (set up by mmu_init)
+    // the linear map translates a kernel VA in the first GB
     {
-        // The kernel maps physical 0x200000 (2MB) as a 2MB block in PGD[0]/PMD[1]
         unsigned long vaddr = KERNEL_VMA + 0x200000;
         unsigned long pa;
         int mapped = mmu_query(vaddr, &pa, 0);
-        TEST_ASSERT("2MB block: mapped", mapped == 1);
-        TEST_ASSERT("2MB block: paddr", pa == 0x200000);
+        TEST_ASSERT("linear map: mapped", mapped == 1);
+        TEST_ASSERT("linear map: paddr", pa == 0x200000);
+    }
+
+    // RAM above the first GB gets 4 KB pages; only regions with no RAM stay 2 MB blocks
+    {
+        static const struct pmm_range fake_ram[] = {
+            {0x40000000UL, 0x40400000UL},
+            {0x40500000UL, 0x40501000UL},
+            {0x7FF00000UL, 0x80000000UL},
+        };
+        unsigned long free_before = pmm_get_free_pages();
+        unsigned long *l2t = pmm_alloc_page();
+        mmu_test_map_linear_gb(l2t, 0x40000000UL, fake_ram, 3);
+
+        TEST_ASSERT_EQ("linear map: RAM region is a table", l2t[0] & 3, 3);
+        TEST_ASSERT_EQ("linear map: second RAM region is a table", l2t[1] & 3, 3);
+        TEST_ASSERT_EQ("linear map: partly-RAM region is a table", l2t[2] & 3, 3);
+        TEST_ASSERT_EQ("linear map: RAM at the top of the GB is a table", l2t[511] & 3, 3);
+        TEST_ASSERT_EQ("linear map: region without RAM is a block", l2t[3] & 3, 1);
+        TEST_ASSERT_EQ("linear map: block output address", l2t[3] & MMU_PTE_ADDR_MASK,
+                       0x40600000UL);
+
+        unsigned long *l3 = (unsigned long *)P2V(l2t[0] & MMU_PTE_ADDR_MASK);
+        TEST_ASSERT_EQ("linear map: page output address", l3[5] & MMU_PTE_ADDR_MASK, 0x40005000UL);
+        TEST_ASSERT_EQ("linear map: page descriptor", l3[5] & 3, 3);
+        TEST_ASSERT("linear map: page is writable and never executable",
+                    !(l3[5] & MMU_AP_RO) && (l3[5] & MMU_XN) == MMU_XN);
+
+        for (int i = 0; i < 512; i++) {
+            if ((l2t[i] & 3) == 3) {
+                pmm_free_page((void *)P2V(l2t[i] & MMU_PTE_ADDR_MASK));
+            }
+        }
+        pmm_free_page(l2t);
+        TEST_ASSERT_EQ("linear map: tables freed", pmm_get_free_pages(), free_before);
+    }
+
+    // no RAM range the pmm found sits behind a 2 MB block, so no guard-page unmap splits one
+    {
+        const struct pmm_range *ram;
+        int ram_count = pmm_get_ram_ranges(&ram);
+        int blocks = 0;
+        for (int i = 0; i < ram_count; i++) {
+            unsigned long pa = ram[i].start & ~(0x200000UL - 1);
+            for (; pa < ram[i].end; pa += 0x200000UL) {
+                blocks += mmu_test_is_block_entry(P2V(pa));
+            }
+        }
+        TEST_ASSERT_EQ("linear map: no RAM behind a block", blocks, 0);
     }
 
     // map and unmap cycle — re-map same VA to different phys

@@ -91,7 +91,12 @@ int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr);
 unsigned long mmu_kernel_ttbr0(void);
 
 #ifdef CONFIG_TESTS
+struct pmm_range;
+
 int mmu_test_is_block_entry(unsigned long vaddr);
+// Fills l2t with mmu_init's linear map of the GB at gb_base, as if ram were the RAM ranges.
+void mmu_test_map_linear_gb(unsigned long *l2t, unsigned long gb_base, const struct pmm_range *ram,
+                            int ram_count);
 #endif
 
 #endif // PERSPICUA_MM_MMU_H
