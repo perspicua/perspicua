@@ -12,6 +12,7 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "sys/stat.h"
 #include "syscall.h"
 #include "wait.h"
 
@@ -35,25 +36,88 @@ char *sh_strndup(const char *s, size_t len)
     return new;
 }
 
-int main(int argc, char *argv[], char *envp[])
+static bool stdin_is_terminal(void)
 {
-    (void)envp;
+    struct stat st;
+    return fstat(0, &st) == 0 && S_ISCHR(st.st_mode);
+}
 
-    // sh -c runs one line without job control and exits with its status.
-    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
-        g_job_control = false;
-        signal(SIGCHLD, handle_sigchld);
-        execute_line(argv[2]);
+// One line of a script, without its newline; false once the input is used up.
+static bool read_script_line(char *buf, size_t size)
+{
+    size_t n = 0;
+    bool got = false;
+    char c;
+    while (read(0, &c, 1) == 1) {
+        got = true;
+        if (c == '\n') {
+            break;
+        }
+        if (n < size - 1) {
+            buf[n++] = c;
+        }
+    }
+    buf[n] = '\0';
+    return got;
+}
+
+// Runs lines without job control, as sh -c and a script on a pipe do, and exits with the last status.
+static int run_noninteractive(char *line)
+{
+    g_job_control = false;
+    if (line) {
+        execute_line(line);
         return g_last_status;
     }
 
+    char *buf = malloc(CMD_MAX_LEN);
+    if (!buf) {
+        fprintf(stderr, "sh: memory allocation failed\n");
+        return 1;
+    }
+    while (read_script_line(buf, CMD_MAX_LEN)) {
+        execute_line(buf);
+    }
+    free(buf);
+    return g_last_status;
+}
+
+/*
+ * Takes the terminal for an interactive shell. The job-control signals are for its
+ * jobs: a shell stopped or killed by one leaves nothing reading the console.
+ */
+static void take_terminal(void)
+{
     signal(SIGINT, SIG_IGN);
-    signal(SIGCHLD, handle_sigchld);
+    signal(SIGQUIT, SIG_IGN);
+    signal(SIGTSTP, SIG_IGN);
     signal(SIGTTOU, SIG_IGN);
 
-    setsid();
-    int shell_pgid = getpid();
-    tcsetpgrp(0, shell_pgid);
+    // Started in the background, the shell waits to be brought forward before it reads.
+    int fg;
+    while ((fg = tcgetpgrp(0)) > 0 && fg != getpgid(0)) {
+        kill(-getpgid(0), SIGTTIN);
+    }
+    signal(SIGTTIN, SIG_IGN);
+
+    // A session leader already leads its group; init makes the login shell one.
+    setpgid(0, 0);
+    tcsetpgrp(0, getpgid(0));
+}
+
+int main(int argc, char *argv[], char *envp[])
+{
+    (void)envp;
+    signal(SIGCHLD, handle_sigchld);
+
+    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
+        return run_noninteractive(argv[2]);
+    }
+    if (!stdin_is_terminal()) {
+        return run_noninteractive(NULL);
+    }
+
+    take_terminal();
 
     printf("Perspicua Shell\n");
     printf("Type help to see available commands.\n\n");
@@ -78,5 +142,5 @@ int main(int argc, char *argv[], char *envp[])
     }
 
     free(cmd_buffer);
-    return 0;
+    return g_last_status;
 }

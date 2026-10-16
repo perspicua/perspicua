@@ -34,6 +34,7 @@ char *sh_strdup(const char *s);
 char *sh_strndup(const char *s, size_t len);
 
 // edit.c
+#define KEY_EOF (-1) // end of input, or a read error that will not go away
 int read_key(void);
 int sh_read_line(char *buf, size_t size);
 void redraw_line(const char *cmd);

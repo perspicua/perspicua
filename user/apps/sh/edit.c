@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include "dirent.h"
+#include "errno.h"
 #include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
@@ -73,8 +74,10 @@ void redraw_line(const char *cmd)
 int read_key(void)
 {
     char c;
-    if (read(0, &c, 1) <= 0) {
-        return -1;
+    int r;
+    while ((r = read(0, &c, 1)) < 0 && errno == EINTR) {}
+    if (r <= 0) {
+        return KEY_EOF;
     }
 
     if (c == 27) {
@@ -605,8 +608,14 @@ int sh_read_line(char *buf, size_t size)
 
     while (1) {
         int key = read_key();
-        if (key < 0) {
-            continue;
+        // A partial line still runs; the next call reports the end of input.
+        if (key == KEY_EOF) {
+            if (len == 0) {
+                return -1;
+            }
+            buf[len] = '\0';
+            printf("\n");
+            return len;
         }
 
         if (key == '\n' || key == '\r') {

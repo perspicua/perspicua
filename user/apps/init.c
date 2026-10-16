@@ -1,7 +1,12 @@
+/*
+ * init.c - PID 1: starts the login shell, restarts it when it exits, and reaps orphans.
+ */
+
 #include <stddef.h>
 
 #include "syscall.h"
 #include "string.h"
+#include "signal.h"
 #include "wait.h"
 
 static void print_string(const char *s)
@@ -34,7 +39,8 @@ int main(int argc, char *argv[], char *envp[])
         }
 
         if (shell_pid == 0) {
-            // Child process: execute the shell
+            // The login session owns the console; the shell's own jobs never start one.
+            setsid();
             char *argv[] = {"/bin/sh.elf", NULL};
             execve("/bin/sh.elf", argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
@@ -44,7 +50,12 @@ int main(int argc, char *argv[], char *envp[])
                but also reap any orphaned zombies that get reparented to us. */
             while (1) {
                 int status = 0;
-                int reaped = waitpid(-1, &status, 0);
+                int reaped = waitpid(-1, &status, WUNTRACED);
+                if (reaped == shell_pid && WIFSTOPPED(status)) {
+                    // A stopped login shell leaves nothing reading the console.
+                    kill(shell_pid, SIGCONT);
+                    continue;
+                }
                 if (reaped == shell_pid) {
                     // The shell itself exited
                     break;

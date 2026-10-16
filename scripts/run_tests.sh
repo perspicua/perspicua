@@ -93,10 +93,10 @@ USER_SUITES=(
     "test_restart:20"
     "test_tools:94"
     "test_libc:352"
-    "test_syscall:142"
+    "test_syscall:144"
     "test_fcntl:8"
-    "test_stop_cont:34"
-    "test_sh:13"
+    "test_stop_cont:39"
+    "test_sh:15"
     "stress -s 1:1290"
 )
 
@@ -186,6 +186,16 @@ for marker in "${KERNEL_MARKERS[@]}"; do
     wait_for "$marker" || break
 done
 
+# Waits up to secs for a line matching pattern, without the run's overall budget.
+wait_briefly()
+{
+    local deadline=$(( $(date +%s) + $2 ))
+    until tr -d '\r' <"$LOG" | grep -qE "$1"; do
+        [ "$(date +%s)" -ge "$deadline" ] && return 1
+        sleep 0.2
+    done
+}
+
 # Output lines only: the shell's echo of a typed line carries the prompt in front of it.
 burst_lines_back()
 {
@@ -207,6 +217,31 @@ if wait_for "$SHELL_MARKER"; then
             break
         fi
     done
+fi
+
+# Job control at the live prompt; each of these once left the console dead.
+job_control_failures=()
+if [ "$suites_finished" -eq 1 ]; then
+    printf '\032' >&3
+    printf 'echo JC-CTRLZ\n' >&3
+    wait_briefly '^JC-CTRLZ$' 10 || job_control_failures+=("Ctrl-Z at the prompt stopped the shell")
+
+    printf 'sh &\n' >&3
+    printf 'echo JC-BGSH\n' >&3
+    wait_briefly '^JC-BGSH$' 10 || job_control_failures+=("a background sh took the terminal")
+
+    printf 'sleep 1 | sleep 2\n' >&3
+    sleep 0.7
+    printf '\032' >&3
+    if wait_briefly '^\[stopped\]' 10; then
+        # grep finds no sleep, and says so with status 1, only once fg has waited for both.
+        printf 'fg; ps | grep sleep; echo JC-FG-$?\n' >&3
+        if ! wait_briefly '^JC-FG-1$' 15; then
+            job_control_failures+=("fg returned before the whole pipeline finished")
+        fi
+    else
+        job_control_failures+=("Ctrl-Z did not stop a foreground pipeline")
+    fi
 fi
 
 if [ "$suites_finished" -eq 1 ]; then
@@ -312,6 +347,11 @@ for entry in "${USER_SUITES[@]}"; do
     fi
     n="$(grep -E "^$name: all [0-9]+ tests passed$" "$CLEAN" | sed -E 's/.* all ([0-9]+) tests.*/\1/')"
     check_count "userspace suite '$name'" "$n" "${entry##*:}"
+done
+
+for failure in "${job_control_failures[@]}"; do
+    echo "FAIL: job control: $failure"
+    status=1
 done
 
 if [ "$console_burst_ran" -eq 1 ]; then

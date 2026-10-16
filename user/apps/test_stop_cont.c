@@ -2,6 +2,7 @@
  * test_stop_cont.c - Job-control signals: SIGSTOP, SIGCONT, SIGKILL, sessions and SIGTTIN.
  */
 
+#include <errno.h>
 #include <signal.h>
 #include <syscall.h>
 #include <wait.h>
@@ -207,6 +208,48 @@ static void test_background_read(void)
     CHECK(kill_and_reap(stop_pid) == STATUS_KILLED);
 }
 
+// Once nothing in its session can resume a stopped group, the kernel sends it SIGHUP and SIGCONT.
+static void test_orphaned_stopped_group(void)
+{
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+
+    int middle = fork();
+    if (middle == 0) {
+        close(fds[0]);
+        int child = fork();
+        if (child == 0) {
+            setpgid(0, 0);
+            kill(getpid(), SIGSTOP);
+            for (;;) {
+                usleep(50 * 1000);
+            }
+        }
+        int status;
+        waitpid(child, &status, WUNTRACED);
+        write(fds[1], (const char *)&child, sizeof(child));
+        _exit(0);
+    }
+    close(fds[1]);
+    CHECK(middle > 0);
+
+    int child = -1;
+    CHECK(read(fds[0], (char *)&child, sizeof(child)) == sizeof(child));
+    int status;
+    CHECK(waitpid(middle, &status, 0) == middle);
+
+    // The child is init's now, so only its disappearance can be watched.
+    int gone = 0;
+    for (int i = 0; i < 100 && !gone; i++) {
+        gone = kill(child, 0) < 0 && errno == ESRCH;
+        if (!gone) {
+            usleep(10 * 1000);
+        }
+    }
+    CHECK(gone);
+    close(fds[0]);
+}
+
 int main(void)
 {
     test_observable_stop_cont();
@@ -214,6 +257,7 @@ int main(void)
     test_cont_racing_stop();
     test_session_daemon();
     test_background_read();
+    test_orphaned_stopped_group();
 
     return utest_summary("test_stop_cont");
 }

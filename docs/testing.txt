@@ -76,6 +76,9 @@ when ALL of the following are true:
   - Every userspace suite in USER_SUITES printed "<name>: all N tests passed"
     with N at least its minimum, and exited with status 0.
   - The kernel printed none of FAIL_MARKERS, the errors that do not panic.
+  - Job control at the live prompt held: Ctrl-Z at an idle prompt and a
+    background `sh &` leave the shell reading, and `fg` on a stopped pipeline
+    waits for every stage.
   - Every line of the console burst came back.
 
 The minimums catch a suite that stops running some of its tests: a dropped

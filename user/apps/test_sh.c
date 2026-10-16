@@ -72,6 +72,12 @@ int main(void)
     EXPECT("seq 1 3 | head -n 1", "1\n", 0);
     EXPECT("echo one > " SCRATCH "; echo two >> " SCRATCH "; cat < " SCRATCH, "one\ntwo\n", 0);
     EXPECT("cd /bin; pwd", "/bin\n", 0);
+
+    // A shell reading a pipe or a file runs it as a script and exits at its end.
+    EXPECT("echo 'echo inner-ran' | sh", "inner-ran\n", 0);
+    EXPECT("echo 'echo l1' > " SCRATCH "; echo 'echo l2; false' >> " SCRATCH "; sh < " SCRATCH
+           "; echo $?",
+           "l1\nl2\n1\n", 0);
     unlink(SCRATCH);
 
     return utest_summary("test_sh");

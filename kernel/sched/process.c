@@ -701,6 +701,35 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     return 0;
 }
 
+/*
+ * pgid_orphaned_stopped_locked - Whether a group has a stopped member and no member
+ * whose parent sits in another group of the same session, so nothing can resume it.
+ *
+ * Precondition: process_table_lock MUST be held by the caller.
+ */
+static int pgid_orphaned_stopped_locked(uint32_t pgid)
+{
+    int stopped = 0;
+    for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        struct process *p = process_table[i];
+        if (!p || p->state != PROCESS_STATE_RUNNING || p->pgid != pgid) {
+            continue;
+        }
+        struct process *parent =
+            p->parent_pid < PROCESS_TABLE_SIZE ? process_table[p->parent_pid] : NULL;
+        if (parent && parent->state == PROCESS_STATE_RUNNING && parent->pgid != pgid
+            && parent->sid == p->sid) {
+            return 0;
+        }
+        if (p->main_task && p->main_task->state == SCHED_TASK_STOPPED) {
+            stopped = 1;
+        }
+    }
+    return stopped;
+}
+
+#define ORPHAN_GROUPS_MAX 16
+
 void process_exit(uint32_t pid, int exit_status)
 {
     struct process *p = process_slot(pid);
@@ -723,21 +752,43 @@ void process_exit(uint32_t pid, int exit_status)
     // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     int orphaned_zombie = 0;
+    uint32_t groups[ORPHAN_GROUPS_MAX];
+    int ngroups = 0;
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
         if (i == (int)pid) {
             continue;
         }
-        if (!process_table[i]) {
+        struct process *child = process_table[i];
+        if (!child || child->parent_pid != pid) {
             continue;
         }
-        if (process_table[i]->parent_pid == pid) {
-            process_table[i]->parent_pid = 1;
-            if (process_table[i]->state == PROCESS_STATE_ZOMBIE) {
-                orphaned_zombie = 1;
-            }
+        child->parent_pid = 1;
+        if (child->state == PROCESS_STATE_ZOMBIE) {
+            orphaned_zombie = 1;
+            continue;
+        }
+        int seen = 0;
+        for (int g = 0; g < ngroups; g++) {
+            seen |= groups[g] == child->pgid;
+        }
+        if (!seen && ngroups < ORPHAN_GROUPS_MAX) {
+            groups[ngroups++] = child->pgid;
+        }
+    }
+
+    // POSIX: a group this exit orphans, with a stopped member, gets SIGHUP then SIGCONT.
+    int nhup = 0;
+    for (int g = 0; g < ngroups; g++) {
+        if (pgid_orphaned_stopped_locked(groups[g])) {
+            groups[nhup++] = groups[g];
         }
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
+
+    for (int g = 0; g < nhup; g++) {
+        signal_send_group(groups[g], SIGHUP);
+        signal_send_group(groups[g], SIGCONT);
+    }
 
     close_all_fds(p);
     if (p->cwd) {

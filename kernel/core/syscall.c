@@ -661,7 +661,8 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
     int target_pid = (int)tf->x[0];
     int sig = (int)tf->x[1];
 
-    if (sig < 1 || sig >= NSIG) {
+    // Signal 0 runs every check and sends nothing: it asks whether the target is there.
+    if (sig < 0 || sig >= NSIG) {
         return -EINVAL;
     }
 
@@ -700,7 +701,7 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
             err = -EPERM;
         }
         spin_unlock_irqrestore(&process_table_lock, irqf);
-        if (err != 0) {
+        if (err != 0 || sig == 0) {
             return err;
         }
 
@@ -708,6 +709,9 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
     } else if (target_pid == 0) {
         if (proc->pgid == 0) {
             return -EPERM;
+        }
+        if (sig == 0) {
+            return 0;
         }
         return signal_send_group(proc->pgid, sig);
     } else { // target_pid < -1
@@ -740,6 +744,13 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
 
         if (!allowed) {
             return -EPERM;
+        }
+
+        if (sig == 0) {
+            unsigned long irqf = spin_lock_irqsave(&process_table_lock);
+            int exists = pgid_session_locked(target_pgid) != 0;
+            spin_unlock_irqrestore(&process_table_lock, irqf);
+            return exists ? 0 : -ESRCH;
         }
 
         return signal_send_group(target_pgid, sig);

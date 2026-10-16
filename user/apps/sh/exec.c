@@ -25,7 +25,30 @@ int g_last_status = 0;
 // Off for sh -c: jobs then stay in the shell's group and the terminal is never handed over.
 bool g_job_control = true;
 
-static int stopped_pgid = 0;
+#define MAX_JOBS 8
+
+// A stopped job: its group, and the members not yet reaped when it stopped.
+struct job {
+    int pgid;
+    int pids[MAX_CMDS];
+    int count;
+};
+
+// Most recent last; fg resumes from the end.
+static struct job stopped_jobs[MAX_JOBS];
+static int stopped_count = 0;
+
+static void remember_stopped(int pgid, const int *pids, int count)
+{
+    if (stopped_count == MAX_JOBS) {
+        printf("sh: too many stopped jobs; group %d is not tracked\n", pgid);
+        return;
+    }
+    struct job *job = &stopped_jobs[stopped_count++];
+    job->pgid = pgid;
+    job->count = count;
+    memcpy(job->pids, pids, sizeof(int) * (size_t)count);
+}
 
 void handle_sigchld(int sig)
 {
@@ -71,8 +94,9 @@ static int wait_foreground(int pgid, const int *pids, int count)
         if (r < 0) {
             continue;
         }
+        // Members before i are reaped; the stop keeps this one and the rest for fg.
         if (WIFSTOPPED(status)) {
-            stopped_pgid = pgid;
+            remember_stopped(pgid, pids + i, count - i);
             printf("\n[stopped]  use 'fg' to resume\n");
             last_status = 128 + WSTOPSIG(status);
             break;
@@ -99,15 +123,17 @@ static void run_parent_builtin(Command *cmd)
     } else if (strcmp(cmd->argv[0], "false") == 0) {
         g_last_status = 1;
     } else if (strcmp(cmd->argv[0], "fg") == 0) {
-        if (stopped_pgid == 0) {
+        if (stopped_count == 0) {
             printf("sh: fg: no stopped job\n");
             g_last_status = 1;
         } else {
-            int pgid = stopped_pgid;
-            stopped_pgid = 0;
-            kill(-pgid, SIGCONT);
-            int pids[1] = {pgid};
-            g_last_status = wait_foreground(pgid, pids, 1);
+            struct job job = stopped_jobs[--stopped_count];
+            if (kill(-job.pgid, SIGCONT) < 0) {
+                printf("sh: fg: job %d has ended\n", job.pgid);
+                g_last_status = 1;
+            } else {
+                g_last_status = wait_foreground(job.pgid, job.pids, job.count);
+            }
         }
     } else if (strcmp(cmd->argv[0], "cd") == 0) {
         const char *target = (cmd->argc > 1) ? cmd->argv[1] : "/";
@@ -184,9 +210,12 @@ static void run_exec(Command *cmd)
 {
     char *name = cmd->argv[0];
 
-    /* The shell ignores SIGINT so Ctrl-C doesn't kill it, and exec preserves
-     * SIG_IGN. Restore the default so a foreground command responds to Ctrl-C. */
+    // exec keeps SIG_IGN, and a command must stop, die and wait for the terminal as usual.
     signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
+    signal(SIGTTIN, SIG_DFL);
+    signal(SIGTTOU, SIG_DFL);
 
     // A name containing a slash is a path: exec it directly, never via PATH.
     if (strchr(name, '/')) {
@@ -304,8 +333,12 @@ static void execute_pipeline(char *pipe_string)
 
         if (pid == 0) {
             sigprocmask(SIG_SETMASK, &old_mask, NULL);
+            // The child takes the terminal itself, so it cannot read before the parent hands it over.
             if (g_job_control) {
                 setpgid(0, pgid);
+                if (!background) {
+                    tcsetpgrp(0, getpgid(0));
+                }
             }
 
             if (prev_pipe != -1) {

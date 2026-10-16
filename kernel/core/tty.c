@@ -167,8 +167,7 @@ void tty_init(struct tty *tty)
 /*
  * tty_session_exit - Dispatches SIGHUP and detaches terminal when session leader exits.
  *
- * Explicitly out of scope: POSIX orphaned-process-group handling
- * (SIGHUP+SIGCONT to newly-orphaned groups with stopped members).
+ * Stopped groups the exit orphans get their SIGHUP and SIGCONT from process_exit.
  */
 void tty_session_exit(uint32_t sid)
 {

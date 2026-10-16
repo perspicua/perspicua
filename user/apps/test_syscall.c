@@ -525,6 +525,9 @@ static void test_bad_arguments(void)
     CHECK(signal(999, SIG_DFL) == SIG_ERR);
     CHECK(kill(-1, 0) < 0);
     CHECK(kill(getpid(), -1) < 0);
+    CHECK(kill(getpid(), 0) == 0);
+    errno = 0;
+    CHECK(kill(999999, 0) < 0 && errno == ESRCH);
     CHECK(kill(999999, SIGKILL) < 0);
     CHECK(sigaction(-1, NULL, NULL) < 0);
 
