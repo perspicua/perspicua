@@ -98,7 +98,7 @@ USER_SUITES=(
     "test_syscall:167"
     "test_fcntl:8"
     "test_stop_cont:39"
-    "test_sh:15"
+    "test_sh:17"
     "stress -s 1:1290"
 )
 

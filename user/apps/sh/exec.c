@@ -70,6 +70,8 @@ static int is_parent_builtin(const char *name)
  *
  * Returns after the job exits or stops. A stop leaves the job parked and
  * recorded rather than reaped, so the prompt comes back with it still alive.
+ * Background children that finish meanwhile are reaped here: SIGCHLD is
+ * blocked for the whole wait, so handle_sigchld cannot.
  */
 static int wait_foreground(int pgid, const int *pids, int count)
 {
@@ -85,27 +87,52 @@ static int wait_foreground(int pgid, const int *pids, int count)
     if (g_job_control) {
         tcsetpgrp(0, pgid);
     }
+
+    // A member that died while its job sat stopped was reaped at the prompt and is no child now.
+    int live[MAX_CMDS];
+    int n = 0;
     for (int i = 0; i < count; i++) {
         int status = 0;
-        int r;
-        do {
-            r = waitpid(pids[i], &status, WUNTRACED);
-        } while (r < 0 && errno == EINTR);
+        int r = waitpid(pids[i], &status, WNOHANG);
+        if (r == 0) {
+            live[n++] = pids[i];
+        } else if (r > 0 && i == count - 1) {
+            last_status = WEXITSTATUS(status);
+        }
+    }
+
+    while (n > 0) {
+        int status = 0;
+        int r = waitpid(-1, &status, WUNTRACED);
         if (r < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        int m = 0;
+        while (m < n && live[m] != r) {
+            m++;
+        }
+        if (m == n) {
             continue;
         }
-        // Members before i are reaped; the stop keeps this one and the rest for fg.
+        // The stop keeps every member not yet reaped for fg.
         if (WIFSTOPPED(status)) {
-            remember_stopped(pgid, pids + i, count - i);
+            remember_stopped(pgid, live, n);
             printf("\n[stopped]  use 'fg' to resume\n");
             last_status = 128 + WSTOPSIG(status);
             break;
         }
         // A pipeline's status is that of its last (rightmost) command.
-        if (i == count - 1) {
+        if (r == pids[count - 1]) {
             last_status = WEXITSTATUS(status);
         }
+        // In pipeline order, so the rightmost member stays last for fg.
+        memmove(&live[m], &live[m + 1], sizeof(int) * (size_t)(n - m - 1));
+        n--;
     }
+
     if (g_job_control) {
         tcsetpgrp(0, shell_pgid);
     }

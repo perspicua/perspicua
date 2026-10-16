@@ -55,6 +55,18 @@ static int runs(const char *line, const char *want, int want_status)
     return 1;
 }
 
+// Runs line and passes when the ps it ends up running lists no zombie.
+static int no_zombie(const char *line)
+{
+    char out[OUT_MAX];
+    int status = sh_c(line, out);
+    if (status != 0 || !strstr(out, "PID") || strstr(out, "zombie")) {
+        printf("  sh -c '%s': status %d, got \"%s\"\n", line, status, out);
+        return 0;
+    }
+    return 1;
+}
+
 int main(void)
 {
     EXPECT("echo hello", "hello\n", 0);
@@ -78,6 +90,11 @@ int main(void)
     EXPECT("echo 'echo l1' > " SCRATCH "; echo 'echo l2; false' >> " SCRATCH "; sh < " SCRATCH
            "; echo $?",
            "l1\nl2\n1\n", 0);
+
+    // A background job that ends while a foreground one runs is reaped then, not at the next prompt.
+    EXPECT("echo 'sleep 1' > " SCRATCH "; echo ps >> " SCRATCH, "", 0);
+    utest_check(no_zombie("sleep 0 &; sh < " SCRATCH),
+                "background job reaped during a foreground one", __LINE__);
     unlink(SCRATCH);
 
     return utest_summary("test_sh");
