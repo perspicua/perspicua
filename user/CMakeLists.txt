@@ -33,6 +33,7 @@ foreach(APP_SRC ${APP_SRCS})
         -nostdlib
         -T ${CMAKE_CURRENT_SOURCE_DIR}/user.ld
     )
+    set_target_properties(${APP_NAME}.elf PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/user.ld)
     set(APP_ELF_PATH "${CMAKE_CURRENT_BINARY_DIR}/${APP_NAME}.elf")
     list(APPEND USER_ELFS "${APP_ELF_PATH}")
 endforeach()

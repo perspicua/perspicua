@@ -18,6 +18,7 @@ void run_all_tests(void)
 
     test_types();
     test_string();
+    test_ksym();
     test_spinlock();
     test_pmm();
     test_slab();

@@ -1,10 +1,8 @@
-#include "panic.h"
+/*
+ * dummy_symtab.c - The empty symbol table the first link pass is built with.
+ */
 
-const int kernel_symbol_count = 0;
-const void* kernel_symbols = 0;
+#include "debug/ksym.h"
 
-const char* panic_resolve_symbol(unsigned long addr, unsigned long *offset) {
-    (void)addr;
-    (void)offset;
-    return 0;
-}
+const unsigned long ksym_count = 0;
+const struct ksym ksym_table[1] = {{0, 0}};

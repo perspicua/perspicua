@@ -49,6 +49,7 @@ FAIL_MARKERS=(
 KERNEL_SUITES=(
     "Types:24"
     "String:99"
+    "Symbols:8"
     "Spinlock:233"
     "Physical Memory Manager:789"
     "Slab Allocator:1253"

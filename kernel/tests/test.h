@@ -98,6 +98,7 @@ void *test_map_user_page(unsigned long *pgd, unsigned long va, unsigned long fla
 // lib tests
 void test_types(void);
 void test_string(void);
+void test_ksym(void);
 
 // kernel tests
 void test_spinlock(void);

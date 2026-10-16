@@ -31,8 +31,8 @@ find_package(Python3 REQUIRED)
 
 # The kernel is linked twice: once to discover the symbol addresses, then again
 # with a table of them compiled in. Only that one generated file differs
-# between the passes, so the sources are compiled once here and both links
-# reuse the objects.
+# between the passes, and it holds data only, so the sources are compiled once
+# here and both links lay out text identically.
 add_library(kernel_objs OBJECT ${KERNEL_SRCS} ${KERNEL_ASMS})
 
 target_include_directories(kernel_objs PUBLIC
@@ -63,9 +63,11 @@ target_link_options(kernel8_pass1.elf PRIVATE
     -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
 )
 
+set(GEN_SYMTAB ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/gen_symtab.py)
+
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/gen_symtab.py ${CMAKE_CURRENT_BINARY_DIR}/kernel8_pass1.elf ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c
+    COMMAND ${GEN_SYMTAB} table ${CMAKE_NM} ${CMAKE_CURRENT_BINARY_DIR}/kernel8_pass1.elf ${CMAKE_CURRENT_BINARY_DIR}/symbol_table.c
     DEPENDS kernel8_pass1.elf ${CMAKE_SOURCE_DIR}/scripts/gen_symtab.py
     COMMENT "Generating kernel symbol table"
 )
@@ -76,6 +78,18 @@ target_link_libraries(kernel8.elf PRIVATE kernel_objs libk)
 target_link_options(kernel8.elf PRIVATE
     -nostdlib
     -T ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
+    -Wl,-Map,${CMAKE_CURRENT_BINARY_DIR}/kernel8.map
+)
+
+# -T is invisible to CMake's dependency tracking.
+set_target_properties(kernel8_pass1.elf kernel8.elf PROPERTIES
+    LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/kernel.ld
+)
+
+# The table holds pass-1 addresses, so the image ships only if pass 2 matches them.
+add_custom_command(TARGET kernel8.elf POST_BUILD
+    COMMAND ${GEN_SYMTAB} check ${CMAKE_NM} ${CMAKE_CURRENT_BINARY_DIR}/kernel8_pass1.elf ${CMAKE_CURRENT_BINARY_DIR}/kernel8.elf
+    COMMENT "Checking the symbol table against the final link"
 )
 
 # Post-build: Create binary image

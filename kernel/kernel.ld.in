@@ -27,6 +27,8 @@ SECTIONS
     .rodata : AT(ADDR(.rodata) - KERNEL_VMA) ALIGN(4096) {
         __rodata_start = .;
         *(.rodata .rodata.*)
+        /* Read-only once relocated, and the kernel is never relocated. */
+        *(.data.rel.ro .data.rel.ro.*)
         . = ALIGN(8);
         __drivers_core_start = .;
         KEEP(*(.drivers.core))

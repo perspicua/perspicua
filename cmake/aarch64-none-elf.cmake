@@ -27,10 +27,14 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 # registers the trap frame does not save. Lifting this means implementing lazy
 # FP first -- see the note on struct exception_trap_frame.
 set(ARCH_FLAGS "-mcpu=cortex-a72+nosimd -mgeneral-regs-only")
-set(COMMON_FLAGS "${ARCH_FLAGS} -Wall -Wextra -Werror -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics")
+# Never PIE: a hosted Linux cross gcc defaults to it, which puts const pointer
+# tables such as syscall_table in writable .data and links in relocations
+# nothing applies.
+set(COMMON_FLAGS "${ARCH_FLAGS} -Wall -Wextra -Werror -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics -fno-pie")
 
-set(CMAKE_C_FLAGS "${COMMON_FLAGS}" CACHE STRING "Common C flags")
-set(CMAKE_ASM_FLAGS "${ARCH_FLAGS}" CACHE STRING "Common ASM flags")
+# FORCE on every flag variable here, for the reason given at the build-type flags below.
+set(CMAKE_C_FLAGS "${COMMON_FLAGS}" CACHE STRING "Common C flags" FORCE)
+set(CMAKE_ASM_FLAGS "${ARCH_FLAGS}" CACHE STRING "Common ASM flags" FORCE)
 
 # Build type specific flags.
 #
@@ -52,5 +56,5 @@ set(CMAKE_C_FLAGS_DEBUG "-O0 -g" CACHE STRING "Debug C flags" FORCE)
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "Default C flags" FORCE)
 set(CMAKE_C_FLAGS_RELEASE "-O2" CACHE STRING "Release C flags" FORCE)
 
-# Linker flags: Generate map file
-set(CMAKE_EXE_LINKER_FLAGS "-Wl,-Map,kernel8.map" CACHE STRING "Linker flags")
+# Without --build-id=none a -no-pie link fails on the orphan .note.gnu.build-id.
+set(CMAKE_EXE_LINKER_FLAGS "-no-pie -Wl,--build-id=none" CACHE STRING "Linker flags" FORCE)
