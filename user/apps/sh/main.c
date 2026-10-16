@@ -37,9 +37,16 @@ char *sh_strndup(const char *s, size_t len)
 
 int main(int argc, char *argv[], char *envp[])
 {
-    (void)argc;
-    (void)argv;
     (void)envp;
+
+    // sh -c runs one line without job control and exits with its status.
+    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
+        g_job_control = false;
+        signal(SIGCHLD, handle_sigchld);
+        execute_line(argv[2]);
+        return g_last_status;
+    }
+
     signal(SIGINT, SIG_IGN);
     signal(SIGCHLD, handle_sigchld);
     signal(SIGTTOU, SIG_IGN);

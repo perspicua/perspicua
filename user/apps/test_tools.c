@@ -389,6 +389,19 @@ static void test_find_du(void)
     rmdir(TREE);
 }
 
+// Each game checks its own rules with --selftest, without touching the terminal.
+static void test_game_selftests(void)
+{
+    check("2048 --selftest",
+          outputs(NULL, "2048 selftest: ok (0 failed)\n", (char *[]){"2048", "--selftest", NULL}));
+    check("snake --selftest", outputs(NULL, "snake selftest: ok (0 failed)\n",
+                                      (char *[]){"snake", "--selftest", NULL}));
+    check("tetris --selftest", outputs(NULL, "tetris selftest: ok (0 failed)\n",
+                                       (char *[]){"tetris", "--selftest", NULL}));
+    check("mines --selftest", outputs(NULL, "mines selftest: ok (0 failed)\n",
+                                      (char *[]){"mines", "--selftest", NULL}));
+}
+
 int main(void)
 {
     test_head_tail();
@@ -401,6 +414,7 @@ int main(void)
     test_ptop();
     test_edit();
     test_find_du();
+    test_game_selftests();
 
     if (failed) {
         printf("test_tools: %d of %d tests failed\n", failed, passed + failed);

@@ -647,7 +647,7 @@ void test_scheduler(void)
 
     // task execution order
 
-    // fifo ordering: tasks enqueued in order run in order
+    // each queued task runs exactly once; with several cores, creation order is not run order
     {
         order_idx = 0;
         for (int i = 0; i < 16; i++) {
@@ -658,10 +658,15 @@ void test_scheduler(void)
         sched_create_task(task_order_3);
         sched_sleep_ms(50);
         TEST_ASSERT("order count", order_idx == 3);
-        // Round-robin FIFO: 1 enqueued first should run first
-        TEST_ASSERT("order[0]==1", order_log[0] == 1);
-        TEST_ASSERT("order[1]==2", order_log[1] == 2);
-        TEST_ASSERT("order[2]==3", order_log[2] == 3);
+        int seen[4] = {0, 0, 0, 0};
+        for (int i = 0; i < 3; i++) {
+            if (order_log[i] >= 1 && order_log[i] <= 3) {
+                seen[order_log[i]]++;
+            }
+        }
+        TEST_ASSERT("task 1 ran once", seen[1] == 1);
+        TEST_ASSERT("task 2 ran once", seen[2] == 1);
+        TEST_ASSERT("task 3 ran once", seen[3] == 1);
     }
 
     // sched_sleep_ms

@@ -22,6 +22,9 @@
  */
 int g_last_status = 0;
 
+// Off for sh -c: jobs then stay in the shell's group and the terminal is never handed over.
+bool g_job_control = true;
+
 static int stopped_pgid = 0;
 
 void handle_sigchld(int sig)
@@ -56,7 +59,9 @@ static int wait_foreground(int pgid, const int *pids, int count)
     sigset_t old_mask;
     sigprocmask(SIG_BLOCK, &chld, &old_mask);
 
-    tcsetpgrp(0, pgid);
+    if (g_job_control) {
+        tcsetpgrp(0, pgid);
+    }
     for (int i = 0; i < count; i++) {
         int status = 0;
         int r;
@@ -77,7 +82,9 @@ static int wait_foreground(int pgid, const int *pids, int count)
             last_status = status & 0xFF;
         }
     }
-    tcsetpgrp(0, shell_pgid);
+    if (g_job_control) {
+        tcsetpgrp(0, shell_pgid);
+    }
     sigprocmask(SIG_SETMASK, &old_mask, NULL);
     return last_status;
 }
@@ -267,6 +274,9 @@ static void execute_pipeline(char *pipe_string)
     sigset_t old_mask;
     sigprocmask(SIG_BLOCK, &chld, &old_mask);
 
+    // A child inherits unflushed parent output and would write it a second time.
+    fflush(stdout);
+
     int pids[MAX_CMDS];
     int started = 0;
     int pgid = 0;
@@ -294,7 +304,9 @@ static void execute_pipeline(char *pipe_string)
 
         if (pid == 0) {
             sigprocmask(SIG_SETMASK, &old_mask, NULL);
-            setpgid(0, pgid);
+            if (g_job_control) {
+                setpgid(0, pgid);
+            }
 
             if (prev_pipe != -1) {
                 dup2(prev_pipe, 0);
@@ -321,7 +333,9 @@ static void execute_pipeline(char *pipe_string)
         if (i == 0) {
             pgid = pid;
         }
-        setpgid(pid, pgid);
+        if (g_job_control) {
+            setpgid(pid, pgid);
+        }
         pids[started++] = pid;
 
         if (prev_pipe != -1) {
@@ -339,8 +353,8 @@ static void execute_pipeline(char *pipe_string)
 
     if (failed) {
         // A half-built pipeline is taken down and reaped, not left running.
-        if (pgid > 0) {
-            kill(-pgid, SIGKILL);
+        for (int i = 0; i < started; i++) {
+            kill(pids[i], SIGKILL);
         }
         for (int i = 0; i < started; i++) {
             waitpid(pids[i], NULL, 0);

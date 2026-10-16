@@ -1,55 +1,59 @@
+/*
+ * test_syscall.c - Syscall semantics, from file cursors and truncate to bad arguments.
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
 #include <stdio.h>
 #include <syscall.h>
-#include <assert.h>
 #include <string.h>
 #include <errno.h>
 #include <dirent.h>
 #include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
+#include "utest.h"
+
 void test_pread_pwrite(void)
 {
     printf("[ TEST ] Running pread/pwrite cursor tests...\n");
 
     int fd = open("test_pw.txt", O_CREAT | O_RDWR);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
 
     // 1. Write initial data. Cursor moves to 10.
     int res = write(fd, "0123456789", 10);
-    assert(res == 10);
+    CHECK(res == 10);
 
     // 2. pwrite at offset 2. This must NOT move the cursor from 10.
     res = pwrite(fd, "abcde", 5, 2);
-    assert(res == 5);
+    CHECK(res == 5);
 
     /* 3. Normal write. Because pwrite didn't move the cursor,
           this should write starting at offset 10. */
     res = write(fd, "XYZ", 3);
-    assert(res == 3);
+    CHECK(res == 3);
 
     /* 4. pread from offset 2. Should read "abcde".
           This must NOT move the cursor from 13. */
     char buf[16] = {0};
     res = pread(fd, buf, 5, 2);
-    assert(res == 5);
-    assert(strcmp(buf, "abcde") == 0);
+    CHECK(res == 5);
+    CHECK(strcmp(buf, "abcde") == 0);
     // pread must not have moved the cursor: it is still at 13 from step 3.
-    assert(lseek(fd, 0, SEEK_CUR) == 13);
+    CHECK(lseek(fd, 0, SEEK_CUR) == 13);
 
     /* 5. Verify the entire file.
           Expected content: "01" + "abcde" + "789" + "XYZ" = "01abcde789XYZ" */
     lseek(fd, 0, SEEK_SET);
     memset(buf, 0, sizeof(buf));
     res = read(fd, buf, 13);
-    assert(res == 13);
-    assert(strcmp(buf, "01abcde789XYZ") == 0);
+    CHECK(res == 13);
+    CHECK(strcmp(buf, "01abcde789XYZ") == 0);
 
     close(fd);
     unlink("test_pw.txt");
-    printf("[ TEST ] pread/pwrite passed!\n");
 }
 
 void test_getppid(void)
@@ -70,14 +74,12 @@ void test_getppid(void)
         _exit(0);
     } else {
         // We are in the parent process
-        assert(child_pid > 0);
+        CHECK(child_pid > 0);
         int status = -1;
         int res = waitpid(child_pid, &status, 0);
-        assert(res == child_pid);
-        assert(status == 0); // 0 means the child exited successfully
+        CHECK(res == child_pid);
+        CHECK(status == 0); // 0 means the child exited successfully
     }
-
-    printf("[ TEST ] getppid passed!\n");
 }
 
 void test_time_syscalls(void)
@@ -85,33 +87,31 @@ void test_time_syscalls(void)
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
 
     // 1. Invalid arguments
-    assert(gettimeofday(NULL, NULL) < 0);
-    assert(clock_gettime(9999, NULL) < 0);
+    CHECK(gettimeofday(NULL, NULL) < 0);
+    CHECK(clock_gettime(9999, NULL) < 0);
 
     // 2. Valid gettimeofday
     struct timeval tv;
     memset(&tv, 0, sizeof(tv));
     int res = gettimeofday(&tv, NULL);
-    assert(res == 0);
-    assert(tv.tv_sec >= 0);
-    assert(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
+    CHECK(res == 0);
+    CHECK(tv.tv_sec >= 0);
+    CHECK(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
 
     // 3. Valid clock_gettime
     struct timespec ts;
     memset(&ts, 0, sizeof(ts));
     res = clock_gettime(CLOCK_MONOTONIC, &ts);
-    assert(res == 0);
-    assert(ts.tv_sec >= 0);
-    assert(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000);
+    CHECK(res == 0);
+    CHECK(ts.tv_sec >= 0);
+    CHECK(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000);
 
     struct timespec ts_real;
     memset(&ts_real, 0, sizeof(ts_real));
     res = clock_gettime(CLOCK_REALTIME, &ts_real);
-    assert(res == 0);
-    assert(ts_real.tv_sec >= 0);
-    assert(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
-
-    printf("[ TEST ] gettimeofday & clock_gettime passed!\n");
+    CHECK(res == 0);
+    CHECK(ts_real.tv_sec >= 0);
+    CHECK(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
 }
 
 void test_nanosleep(void)
@@ -119,41 +119,39 @@ void test_nanosleep(void)
     printf("[ TEST ] Running nanosleep tests...\n");
 
     // 1. Invalid inputs
-    assert(nanosleep(NULL, NULL) < 0);
+    CHECK(nanosleep(NULL, NULL) < 0);
 
     struct timespec invalid_nsec = {0, 2000000000};
-    assert(nanosleep(&invalid_nsec, NULL) < 0);
+    CHECK(nanosleep(&invalid_nsec, NULL) < 0);
 
     struct timespec invalid_sec = {-1, 0};
-    assert(nanosleep(&invalid_sec, NULL) < 0);
+    CHECK(nanosleep(&invalid_sec, NULL) < 0);
 
     // 2. Valid short sleep (50 ms)
     struct timespec t_before = {0, 0};
     struct timespec t_after = {0, 0};
-    assert(clock_gettime(CLOCK_MONOTONIC, &t_before) == 0);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &t_before) == 0);
 
     struct timespec req = {0, 50000000}; // 50 ms
-    assert(nanosleep(&req, NULL) == 0);
+    CHECK(nanosleep(&req, NULL) == 0);
 
-    assert(clock_gettime(CLOCK_MONOTONIC, &t_after) == 0);
+    CHECK(clock_gettime(CLOCK_MONOTONIC, &t_after) == 0);
 
     unsigned long delta_ms = (unsigned long)(t_after.tv_sec - t_before.tv_sec) * 1000
                              + (unsigned long)(t_after.tv_nsec - t_before.tv_nsec) / 1000000;
-    assert(delta_ms >= 40);
+    CHECK(delta_ms >= 40);
 
     // 3. rem zeroed when non-NULL pre-filled with garbage
     struct timespec rem;
     rem.tv_sec = 1234;
     rem.tv_nsec = 5678;
     struct timespec req_short = {0, 10000000}; // 10 ms
-    assert(nanosleep(&req_short, &rem) == 0);
-    assert(rem.tv_sec == 0 && rem.tv_nsec == 0);
+    CHECK(nanosleep(&req_short, &rem) == 0);
+    CHECK(rem.tv_sec == 0 && rem.tv_nsec == 0);
 
     // 4. Zero sleep returns immediately
     struct timespec req_zero = {0, 0};
-    assert(nanosleep(&req_zero, NULL) == 0);
-
-    printf("[ TEST ] nanosleep passed!\n");
+    CHECK(nanosleep(&req_zero, NULL) == 0);
 }
 
 void test_fstat(void)
@@ -164,41 +162,39 @@ void test_fstat(void)
     memset(&st, 0, sizeof(st));
 
     // 1. Bad fd: unopened or negative
-    assert(fstat(-1, &st) < 0);
-    assert(fstat(999, &st) < 0);
+    CHECK(fstat(-1, &st) < 0);
+    CHECK(fstat(999, &st) < 0);
 
     // 2. A regular file reports its size and mode
     const char *test_path = "test_fstat.txt";
     int fd = open(test_path, O_CREAT | O_RDWR);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
 
     const char *data = "Hello, fstat!";
     size_t len = strlen(data);
     int res = write(fd, data, len);
-    assert(res == (int)len);
+    CHECK(res == (int)len);
 
     res = fstat(fd, &st);
-    assert(res == 0);
-    assert(S_ISREG(st.st_mode));
-    assert(st.st_size == (uint64_t)len);
+    CHECK(res == 0);
+    CHECK(S_ISREG(st.st_mode));
+    CHECK(st.st_size == (uint64_t)len);
 
     // 3. stat and fstat agree on the same file
     struct stat sp;
     memset(&sp, 0, sizeof(sp));
     res = stat(test_path, &sp);
-    assert(res == 0);
-    assert(sp.st_size == st.st_size);
-    assert(sp.st_mode == st.st_mode);
+    CHECK(res == 0);
+    CHECK(sp.st_size == st.st_size);
+    CHECK(sp.st_mode == st.st_mode);
 
     // 4. A closed fd is rejected
     close(fd);
     memset(&st, 0, sizeof(st));
-    assert(fstat(fd, &st) < 0);
+    CHECK(fstat(fd, &st) < 0);
 
     // Cleanup test file
     unlink(test_path);
-
-    printf("[ TEST ] fstat passed!\n");
 }
 
 void test_truncate(void)
@@ -207,65 +203,65 @@ void test_truncate(void)
 
     const char *test_path = "test_trunc.txt";
     int fd = open(test_path, O_CREAT | O_RDWR);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
 
     // 1. Setup: write 100 bytes
     char buf100[100];
     memset(buf100, 'A', sizeof(buf100));
     int res = write(fd, buf100, sizeof(buf100));
-    assert(res == 100);
+    CHECK(res == 100);
 
     // 2. Shrink
     res = ftruncate(fd, 10);
-    assert(res == 0);
+    CHECK(res == 0);
 
     struct stat st;
     memset(&st, 0, sizeof(st));
-    assert(fstat(fd, &st) == 0);
-    assert(st.st_size == 10);
+    CHECK(fstat(fd, &st) == 0);
+    CHECK(st.st_size == 10);
 
     lseek(fd, 0, SEEK_SET);
     char rbuf[64] = {0};
     int rbytes = read(fd, rbuf, sizeof(rbuf));
-    assert(rbytes == 10);
+    CHECK(rbytes == 10);
 
     // 3. Truncate to zero
     res = ftruncate(fd, 0);
-    assert(res == 0);
-    assert(fstat(fd, &st) == 0);
-    assert(st.st_size == 0);
+    CHECK(res == 0);
+    CHECK(fstat(fd, &st) == 0);
+    CHECK(st.st_size == 0);
 
     // 4. Path-based truncate
     lseek(fd, 0, SEEK_SET);
-    assert(write(fd, "0123456789", 10) == 10);
-    assert(truncate(test_path, 5) == 0);
+    CHECK(write(fd, "0123456789", 10) == 10);
+    CHECK(truncate(test_path, 5) == 0);
 
     memset(&st, 0, sizeof(st));
-    assert(stat(test_path, &st) == 0);
-    assert(st.st_size == 5);
+    CHECK(stat(test_path, &st) == 0);
+    CHECK(st.st_size == 5);
 
     // 5. O_TRUNC empties the file on open
     lseek(fd, 0, SEEK_SET);
     char buf50[50];
     memset(buf50, 'B', sizeof(buf50));
-    assert(write(fd, buf50, sizeof(buf50)) == 50);
+    CHECK(write(fd, buf50, sizeof(buf50)) == 50);
     close(fd);
 
     int trunc_fd = open(test_path, O_RDWR | O_TRUNC);
-    assert(trunc_fd >= 0);
+    CHECK(trunc_fd >= 0);
     memset(&st, 0, sizeof(st));
-    assert(fstat(trunc_fd, &st) == 0);
-    assert(st.st_size == 0);
+    CHECK(fstat(trunc_fd, &st) == 0);
+    CHECK(st.st_size == 0);
     close(trunc_fd);
 
     // 6. Error handling
-    assert(ftruncate(-1, 0) < 0);
-    assert(truncate("/nonexistent_file_xyz", 0) < 0);
+    CHECK(ftruncate(-1, 0) < 0);
+    CHECK(truncate("/nonexistent_file_xyz", 0) < 0);
 
     int err_fd = open(test_path, O_RDWR);
-    assert(err_fd >= 0);
+    CHECK(err_fd >= 0);
     // Grow attempt returns error in first-cut implementation
-    assert(ftruncate(err_fd, 999999) < 0);
+    CHECK(ftruncate(err_fd, 999999) < 0);
     close(err_fd);
     unlink(test_path);
 
@@ -275,32 +271,30 @@ void test_truncate(void)
     const char *path_a = "trun_a.txt";
     const char *path_b = "trun_b.txt";
     int fd_a = open(path_a, O_CREAT | O_RDWR);
-    assert(fd_a >= 0);
+    CHECK(fd_a >= 0);
     close(fd_a);
 
     int fd_b = open(path_b, O_CREAT | O_RDWR);
-    assert(fd_b >= 0);
-    assert(write(fd_b, "12345678901234567890", 20) == 20);
+    CHECK(fd_b >= 0);
+    CHECK(write(fd_b, "12345678901234567890", 20) == 20);
 
-    assert(ftruncate(fd_b, 0) == 0);
+    CHECK(ftruncate(fd_b, 0) == 0);
 
     struct stat st_a, st_b;
     memset(&st_a, 0, sizeof(st_a));
     memset(&st_b, 0, sizeof(st_b));
-    assert(stat(path_a, &st_a) == 0);
-    assert(stat(path_b, &st_b) == 0);
-    assert(st_a.st_size == 0);
-    assert(st_b.st_size == 0);
+    CHECK(stat(path_a, &st_a) == 0);
+    CHECK(stat(path_b, &st_b) == 0);
+    CHECK(st_a.st_size == 0);
+    CHECK(st_b.st_size == 0);
 
     lseek(fd_b, 0, SEEK_SET);
     char buf_b[16] = {0};
-    assert(read(fd_b, buf_b, sizeof(buf_b)) == 0);
+    CHECK(read(fd_b, buf_b, sizeof(buf_b)) == 0);
 
     close(fd_b);
     unlink(path_a);
     unlink(path_b);
-
-    printf("[ TEST ] truncate / ftruncate & O_TRUNC passed!\n");
 }
 
 void test_procfs(void)
@@ -309,42 +303,40 @@ void test_procfs(void)
 
     // 1. Read /proc/mounts
     int fd = open("/proc/mounts", O_RDONLY);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
     char buf[512] = {0};
     int r = read(fd, buf, sizeof(buf) - 1);
-    assert(r > 0);
-    assert(strstr(buf, "procfs") != NULL);
+    CHECK(r > 0);
+    CHECK(strstr(buf, "procfs") != NULL);
     close(fd);
 
     // 2. Read /proc/cpuinfo
     fd = open("/proc/cpuinfo", O_RDONLY);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
     memset(buf, 0, sizeof(buf));
     r = read(fd, buf, sizeof(buf) - 1);
-    assert(r > 0);
-    assert(strstr(buf, "ARM Cortex-A72") != NULL);
+    CHECK(r > 0);
+    CHECK(strstr(buf, "ARM Cortex-A72") != NULL);
     close(fd);
 
     // 3. Read /proc/stat
     fd = open("/proc/stat", O_RDONLY);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
     memset(buf, 0, sizeof(buf));
     r = read(fd, buf, sizeof(buf) - 1);
-    assert(r > 0);
-    assert(strstr(buf, "ctxt") != NULL);
-    assert(strstr(buf, "processes") != NULL);
+    CHECK(r > 0);
+    CHECK(strstr(buf, "ctxt") != NULL);
+    CHECK(strstr(buf, "processes") != NULL);
     close(fd);
 
     // 4. Read /proc/self/status
     fd = open("/proc/self/status", O_RDONLY);
-    assert(fd >= 0);
+    CHECK(fd >= 0);
     memset(buf, 0, sizeof(buf));
     r = read(fd, buf, sizeof(buf) - 1);
-    assert(r > 0);
-    assert(strstr(buf, "Pid:") != NULL);
+    CHECK(r > 0);
+    CHECK(strstr(buf, "Pid:") != NULL);
     close(fd);
-
-    printf("[ TEST ] procfs completeness passed!\n");
 }
 
 // Issues a syscall directly so an unassigned number can be reached.
@@ -369,18 +361,18 @@ void test_review_bugfixes(void)
     // whatever the caller happened to leave in x0.
     {
         long res = raw_syscall(999, 0x1234);
-        assert(res != 0x1234);
-        assert(res == -ENOSYS);
+        CHECK(res != 0x1234);
+        CHECK(res == -ENOSYS);
     }
 
     // The same regular file may be opened more than once at a time.
     {
         const char *path = "dupopen.txt";
         int a = open(path, O_RDWR | O_CREAT | O_TRUNC);
-        assert(a >= 0);
+        CHECK(a >= 0);
         int b = open(path, O_RDONLY);
-        assert(b >= 0);
-        assert(a != b);
+        CHECK(b >= 0);
+        CHECK(a != b);
         close(a);
         close(b);
         unlink(path);
@@ -394,18 +386,18 @@ void test_review_bugfixes(void)
 
         const char *path = "ptrunc.txt";
         int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC);
-        assert(fd >= 0);
+        CHECK(fd >= 0);
 
         int saved = dup2(1, 9);
-        assert(saved >= 0);
-        assert(dup2(fd, 1) >= 0);
+        CHECK(saved >= 0);
+        CHECK(dup2(fd, 1) >= 0);
         printf("%s", big);
-        assert(dup2(saved, 1) >= 0);
+        CHECK(dup2(saved, 1) >= 0);
         close(saved);
         close(fd);
 
         int rfd = open(path, O_RDONLY);
-        assert(rfd >= 0);
+        CHECK(rfd >= 0);
         int total = 0, n;
         char buf[256];
         while ((n = read(rfd, buf, sizeof(buf))) > 0) {
@@ -413,14 +405,14 @@ void test_review_bugfixes(void)
         }
         close(rfd);
         unlink(path);
-        assert(total == (int)sizeof(big) - 1);
+        CHECK(total == (int)sizeof(big) - 1);
     }
 
     // A process killed by a bad sigreturn frame must still become a zombie its
     // parent can reap, rather than leaking its slot.
     {
         int pid = fork();
-        assert(pid >= 0);
+        CHECK(pid >= 0);
         if (pid == 0) {
             // sp_el0 == 0 makes the frame pointer fail validation outright.
             asm volatile("mov x9, #0\n"
@@ -431,10 +423,8 @@ void test_review_bugfixes(void)
             _exit(0);
         }
         int status = 0;
-        assert(waitpid(pid, &status, 0) == pid);
+        CHECK(waitpid(pid, &status, 0) == pid);
     }
-
-    printf("[ TEST ] review bug-fix regressions passed!\n");
 }
 
 static char e2big_arg[1000];
@@ -455,44 +445,92 @@ void test_audit_fixes(void)
         argv[100] = NULL;
 
         errno = 0;
-        assert(execve("/bin/wc.elf", argv, NULL) < 0);
-        assert(errno == E2BIG);
+        CHECK(execve("/bin/wc.elf", argv, NULL) < 0);
+        CHECK(errno == E2BIG);
     }
 
     // Every image has to provide it, so the test makes its own regular file.
     const char *plain = "audit_plain.txt";
     int made = open(plain, O_CREAT | O_RDWR | O_TRUNC);
-    assert(made >= 0);
+    CHECK(made >= 0);
     close(made);
 
     // opendir refuses what is not a directory.
     {
         errno = 0;
-        assert(opendir(plain) == NULL);
-        assert(errno == ENOTDIR);
+        CHECK(opendir(plain) == NULL);
+        CHECK(errno == ENOTDIR);
     }
 
     // F_SETFD keeps only the flag it defines.
     {
         int fd = open(plain, O_RDONLY);
-        assert(fd >= 0);
-        assert(fcntl(fd, F_SETFD, 0xFF) == 0);
-        assert(fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
+        CHECK(fd >= 0);
+        CHECK(fcntl(fd, F_SETFD, 0xFF) == 0);
+        CHECK(fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
         close(fd);
     }
 
     // An unknown whence is EINVAL.
     {
         int fd = open(plain, O_RDONLY);
-        assert(fd >= 0);
+        CHECK(fd >= 0);
         errno = 0;
-        assert(lseek(fd, 0, 99) < 0);
-        assert(errno == EINVAL);
+        CHECK(lseek(fd, 0, 99) < 0);
+        CHECK(errno == EINVAL);
         close(fd);
     }
 
     unlink(plain);
-    printf("[ TEST ] audit regressions passed!\n");
+}
+
+// Bad descriptors, pointers, pids and signals are refused rather than acted on.
+static void test_bad_arguments(void)
+{
+    printf("[ TEST ] Running bad-argument checks...\n");
+
+    char buf[16];
+    CHECK(read(-1, buf, sizeof(buf)) < 0);
+    CHECK(read(9999, buf, sizeof(buf)) < 0);
+    CHECK(write(-1, "test", 4) < 0);
+    CHECK(write(9999, "test", 4) < 0);
+    CHECK(pread(-1, buf, sizeof(buf), 0) < 0);
+    CHECK(pwrite(9999, "test", 4, 0) < 0);
+    CHECK(close(-1) < 0);
+    CHECK(close(9999) < 0);
+    CHECK(getdents(-1, buf, sizeof(buf)) < 0);
+
+    CHECK(write(1, NULL, 10) < 0);
+    CHECK(write(1, (void *)0xdeadbeef, 10) < 0);
+    CHECK(pwrite(1, NULL, 10, 0) < 0);
+    CHECK(open(NULL, 0) < 0);
+    CHECK(open((void *)0xffffffffffffffff, 0) < 0);
+    CHECK(chdir(NULL) < 0);
+    CHECK(stat(NULL, NULL) < 0);
+    CHECK(pread(0, buf, 10, -1) < 0);
+    CHECK(pwrite(1, "test", 4, -1) < 0);
+
+    CHECK(execve(NULL, NULL, NULL) < 0);
+    char *bad_argv[] = {(char *)0xdeadbeef, NULL};
+    CHECK(execve("/bin/ls", bad_argv, NULL) < 0);
+
+    int status;
+    CHECK(waitpid(-999, &status, 0) < 0);
+    CHECK(waitpid(999999, NULL, 0) < 0);
+
+    CHECK(mmap(NULL, 0, 0, 0, -1, 0) == MAP_FAILED);
+    CHECK(mmap((void *)0x1000, 0xffffffff, 0, 0, -1, 0) == MAP_FAILED);
+
+    CHECK(signal(-1, SIG_DFL) == SIG_ERR);
+    CHECK(signal(999, SIG_DFL) == SIG_ERR);
+    CHECK(kill(-1, 0) < 0);
+    CHECK(kill(getpid(), -1) < 0);
+    CHECK(kill(999999, SIGKILL) < 0);
+    CHECK(sigaction(-1, NULL, NULL) < 0);
+
+    // Seconds whose conversion to ms would overflow must be refused, not slept.
+    struct timespec huge = {.tv_sec = (time_t)0x7FFFFFFFFFFFFFFFLL, .tv_nsec = 0};
+    CHECK(nanosleep(&huge, NULL) < 0);
 }
 
 int main(void)
@@ -508,7 +546,7 @@ int main(void)
     test_procfs();
     test_review_bugfixes();
     test_audit_fixes();
+    test_bad_arguments();
 
-    printf("--- All Syscall Tests Passed! ---\n");
-    return 0;
+    return utest_summary("test_syscall");
 }

@@ -9,6 +9,7 @@
 extern int tests_passed;
 extern int tests_failed;
 extern int _suite_failed;
+extern int _suite_passed;
 
 // test assertion macros
 
@@ -52,12 +53,14 @@ extern int _suite_failed;
 #define TEST_SUITE_BEGIN(name)        \
     do {                              \
         _suite_failed = tests_failed; \
+        _suite_passed = tests_passed; \
     } while (0)
 
+// The count lets run_tests.sh notice a suite that quietly stopped running some of its tests.
 #define TEST_SUITE_END(name)                                                                \
     do {                                                                                    \
         if (tests_failed == _suite_failed)                                                  \
-            pr_info("test: %s [OK]\n", name);                                               \
+            pr_info("test: %s: %d tests [OK]\n", name, tests_passed - _suite_passed);       \
         else                                                                                \
             pr_err("test: %s: %d failures [FAILED]\n", name, tests_failed - _suite_failed); \
     } while (0)

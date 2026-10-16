@@ -1594,11 +1594,11 @@ int main(int argc, char **argv, char **envp)
         }
     }
 
-    printf("[stress] %d checks, %d failures\n", g_checks, g_failures);
     if (g_failures != 0) {
-        printf("[stress] FAILED -- replay with: stress -s %u\n", seed);
+        printf("stress: %d of %d tests failed\n", g_failures, g_checks);
+        printf("[stress] replay with: stress -s %u\n", seed);
         return 1;
     }
-    printf("[stress] all clear\n");
+    printf("stress: all %d tests passed\n", g_checks);
     return 0;
 }

@@ -25,6 +25,11 @@ for f in "$KERNEL" "$DTB" "$SDCARD"; do
     fi
 done
 
+if ! command -v qemu-system-aarch64 >/dev/null; then
+    echo "run_tests: qemu-system-aarch64 is not on PATH" >&2
+    exit 1
+fi
+
 KERNEL_MARKERS=(
     "reached target: kernel self-test complete"
     "reached target: scheduler test complete"
@@ -33,9 +38,66 @@ KERNEL_MARKERS=(
 SHELL_MARKER="Type help to see available commands"
 PANIC_MARKER="KERNEL PANIC"
 
-# Userspace suites, run in order at the shell prompt. Each must print
-# "<name>: all N tests passed"; add a program here to have it gated.
-USER_SUITES=(test_restart test_tools test_libc)
+# A kernel that prints one of these has gone wrong without panicking.
+FAIL_MARKERS=(
+    "lockdep: attempting to release unheld"
+    "user abort with no owning process"
+)
+
+# Kernel suites as "<name>:<fewest tests>". Each must print "test: <name>: N tests [OK]"
+# with N at least that; raise a minimum when a suite grows, never lower one to pass.
+KERNEL_SUITES=(
+    "Types:24"
+    "String:99"
+    "Spinlock:233"
+    "Physical Memory Manager:789"
+    "Slab Allocator:1253"
+    "Heap Allocator:1230"
+    "Heap Properties:14"
+    "Timer:9"
+    "SD Driver:545"
+    "MMU Dynamic Mapping:35"
+    "MMU Per-Process Page Tables:76"
+    "VFS:89"
+    "FAT32:1524"
+    "FAT32 Corrupt Media:15"
+    "Pipe:26"
+    "Mutex:27"
+    "Semaphore:34"
+    "Completion:39"
+    "RWSEM:17"
+    "WaitQueue:84"
+    "User Access:27"
+    "Process:32"
+    "Syscall Bounds:19"
+    "Fault Injection:49"
+    "Scheduler:105"
+    "WaitQueue-MultiTask:104"
+    "Semaphore-MultiTask:60"
+    "Completion-MultiTask:36"
+    "RWSEM-MultiTask:48"
+    "Signals:44"
+)
+
+# Built, or grown, only with CONFIG_LOCKDEP, which the kernel announces with LOCKDEP_MARKER.
+LOCKDEP_SUITES=(
+    "Lockdep-Sleeping:55"
+    "RWSEM:22"
+)
+LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
+
+# Userspace suites typed at the prompt in order, as "<command line>:<fewest tests>". The
+# command's first word names the suite: it must print "<name>: all N tests passed" and exit 0.
+USER_SUITES=(
+    "test_restart:20"
+    "test_tools:58"
+    "test_libc:352"
+    "test_syscall:142"
+    "test_fcntl:8"
+    "test_stop_cont:34"
+    "test_sh:13"
+    "stress -s 1:1290"
+)
 
 # Lines typed at the shell WITHOUT waiting for each echo, so they overlap in
 # the UART FIFO -- a drained FIFO is exactly when a late interrupt acknowledge
@@ -47,12 +109,18 @@ CONSOLE_BURST_LINES=20
 CONSOLE_BURST_GAP=0.05
 CONSOLE_BURST_PAD=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
 
-LOG="$(mktemp -t perspicua-tests.XXXXXX)"
-FIFO="$(mktemp -u -t perspicua-stdin.XXXXXX)"
-mkfifo "$FIFO"
+WORK="$(mktemp -d -t perspicua-tests.XXXXXX)" || exit 1
+LOG="$WORK/log"
+CLEAN="$WORK/log.clean"
+FIFO="$WORK/stdin"
+if ! mkfifo "$FIFO"; then
+    echo "run_tests: cannot create $FIFO" >&2
+    rm -rf "$WORK"
+    exit 1
+fi
 
 # Each run boots its own copy, so a build or another run writing the image cannot reach it.
-CARD="$(mktemp -t perspicua-sdcard.XXXXXX)"
+CARD="$WORK/sdcard.img"
 
 qemu_pid=""
 cleanup()
@@ -61,7 +129,7 @@ cleanup()
         kill "$qemu_pid" 2>/dev/null
     fi
     exec 3>&-
-    rm -f "$LOG" "$FIFO" "$CARD"
+    rm -rf "$WORK"
 }
 trap cleanup EXIT
 
@@ -117,18 +185,31 @@ for marker in "${KERNEL_MARKERS[@]}"; do
     wait_for "$marker" || break
 done
 
+# Output lines only: the shell's echo of a typed line carries the prompt in front of it.
+burst_lines_back()
+{
+    tr -d '\r' <"$LOG" | grep -cxE "B[0-9]+-$CONSOLE_BURST_PAD-END"
+}
+
 console_burst_ran=0
+suites_finished=0
 
 if wait_for "$SHELL_MARKER"; then
-    for suite in "${USER_SUITES[@]}"; do
-        printf '%s\n' "$suite" >&3
-        # Matches a pass or a failure, so a failing suite reports at once
-        # instead of waiting out the budget.
-        wait_for "^$suite: (all [0-9]+ tests passed|[0-9]+ of [0-9]+ tests failed)" || break
+    suites_finished=1
+    for entry in "${USER_SUITES[@]}"; do
+        cmd="${entry%:*}"
+        name="${cmd%% *}"
+        # The status line comes back whether the suite passed, failed or crashed.
+        printf '%s; echo %s-rc=$?\n' "$cmd" "$name" >&3
+        if ! wait_for "^$name-rc=[0-9]+"; then
+            suites_finished=0
+            break
+        fi
     done
+fi
 
-    # Each line goes out as a single write and must come back before the next
-    # one is sent: a dropped byte shows up as the echo that never arrives.
+if [ "$suites_finished" -eq 1 ]; then
+    # Sent at a fixed gap without waiting, so the lines pile up in the UART FIFO.
     console_burst_ran=1
     for i in $(seq 1 "$CONSOLE_BURST_LINES"); do
         printf 'echo B%d-%s-END\n' "$i" "$CONSOLE_BURST_PAD" >&3
@@ -138,7 +219,7 @@ if wait_for "$SHELL_MARKER"; then
     # Bounded on its own rather than through wait_for, so a wedged console
     # fails in seconds instead of eating the whole run's budget.
     burst_deadline=$(( $(date +%s) + 20 ))
-    until grep -qF "B$CONSOLE_BURST_LINES-$CONSOLE_BURST_PAD-END" "$LOG"; do
+    until [ "$(burst_lines_back)" -ge "$CONSOLE_BURST_LINES" ]; do
         [ "$(date +%s)" -ge "$burst_deadline" ] && break
         sleep 0.2
     done
@@ -149,11 +230,31 @@ wait "$qemu_pid" 2>/dev/null
 qemu_pid=""
 
 cat "$LOG"
+tr -d '\r' <"$LOG" >"$CLEAN"
 
 echo
 echo "--------------------------------------------------------------------------"
 
 status=0
+
+# Prints the N of the first line containing prefix and ending in suffix, or nothing.
+count_after()
+{
+    grep -F -- "$1" "$CLEAN" | sed -nE "s/.*$2/\1/p" | head -n 1
+}
+
+# Fails the run unless suite reported at least min tests.
+check_count()
+{
+    local what="$1" n="$2" min="$3"
+    if [ -z "$n" ]; then
+        echo "FAIL: $what did not pass"
+        status=1
+    elif [ "$n" -lt "$min" ]; then
+        echo "FAIL: $what ran $n tests, fewer than the $min expected"
+        status=1
+    fi
+}
 
 # A failing suite prints [FAILED]; a suite that never ran prints nothing at
 # all, so completion is checked separately from failure.
@@ -180,26 +281,52 @@ for marker in "${KERNEL_MARKERS[@]}"; do
     fi
 done
 
-for suite in "${USER_SUITES[@]}"; do
-    if ! grep -qE "^$suite: all [0-9]+ tests passed" "$LOG"; then
-        echo "FAIL: userspace suite '$suite' did not pass"
+for marker in "${FAIL_MARKERS[@]}"; do
+    if grep -qF "$marker" "$CLEAN"; then
+        echo "FAIL: the kernel reported '$marker'"
         status=1
     fi
+done
+
+expected_kernel=("${KERNEL_SUITES[@]}")
+if grep -qF "$LOCKDEP_MARKER" "$CLEAN"; then
+    expected_kernel+=("${LOCKDEP_SUITES[@]}")
+fi
+for entry in "${expected_kernel[@]}"; do
+    name="${entry%:*}"
+    n="$(count_after "] test: $name: " ': ([0-9]+) tests \[OK\]$')"
+    check_count "kernel suite '$name'" "$n" "${entry##*:}"
+done
+
+for entry in "${USER_SUITES[@]}"; do
+    cmd="${entry%:*}"
+    name="${cmd%% *}"
+    rc="$(grep -E "^$name-rc=[0-9]+$" "$CLEAN" | head -n 1)"
+    if [ -z "$rc" ]; then
+        echo "FAIL: userspace suite '$name' never finished"
+        status=1
+    elif [ "$rc" != "$name-rc=0" ]; then
+        echo "FAIL: userspace suite '$name' exited with status ${rc#*=}"
+        status=1
+    fi
+    n="$(grep -E "^$name: all [0-9]+ tests passed$" "$CLEAN" | sed -E 's/.* all ([0-9]+) tests.*/\1/')"
+    check_count "userspace suite '$name'" "$n" "${entry##*:}"
 done
 
 if [ "$console_burst_ran" -eq 1 ]; then
     burst_missing=0
     for i in $(seq 1 "$CONSOLE_BURST_LINES"); do
-        grep -qF "B$i-$CONSOLE_BURST_PAD-END" "$LOG" || burst_missing=$((burst_missing + 1))
+        grep -qxF "B$i-$CONSOLE_BURST_PAD-END" "$CLEAN" || burst_missing=$((burst_missing + 1))
     done
     if [ "$burst_missing" -gt 0 ]; then
-        echo "FAIL: $burst_missing of $CONSOLE_BURST_LINES console lines came back garbled or not at all"
+        echo "FAIL: console burst: $burst_missing of $CONSOLE_BURST_LINES lines did not come back" \
+            "($(qemu-system-aarch64 --version | head -n 1))"
         status=1
     fi
 fi
 
 if [ "$status" -eq 0 ]; then
-    grep -E "all [0-9]+ tests passed" "$LOG" | sed 's/^/  /'
+    grep -E "all [0-9]+ tests passed" "$CLEAN" | sed 's/^/  /'
     echo "PASS: all kernel and userspace test suites passed"
 fi
 

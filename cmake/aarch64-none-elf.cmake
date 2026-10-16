@@ -40,10 +40,9 @@ set(CMAKE_ASM_FLAGS "${ARCH_FLAGS}" CACHE STRING "Common ASM flags")
 # the debug sections are not loaded -- and keeps the symbol table and
 # backtraces intact. Debug stays available for stepping.
 #
-# No -DNDEBUG anywhere: ASSERT is how the kernel catches broken invariants, and
-# assert() is how the userspace test apps check anything at all -- test_syscall
-# alone wraps a hundred syscalls in one. Compiling those out does not make the
-# tests faster, it makes them pass without running.
+# No -DNDEBUG anywhere: ASSERT is how the kernel catches broken invariants.
+# Compiling it out does not make the tests faster, it makes them pass without
+# running.
 #
 # FORCE, because CMake seeds its own defaults for every build type on the first
 # configure -- RelWithDebInfo's includes -DNDEBUG -- and a plain

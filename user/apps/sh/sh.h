@@ -9,6 +9,7 @@
 #ifndef PERSPICUA_SH_H
 #define PERSPICUA_SH_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #define MAX_ARGS    32
@@ -49,6 +50,7 @@ void parse_command(char *str, Command *cmd);
 
 // exec.c
 extern int g_last_status;
+extern bool g_job_control;
 void execute_line(char *line);
 void handle_sigchld(int sig);
 
