@@ -161,6 +161,9 @@ void process_init(void);
 int process_create_from_file(const char *path, uint32_t pid);
 int process_exec(const char *path, char *const argv[], char *const envp[]);
 int process_fork(struct exception_trap_frame *parent_tf);
+// The status a process killed by sig reports, as sh would show it.
+#define PROCESS_KILLED_BY(sig) (128 + (sig))
+
 __attribute__((noreturn)) void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 

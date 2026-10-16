@@ -180,7 +180,7 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
             }
         }
 
-        process_exit(pid, 128 + sig);
+        process_exit(pid, PROCESS_KILLED_BY(sig));
     }
 
     /* SA_ONSTACK is what makes a SIGSEGV from stack exhaustion catchable:
@@ -191,12 +191,12 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     }
 
     if (stack_top < (sizeof(struct signal_frame) + SIGNAL_STACK_GUARD) || stack_top >= KERNEL_VMA) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     uintptr_t new_sp = (stack_top - sizeof(struct signal_frame)) & ~0xFUL;
     if (new_sp == 0 || new_sp >= KERNEL_VMA) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     /* A handler with no way back cannot be entered: sigreturn is what restores
@@ -204,7 +204,7 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
      * whatever x30 happened to hold. */
     if (!(sa->sa_flags & SA_RESTORER) || (uintptr_t)sa->sa_restorer == 0
         || (uintptr_t)sa->sa_restorer >= KERNEL_VMA) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     if (restart->active) {
@@ -236,7 +236,7 @@ static enum signal_progress signal_deliver_one(struct exception_trap_frame *tf, 
     if (!syscall_validate_user_buffer((void *)new_sp, sizeof(struct signal_frame), 1)
         || copy_to_user((void *)new_sp, &frame, sizeof(struct signal_frame)) != 0) {
         p->blocked_signals = old_mask;
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     // The frame owns it now; signal_handle_pending must not restore it again.
@@ -383,6 +383,32 @@ int signal_raise_fault(int sig)
     spin_unlock_irqrestore(&process_table_lock, flags);
 
     return fatal;
+}
+
+int signal_kill(uint32_t sender_pid, uint32_t target_pid, int sig)
+{
+    if (sig < 0 || sig >= NSIG) {
+        return -EINVAL;
+    }
+    if (target_pid == 0 || target_pid >= PROCESS_TABLE_SIZE) {
+        return -ESRCH;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct process *sender = process_slot(sender_pid);
+    struct process *target = process_table[target_pid];
+    int res = 0;
+    if (!sender || !target || target->state != PROCESS_STATE_RUNNING) {
+        res = -ESRCH;
+    } else if (target_pid != sender_pid && target->parent_pid != sender_pid
+               && sender->parent_pid != target_pid && target->pgid != sender->pgid) {
+        res = -EPERM;
+    } else if (sig != 0
+               && !(target_pid == 1 && target->signal_handlers[sig - 1].sa_handler == SIG_DFL)) {
+        res = signal_send_target_locked(target, sig);
+    }
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    return res;
 }
 
 int signal_send(uint32_t target_pid, int sig)

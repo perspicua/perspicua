@@ -45,6 +45,13 @@ void signal_handle_pending(struct exception_trap_frame *tf);
  */
 int signal_raise_fault(int sig);
 
+/*
+ * kill() for one process: checks that sender may signal target and sends, under one
+ * hold of process_table_lock so a recycled pid is never hit. Signal 0 only checks.
+ * init gets only the signals it has a handler for, as nothing restarts it.
+ */
+int signal_kill(uint32_t sender_pid, uint32_t target_pid, int sig);
+
 int signal_send(uint32_t target_pid, int sig);
 
 int signal_send_group(uint32_t pgid, int sig);

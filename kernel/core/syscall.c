@@ -685,27 +685,7 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
     }
 
     if (target_pid > 0) {
-        if (target_pid >= PROCESS_TABLE_SIZE) {
-            return -ESRCH;
-        }
-
-        // Checked under the lock a reaper frees the target with; signal_send
-        // re-checks that it is still there.
-        unsigned long irqf = spin_lock_irqsave(&process_table_lock);
-        struct process *target = process_table[target_pid];
-        int err = 0;
-        if (!target || target->state != PROCESS_STATE_RUNNING) {
-            err = -ESRCH;
-        } else if (target_pid != (int)pid && target->parent_pid != pid
-                   && (int)proc->parent_pid != target_pid && target->pgid != proc->pgid) {
-            err = -EPERM;
-        }
-        spin_unlock_irqrestore(&process_table_lock, irqf);
-        if (err != 0 || sig == 0) {
-            return err;
-        }
-
-        return signal_send((uint32_t)target_pid, sig);
+        return signal_kill(pid, (uint32_t)target_pid, sig);
     } else if (target_pid == 0) {
         if (proc->pgid == 0) {
             return -EPERM;
@@ -1001,20 +981,20 @@ static int64_t sigreturn_handler(struct exception_trap_frame *tf)
 
     if (user_frame_ptr == 0 || user_frame_ptr >= KERNEL_VMA
         || user_frame_ptr + sizeof(struct signal_frame) < user_frame_ptr) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     if (!syscall_validate_user_buffer((void *)user_frame_ptr, sizeof(struct signal_frame), 0)) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     struct signal_frame frame;
     if (copy_from_user(&frame, (void *)user_frame_ptr, sizeof(struct signal_frame)) != 0) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     if (frame.saved_tf.elr_el1 >= KERNEL_VMA || frame.saved_tf.sp_el0 >= KERNEL_VMA) {
-        process_exit(pid, -1);
+        process_exit(pid, PROCESS_KILLED_BY(SIGSEGV));
     }
 
     memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));

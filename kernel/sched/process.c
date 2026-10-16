@@ -737,6 +737,11 @@ void process_exit(uint32_t pid, int exit_status)
         PANIC("process_exit: no such process");
     }
 
+    // Nothing reaps orphans or restarts the shell once init is gone, so its end is loud.
+    if (pid == 1) {
+        PANIC("init exited");
+    }
+
     process_state_t expected = PROCESS_STATE_RUNNING;
     if (!__atomic_compare_exchange_n(&p->state, &expected, PROCESS_STATE_DEAD, 0, __ATOMIC_SEQ_CST,
                                      __ATOMIC_SEQ_CST)) {
@@ -816,7 +821,8 @@ void process_exit(uint32_t pid, int exit_status)
         mmu_destroy_user_pgd(pgd);
     }
 
-    p->exit_status = exit_status;
+    // 8 bits, so no exit value can carry __W_STOPPED.
+    p->exit_status = exit_status & 0xFF;
 
     flags = spin_lock_irqsave(&process_table_lock);
     p->va.count = 0;
@@ -868,6 +874,18 @@ void process_exit(uint32_t pid, int exit_status)
     sched_exit_current();
 }
 
+// Whether id still names a group or session: handing it out would let a newcomer join that.
+static int id_in_use_locked(uint32_t id)
+{
+    for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
+        struct process *p = process_table[i];
+        if (p && (p->pgid == id || p->sid == id)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int process_claim_slot(void)
 {
     /*
@@ -883,7 +901,7 @@ static int process_claim_slot(void)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
 
     for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
-        if (process_table[i]) {
+        if (process_table[i] || id_in_use_locked((uint32_t)i)) {
             continue;
         }
 
@@ -896,7 +914,7 @@ static int process_claim_slot(void)
 
     spin_unlock_irqrestore(&process_table_lock, flags);
     heap_free(p);
-    return -ENFILE;
+    return -EAGAIN;
 }
 
 #ifdef CONFIG_TESTS
@@ -1004,6 +1022,8 @@ int process_waitpid(int pid, int *status, int options)
         unsigned long irqf = irq_save();
         spin_lock(&process_table_lock);
 
+        struct process *self = process_table[parent_pid];
+        uint32_t caller_pgid = self ? self->pgid : 0;
         int has_children = 0;
         for (int i = 1; i < PROCESS_TABLE_SIZE; i++) {
             struct process *candidate = process_table[i];
@@ -1014,7 +1034,14 @@ int process_waitpid(int pid, int *status, int options)
             if (candidate->parent_pid != (uint32_t)parent_pid) {
                 continue;
             }
-            if (pid != -1 && (int)candidate->pid != pid) {
+            // pid > 0 names a child, 0 the caller's group, -1 any child, below -1 group -pid.
+            if (pid > 0 && (int)candidate->pid != pid) {
+                continue;
+            }
+            if (pid == 0 && candidate->pgid != caller_pgid) {
+                continue;
+            }
+            if (pid < -1 && (int64_t)candidate->pgid != -(int64_t)pid) {
                 continue;
             }
 

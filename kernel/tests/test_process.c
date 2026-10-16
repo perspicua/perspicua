@@ -227,5 +227,40 @@ void test_process(void)
         TEST_ASSERT_EQ("zero pages is refused", (long)process_va_alloc(&va, 0), 0);
     }
 
+    // a free slot whose number a live process still uses as its group is not handed out
+    {
+        int leader = process_test_claim_slot();
+        int member = process_test_claim_slot();
+        int while_named = -1, once_free = -1;
+        if (leader > 0 && member > 0) {
+            process_table[member]->pgid = (uint32_t)leader;
+            process_test_release_slot((uint32_t)leader);
+            while_named = process_test_claim_slot();
+
+            process_table[member]->pgid = 0;
+            once_free = process_test_claim_slot();
+        }
+        TEST_ASSERT("slots claimed", leader > 0 && member > 0);
+        TEST_ASSERT("a pid naming a live group is skipped",
+                    while_named > 0 && while_named != leader);
+        TEST_ASSERT_EQ("the pid comes back once no group uses it", once_free, leader);
+        release_slot(once_free);
+        release_slot(while_named);
+        release_slot(member);
+    }
+
+    // a full table makes fork fail with EAGAIN, the error a caller retries on
+    {
+        static int claimed[PROCESS_TABLE_SIZE];
+        int n = 0, last = 0;
+        while (n < PROCESS_TABLE_SIZE && (last = process_test_claim_slot()) > 0) {
+            claimed[n++] = last;
+        }
+        TEST_ASSERT_EQ("a full table reports EAGAIN", last, -EAGAIN);
+        while (n > 0) {
+            release_slot(claimed[--n]);
+        }
+    }
+
     TEST_SUITE_END("Process");
 }

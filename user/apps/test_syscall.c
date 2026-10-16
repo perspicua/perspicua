@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <dirent.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <wait.h>
 #include "uapi/errno.h"
 #include "uapi/syscalls.h"
 
@@ -568,6 +570,92 @@ static void test_procfs_pid_files(void)
     CHECK(garbled == 0);
 }
 
+static int exit_status_of(int code)
+{
+    int pid = fork();
+    if (pid == 0) {
+        _exit(code);
+    }
+    int status = -1;
+    waitpid(pid, &status, WUNTRACED);
+    return status;
+}
+
+// Statuses are 8 bits; waitpid finds children by group; init and live groups are protected.
+static void test_wait_and_kill(void)
+{
+    printf("[ TEST ] Running exit status, waitpid group and kill tests...\n");
+
+    int st = exit_status_of(-1);
+    CHECK(!WIFSTOPPED(st) && WIFEXITED(st) && WEXITSTATUS(st) == 255);
+    st = exit_status_of(256 + 3);
+    CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 3);
+
+    int same = fork();
+    if (same == 0) {
+        _exit(4);
+    }
+    CHECK(waitpid(0, &st, 0) == same && WEXITSTATUS(st) == 4);
+
+    int other = fork();
+    if (other == 0) {
+        _exit(5);
+    }
+    setpgid(other, other);
+    CHECK(waitpid(-other, &st, 0) == other && WEXITSTATUS(st) == 5);
+    errno = 0;
+    CHECK(waitpid(-other, &st, 0) < 0 && errno == ECHILD);
+
+    // A child of init may signal it, but only signals init handles get through.
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    int middle = fork();
+    if (middle == 0) {
+        if (fork() == 0) {
+            while (getppid() != 1) {
+                usleep(1000);
+            }
+            int results[2] = {kill(1, SIGTERM), kill(1, SIGKILL)};
+            write(fds[1], (const char *)results, sizeof(results));
+            _exit(0);
+        }
+        _exit(0);
+    }
+    waitpid(middle, &st, 0);
+    int results[2] = {-1, -1};
+    CHECK(read(fds[0], (char *)results, sizeof(results)) == sizeof(results));
+    CHECK(results[0] == 0 && results[1] == 0);
+    // A dead init stays a zombie nobody reaps, so its status file outlives it.
+    char init_status[256];
+    CHECK(read_proc("/proc/1/status", init_status, sizeof(init_status)) > 0
+          && strstr(init_status, "running") != NULL);
+    close(fds[0]);
+    close(fds[1]);
+
+    // A group outlives its leader, so the leader's pid is not handed out while it has members.
+    int leader = fork();
+    if (leader == 0) {
+        _exit(0);
+    }
+    setpgid(leader, leader);
+    int member = fork();
+    if (member == 0) {
+        for (;;) {
+            usleep(50 * 1000);
+        }
+    }
+    setpgid(member, leader);
+    waitpid(leader, &st, 0);
+    int next = fork();
+    if (next == 0) {
+        _exit(0);
+    }
+    CHECK(next != leader);
+    waitpid(next, &st, 0);
+    kill(member, SIGKILL);
+    waitpid(member, &st, 0);
+}
+
 // Bad descriptors, pointers, pids and signals are refused rather than acted on.
 static void test_bad_arguments(void)
 {
@@ -635,6 +723,7 @@ int main(void)
     test_audit_fixes();
     test_bad_arguments();
     test_procfs_pid_files();
+    test_wait_and_kill();
 
     return utest_summary("test_syscall");
 }

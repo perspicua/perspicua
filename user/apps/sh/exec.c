@@ -103,7 +103,7 @@ static int wait_foreground(int pgid, const int *pids, int count)
         }
         // A pipeline's status is that of its last (rightmost) command.
         if (i == count - 1) {
-            last_status = status & 0xFF;
+            last_status = WEXITSTATUS(status);
         }
     }
     if (g_job_control) {
