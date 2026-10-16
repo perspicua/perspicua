@@ -719,6 +719,63 @@ static void test_bad_arguments(void)
     CHECK(nanosleep(&huge, NULL) < 0);
 }
 
+// The kernel's signal_frame: a trap frame, whose spsr_el1 is at byte 24, then the saved mask.
+struct forged_frame {
+    uint64_t sp_el0, pad, elr, spsr, x[30], x30, pad_end;
+    uint32_t mask;
+} __attribute__((aligned(16)));
+
+#define SPSR_FLAGS 0xF0000000ULL
+
+uint64_t forged_seen_spsr = ~0ULL;
+static char forged_stack[8192] __attribute__((aligned(16)));
+
+// Entered with sp at its signal frame; records the state the interrupted code ran in.
+void forged_spsr_handler(int sig);
+asm(".pushsection .text\n"
+    ".balign 4\n"
+    ".global forged_spsr_handler\n"
+    ".type forged_spsr_handler, %function\n"
+    "forged_spsr_handler:\n"
+    "    ldr x1, [sp, #24]\n"
+    "    adrp x2, forged_seen_spsr\n"
+    "    str x1, [x2, :lo12:forged_seen_spsr]\n"
+    "    ret\n"
+    ".size forged_spsr_handler, . - forged_spsr_handler\n"
+    ".popsection\n");
+
+static void __attribute__((noreturn)) forged_resume(void)
+{
+    signal(SIGUSR1, forged_spsr_handler);
+    kill(getpid(), SIGUSR1);
+    _exit((forged_seen_spsr & ~SPSR_FLAGS) == 0 ? 42 : 1);
+}
+
+// A frame asking sigreturn for EL1h, masked interrupts, single-step and an illegal state
+// must come back as plain EL0.
+static void test_forged_sigreturn(void)
+{
+    printf("[ TEST ] Running forged sigreturn frame...\n");
+
+    int pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        static struct forged_frame frame;
+        frame.elr = (uintptr_t)forged_resume;
+        frame.sp_el0 = (uintptr_t)(forged_stack + sizeof(forged_stack));
+        frame.spsr = 0x203003C5ULL;
+        asm volatile("mov sp, %0\n"
+                     "mov x8, %1\n"
+                     "svc #0" ::"r"(&frame),
+                     "i"(SYS_SIGRETURN)
+                     : "x8", "memory");
+        _exit(2);
+    }
+    int status = 0;
+    CHECK(waitpid(pid, &status, 0) == pid);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 42);
+}
+
 int main(void)
 {
     printf("--- Starting Syscall Functional Tests ---\n");
@@ -735,6 +792,7 @@ int main(void)
     test_bad_arguments();
     test_procfs_pid_files();
     test_wait_and_kill();
+    test_forged_sigreturn();
 
     return utest_summary("test_syscall");
 }

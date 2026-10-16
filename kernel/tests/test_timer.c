@@ -49,6 +49,39 @@ void test_timer(void)
         TEST_ASSERT("sleep 0ms returns", (after - before) < 50);
     }
 
+    // civil dates convert to epoch seconds, across leap rules and before 1970
+    {
+        TEST_ASSERT_EQ("civil: the epoch", timer_civil_to_epoch(1970, 1, 1, 0, 0, 0), 0);
+        TEST_ASSERT_EQ("civil: the second before it",
+                       timer_civil_to_epoch(1969, 12, 31, 23, 59, 59), -1);
+        TEST_ASSERT_EQ("civil: 2000 is a leap year", timer_civil_to_epoch(2000, 3, 1, 0, 0, 0),
+                       951868800L);
+        TEST_ASSERT_EQ("civil: a leap day with a time",
+                       timer_civil_to_epoch(2024, 2, 29, 12, 34, 56), 1709210096L);
+        TEST_ASSERT_EQ("civil: 2100 is not", timer_civil_to_epoch(2100, 3, 1, 0, 0, 0),
+                       4107542400L);
+        TEST_ASSERT_EQ("civil: 1900 is not either", timer_civil_to_epoch(1900, 3, 1, 0, 0, 0),
+                       -2203891200L);
+    }
+
+    // the wall clock is the build date plus uptime, so it is past 2026 and never runs backwards
+    {
+        time_t a = timer_get_wall_time();
+        time_t b = timer_get_wall_time();
+        TEST_ASSERT("wall time is after the tree's first build year",
+                    a >= timer_civil_to_epoch(2026, 1, 1, 0, 0, 0));
+        TEST_ASSERT("wall time does not run backwards", b >= a);
+    }
+
+    // a span of counter ticks converts to the milliseconds it took
+    {
+        uint64_t before = timer_ticks();
+        timer_sleep_ms(50);
+        uint64_t ms = timer_ticks_to_ms(timer_ticks() - before);
+        TEST_ASSERT("ticks to ms: 50ms lower bound", ms >= 40);
+        TEST_ASSERT("ticks to ms: 50ms upper bound", ms < 200);
+    }
+
     // irq_save / irq_restore
     {
         unsigned long flags_before;

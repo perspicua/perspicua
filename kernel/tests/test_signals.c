@@ -18,10 +18,14 @@
 #include "uapi/syscalls.h"
 
 #include "core/signals.h"
+#include "mm/mmu.h"
 #include "sched/process.h"
 
 // init is created first and is the process these tests target.
 #define INIT_PID 1
+
+// Where the masks handed to the syscalls below live.
+#define MASK_USER_VA 0x0000000052000000UL
 
 static int64_t call_kill(int64_t target_pid, int sig)
 {
@@ -187,6 +191,61 @@ void test_signals(void)
             TEST_ASSERT("NULL process is never pending", !signal_pending(NULL));
 
             process_test_release_slot(target);
+        }
+    }
+
+    // SIGKILL and SIGSTOP stay unblockable whichever call hands the kernel a mask
+    {
+        unsigned long *pgd = test_borrow_user_pgd();
+        void *user = pgd ? test_map_user_page(pgd, MASK_USER_VA, MMU_PAGE_USER_DATA) : NULL;
+        TEST_ASSERT("mask probe address space built", user != NULL);
+
+        if (user) {
+            struct process *kernel = process_table[0];
+            const sigset_t unblockable = (1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1));
+            const sigset_t usr1 = 1u << (SIGUSR1 - 1);
+            sigset_t saved_mask = kernel->blocked_signals;
+            struct sigaction saved_act = kernel->signal_handlers[SIGUSR1 - 1];
+            sigset_t *uset = user;
+
+            *uset = unblockable | usr1;
+            uint64_t block[6] = {SIG_BLOCK, MASK_USER_VA, 0, 0, 0, 0};
+            TEST_ASSERT_EQ("SIG_BLOCK accepted", test_syscall(SYS_SIGPROCMASK, block), 0);
+            TEST_ASSERT("SIG_BLOCK blocks SIGUSR1", (kernel->blocked_signals & usr1) != 0);
+            TEST_ASSERT("SIG_BLOCK leaves SIGKILL and SIGSTOP unblocked",
+                        (kernel->blocked_signals & unblockable) == 0);
+
+            *uset = ~(sigset_t)0;
+            uint64_t setmask[6] = {SIG_SETMASK, MASK_USER_VA, 0, 0, 0, 0};
+            TEST_ASSERT_EQ("SIG_SETMASK accepted", test_syscall(SYS_SIGPROCMASK, setmask), 0);
+            TEST_ASSERT("SIG_SETMASK leaves SIGKILL and SIGSTOP unblocked",
+                        (kernel->blocked_signals & unblockable) == 0);
+
+            struct sigaction *uact = user;
+            memset(uact, 0, sizeof(*uact));
+            uact->sa_handler = (sighandler_t)MASK_USER_VA;
+            uact->sa_mask = ~(sigset_t)0;
+            uint64_t act[6] = {SIGUSR1, MASK_USER_VA, 0, 0, 0, 0};
+            TEST_ASSERT_EQ("sigaction with a full mask accepted", test_syscall(SYS_SIGACTION, act),
+                           0);
+            TEST_ASSERT("a handler's mask leaves SIGKILL and SIGSTOP out",
+                        (kernel->signal_handlers[SIGUSR1 - 1].sa_mask & unblockable) == 0);
+
+            uint64_t act_kill[6] = {SIGKILL, MASK_USER_VA, 0, 0, 0, 0};
+            uint64_t act_stop[6] = {SIGSTOP, MASK_USER_VA, 0, 0, 0, 0};
+            TEST_ASSERT_EQ("SIGKILL cannot be caught", test_syscall(SYS_SIGACTION, act_kill),
+                           -EINVAL);
+            TEST_ASSERT_EQ("SIGSTOP cannot be caught", test_syscall(SYS_SIGACTION, act_stop),
+                           -EINVAL);
+
+            unsigned long flags = spin_lock_irqsave(&process_table_lock);
+            kernel->signal_handlers[SIGUSR1 - 1] = saved_act;
+            kernel->blocked_signals = saved_mask;
+            spin_unlock_irqrestore(&process_table_lock, flags);
+        }
+
+        if (pgd) {
+            test_release_user_pgd(pgd);
         }
     }
 

@@ -71,7 +71,7 @@ This describes what exists today. For planned work see
   the games `tetris`, `snake`, `2048` and `mines`; and the test programs
 
 **Debugging**
-- In-kernel debugger (kdb), lockdep, KASAN
+- In-kernel debugger (kdb), lockdep, heap redzones and slab free canaries
 - Fault injection that refuses a chosen heap or page allocation
 - Generated symbol tables and GDB helper scripts
 
@@ -126,7 +126,7 @@ The output image is `pi4-boot/kernel8.img`.
 ## Testing
 
 In-kernel test suites live in `kernel/tests/` and are compiled in only under
-`CONFIG_TESTS`. They cover memory (pmm, mmu, slab, heap, KASAN), scheduling and
+`CONFIG_TESTS`. They cover memory (pmm, mmu, slab, heap), scheduling and
 locking (the scheduler, spinlocks, sleeping locks, wait queues, lockdep),
 processes and signals, filesystems (VFS, FAT32 including corrupt media, pipes),
 the SD driver, user-memory access, syscall bounds, and fault injection. The

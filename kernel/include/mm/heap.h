@@ -35,9 +35,10 @@ int heap_test_redzone_ok(const void *ptr);
 /*
  * Arms a one-shot refusal: the calling task's nth allocation from now returns
  * NULL as though the heap were exhausted. n == 0 disarms. Sizes the allocator
- * would have refused anyway are not counted.
+ * would have refused anyway are not counted. Returns what was left of the
+ * previous arming, so 0 means it fired.
  */
-void heap_test_fail_nth(unsigned long n);
+unsigned long heap_test_fail_nth(unsigned long n);
 #endif
 
 #endif // PERSPICUA_MM_HEAP_H

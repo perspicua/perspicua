@@ -1,7 +1,9 @@
 #include "test.h"
 #include "core/lock.h"
+#include "arch/cpu.h"
 #include "arch/irq.h"
 #include "core/timer.h"
+#include "sched/sched.h"
 #include "string.h"
 
 void test_spinlock(void)
@@ -273,4 +275,61 @@ void test_spinlock(void)
     }
 
     TEST_SUITE_END("Spinlock");
+}
+
+#define SPIN_STRESS_WORKERS 4
+#define SPIN_STRESS_ROUNDS  20000
+
+static spinlock_t spin_stress_lock = SPINLOCK_INIT;
+static unsigned long spin_stress_count;
+static int spin_stress_done;
+static unsigned int spin_stress_cores;
+
+// A plain read-modify-write under the lock, so only mutual exclusion keeps the count whole;
+// the sleeps let other cores' ticks pick the workers up.
+static void spin_stress_worker(void)
+{
+    for (int i = 0; i < SPIN_STRESS_ROUNDS; i++) {
+        spin_lock(&spin_stress_lock);
+        unsigned long v = *(volatile unsigned long *)&spin_stress_count;
+        for (volatile int d = 0; d < 8; d++) {}
+        *(volatile unsigned long *)&spin_stress_count = v + 1;
+        __atomic_fetch_or(&spin_stress_cores, 1u << cpu_id(), __ATOMIC_RELAXED);
+        spin_unlock(&spin_stress_lock);
+
+        if (i % 2000 == 1999) {
+            sched_sleep_ms(1);
+        }
+    }
+    __atomic_fetch_add(&spin_stress_done, 1, __ATOMIC_SEQ_CST);
+}
+
+void test_spinlock_scheduler(void)
+{
+    TEST_SUITE_BEGIN("Spinlock-MultiTask");
+
+    spin_stress_count = 0;
+    spin_stress_done = 0;
+    spin_stress_cores = 0;
+
+    int created = 0;
+    for (int i = 0; i < SPIN_STRESS_WORKERS; i++) {
+        created += sched_create_task(spin_stress_worker) == 0;
+    }
+    for (int n = 0; n < 1000 && __atomic_load_n(&spin_stress_done, __ATOMIC_SEQ_CST) < created;
+         n++) {
+        sched_sleep_ms(10);
+    }
+
+    TEST_ASSERT_EQ("spinlock stress: every worker created", created, SPIN_STRESS_WORKERS);
+    TEST_ASSERT_EQ("spinlock stress: every worker finished", spin_stress_done, created);
+    TEST_ASSERT_EQ("spinlock stress: no increment lost", spin_stress_count,
+                   (long)created * SPIN_STRESS_ROUNDS);
+    int cores = 0;
+    for (unsigned int m = spin_stress_cores; m; m &= m - 1) {
+        cores++;
+    }
+    pr_info("test: spinlock stress ran on %d cores\n", cores);
+
+    TEST_SUITE_END("Spinlock-MultiTask");
 }

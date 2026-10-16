@@ -67,7 +67,9 @@ void run_scheduler_tests(void)
     test_semaphore_scheduler();
     test_completion_scheduler();
     test_rwsem_scheduler();
+    test_spinlock_scheduler();
     test_lockdep_scheduler();
+    test_lockdep_spin();
 
     printk("\n");
 

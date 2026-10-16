@@ -14,10 +14,11 @@ struct fail_arming {
     const struct task *task;
 };
 
-static inline void fail_arm(struct fail_arming *a, unsigned long n)
+// Returns what was left of the previous arming: 0 once it fired, or if there was none.
+static inline unsigned long fail_arm(struct fail_arming *a, unsigned long n)
 {
     a->task = sched_current_task();
-    __atomic_store_n(&a->countdown, n, __ATOMIC_RELEASE);
+    return __atomic_exchange_n(&a->countdown, n, __ATOMIC_ACQ_REL);
 }
 
 // Only the arming task's requests count, so another core can neither spend

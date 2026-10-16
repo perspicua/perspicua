@@ -17,6 +17,7 @@
 
 #include "uapi/errno.h"
 #include "uapi/fcntl.h"
+#include "uapi/mman.h"
 #include "uapi/signals.h"
 #include "uapi/syscalls.h"
 
@@ -96,12 +97,37 @@ static const struct skipped_syscall skipped[] = {
     {SYS_YIELD, "schedules away mid-suite"},
     {SYS_KILL, "signals whatever process the argument names"},
     {SYS_PIPE, "leaks a pipe and two fds into the kernel slot"},
-    {SYS_MMAP, "maps into the kernel slot's address space on success"},
     {SYS_SYNC, "flushes the volume the rest of the suite runs on"},
     {SYS_FSYNC, "flushes the volume the rest of the suite runs on"},
     {SYS_SETSID, "takes no argument to fail on and would resession slot 0"},
     {SYS_SETPGID, "would move slot 0 into another process group"},
     {SYS_TCSETPGRP, "would hand the terminal to whatever group the argument names"},
+};
+
+struct fd_probe {
+    const char *name;
+    uint64_t nr;
+    int fd_arg;
+    int open_arg; // >= 0: fd_arg is a target, so may be an empty slot; this arg gets an open fd
+    uint64_t args[6];
+};
+
+// Every unskipped syscall that takes an fd, with the bad fd in fd_arg.
+static const struct fd_probe fd_probes[] = {
+    {"read", SYS_READ, 0, -1, {0, USER_RW_VA, 16, 0, 0, 0}},
+    {"write", SYS_WRITE, 0, -1, {0, USER_RW_VA, 16, 0, 0, 0}},
+    {"close", SYS_CLOSE, 0, -1, {0, 0, 0, 0, 0, 0}},
+    {"dup2 old", SYS_DUP2, 0, -1, {0, 3, 0, 0, 0, 0}},
+    {"dup2 new", SYS_DUP2, 1, 0, {0, 0, 0, 0, 0, 0}},
+    {"getdents", SYS_GETDENTS, 0, -1, {0, USER_RW_VA, sizeof(struct dirent), 0, 0, 0}},
+    {"lseek", SYS_LSEEK, 0, -1, {0, 0, 0, 0, 0, 0}},
+    {"fcntl", SYS_FCNTL, 0, -1, {0, F_GETFL, 0, 0, 0, 0}},
+    {"pread", SYS_PREAD, 0, -1, {0, USER_RW_VA, 16, 0, 0, 0}},
+    {"pwrite", SYS_PWRITE, 0, -1, {0, USER_RW_VA, 16, 0, 0, 0}},
+    {"fstat", SYS_FSTAT, 0, -1, {0, USER_RW_VA, 0, 0, 0, 0}},
+    {"ftruncate", SYS_FTRUNCATE, 0, -1, {0, 0, 0, 0, 0, 0}},
+    {"tcgetpgrp", SYS_TCGETPGRP, 0, -1, {0, 0, 0, 0, 0, 0}},
+    {"mmap", SYS_MMAP, 4, -1, {0, PAGE_SIZE, PROT_READ, MAP_PRIVATE, 0, 0}},
 };
 
 // Pointer values a syscall must refuse whatever else it is handed.
@@ -186,6 +212,12 @@ void test_syscall_bounds(void)
         for (size_t i = 0; i < sizeof(ptr_probes) / sizeof(ptr_probes[0]); i++) {
             if (is_skipped(ptr_probes[i].nr)) {
                 pr_err("test: %s is both driven and skipped [FAILED]\n", ptr_probes[i].name);
+                conflict = 1;
+            }
+        }
+        for (size_t i = 0; i < sizeof(fd_probes) / sizeof(fd_probes[0]); i++) {
+            if (is_skipped(fd_probes[i].nr)) {
+                pr_err("test: %s is both driven and skipped [FAILED]\n", fd_probes[i].name);
                 conflict = 1;
             }
         }
@@ -338,31 +370,55 @@ void test_syscall_bounds(void)
     // The sweep below closes fd 0 and truncates whatever it names.
     vfs_close(scratch_fd);
 
-    // an fd is an index into a table, and every number outside it is an error
+    // an fd outside the table, or a slot in it with nothing open, is EBADF to every call
     {
-        static const int64_t bad_fds[] = {-1, -2147483648LL, 64, 65535, 0x7FFFFFFFFFFFFFFFLL};
+        static const int64_t bad_fds[] = {-1,          -2147483648LL, VFS_MAX_FDS - 1,
+                                          VFS_MAX_FDS, 65535,         0x7FFFFFFFFFFFFFFFLL};
+        int open_fd = vfs_open("/", O_RDONLY);
         int fd_ok = 1;
 
-        for (size_t f = 0; f < sizeof(bad_fds) / sizeof(bad_fds[0]); f++) {
-            uint64_t fd = (uint64_t)bad_fds[f];
+        TEST_ASSERT("fd sweep has an open fd to pair with",
+                    open_fd >= 0 && open_fd < VFS_MAX_FDS - 1);
 
-            uint64_t read_args[6] = {fd, USER_RW_VA, 16, 0, 0, 0};
-            uint64_t close_args[6] = {fd, 0, 0, 0, 0, 0};
-            uint64_t lseek_args[6] = {fd, 0, 0, 0, 0, 0};
-            uint64_t fstat_args[6] = {fd, USER_RW_VA, 0, 0, 0, 0};
-            uint64_t dup2_args[6] = {fd, fd, 0, 0, 0, 0};
-            uint64_t ftruncate_args[6] = {fd, 0, 0, 0, 0, 0};
+        // fd_flags follows fd_table, so with a flag set a bound off by one reads a non-NULL file.
+        struct process *kernel = process_table[0];
+        unsigned long fdflags = spin_lock_irqsave(&kernel->fd_lock);
+        int saved_flag = kernel->fd_flags[0];
+        kernel->fd_flags[0] = FD_CLOEXEC;
+        spin_unlock_irqrestore(&kernel->fd_lock, fdflags);
 
-            if (test_syscall(SYS_READ, read_args) >= 0 || test_syscall(SYS_CLOSE, close_args) >= 0
-                || test_syscall(SYS_LSEEK, lseek_args) >= 0
-                || test_syscall(SYS_FSTAT, fstat_args) >= 0
-                || test_syscall(SYS_DUP2, dup2_args) >= 0
-                || test_syscall(SYS_FTRUNCATE, ftruncate_args) >= 0) {
-                fd_ok = 0;
+        for (size_t p = 0; open_fd >= 0 && p < sizeof(fd_probes) / sizeof(fd_probes[0]); p++) {
+            const struct fd_probe *probe = &fd_probes[p];
+
+            for (size_t f = 0; f < sizeof(bad_fds) / sizeof(bad_fds[0]); f++) {
+                if (probe->open_arg >= 0 && bad_fds[f] >= 0 && bad_fds[f] < VFS_MAX_FDS) {
+                    continue;
+                }
+                uint64_t args[6];
+                memcpy(args, probe->args, sizeof(args));
+                args[probe->fd_arg] = (uint64_t)bad_fds[f];
+                if (probe->open_arg >= 0) {
+                    args[probe->open_arg] = (uint64_t)open_fd;
+                }
+
+                int64_t ret = test_syscall(probe->nr, args);
+                if (ret != -EBADF) {
+                    pr_err("test: %s on fd %ld returned %ld, not -EBADF [FAILED]\n", probe->name,
+                           (long)bad_fds[f], (long)ret);
+                    fd_ok = 0;
+                }
             }
         }
 
-        TEST_ASSERT("no out-of-table fd is accepted", fd_ok);
+        TEST_ASSERT("every fd-taking call refuses a bad fd with EBADF", fd_ok);
+
+        fdflags = spin_lock_irqsave(&kernel->fd_lock);
+        kernel->fd_flags[0] = saved_flag;
+        spin_unlock_irqrestore(&kernel->fd_lock, fdflags);
+
+        if (open_fd >= 0) {
+            vfs_close(open_fd);
+        }
     }
 
     // a kernel address is never a user buffer, whichever argument carries it

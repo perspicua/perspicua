@@ -226,9 +226,7 @@ void test_mmu_user(void)
 
     // destroy PGD with active mappings frees table pages
     {
-        // track PMM state before and after to ensure no leaks
-        void *before = pmm_alloc_page();
-        pmm_free_page(before);
+        unsigned long before = pmm_get_free_pages();
 
         unsigned long *pgd = mmu_create_user_pgd();
         void *p1 = pmm_alloc_page();
@@ -243,10 +241,7 @@ void test_mmu_user(void)
         // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
-        // if table pages leaked, we'd eventually run out — allocate to confirm
-        void *after = pmm_alloc_page();
-        TEST_ASSERT("destroy: no table page leak", after != 0);
-        pmm_free_page(after);
+        TEST_ASSERT_EQ("destroy: no table page leak", pmm_get_free_pages(), before);
     }
 
     // kernel_ttbr0 returns non-zero
@@ -329,6 +324,7 @@ void test_mmu_user(void)
 
     // destroy PGD with mappings across multiple L1 entries
     {
+        unsigned long before = pmm_get_free_pages();
         unsigned long *pgd = mmu_create_user_pgd();
         void *p1 = pmm_alloc_page();
         void *p2 = pmm_alloc_page();
@@ -339,10 +335,7 @@ void test_mmu_user(void)
         // destroy frees all mapped physical pages + table pages + PGD
         mmu_destroy_user_pgd(pgd);
 
-        // verify PMM still works (no corruption)
-        void *check = pmm_alloc_page();
-        TEST_ASSERT("destroy multi-L1: PMM ok", check != 0);
-        pmm_free_page(check);
+        TEST_ASSERT_EQ("destroy multi-L1: no table page leak", pmm_get_free_pages(), before);
     }
 
     // stress: create many PGDs, map, destroy
@@ -686,6 +679,51 @@ void test_mmu_user(void)
 
         mmu_destroy_user_pgd(pgd);
         pmm_free_page(shared); // the stand-in holder
+    }
+
+    // fork's copy shares every page: a writable one turns copy-on-write on both sides, a
+    // read-only one is shared as it is
+    {
+        unsigned long before = pmm_get_free_pages();
+        unsigned long *parent = mmu_create_user_pgd();
+        void *rw = pmm_alloc_page();
+        void *ro = pmm_alloc_page();
+        const unsigned long rw_va = USER_VA_BASE + 0x800000;
+        const unsigned long ro_va = 0x300000000ULL; // another L1 entry
+        unsigned long *child = NULL;
+        unsigned long pf = 0, cf = 0, rpf = 0, rcf = 0, cpa = 0, rcpa = 0;
+        unsigned int rw_rc = 0, ro_rc = 0, rw_rc_after = 0;
+
+        if (parent && rw && ro) {
+            mmu_user_map_page(parent, rw_va, V2P(rw), MMU_PAGE_USER_DATA);
+            mmu_user_map_page(parent, ro_va, V2P(ro), MMU_PAGE_USER_RODATA);
+            child = mmu_copy_user_pgd(parent);
+        }
+        if (child) {
+            mmu_user_query(parent, rw_va, NULL, &pf);
+            mmu_user_query(child, rw_va, &cpa, &cf);
+            mmu_user_query(parent, ro_va, NULL, &rpf);
+            mmu_user_query(child, ro_va, &rcpa, &rcf);
+            rw_rc = pmm_page_refcount(rw);
+            ro_rc = pmm_page_refcount(ro);
+            mmu_destroy_user_pgd(child);
+            rw_rc_after = pmm_page_refcount(rw);
+        }
+
+        TEST_ASSERT("copy: address space copied", child != NULL);
+        TEST_ASSERT_EQ("copy: the child maps the parent's page", cpa & ~0xFFFUL, V2P(rw));
+        TEST_ASSERT("copy: the parent's writable page turns copy-on-write",
+                    (pf & MMU_AP_RO) && (pf & MMU_PTE_COW));
+        TEST_ASSERT("copy: so does the child's", (cf & MMU_AP_RO) && (cf & MMU_PTE_COW));
+        TEST_ASSERT_EQ("copy: the read-only page is shared", rcpa & ~0xFFFUL, V2P(ro));
+        TEST_ASSERT("copy: a read-only page is not copy-on-write",
+                    (rpf & MMU_AP_RO) && (rcf & MMU_AP_RO) && !((rpf | rcf) & MMU_PTE_COW));
+        TEST_ASSERT_EQ("copy: the writable page has two holders", rw_rc, 2);
+        TEST_ASSERT_EQ("copy: the read-only page has two holders", ro_rc, 2);
+        TEST_ASSERT_EQ("copy: destroying the child drops its hold", rw_rc_after, 1);
+
+        mmu_destroy_user_pgd(parent);
+        TEST_ASSERT_EQ("copy: both address spaces freed every page", pmm_get_free_pages(), before);
     }
 
     TEST_SUITE_END("MMU Per-Process Page Tables");

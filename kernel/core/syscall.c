@@ -342,14 +342,38 @@ static int64_t getpgid_handler(struct exception_trap_frame *tf)
     return (int64_t)res_pgid;
 }
 
+// The tty open on fd, or NULL with *err set: EBADF when nothing is open there, ENOTTY otherwise.
+static struct tty *fd_tty(struct process *p, int fd, int *err)
+{
+    if (fd < 0 || fd >= VFS_MAX_FDS) {
+        *err = -EBADF;
+        return NULL;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&p->fd_lock);
+    struct vfs_file *file = p->fd_table[fd];
+    struct tty *tty = NULL;
+    if (!file) {
+        *err = -EBADF;
+    } else if (file->node && file->node->ops == &devfs_tty_ops && file->node->internal_info) {
+        tty = (struct tty *)file->node->internal_info;
+    } else {
+        *err = -ENOTTY;
+    }
+    spin_unlock_irqrestore(&p->fd_lock, flags);
+    return tty;
+}
+
 static int64_t tcsetpgrp_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     int new_pgid = (int)tf->x[1];
 
     int curr_pid = process_current_pid();
-    if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS || new_pgid < 1
-        || new_pgid >= PROCESS_TABLE_SIZE) {
+    if (curr_pid < 0) {
+        return -ESRCH;
+    }
+    if (new_pgid < 1 || new_pgid >= PROCESS_TABLE_SIZE) {
         return -EINVAL;
     }
 
@@ -358,17 +382,10 @@ static int64_t tcsetpgrp_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
-    struct vfs_file *file = curr_proc->fd_table[fd];
-    if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
-        spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-        return -EINVAL;
-    }
-    struct tty *tty = (struct tty *)file->node->internal_info;
-    spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-
+    int err = 0;
+    struct tty *tty = fd_tty(curr_proc, fd, &err);
     if (!tty) {
-        return -EINVAL;
+        return err;
     }
 
     unsigned long irqf = spin_lock_irqsave(&process_table_lock);
@@ -403,8 +420,8 @@ static int64_t tcgetpgrp_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     int curr_pid = process_current_pid();
-    if (curr_pid < 0 || fd < 0 || fd >= VFS_MAX_FDS) {
-        return -EINVAL;
+    if (curr_pid < 0) {
+        return -ESRCH;
     }
 
     struct process *curr_proc = process_slot((uint32_t)curr_pid);
@@ -412,17 +429,10 @@ static int64_t tcgetpgrp_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    unsigned long fdflags = spin_lock_irqsave(&curr_proc->fd_lock);
-    struct vfs_file *file = curr_proc->fd_table[fd];
-    if (!file || !file->node || file->node->ops != &devfs_tty_ops) {
-        spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-        return -EINVAL;
-    }
-    struct tty *tty = (struct tty *)file->node->internal_info;
-    spin_unlock_irqrestore(&curr_proc->fd_lock, fdflags);
-
+    int err = 0;
+    struct tty *tty = fd_tty(curr_proc, fd, &err);
     if (!tty) {
-        return -EINVAL;
+        return err;
     }
 
     unsigned long ttyflags = spin_lock_irqsave(&tty->lock);
@@ -1486,7 +1496,10 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
         }
         spin_unlock_irqrestore(&proc->fd_lock, fdflags);
 
-        if (!file || !file->node || !file->node->ops || !file->node->ops->mmap) {
+        if (!file) {
+            return -EBADF;
+        }
+        if (!file->node || !file->node->ops || !file->node->ops->mmap) {
             vfs_file_put(file);
             return -ENODEV;
         }

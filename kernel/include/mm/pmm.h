@@ -79,9 +79,13 @@ unsigned long pmm_get_total_pages(void);
 /*
  * Arms a one-shot refusal: the calling task's nth page allocation from now
  * returns NULL as though the machine were out of memory. n == 0 disarms.
- * Orders the allocator would have refused anyway are not counted.
+ * Orders the allocator would have refused anyway are not counted. Returns what
+ * was left of the previous arming, so 0 means it fired.
  */
-void pmm_test_fail_nth(unsigned long n);
+unsigned long pmm_test_fail_nth(unsigned long n);
+
+// The order of the free block that starts at ptr, or -1 if none does.
+int pmm_test_free_order(void *ptr);
 #endif
 
 #endif // PERSPICUA_MM_PMM_H

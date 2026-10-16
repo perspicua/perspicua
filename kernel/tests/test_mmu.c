@@ -2,9 +2,29 @@
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/addr.h"
+#include "sched/sched.h"
 #include "string.h"
 
 #define TEST_VA_BASE (KERNEL_VMA + 0x100000000ULL) // PGD index 4
+
+// Returns 0 when a byte at addr can be read and -1 when the read faults; the fixup table resumes it.
+int test_probe_read(const void *addr);
+asm(".pushsection .text\n"
+    ".balign 4\n"
+    ".global test_probe_read\n"
+    ".type test_probe_read, %function\n"
+    "test_probe_read:\n"
+    "1:  ldrb w1, [x0]\n"
+    "    mov w0, #0\n"
+    "    ret\n"
+    "2:  mov w0, #-1\n"
+    "    ret\n"
+    ".size test_probe_read, . - test_probe_read\n"
+    ".pushsection __ex_table, \"a\"\n"
+    ".align 3\n"
+    ".quad 1b, 2b\n"
+    ".popsection\n"
+    ".popsection\n");
 
 void test_mmu(void)
 {
@@ -261,6 +281,33 @@ void test_mmu(void)
         }
         TEST_ASSERT("fill: all unmapped", ok);
 #undef FILL_COUNT
+    }
+
+    // unmapping flushes the TLB: a page read just before it is unmapped faults just after
+    {
+        void *page = pmm_alloc_page();
+        unsigned long vaddr = TEST_VA_BASE + 0x40000;
+        mmu_map_page(vaddr, V2P(page), MMU_FLAGS_KERNEL_RW);
+
+        int before = test_probe_read((const void *)vaddr);
+        mmu_unmap_page(vaddr);
+        int after = test_probe_read((const void *)vaddr);
+        pmm_free_page(page);
+
+        TEST_ASSERT_EQ("probe: a mapped page reads", before, 0);
+        TEST_ASSERT_EQ("unmap: a page read before the unmap faults after it", after, -1);
+    }
+
+    // a kernel stack's guard page faults although allocating the stack has just written to it
+    {
+        unsigned char *stack = kstack_alloc();
+        int guard = stack ? test_probe_read(stack) : 0;
+        int body = stack ? test_probe_read(stack + PAGE_SIZE) : -1;
+        kstack_free(stack);
+
+        TEST_ASSERT("kstack: allocated", stack != NULL);
+        TEST_ASSERT_EQ("kstack: the guard page faults", guard, -1);
+        TEST_ASSERT_EQ("kstack: the page above it reads", body, 0);
     }
 
     TEST_SUITE_END("MMU Dynamic Mapping");

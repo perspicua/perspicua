@@ -25,15 +25,57 @@
 #include "mm/mmu.h"
 #include "mm/pmm.h"
 #include "mm/slab.h"
+#include "sched/process.h"
 #include "sched/sched.h"
 
 // Where the path handed to the syscall probe below lives.
 #define OOM_USER_VA 0x0000000051000000UL
 #define OOM_PATH    "/bin/init.elf"
 
-// Past the last allocation open makes, so the tail of the walk succeeds.
+// Three pages under two L1 and three L2 entries, so a copy builds six tables.
+#define OOM_SPREAD_PAGES 3
+static const unsigned long oom_spread_va[OOM_SPREAD_PAGES] = {OOM_USER_VA, OOM_USER_VA + 0x200000,
+                                                              OOM_USER_VA + 0x100000000UL};
+
+// Past the last allocation each call makes, so the tail of the walk succeeds.
 #define OOM_OPEN_MAX_NTH 16
 #define OOM_PIPE_MAX_NTH 16
+#define OOM_COPY_MAX_NTH 16
+#define OOM_FORK_MAX_NTH 16
+
+// fork's heap allocations are the process and then its task; refusing the second fails every round.
+#define FORK_LAST_HEAP_ALLOC 2
+
+#define OOM_MMAP_PAGES 4
+
+static int spread_map(unsigned long *pgd, void *pages[OOM_SPREAD_PAGES])
+{
+    for (int i = 0; i < OOM_SPREAD_PAGES; i++) {
+        pages[i] = pgd ? test_map_user_page(pgd, oom_spread_va[i], MMU_PAGE_USER_DATA) : NULL;
+        if (!pages[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int spread_held_once(void *const pages[OOM_SPREAD_PAGES])
+{
+    for (int i = 0; i < OOM_SPREAD_PAGES; i++) {
+        if (pmm_page_refcount(pages[i]) != 1) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void unmap_region(unsigned long *pgd, uint64_t region, unsigned long pages)
+{
+    for (unsigned long i = 0; i < pages; i++) {
+        mmu_user_unmap_page(pgd, region + i * PAGE_SIZE);
+    }
+    process_va_free(&process_table[0]->va, region);
+}
 
 static void dummy_task_entry(void) {}
 
@@ -296,7 +338,7 @@ void test_faultinject(void)
                 vfs_close(pipefd[1]);
             }
 
-            void (*const arm[])(unsigned long) = {heap_test_fail_nth, pmm_test_fail_nth};
+            unsigned long (*const arm[])(unsigned long) = {heap_test_fail_nth, pmm_test_fail_nth};
             int enomem_ok = 1;
             int refusals = 0;
             int walked_past = 0;
@@ -338,42 +380,147 @@ void test_faultinject(void)
         }
     }
 
-    // mmap under page refusal reports -ENOMEM and releases all reserved resources
+    // a copy refused at each table it builds unwinds them and leaves the parent writable
+    {
+        unsigned long *parent = mmu_create_user_pgd();
+        void *pages[OOM_SPREAD_PAGES];
+        int built = spread_map(parent, pages);
+        TEST_ASSERT("probe address space for the copy built", built);
+
+        if (built) {
+            unsigned long before = pmm_get_free_pages();
+            unsigned long *child = NULL;
+            int refusals = 0;
+            int clean = 1;
+
+            for (unsigned long nth = 1; nth <= OOM_COPY_MAX_NTH; nth++) {
+                pmm_test_fail_nth(nth);
+                child = mmu_copy_user_pgd(parent);
+                pmm_test_fail_nth(0);
+                if (child) {
+                    break;
+                }
+                refusals++;
+
+                for (int i = 0; i < OOM_SPREAD_PAGES; i++) {
+                    unsigned long flags = 0;
+                    mmu_user_query(parent, oom_spread_va[i], NULL, &flags);
+                    if (flags & (MMU_AP_RO | MMU_PTE_COW)) {
+                        clean = 0;
+                    }
+                }
+                if (!spread_held_once(pages) || pmm_get_free_pages() != before) {
+                    pr_err("test: copy with page %lu refused leaked [FAILED]\n", nth);
+                    clean = 0;
+                }
+            }
+
+            TEST_ASSERT_EQ("a copy can be refused at each of its six tables", refusals, 6);
+            TEST_ASSERT("the walk reaches a copy that succeeds", child != NULL);
+            TEST_ASSERT("a refused copy leaks nothing and leaves the parent writable", clean);
+
+            mmu_destroy_user_pgd(child);
+            TEST_ASSERT_EQ("the copy that succeeded gives back what it took", pmm_get_free_pages(),
+                           before);
+        }
+        mmu_destroy_user_pgd(parent);
+    }
+
+    // fork refused at each page allocation in turn, and then at its task, unwinds all of it
+    {
+        unsigned long *pgd = test_borrow_user_pgd();
+        void *pages[OOM_SPREAD_PAGES];
+        int built = spread_map(pgd, pages);
+        TEST_ASSERT("probe address space for fork built", built);
+
+        if (built) {
+            uint64_t args[6] = {0, 0, 0, 0, 0, 0};
+
+            // A first round grows whatever caches fork draws from, so the counts hold still.
+            heap_test_fail_nth(FORK_LAST_HEAP_ALLOC);
+            test_syscall(SYS_FORK, args);
+            heap_test_fail_nth(0);
+
+            unsigned long before_pages = pmm_get_free_pages();
+            unsigned long before_slab = slab_get_used();
+            int refusals = 0;
+            int walked_past = 0;
+            int clean = 1;
+
+            for (unsigned long nth = 1; nth <= OOM_FORK_MAX_NTH && !walked_past; nth++) {
+                heap_test_fail_nth(FORK_LAST_HEAP_ALLOC);
+                pmm_test_fail_nth(nth);
+                int64_t ret = test_syscall(SYS_FORK, args);
+                walked_past = pmm_test_fail_nth(0) != 0;
+                heap_test_fail_nth(0);
+                refusals += !walked_past;
+
+                if (ret != -ENOMEM || !spread_held_once(pages)
+                    || pmm_get_free_pages() != before_pages || slab_get_used() != before_slab) {
+                    pr_err("test: fork with page %lu refused returned %ld or leaked [FAILED]\n",
+                           nth, (long)ret);
+                    clean = 0;
+                }
+            }
+
+            TEST_ASSERT_EQ("fork can be refused at its six tables and its stack", refusals, 7);
+            TEST_ASSERT("the walk reaches fork's task allocation", walked_past);
+            TEST_ASSERT("every refused fork returns -ENOMEM and leaks nothing", clean);
+        }
+
+        if (pgd) {
+            test_release_user_pgd(pgd);
+        }
+    }
+
+    // an mmap refused at each page in turn unmaps what it mapped and gives its range back
     {
         unsigned long *pgd = test_borrow_user_pgd();
         TEST_ASSERT("probe address space for mmap built", pgd != NULL);
 
         if (pgd) {
+            uint64_t args[6] = {0,
+                                OOM_MMAP_PAGES * PAGE_SIZE,
+                                PROT_READ | PROT_WRITE,
+                                MAP_ANONYMOUS | MAP_PRIVATE,
+                                (uint64_t)-1,
+                                0};
+
+            // Mapped and taken down once first, so the page tables exist and a refusal's
+            // count is data pages alone.
+            int64_t region = test_syscall(SYS_MMAP, args);
+            if (region > 0) {
+                unmap_region(pgd, (uint64_t)region, OOM_MMAP_PAGES);
+            }
+
             unsigned long before = pmm_get_free_pages();
-            uint64_t args[6] = {
-                0, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, (uint64_t)-1, 0};
+            int64_t ret = -ENOMEM;
+            int refusals = 0;
+            int clean = 1;
 
-            pmm_test_fail_nth(1);
-            int64_t ret = test_syscall(SYS_MMAP, args);
-            pmm_test_fail_nth(0);
+            for (unsigned long nth = 1; nth <= OOM_MMAP_PAGES + 1 && ret < 0; nth++) {
+                pmm_test_fail_nth(nth);
+                ret = test_syscall(SYS_MMAP, args);
+                pmm_test_fail_nth(0);
 
-            TEST_ASSERT_EQ("refused mmap page allocation returns -ENOMEM", ret, -ENOMEM);
-            TEST_ASSERT_EQ("refused mmap leaks no pages", pmm_get_free_pages(), before);
+                if (ret == -ENOMEM) {
+                    refusals++;
+                    clean &= pmm_get_free_pages() == before;
+                } else if (ret < 0) {
+                    clean = 0;
+                }
+            }
 
-            test_release_user_pgd(pgd);
-        }
-    }
+            TEST_ASSERT("mmap succeeds unarmed", region > 0);
+            TEST_ASSERT_EQ("an mmap can be refused at each of its pages", refusals, OOM_MMAP_PAGES);
+            TEST_ASSERT("every refused mmap is -ENOMEM and leaks no pages", clean);
+            TEST_ASSERT_EQ("a refused mmap gives its address range back", ret, region);
 
-    // fork under page refusal reports -ENOMEM and releases the claimed slot
-    {
-        unsigned long *pgd = test_borrow_user_pgd();
-        TEST_ASSERT("probe address space for fork built", pgd != NULL);
-
-        if (pgd) {
-            unsigned long before = pmm_get_free_pages();
-            uint64_t args[6] = {0, 0, 0, 0, 0, 0};
-
-            pmm_test_fail_nth(1);
-            int64_t ret = test_syscall(SYS_FORK, args);
-            pmm_test_fail_nth(0);
-
-            TEST_ASSERT_EQ("refused fork allocation returns -ENOMEM", ret, -ENOMEM);
-            TEST_ASSERT_EQ("refused fork leaks no pages", pmm_get_free_pages(), before);
+            if (ret > 0) {
+                unmap_region(pgd, (uint64_t)ret, OOM_MMAP_PAGES);
+            }
+            TEST_ASSERT_EQ("the mmap that succeeded gives back its pages", pmm_get_free_pages(),
+                           before);
 
             test_release_user_pgd(pgd);
         }

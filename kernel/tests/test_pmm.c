@@ -12,6 +12,9 @@
 
 #define GB (1UL << 30)
 
+// Single pages taken to drain the low-order free lists before a block is split.
+#define MERGE_RUN 1024
+
 static int parse(const uint32_t *reg, unsigned long bytes, uint32_t ac, uint32_t sc,
                  struct pmm_range *r, int max, unsigned long *ignored)
 {
@@ -426,46 +429,50 @@ void test_pmm(void)
         }
     }
 
-    // buddy merging
-
-    // two single pages free -> can alloc 2-page block
+    // buddies freed as single pages merge back into one block, an order at a time
     {
-        void *a = pmm_alloc_page();
-        void *b = pmm_alloc_page();
-        pmm_free_page(a);
-        pmm_free_page(b);
-        void *pair = pmm_alloc_pages(2);
-        TEST_ASSERT("buddy merge 2p", pair != NULL);
-        TEST_ASSERT("buddy merge aligned", ((unsigned long)pair & (PAGE_SIZE - 1)) == 0);
-        pmm_free_pages(pair);
-    }
+        static void *run[MERGE_RUN];
+        int got = 0;
+        while (got < MERGE_RUN && (run[got] = pmm_alloc_page()) != NULL) {
+            got++;
+        }
 
-    // four pages free -> should merge up to order 2
-    {
-        void *pages[4];
-        for (int i = 0; i < 4; i++) {
-            pages[i] = pmm_alloc_page();
+        // Once the low-order lists are spent, single pages come out of a split block in order.
+        int base = -1;
+        for (int i = 0; i + 8 <= got && base < 0; i++) {
+            int whole = (V2P((unsigned long)run[i]) / PAGE_SIZE) % 8 == 0;
+            for (int j = 1; j < 8 && whole; j++) {
+                whole = run[i + j] == (char *)run[i] + j * PAGE_SIZE;
+            }
+            if (whole) {
+                base = i;
+            }
         }
-        for (int i = 0; i < 4; i++) {
-            pmm_free_page(pages[i]);
-        }
-        void *quad = pmm_alloc_pages(4);
-        TEST_ASSERT("buddy merge 4p", quad != NULL);
-        pmm_free_pages(quad);
-    }
+        TEST_ASSERT("buddy merge: an aligned run of 8 single pages", base >= 0);
 
-    // eight pages free -> merge to order 3
-    {
-        void *pages[8];
-        for (int i = 0; i < 8; i++) {
-            pages[i] = pmm_alloc_page();
+        if (base >= 0) {
+            void *head = run[base];
+            pmm_free_page(run[base]);
+            TEST_ASSERT_EQ("buddy merge: a page with a held buddy stays order 0",
+                           pmm_test_free_order(head), 0);
+            pmm_free_page(run[base + 1]);
+            TEST_ASSERT_EQ("buddy merge 2p", pmm_test_free_order(head), 1);
+            TEST_ASSERT_EQ("buddy merge: the absorbed buddy heads no block",
+                           pmm_test_free_order(run[base + 1]), -1);
+            pmm_free_page(run[base + 2]);
+            pmm_free_page(run[base + 3]);
+            TEST_ASSERT_EQ("buddy merge 4p", pmm_test_free_order(head), 2);
+            for (int j = 4; j < 8; j++) {
+                pmm_free_page(run[base + j]);
+            }
+            TEST_ASSERT("buddy merge 8p", pmm_test_free_order(head) >= 3);
+            for (int j = 0; j < 8; j++) {
+                run[base + j] = NULL;
+            }
         }
-        for (int i = 0; i < 8; i++) {
-            pmm_free_page(pages[i]);
+        for (int i = 0; i < got; i++) {
+            pmm_free_page(run[i]);
         }
-        void *octet = pmm_alloc_pages(8);
-        TEST_ASSERT("buddy merge 8p", octet != NULL);
-        pmm_free_pages(octet);
     }
 
     // partial merge: free 2, keep 1 between -> no merge past held page
@@ -703,24 +710,6 @@ void test_pmm(void)
         for (int i = 0; i < 20; i++) {
             pmm_free_page(pages[i]);
         }
-    }
-
-    // fragment then request larger block
-    //    Fragment the allocator, then request a multi-page block to
-    //    verify buddy merging still works in a fragmented state.
-    {
-        void *pages[8];
-        for (int i = 0; i < 8; i++) {
-            pages[i] = pmm_alloc_page();
-        }
-        // Free all -> buddies should merge back up
-        for (int i = 0; i < 8; i++) {
-            pmm_free_page(pages[i]);
-        }
-        // Now alloc 8-page block — requires full merge to order 3
-        void *big = pmm_alloc_pages(8);
-        TEST_ASSERT("post-frag 8p alloc", big != NULL);
-        pmm_free_pages(big);
     }
 
     // stress tests

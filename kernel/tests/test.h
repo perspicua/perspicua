@@ -128,10 +128,13 @@ void test_wait_scheduler(void);
 void test_semaphore_scheduler(void);
 void test_completion_scheduler(void);
 void test_rwsem_scheduler(void);
+void test_spinlock_scheduler(void);
 #ifdef CONFIG_LOCKDEP
 void test_lockdep_scheduler(void);
+void test_lockdep_spin(void);
 #else
 static inline void test_lockdep_scheduler(void) {}
+static inline void test_lockdep_spin(void) {}
 #endif
 
 // scheduler tests (must be called after enable_interrupts + sched_init)
@@ -140,8 +143,5 @@ void run_scheduler_tests(void);
 // post-init tests (must be called after a user process exists)
 void run_post_init_tests(void);
 void test_signals(void);
-
-void test_kasan_heap(void);
-void test_kasan_slab(void);
 
 #endif // PERSPICUA_TESTS_TEST_H

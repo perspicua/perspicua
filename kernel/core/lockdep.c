@@ -181,45 +181,39 @@ void lockdep_acquire(spinlock_t *lock)
     }
 
     uintptr_t new_addr = (uintptr_t)lock;
+    char msg[96];
+    const char *violation = NULL;
 
-    // Check for recursive lock acquisition
     for (int i = 0; i < count; i++) {
         if (held_locks[core][i] == new_addr) {
-            raw_spin_unlock(&lockdep_lock);
-            lockdep_disabled[core] = 0;
-            PANIC("lockdep: recursive lock acquisition detected");
+            snprintf(msg, sizeof(msg), "lockdep: recursive acquisition of spinlock %p on core %d",
+                     (void *)new_addr, core);
+            violation = msg;
+            break;
         }
     }
 
-    // Update dependency graph
-    int new_node = get_or_create_node(new_addr);
-    if (new_node >= 0) {
-        for (int i = 0; i < count; i++) {
-            int held_node = get_or_create_node(held_locks[core][i]);
-            if (held_node < 0) {
-                continue;
-            }
-
-            if (lockdep_order(held_node, new_node)) {
-                raw_spin_unlock(&lockdep_lock);
-                lockdep_disabled[core] = 0;
-                pr_err("\n========================================\n");
-                pr_err("LOCKDEP: CIRCULAR DEPENDENCY DETECTED!\n");
-                pr_err("Core %d is holding lock at %p\n", core, (void *)held_locks[core][i]);
-                pr_err("And is trying to acquire lock at %p\n", (void *)new_addr);
-                pr_err("But this creates a cycle in the globally observed order.\n");
-                pr_err("========================================\n");
-                PANIC("lockdep: deadlock cycle");
-            }
+    int new_node = violation ? -1 : get_or_create_node(new_addr);
+    for (int i = 0; new_node >= 0 && i < count && !violation; i++) {
+        int held_node = get_or_create_node(held_locks[core][i]);
+        if (held_node >= 0 && lockdep_order(held_node, new_node)) {
+            snprintf(msg, sizeof(msg),
+                     "lockdep: spinlock order cycle on core %d: %p held, acquiring %p", core,
+                     (void *)held_locks[core][i], (void *)new_addr);
+            violation = msg;
         }
     }
 
-    // Record the acquisition
+    // Recorded even on a violation, so a quiet-mode test's release still balances.
     held_locks[core][count] = new_addr;
     held_count[core] = count + 1;
 
     raw_spin_unlock(&lockdep_lock);
     lockdep_disabled[core] = 0;
+
+    if (violation) {
+        lockdep_violation(violation);
+    }
 }
 
 void lockdep_release(spinlock_t *lock)

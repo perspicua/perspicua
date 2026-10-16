@@ -435,9 +435,23 @@ void pmm_init(void)
 #ifdef CONFIG_TESTS
 static struct fail_arming pmm_fail;
 
-void pmm_test_fail_nth(unsigned long n)
+unsigned long pmm_test_fail_nth(unsigned long n)
 {
-    fail_arm(&pmm_fail, n);
+    return fail_arm(&pmm_fail, n);
+}
+
+int pmm_test_free_order(void *ptr)
+{
+    unsigned long pfn = V2P((unsigned long)ptr) / PAGE_SIZE;
+    if (pfn >= pmm_num_pages) {
+        return -1;
+    }
+
+    unsigned long irq = spin_lock_irqsave(&pmm_lock);
+    struct pmm_page *p = pfn_to_page(pfn);
+    int order = p->is_free ? (int)p->order : -1;
+    spin_unlock_irqrestore(&pmm_lock, irq);
+    return order;
 }
 #endif
 

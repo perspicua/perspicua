@@ -150,9 +150,9 @@ void heap_init(void)
 #ifdef CONFIG_TESTS
 static struct fail_arming heap_fail;
 
-void heap_test_fail_nth(unsigned long n)
+unsigned long heap_test_fail_nth(unsigned long n)
 {
-    fail_arm(&heap_fail, n);
+    return fail_arm(&heap_fail, n);
 }
 #endif
 

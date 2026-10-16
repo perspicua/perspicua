@@ -215,6 +215,39 @@ void test_heap_props(void)
         TEST_ASSERT("filling the usable region leaves the redzone intact", redzone_ok);
     }
 
+    // one byte past the usable region breaks the redzone heap_free checks; slab objects have none
+    {
+        int caught = 1;
+        int probed = 0;
+
+        for (int i = 0; i < sweep_count; i++) {
+            if (sweep[i] <= TEST_SLAB_MAX) {
+                continue;
+            }
+            unsigned char *p = heap_malloc(sweep[i]);
+            if (!p) {
+                caught = 0;
+                continue;
+            }
+
+            unsigned long usable = heap_test_usable_size(p);
+            unsigned char saved = p[usable];
+            p[usable] = (unsigned char)~saved;
+            if (heap_test_redzone_ok(p)) {
+                caught = 0;
+            }
+            p[usable] = saved;
+            if (!heap_test_redzone_ok(p)) {
+                caught = 0;
+            }
+            heap_free(p);
+            probed++;
+        }
+
+        TEST_ASSERT("the sweep reaches first-fit sizes", probed > 0);
+        TEST_ASSERT("a one-byte overrun breaks the redzone", caught);
+    }
+
     // a full allocation does not reach its neighbours. Three at a time,
     // because an overrun lands on whichever of them follows it in memory
     {

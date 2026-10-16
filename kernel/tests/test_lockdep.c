@@ -1,5 +1,5 @@
 /*
- * test_lockdep.c - Tests for sleeping lockdep validator.
+ * test_lockdep.c - Tests for the lockdep validator, sleeping locks and spinlocks.
  */
 
 #ifdef CONFIG_LOCKDEP
@@ -13,6 +13,10 @@
     #include "test.h"
 
 static int la, lb, lc;
+
+static spinlock_t sl_a = SPINLOCK_INIT;
+static spinlock_t sl_b = SPINLOCK_INIT;
+static spinlock_t sl_c = SPINLOCK_INIT;
 
 static struct kmutex km_rec;
 static struct kmutex km_a;
@@ -380,6 +384,70 @@ void test_lockdep_scheduler(void)
     }
 
     TEST_SUITE_END("Lockdep-Sleeping");
+}
+
+// Static locks: lockdep keys its graph by address, and a stack lock's address is reused.
+void test_lockdep_spin(void)
+{
+    TEST_SUITE_BEGIN("Lockdep-Spinlock");
+    lockdep_test_quiet(1);
+
+    // A then B, twice, records the order without a violation
+    {
+        int v0 = lockdep_test_violations();
+        for (int i = 0; i < 2; i++) {
+            spin_lock(&sl_a);
+            spin_lock(&sl_b);
+            spin_unlock(&sl_b);
+            spin_unlock(&sl_a);
+        }
+        TEST_ASSERT_EQ("spin lockdep: A then B gives no violation", lockdep_test_violations() - v0,
+                       0);
+    }
+
+    // B then A reverses the recorded order
+    {
+        int v0 = lockdep_test_violations();
+        spin_lock(&sl_b);
+        spin_lock(&sl_a);
+        spin_unlock(&sl_a);
+        spin_unlock(&sl_b);
+        TEST_ASSERT_EQ("spin lockdep: B then A gives 1 violation", lockdep_test_violations() - v0,
+                       1);
+    }
+
+    // B then C, then C then A closes a cycle through B
+    {
+        int v0 = lockdep_test_violations();
+        spin_lock(&sl_b);
+        spin_lock(&sl_c);
+        spin_unlock(&sl_c);
+        spin_unlock(&sl_b);
+        TEST_ASSERT_EQ("spin lockdep: B then C gives no violation", lockdep_test_violations() - v0,
+                       0);
+
+        spin_lock(&sl_c);
+        spin_lock(&sl_a);
+        spin_unlock(&sl_a);
+        spin_unlock(&sl_c);
+        TEST_ASSERT_EQ("spin lockdep: C then A gives 1 violation", lockdep_test_violations() - v0,
+                       1);
+    }
+
+    // Taking a held lock again is reported; the second acquire is only told to lockdep, so
+    // nothing spins
+    {
+        int v0 = lockdep_test_violations();
+        spin_lock(&sl_a);
+        lockdep_acquire(&sl_a);
+        TEST_ASSERT_EQ("spin lockdep: recursion gives 1 violation", lockdep_test_violations() - v0,
+                       1);
+        lockdep_release(&sl_a);
+        spin_unlock(&sl_a);
+    }
+
+    lockdep_test_quiet(0);
+    TEST_SUITE_END("Lockdep-Spinlock");
 }
 
 #endif // CONFIG_LOCKDEP
