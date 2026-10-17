@@ -32,6 +32,7 @@ void run_all_tests(void)
     test_fat32();
     test_fat32_corrupt();
     test_pipe();
+    test_procfs();
     test_mutex();
     test_semaphore();
     test_completion();

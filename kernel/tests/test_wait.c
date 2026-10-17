@@ -493,6 +493,32 @@ static char pipe_test_buf[64];
 static int pipe_test_fds[2] = {-1, -1};
 static struct task *pipe_test_reader = NULL;
 
+static volatile int pipe_writer_done;
+static volatile int pipe_writer_ret;
+static const char *pipe_writer_src;
+static size_t pipe_writer_len;
+static struct task *pipe_writer_task;
+static char pipe_big[6000];
+static char pipe_back[PIPE_BUF_SIZE];
+
+static void task_pipe_writer(void)
+{
+    pipe_writer_task = sched_current_task();
+    pipe_writer_ret = vfs_write(pipe_test_fds[1], pipe_writer_src, pipe_writer_len);
+    pipe_writer_done = 1;
+}
+
+static void start_pipe_writer(const char *src, size_t len)
+{
+    pipe_writer_done = 0;
+    pipe_writer_ret = 0;
+    pipe_writer_task = NULL;
+    pipe_writer_src = src;
+    pipe_writer_len = len;
+    sched_create_task(task_pipe_writer);
+    WAIT_UNTIL(task_blocked(pipe_writer_task));
+}
+
 static void task_pipe_reader(void)
 {
     pipe_test_reader = sched_current_task();
@@ -890,6 +916,74 @@ void test_wait_scheduler(void)
         TEST_ASSERT_EQ("reader got 0 for EOF", pipe_test_bytes, 0);
 
         vfs_close(pipe_test_fds[0]);
+    }
+
+    // 11b. A writer blocks on a full pipe, a read lets it finish, and the bytes wrap the ring intact
+    {
+        TEST_ASSERT_EQ("create pipe for blocked writer", pipe_create(pipe_test_fds), 0);
+        for (size_t i = 0; i < sizeof(pipe_big); i++) {
+            pipe_big[i] = (char)(i % 251);
+        }
+
+        start_pipe_writer(pipe_big, sizeof(pipe_big));
+        TEST_ASSERT("writer blocks on a full pipe",
+                    task_blocked(pipe_writer_task) && !pipe_writer_done);
+
+        int first = vfs_read(pipe_test_fds[0], pipe_back, PIPE_BUF_SIZE);
+        TEST_ASSERT_EQ("the pipe held its capacity", first, PIPE_BUF_SIZE);
+        TEST_ASSERT("first bytes intact", memcmp(pipe_back, pipe_big, PIPE_BUF_SIZE) == 0);
+
+        WAIT_UNTIL(pipe_writer_done);
+        TEST_ASSERT_EQ("writer finished the whole write", pipe_writer_ret, (int)sizeof(pipe_big));
+
+        int rest = vfs_read(pipe_test_fds[0], pipe_back, PIPE_BUF_SIZE);
+        TEST_ASSERT_EQ("the rest is queued", rest, (int)sizeof(pipe_big) - PIPE_BUF_SIZE);
+        TEST_ASSERT("wrapped bytes intact",
+                    memcmp(pipe_back, pipe_big + PIPE_BUF_SIZE, sizeof(pipe_big) - PIPE_BUF_SIZE)
+                        == 0);
+
+        vfs_close(pipe_test_fds[0]);
+        vfs_close(pipe_test_fds[1]);
+    }
+
+    // 11c. A write that fits the pipe waits for room for all of it, so none of it lands early
+    {
+        TEST_ASSERT_EQ("create pipe for atomic write", pipe_create(pipe_test_fds), 0);
+        memset(pipe_big, 'f', 4000);
+        vfs_write(pipe_test_fds[1], pipe_big, 4000);
+
+        static char line[200];
+        memset(line, 'A', sizeof(line));
+        start_pipe_writer(line, sizeof(line));
+        TEST_ASSERT("atomic writer waits for room",
+                    task_blocked(pipe_writer_task) && !pipe_writer_done);
+
+        TEST_ASSERT_EQ("none of the 200 landed beside the 4000",
+                       vfs_read(pipe_test_fds[0], pipe_back, PIPE_BUF_SIZE), 4000);
+        WAIT_UNTIL(pipe_writer_done);
+        TEST_ASSERT_EQ("atomic writer wrote it all", pipe_writer_ret, (int)sizeof(line));
+        TEST_ASSERT("the 200 arrive together",
+                    vfs_read(pipe_test_fds[0], pipe_back, PIPE_BUF_SIZE) == (int)sizeof(line)
+                        && memcmp(pipe_back, line, sizeof(line)) == 0);
+
+        vfs_close(pipe_test_fds[0]);
+        vfs_close(pipe_test_fds[1]);
+    }
+
+    // 11d. A writer blocked on a full pipe gets EPIPE when the last reader closes
+    {
+        TEST_ASSERT_EQ("create pipe for reader close", pipe_create(pipe_test_fds), 0);
+        memset(pipe_big, 'f', PIPE_BUF_SIZE);
+        vfs_write(pipe_test_fds[1], pipe_big, PIPE_BUF_SIZE);
+
+        start_pipe_writer(pipe_big, 100);
+        TEST_ASSERT("writer blocked before the reader closes", task_blocked(pipe_writer_task));
+
+        vfs_close(pipe_test_fds[0]);
+        WAIT_UNTIL(pipe_writer_done);
+        TEST_ASSERT_EQ("writer woke with EPIPE", pipe_writer_ret, -EPIPE);
+
+        vfs_close(pipe_test_fds[1]);
     }
 
     // 12. TTY reader blocks on empty input and wakes on received byte

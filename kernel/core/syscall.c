@@ -1066,11 +1066,29 @@ static int64_t pipe_handler(struct exception_trap_frame *tf)
     return res;
 }
 
+// A pipe has no position, so seeking one or positioned I/O on one is ESPIPE.
+static int fd_is_pipe(int fd)
+{
+    struct process *p = process_current();
+    if (!p || fd < 0 || fd >= VFS_MAX_FDS) {
+        return 0;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&p->fd_lock);
+    struct vfs_file *file = p->fd_table[fd];
+    int pipe = file && pipe_is_pipe(file->node);
+    spin_unlock_irqrestore(&p->fd_lock, flags);
+    return pipe;
+}
+
 static int64_t lseek_handler(struct exception_trap_frame *tf)
 {
     int fd = (int)tf->x[0];
     off_t offset = (off_t)tf->x[1];
     int whence = (int)tf->x[2];
+    if (fd_is_pipe(fd)) {
+        return -ESPIPE;
+    }
     return vfs_lseek(fd, offset, whence);
 }
 
@@ -1325,6 +1343,9 @@ static int64_t pwrite_handler(struct exception_trap_frame *tf)
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (fd_is_pipe(fd)) {
+        return -ESPIPE;
+    }
     if (len == 0) {
         return vfs_pwrite(fd, "", 0, offset);
     }
@@ -1374,6 +1395,9 @@ static int64_t pread_handler(struct exception_trap_frame *tf)
     size_t len = (size_t)(tf->x[2]);
     vfs_off_t offset = (vfs_off_t)(tf->x[3]);
 
+    if (fd_is_pipe(fd)) {
+        return -ESPIPE;
+    }
     if (len == 0) {
         char none;
         return vfs_pread(fd, &none, 0, offset);

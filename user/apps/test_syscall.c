@@ -354,6 +354,39 @@ void test_procfs(void)
     CHECK(r > 0);
     CHECK(strstr(buf, "Pid:") != NULL);
     close(fd);
+
+    // 5. /proc/self/maps lists every region, even with the region table full. Nothing unmaps,
+    // so a child fills its own table and exits 0 only if the listing has a line per region.
+    {
+        int pid = fork();
+        CHECK(pid >= 0);
+        if (pid == 0) {
+            static char listing[4096];
+            int full = 0;
+            for (int i = 0; i < 64 && !full; i++) {
+                full = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_ANONYMOUS, -1, 0) == MAP_FAILED;
+            }
+            int lines = -1;
+            int mfd = open("/proc/self/maps", O_RDONLY);
+            if (mfd >= 0) {
+                int total = 0;
+                int n;
+                while (total < (int)sizeof(listing) - 1
+                       && (n = read(mfd, listing + total, sizeof(listing) - 1 - (size_t)total))
+                              > 0) {
+                    total += n;
+                }
+                lines = 0;
+                for (int i = 0; i < total; i++) {
+                    lines += listing[i] == '\n';
+                }
+            }
+            // mmap is refused once the table holds 64 regions, whatever was there before.
+            _exit(full && lines == 64 ? 0 : 1);
+        }
+        int st = 0;
+        CHECK(waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0);
+    }
 }
 
 // Issues a syscall directly so an unassigned number can be reached.
@@ -536,6 +569,23 @@ void test_audit_fixes(void)
         char small[1];
         errno = 0;
         CHECK(getcwd(small, sizeof(small)) == NULL && errno == ERANGE);
+    }
+
+    // A pipe has no position: seeks and positioned I/O are ESPIPE, and fstat calls it a FIFO.
+    {
+        int pfd[2];
+        CHECK(pipe(pfd) == 0);
+        char c = 0;
+        struct stat st;
+        errno = 0;
+        CHECK(lseek(pfd[0], 0, SEEK_CUR) < 0 && errno == ESPIPE);
+        errno = 0;
+        CHECK(pread(pfd[0], &c, 1, 0) < 0 && errno == ESPIPE);
+        errno = 0;
+        CHECK(pwrite(pfd[1], &c, 1, 0) < 0 && errno == ESPIPE);
+        CHECK(fstat(pfd[1], &st) == 0 && S_ISFIFO(st.st_mode));
+        close(pfd[0]);
+        close(pfd[1]);
     }
 
     // An unknown whence is EINVAL.

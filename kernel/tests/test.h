@@ -114,6 +114,7 @@ void test_vfs(void);
 void test_fat32(void);
 void test_fat32_corrupt(void);
 void test_pipe(void);
+void test_procfs(void);
 void test_mutex(void);
 void test_semaphore(void);
 void test_completion(void);

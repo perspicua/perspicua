@@ -21,8 +21,6 @@
 #include "sched/process.h"
 #include "sched/wait.h"
 
-#define PIPE_BUF_SIZE 4096
-
 /*
  * struct pipe - Shared IPC buffer and synchronization state.
  */
@@ -88,6 +86,19 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
     return (int)read;
 }
 
+// Copies n bytes in at head; the caller has checked they fit.
+static void pipe_put(struct pipe *pipe, const char *src, size_t n)
+{
+    size_t first = PIPE_BUF_SIZE - pipe->head;
+    if (first > n) {
+        first = n;
+    }
+    memcpy(&pipe->buffer[pipe->head], src, first);
+    memcpy(pipe->buffer, src + first, n - first);
+    pipe->head = (pipe->head + n) % PIPE_BUF_SIZE;
+    pipe->count += n;
+}
+
 static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, vfs_off_t *offset)
 {
     (void)offset; // A pipe has no position.
@@ -100,6 +111,9 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
         return -EBADF;
     }
 
+    // A write that fits the pipe goes in whole, so no other writer's bytes land inside it.
+    size_t need = count <= PIPE_BUF_SIZE ? count : 1;
+
     unsigned long fdflags = spin_lock_irqsave(&pipe->lock);
 
     while (written < count) {
@@ -110,27 +124,30 @@ static int pipe_write(struct vfs_file *file, const void *buffer, size_t count, v
             return written > 0 ? (int)written : -EPIPE;
         }
 
-        if (pipe->count < PIPE_BUF_SIZE) {
-            pipe->buffer[pipe->head] = buf[written++];
-            pipe->head = (pipe->head + 1) % PIPE_BUF_SIZE;
-            pipe->count++;
-        } else {
-            if (file->flags & O_NONBLOCK) {
-                if (written == 0) {
-                    spin_unlock_irqrestore(&pipe->lock, fdflags);
-                    return -EAGAIN;
-                }
-                break;
-            }
-            // Wake waiting readers before blocking so writes larger than the buffer don't deadlock.
-            wq_wake_all(&pipe->read_wq);
+        size_t space = PIPE_BUF_SIZE - pipe->count;
+        if (space >= need) {
+            size_t n = count - written < space ? count - written : space;
+            pipe_put(pipe, buf + written, n);
+            written += n;
+            continue;
+        }
 
-            int r = wq_wait_event_interruptible_locked(
-                &pipe->write_wq, pipe->count < PIPE_BUF_SIZE || pipe->readers == 0, &pipe->lock);
-            if (r != 0) {
+        if (file->flags & O_NONBLOCK) {
+            if (written == 0) {
                 spin_unlock_irqrestore(&pipe->lock, fdflags);
-                return written > 0 ? (int)written : r;
+                return -EAGAIN;
             }
+            break;
+        }
+        // Wake waiting readers before blocking so writes larger than the buffer don't deadlock.
+        wq_wake_all(&pipe->read_wq);
+
+        int r = wq_wait_event_interruptible_locked(
+            &pipe->write_wq, PIPE_BUF_SIZE - pipe->count >= need || pipe->readers == 0,
+            &pipe->lock);
+        if (r != 0) {
+            spin_unlock_irqrestore(&pipe->lock, fdflags);
+            return written > 0 ? (int)written : r;
         }
     }
 
@@ -184,8 +201,21 @@ static int pipe_close(struct vfs_file *file)
     return 0;
 }
 
+static int pipe_stat(struct vfs_vnode *node, struct stat *buf)
+{
+    (void)node;
+    buf->st_mode = S_IFIFO | 0600;
+    buf->st_size = 0;
+    return 0;
+}
+
 static struct vfs_vnode_ops pipe_ops = {
-    .read = pipe_read, .write = pipe_write, .close = pipe_close};
+    .read = pipe_read, .write = pipe_write, .close = pipe_close, .stat = pipe_stat};
+
+int pipe_is_pipe(const struct vfs_vnode *node)
+{
+    return node && node->ops == &pipe_ops;
+}
 
 int pipe_create(int pipefd[2])
 {
@@ -212,6 +242,7 @@ int pipe_create(int pipefd[2])
     }
 
     memset(node, 0, sizeof(struct vfs_vnode));
+    // The VFS has no FIFO type; pipe_stat reports one, and the syscalls refuse to seek it.
     node->type = VFS_VNODE_TYPE_REGULAR;
     node->ops = &pipe_ops;
     node->internal_info = pipe;

@@ -9,4 +9,11 @@
 
 void procfs_init(void);
 
+#ifdef CONFIG_TESTS
+    #include <stddef.h>
+
+// Renders the index-th fixed /proc file into buf; -ENOENT past the last one.
+int procfs_test_generate(size_t index, char *buf, int size);
+#endif
+
 #endif // PERSPICUA_FS_PROCFS_H

@@ -79,10 +79,8 @@ static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t si
 /*
  * procfs_append - Bounded snprintf accumulator.
  *
- * vsnprintf returns the would-be length, so naively doing pos += snprintf() lets
- * pos run past the buffer; the next call would then be handed a negative (wrapped
- * to huge) size and write out of bounds. This guards *pos against the size so the
- * size argument is always valid.
+ * vsnprintf returns the would-be length; *pos advances only by what landed, so
+ * it never passes size - 1 and a generator can return it as the length to copy.
  */
 static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
 {
@@ -94,7 +92,7 @@ static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
     int n = vsnprintf(buf + *pos, (size_t)(size - *pos), fmt, ap);
     va_end(ap);
     if (n > 0) {
-        *pos += n;
+        *pos = n < size - *pos ? *pos + n : size - 1;
     }
 }
 
@@ -341,10 +339,15 @@ static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t siz
     return ret;
 }
 
+_Static_assert(USER_VA_MAX_REGIONS
+                       * sizeof("0000000000000000-0000000000000000 18446744073709551615 pages\n")
+                   <= PROCFS_CONTENT_MAX,
+               "a maps line per region must fit");
+
 static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset)
 {
     uintptr_t pid = (uintptr_t)file->node->internal_info;
-    char *buf = heap_malloc(2048);
+    char *buf = heap_malloc(PROCFS_CONTENT_MAX);
     if (!buf) {
         return -ENOMEM;
     }
@@ -359,7 +362,7 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
 
     for (size_t i = 0; i < process_table[pid]->va.count; i++) {
         struct va_region *r = &process_table[pid]->va.regions[i];
-        procfs_append(buf, &pos, 2048, "%016lx-%016lx %lu pages\n", r->base,
+        procfs_append(buf, &pos, PROCFS_CONTENT_MAX, "%016lx-%016lx %lu pages\n", r->base,
                       r->base + r->pages * PAGE_SIZE, r->pages);
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
@@ -561,6 +564,16 @@ static const struct procfs_static_file {
 };
 
 #define PROCFS_STATIC_COUNT (sizeof(procfs_static_files) / sizeof(procfs_static_files[0]))
+
+#ifdef CONFIG_TESTS
+int procfs_test_generate(size_t index, char *buf, int size)
+{
+    if (index >= PROCFS_STATIC_COUNT) {
+        return -ENOENT;
+    }
+    return procfs_static_files[index].generate(buf, size);
+}
+#endif
 
 static struct vfs_vnode procfs_static_vnodes[PROCFS_STATIC_COUNT];
 
