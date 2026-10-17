@@ -11,7 +11,7 @@ Raspberry Pi 4B (BCM2711, Cortex-A72), written for AArch64.
 It boots at EL1 with the MMU enabled, runs a preemptive round-robin scheduler
 across per-core runqueues, mounts a FAT32 root filesystem from the SD card
 through a VFS layer, and execs an ELF init process into userspace. Development
-happens against QEMU's `raspi4b` machine; changes are validated on real
+happens against QEMU's `raspi4b` machine and on real hardware; changes are validated on real
 hardware before release.
 
 <p align="center">
