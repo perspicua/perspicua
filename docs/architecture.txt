@@ -21,9 +21,11 @@ SOURCE TREE
     arch/               AArch64 entry and low-level asm: boot.S (early boot,
                         secondary-core parking), vector.S (exception vectors),
                         switch.S (context switch), uaccess.S (fault-fixup user
-                        copies), exception.c (synchronous + IRQ handlers).
+                        copies), exception.c (synchronous + IRQ handlers),
+                        irq.c (interrupt masking and the IRQ handler table).
     core/               Cross-cutting services: syscall dispatch, signals, the
-                        tty line discipline, timer, ELF loader, spinlock; the
+                        tty (raw input; ^C, ^\ and ^Z raise SIGINT, SIGQUIT and
+                        SIGTSTP), timer, ELF loader, spinlock; the
                         sleeping locks kmutex, ksem, completion and rwsem;
                         lockdep; and the in-kernel debugger (kdb).
     mm/                 Memory management: pmm (physical page allocator), mmu
@@ -46,7 +48,8 @@ SOURCE TREE
                         sched/, fs/, driver/, arch/, devicetree/, debug/).
 
   libc/                 Freestanding C library, split by consumer:
-    kernel/             The allocator and hooks used by kernel code.
+    kernel/             malloc over the kernel heap, the console write hook,
+                        and the panic handler (panic.c).
     user/               The userspace allocator, syscall wrappers, and stdio
                         glue.
     src/                Code shared by both (string, printf, ctype, stdlib).
@@ -64,11 +67,13 @@ SOURCE TREE
                         outgrows that -- apps/sh/ is split into main, parse,
                         exec and edit.
 
-  cmake/                The cross-compilation toolchain file.
+  cmake/                The toolchain file, the config.h template, and the
+                        build-version generator.
   scripts/              Build/dev helpers: symbol-table generation, GDB helpers,
                         and run_tests.sh (the headless test harness).
-  pi4-boot/             Firmware, the devicetree blob, and the final kernel8.img
-                        that gets flashed or handed to QEMU.
+  pi4-boot/             Firmware, config.txt, the devicetree blob, and the
+                        kernel8.img `just build` publishes for flashing. QEMU
+                        boots the image in the build tree.
 
 
 ================================================================================
@@ -100,13 +105,12 @@ matters, because each stage depends on the ones before it:
                              spin-table release addresses from the DTB), then
                              bring up the VFS, the process subsystem, devfs, and
                              probe the remaining devices. Mount FAT32 from "sd0"
-                             at "/", start the writeback daemon, mount devfs at
-                             "/dev", and init procfs.
+                             at "/", mount devfs at "/dev", and init procfs.
 
-  Launch.  Enable interrupts, (optionally run the test suites under
-           CONFIG_TESTS), then exec /bin/init.elf as the first user process.
-           The boot thread parks in a wfe loop; the scheduler runs everything
-           from here.
+  Launch.  Enable interrupts, run the boot and scheduler suites under
+           CONFIG_TESTS, create /bin/init.elf as the first user process, then
+           run the post-init suites. The boot thread then exits; the scheduler
+           runs everything from here.
 
 Secondary cores start parked in a spin table. smp_init points their release
 address at the shared entry and signals an event; each secondary runs
@@ -144,8 +148,10 @@ Scheduling and processes
   it refuses a sleeping lock taken under a spinlock or in an IRQ handler, or
   one still held at return to EL0 or at task exit.
   A process owns an address space, a file-descriptor table, and signal state;
-  exec loads an ELF, exit tears the process down. Signals are POSIX-style;
-  job-control stops (SIGSTOP/SIGCONT) are not fully wired yet.
+  exec loads an ELF, exit tears the process down. Signals are POSIX-style,
+  including job-control stops (SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU) and SIGCONT;
+  waitpid reports stops with WUNTRACED, and a session's stopped orphans get
+  SIGHUP and SIGCONT when it ends. WCONTINUED is not supported.
 
 Filesystems
   A VFS sits in front of every filesystem: nodes expose an ops table, and paths
@@ -153,14 +159,14 @@ Filesystems
   sleeping mutex (recursive because page-cache eviction re-enters write_page).
   devfs exposes device nodes (console, fb0, block devices); procfs exposes
   kernel state as text; pipes round out the set. File data flows through a page
-  cache; block I/O flows through a block cache in the sd/block drivers. Both
-  caches pin pages that are in use so they cannot be evicted out from under a
-  reader.
+  cache; block I/O flows through a block cache in the sd/block drivers. The page
+  cache pins a page while a caller holds it; the block cache is write-through
+  and copies blocks in and out under its lock.
 
 Drivers and interrupts
   The GIC routes interrupts; drivers register handlers through a probe model
   driven by the devicetree. The UART is the serial console and is decoupled from
-  the tty line discipline (the tty registers callbacks with it). The framebuffer
+  the tty (the tty registers callbacks with it). The framebuffer
   stack is fb (mailbox-allocated surface) -> graphics (primitives) -> fb_console
   (an 8x8-font text console).
 
@@ -178,4 +184,4 @@ WHERE TO LOOK FIRST
   - "What's the ABI?"            uapi/syscalls.h  and  kernel/core/syscall.c
   - "How is a process made?"     kernel/sched/process.c  and  kernel/core/elf.c
   - "How does a read() work?"    kernel/fs/vfs.c -> fat32.c -> pagecache.c
-  - "What runs in userspace?"    user/apps/init.c  and  user/apps/sh.c
+  - "What runs in userspace?"    user/apps/init.c  and  user/apps/sh/main.c

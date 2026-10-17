@@ -128,9 +128,9 @@ V2. CELLS  (restartable subsystems)
     small intent journal. Crash-only design, applied inside the kernel: a
     cell's recovery path IS its boot path, so recovery is tested every boot.
     First cell: the block/SD driver — it has real hardware faults (yank the
-    card mid-I/O), a natural quiesce point (the request queue), and a
-    bounded ledger. The USB and network stacks (order.txt Phase 7) are built
-    AS cells from birth, never retrofitted.
+    card mid-I/O), a natural quiesce point (block.c's read and write entry
+    points), and a bounded ledger. The USB and network stacks (order.txt
+    Phase 7) are built AS cells from birth, never retrofitted.
 
 V3. THE INVARIANT ENGINE AND TIME TRAVEL
     lockdep generalized: subsystems DECLARE invariants ("no page is both in
@@ -166,9 +166,9 @@ HARDWARE WE LEAN ON  (and hardware we do not have)
 --------------------------------------------------------------------------------
 
 The BCM2711's Cortex-A72 is ARMv8.0-A. Be honest about what that means:
-NO PAC, NO BTI, NO MTE, NO LSE atomics (lock-free structures are LDXR/STXR
-loops), NO VHE (the warden is the classic split non-VHE EL2 design). The
-vision is built on what the chip DOES have:
+NO PAN, NO PAC, NO BTI, NO MTE, NO LSE atomics (lock-free structures are
+LDXR/STXR loops), NO VHE (the warden is the classic split non-VHE EL2 design).
+The vision is built on what the chip DOES have:
 
   - Watchdog + reset-surviving PM bits: reboot-reason codes and a crash
     cursor that survive even a hard hang, so the next boot always knows why.
@@ -239,15 +239,16 @@ HOW THE ROADMAP SERVES THIS
 --------------------------------------------------------------------------------
 
   Phases 1-5 (order.txt): unchanged in substance — the foundation IS the
-    prerequisite. Items that seed a pillar are tagged (V1 seed) etc. inline:
-    the dmesg ring, the watchdog, strace-lite, per-CPU exception stacks, the
-    refcounted-object rule all grow into vision machinery.
+    prerequisite. The dmesg ring, the watchdog and strace-lite are tagged
+    (V1 seed) inline; per-CPU exception stacks and refcounted objects (Phase 2
+    items 12 and 11) also grow into vision machinery.
   Phase 6 (order.txt): the vision made concrete — recorder, cells, invariant
-    engine, time travel, warden, in dependency order, each with a "Done"
-    that names a demonstrable capability.
+    engine, time travel, warden, and the fault-injection campaign with its
+    health dashboard, in dependency order, each with a "Done" that names a
+    demonstrable capability.
   Phase 7 (order.txt): the old strategic extensions, re-read through the
-    vision: USB/networking arrive as cells, EL2 virtualization grows out of
-    the warden, and the health dashboard rides the graphics work.
+    vision: USB/networking arrive as cells, and EL2 virtualization grows out
+    of the warden.
 
 --------------------------------------------------------------------------------
 ROADS NOT TAKEN  (recorded so we do not re-litigate them)

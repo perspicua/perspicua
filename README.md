@@ -60,7 +60,8 @@ This describes what exists today. For planned work see
 - Devicetree-driven device and probe model
 
 **User/kernel interface**
-- 46 syscalls defined in [`uapi/syscalls.h`](uapi/syscalls.h)
+- Syscalls numbered in [`uapi/syscalls.h`](uapi/syscalls.h) and dispatched from one
+  table in `kernel/core/syscall.c`
 - `uaccess` helpers copy across the boundary with fault fixup, so a bad user
   pointer returns an error rather than faulting the kernel
 - In-tree freestanding libc shared by kernel and userspace, with buffered
@@ -72,7 +73,7 @@ This describes what exists today. For planned work see
 
 **Debugging**
 - In-kernel debugger (kdb), lockdep, heap redzones and slab free canaries
-- Fault injection that refuses a chosen heap or page allocation
+- Fault injection, in test builds, that refuses a chosen heap or page allocation
 - Generated symbol tables and GDB helper scripts
 
 ## Boot sequence
@@ -89,16 +90,17 @@ before it:
 | 3 | Interrupts and scheduling — IRQ-driven drivers, UART IRQs, timer tick, scheduler |
 | 4 | SMP and filesystems — wake secondary cores, VFS, processes, devfs, mount FAT32 at `/`, procfs |
 
-The kernel then enables interrupts, optionally runs the test suites under
-`CONFIG_TESTS`, and execs `/bin/init.elf`. The boot thread then exits; the
-scheduler runs everything from that point.
+The kernel then enables interrupts and creates `/bin/init.elf` as the first user
+process; under `CONFIG_TESTS` the kernel suites run before and just after that.
+The boot thread then exits; the scheduler runs everything from that point.
 
 Full detail is in [`docs/architecture.txt`](docs/architecture.txt).
 
 ## Building
 
-Requires an AArch64 cross-compiler, CMake, [just](https://github.com/casey/just),
-mtools, and clang-format 22.1.8 for `just format`.
+Requires an AArch64 GCC cross-compiler, CMake, [just](https://github.com/casey/just),
+mtools and Python 3, plus QEMU (`qemu-system-aarch64`) to run and test, and
+clang-format 22.1.8 for `just format`.
 
 The toolchain file, `cmake/aarch64-none-elf.cmake`, uses the first of
 `aarch64-none-elf-gcc` (Arm's bare-metal toolchain), `aarch64-elf-gcc` (Homebrew)
@@ -135,14 +137,16 @@ configuration given in `cmake_args` lasts for that one command; `just config`
 ## Testing
 
 In-kernel test suites live in `kernel/tests/` and are compiled in only under
-`CONFIG_TESTS`. They cover memory (pmm, mmu, slab, heap), scheduling and
-locking (the scheduler, spinlocks, sleeping locks, wait queues, lockdep),
-processes and signals, filesystems (VFS, FAT32 including corrupt media, pipes),
-the SD driver, user-memory access, syscall bounds, and fault injection. The
-userspace suites `test_restart`, `test_tools` and `test_libc` then run at the
-shell. `just test` runs everything headless through `scripts/run_tests.sh` and
-fails on any assertion, panic, or timeout. See
-[`docs/testing.txt`](docs/testing.txt).
+`CONFIG_TESTS`. They cover memory (pmm, mmu, slab, heap and its redzones),
+scheduling and locking (the scheduler, spinlocks, sleeping locks, wait queues,
+lockdep), processes, signals and the ELF loader, filesystems (VFS, FAT32
+including corrupt media, pipes, procfs), the tty, the SD driver, user-memory
+access, syscall bounds, and fault injection. The userspace suites (`test_restart`,
+`test_tools`, `test_libc`, `test_syscall`, `test_fcntl`, `test_stop_cont`,
+`test_sh` and a seeded `stress` run) then run at the shell. `just test` runs
+everything headless through `scripts/run_tests.sh` and fails on a failed
+assertion, a panic, a timeout, a missed marker, a suite with fewer tests than its
+minimum, or a garbled console echo. See [`docs/testing.txt`](docs/testing.txt).
 
 ## Source tree
 
@@ -153,7 +157,7 @@ uapi/       user/kernel ABI: syscall numbers, error codes, struct layouts
 user/       crt0.S and userspace applications (apps/, one file or one directory each)
 cmake/      toolchain file, config header template, build-version generator
 scripts/    symbol-table generation, GDB helpers, test harness
-pi4-boot/   firmware, devicetree blob, and the final kernel8.img
+pi4-boot/   firmware, devicetree blob, and the kernel8.img `just build` publishes
 docs/       design and process documentation
 ```
 

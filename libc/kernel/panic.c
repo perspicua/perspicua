@@ -219,8 +219,8 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
         kdb_enter("kernel panic");
     }
 #else
-    // No watchdog driver exists yet to reboot from (order.txt Phase 0 item
-    // 14), so an unattended board halts here instead of hanging forever
+    // No watchdog driver exists yet to reboot from (order.txt Phase 2 item
+    // 9), so an unattended board halts here instead of hanging forever
     // waiting for a keystroke that will never come.
     panic_printf("\n--- CONFIG_KDB_ON_PANIC is off; halting ---\n\n");
 #endif

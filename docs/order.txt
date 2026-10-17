@@ -37,7 +37,9 @@ PHASE 0: CLEAN THE SHAPE  [COMPLETE]
 Made the tree cheap to read and cheap to change before anything below was built
 on it. No capability was added: every item removed lines, removed a bug, or
 moved a decision to the one place it belongs. Kept as a numbered list because
-later phases cite these by number; the detail is in the commits.
+later phases cite these by number; the detail is in the commits. Two halves
+moved on: 14's watchdog reboot is Phase 2 item 9, and 15's block-cache memory
+is Phase 2 item 5.
 ================================================================================
 
    1. Comment and style reset
@@ -70,8 +72,8 @@ what makes the system usable enough to develop against.
    3. procfs completeness: /proc/mounts, /proc/cpuinfo, /proc/stat, /proc/self
    4. Shell scripting basics: $? , $VAR expansion, correct pipeline exit codes
    5. Core POSIX utility BINARIES: ps, kill, mkdir, rm, cp, mv, touch, wc, grep, env
-   6. Signal delivery completeness
-   7. Close the test-coverage gaps the audit exposed
+   6. Signal delivery completeness                                    (IMP-008)
+   7. Close the test-coverage gaps the audit exposed                  (IMP-011)
 
 
 ================================================================================
@@ -84,12 +86,13 @@ them now avoids retrofitting correctness into ten call sites later. This is the
 single highest-leverage phase in the file.
 ================================================================================
 
-   1. Generic wait-queue / condition-variable primitive [DONE]
+   1. Generic wait-queue / condition-variable primitive [DONE]  (IMP-007, part 1)
       Effort: M | Unlocks: select/poll, futexes, every future blocking driver
       Scope: one struct wait_queue with wq_wait_event{,_interruptible,_timeout,
-        _locked}(wq, condition) / wq_wake_one / wq_wake_all, correct
-        prepare-to-wait/finish-wait ordering, a condition re-check loop, and
-        signal-interruptibility (returns -ERESTARTSYS for the restart path).
+        _locked,_interruptible_locked}(wq, condition) / wq_wake_one /
+        wq_wake_all, correct prepare-to-wait/finish-wait ordering, a condition
+        re-check loop, and signal-interruptibility (returns -ERESTARTSYS for the
+        restart path).
       Done: tty, pipe, sd, AND kmutex are all converted to it and their bespoke
         queues are deleted; a test covers wake, signal-interrupt, and spurious
         wakeup.
@@ -117,9 +120,11 @@ single highest-leverage phase in the file.
         never shares a graph node with its own guard spinlock. A recursive
         down_read counts as a violation, because it deadlocks behind a waiting
         writer.
-        The FAT32 audit: lookup calls open_track; revalidate writes the vnode on
-        every read; a read can evict a dirty page and call write_page while
-        holding the lock; release can free a cluster chain.
+        The FAT32 audit: lookup calls open_track; revalidate runs on every read
+        and, after any entry-changing operation (every write is one), re-walks
+        the parent directory and rewrites the vnode; eviction's writeback branch
+        (pagecache.c) is never reached while FAT32 writes through, and becomes
+        live once writes are deferred; release can free a cluster chain.
         The prerequisites for a split: (a) a spinlock for fat32_opens;
         (b) revalidate kept off the read path; (c) no writeback started while
         holding the FS lock.
@@ -137,17 +142,12 @@ single highest-leverage phase in the file.
         schedule() asserts preempt_count == 0 across every path, not only the
         voluntary ones, wired into the existing lockdep infrastructure, and the
         test suite runs clean with it armed.
-      Note: the SVC path already unmasked IRQs before this item:
-        exception_sync_handler does it once it has read ESR and FAR, which is
-        the delicate ordering the old note warned about, so syscalls were already
-        preemptible outside spinlocks. The old concern that latency was bounded
-        by the slowest syscall (a multi-MB SD read) was also out of date: SD I/O
-        holds a sleeping mutex, not a spinlock. The priority-inversion hazard
-        from non-irqsave locks (fd_lock, pipe->lock, devfs_lock held with IRQs
-        enabled) is gone because such a holder can no longer be switched out
-        (before the hotfix, the SD interrupt's reschedule could do exactly that).
-        What's left: there is no cross-core reschedule IPI; a task woken onto
-        another core waits for that core's next tick.
+      Note: exception_sync_handler unmasks IRQs for an EL0 trap once it has
+        read ESR and FAR, so syscalls are preemptible outside spinlocks; SD I/O
+        holds a sleeping mutex, not a spinlock. fb_console_lock, the one plain
+        spin_lock held with IRQs on at runtime, cannot be switched out while
+        held, because preempt_count holds. There is no cross-core reschedule
+        IPI: a task woken onto another core waits for that core's next tick.
 
    4. Graceful out-of-memory handling [DONE]
       Effort: M | Unlocks: a kernel that degrades instead of dying
@@ -155,13 +155,10 @@ single highest-leverage phase in the file.
         define an OOM policy for user allocations.
       Done: a fault-injected allocation failure returns -ENOMEM to userspace
         instead of taking down the machine.
-      Note: runtime sites that must unwind: mmu alloc_table_page(),
-        process_create() user-stack and kernel-stack paths, elf_load() ("ELF: Out
-        of memory during loading"), sched_create_task(). Boot-time init PANICs
-        (heap_init, slab_init, idle-task allocation) are fine to keep — don't
-        spend effort unwinding code that runs before userspace exists.
-        CoW allocation failure terminates the faulting process via SIGKILL
-        instead of looping on SIGSEGV.
+      Note: alloc_table_page() callers, process_create_from_file, process_fork,
+        elf_load and sched_create_task return -ENOMEM; boot-time init (heap_init,
+        slab_init, the idle tasks) still PANICs, before userspace exists. A CoW
+        allocation failure SIGKILLs the faulting process.
 
    5. Unified buffer cache                                        (IMP-009, part 1)
       Effort: M-L | Unlocks: demand paging; halves cache memory
@@ -185,46 +182,47 @@ single highest-leverage phase in the file.
 
    6. VFS inode / dentry cache with refcounted vnodes
       Effort: M-L | Unlocks: hardlinks, safe rename, stable inode identity, perf
-      Scope: cache vnodes by stable identity, refcount them, add a name cache.
+      Scope: cache vnodes by stable identity (they are already refcounted
+        through vfs_vnode_put) and add a name cache.
       Done: opening the same file twice yields the same vnode; a directory scan
         isn't re-read from disk on every lookup.
-      Note: fat32_vfs_lookup() and the procfs lookups slab_alloc a BRAND NEW vnode
-        on every path resolution. This is also why the page cache had to key on the
-        start cluster (and why empty files once aliased). A real inode identity
-        fixes that class of problem at the root.
+      Note: fat32_vfs_lookup() and the per-pid procfs lookups slab_alloc a BRAND
+        NEW vnode on every path resolution. This is also why the page cache keys
+        on the start cluster. A real inode identity fixes that class of problem
+        at the root.
 
    7. Robust and fast user-memory access                              (IMP-005)
       Effort: S-M | Unlocks: safety once threads share an address space; every
         syscall gets cheaper
-      Scope: treat validate_user_buffer() as advisory; make the fault-fixup
-        copy_to/from_user path the source of truth; uniform access_ok range checks.
-        Rewrite the copy routines to align the destination and then move 16 bytes
-        per iteration with ldtr x/sttr x pairs, with a byte-wise head and tail,
-        each carrying its own __ex_table entry that reports the correct residual
-        count. Enable PAN (SCTLR_EL1.SPAN / PSTATE.PAN) so any kernel access to
-        user memory outside these routines traps immediately. Mask user pointers
-        against the address-space bound before use.
+      Scope: treat syscall_validate_user_buffer() as advisory; make the
+        fault-fixup copy_to/from_user path the source of truth; uniform access_ok
+        range checks. Rewrite the copy routines to align the destination and then
+        move 16 bytes per iteration with ldtr x/sttr x pairs, with a byte-wise
+        head and tail, each carrying its own __ex_table entry that reports the
+        correct residual count. Mask user pointers against the address-space
+        bound before use.
       Done: no syscall depends on a pre-check that a concurrent unmap can
         invalidate, and a bulk read is not bounded by a per-byte loop.
-      Note: validate_user_buffer walks the page tables then drops the lock before
-        the copy — a TOCTOU that only bites once two tasks share a pgd. It is also
-        largely redundant: the fixup path already catches the fault, which is what
-        makes deleting most of it safe. uaccess.S copies ONE BYTE AT A TIME with
-        ldtrb/sttrb, so a 4 MB read() is 4 million iterations of a 4-instruction
-        loop — and every syscall pays it twice, into the bounce buffer and out.
-        PAN is what makes the check-free design safe rather than merely fast, and
-        it costs one boot-time register write; the pointer masking blunts
-        speculative out-of-bounds reads. Phase 5 item 5 covers the rest of that
-        hardening story.
+      Note: syscall_validate_user_buffer walks the page tables then drops the
+        lock before the copy — a TOCTOU that only bites once two tasks share a
+        pgd. It is also largely redundant: the fixup path already catches the
+        fault, which is what makes deleting most of it safe. uaccess.S copies ONE
+        BYTE AT A TIME with ldtrb/sttrb, so a 4 MB read() is 4 million iterations
+        of a 4-instruction loop — and every syscall pays it twice, into the
+        bounce buffer and out. The Cortex-A72 is ARMv8.0 and has no PAN, so the
+        bounds check and the ldtr/sttr fixups are the only guard against a stray
+        kernel access to user memory; the pointer masking blunts speculative
+        out-of-bounds reads. Phase 5 item 5 covers the rest of that hardening.
 
-   8. Panic/oops with symbolized backtrace + dmesg ring buffer        (V1 seed)
-      Effort: S-M | Unlocks: debuggability; turns "it hung" into a stack trace
-      Scope: walk frame pointers, resolve via the symbol table, print on panic; an
-        in-memory log ring exposed as /proc/kmsg or a dmesg syscall.
-      Done: a deliberate NULL deref prints a symbolized call chain.
-      Note: scripts/gen_symtab.py and the two-pass build already produce a full
-        kernel symbol table — the data is there, it just isn't used for unwinding.
-        This ring is the embryo of the flight recorder (vision.txt, V1): design
+   8. dmesg ring buffer                                               (V1 seed)
+      Effort: S-M | Unlocks: the boot log after the fact; the recorder's format
+      Scope: an in-memory record ring exposed as /proc/kmsg or a dmesg syscall;
+        symbolize the faulting PC (ELR) in the panic report.
+      Done: the boot log reads back after boot, and a panic report names the
+        function that faulted.
+      Note: panic.c and kdb's bt already walk frame records and resolve them
+        through gen_symtab.py's table; only ELR is printed raw. This ring is the
+        embryo of the flight recorder (vision.txt, V1): design
         it as clock-stamped records from day one — a fixed header (timestamp,
         cpu, event type, length) plus payload — not a bare char stream, so
         upgrading it into the binary event ring of Phase 6 item 1 is a format
@@ -236,7 +234,8 @@ single highest-leverage phase in the file.
       Scope: periodic check for tasks blocked beyond a threshold or a core that
         stopped taking timer ticks; the BCM2711 hardware watchdog as the last-
         resort backstop, writing a reboot-reason code to the PM block's reset-
-        surviving bits before any deliberate reset.
+        surviving bits before any deliberate reset; with CONFIG_KDB_ON_PANIC
+        off, a panic resets through it.
       Done: an artificial deadlock prints a warning naming the stuck task, and
         after a forced watchdog reset the next boot reports WHY it rebooted.
       Note: the reboot-reason plumbing is the first brick of the black-box
@@ -246,9 +245,11 @@ single highest-leverage phase in the file.
   10. Per-CPU data API
       Effort: S-M | Unlocks: cleaner SMP code; prerequisite for scalable counters
       Scope: a small this_cpu()/per_cpu() abstraction.
-      Note: the kernel currently uses bare `array[get_core_id()]` everywhere
-        (sched_rq_lock[], core_irq_stats[], cpu_asid_gen[], lockdep held_locks[]).
-        Fine at 4 cores, but it hides the intent and invites off-by-one bugs.
+      Note: the kernel indexes bare arrays by cpu_id(): sched_rq_lock[] and the
+        other run-queue arrays in sched.c, irq_depth[], irq_table[].count[],
+        cpu_asid_gen[], lockdep's held_locks[]. Fine at 4 cores, but it hides the
+        intent and invites off-by-one bugs. TPIDR_EL1 already holds the current
+        task, so a per-CPU base needs another register or a table.
 
   11. Reference-counted task and process objects                       (IMP-004)
       Effort: M-L | Unlocks: closes a whole bug class instead of one site at a time
@@ -261,13 +262,13 @@ single highest-leverage phase in the file.
         assertion in debug builds rather than corrupting memory in release ones.
       Note: three of the six critical audit findings were the same bug — an object
         freed while another subsystem still held a pointer. struct task is
-        reachable from run queues, the sleep queue, mutex/pipe/tty wait queues,
-        sched_prev_task, sched_cleanup, and process_table[]->main_task, and is
-        freed based on a single core's view of its state. Patching each site
-        individually will not hold as more wait queues appear. Refcounting
-        struct process is also what makes waitpid's teardown of a live PCB
-        impossible rather than merely unlikely. Best done alongside item 1: the
-        unified wait queue is what makes "unlinked from every list" checkable.
+        reachable from run queues, the sleep queue, sched_prev_task[],
+        sched_cleanup[], process_table[]->main_task, and through wait_entry->task
+        while it waits, and is freed based on a single core's view of its state.
+        Patching each site individually will not hold as more wait queues
+        appear. Refcounting struct process is also what makes waitpid's teardown
+        of a live PCB impossible rather than merely unlikely. Item 1's wait queue
+        is what makes "unlinked from every list" checkable.
 
   12. Per-CPU exception stacks                                         (IMP-010)
       Effort: S-M | Unlocks: stack overflow becomes a diagnosable fault
@@ -277,15 +278,15 @@ single highest-leverage phase in the file.
         known task stack base" and report it as a stack overflow naming the
         faulting task, rather than as a generic abort.
       Done: a deliberately recursive kernel function prints a stack-overflow
-        report identifying the task instead of hanging the core.
+        report identifying the task, and nothing below the guard page is written.
       Note: all exceptions are taken on the current kernel stack, and save_all
-        immediately subtracts 800 bytes. If the fault WAS a stack overflow, that
-        push lands on the unmapped guard page and takes another abort, recursing
-        until the CPU gives up — so the guard page, which should turn overflow
-        into a clean fault, currently turns it into an unrecoverable loop. The
-        stack canary in struct task only catches it at the next schedule(), far
-        too late to report. Small change, and it makes every later memory bug
-        cheaper to diagnose; pairs naturally with item 8.
+        pushes a 288-byte frame there. On an overflow, each nested abort descends
+        288 bytes until the frame leaves the guard page; the handler then runs on,
+        and overwrites, the physical page below the stack block, and panics as a
+        generic abort with ELR in sync_handler and a broken backtrace. The canary
+        at stack + PAGE_SIZE is checked only in sched_schedule(), far too late to
+        report. Small change, and it makes every later memory bug cheaper to
+        diagnose; pairs naturally with item 8.
 
 
 ================================================================================
@@ -298,30 +299,37 @@ Goal: Make Perspicua a place you can actually work in and observe.
       Scope: add a ->poll(file, wq) vnode op returning a readiness mask, then
         implement poll() on top of it; select() becomes a libc wrapper.
       Done: a userspace program multiplexes console + a pipe without busy-waiting.
-      Depends: Phase 2 item 1 (wait queue). Do not attempt before it.
-      Note: there is no way today for a process to wait on more than one
-        descriptor, which blocks any non-trivial shell or server, and is the
-        dependency the network stack also sits behind.
+      Depends: Phase 2 item 1 (wait queue, done).
+      Note: no descriptor can be waited on together with others, and no read can
+        time out: term_key (libc/user/term.c) polls non-blocking stdin every 2 ms,
+        which poll() replaces. It blocks any non-trivial shell or server, and the
+        network stack sits behind it too.
 
    2. Core /dev nodes: /dev/null, /dev/zero, /dev/full, /dev/tty, /dev/random+urandom
       Effort: S | Unlocks: scripts, test fixtures, and anything expecting a real /dev
       Done: `cat /dev/zero | wc -c` style pipelines behave.
       Note: devfs registers "console", "fb0", and block devices ("sd0" via
         block.c) today — no /dev/null-style pseudo-devices. /dev/random needs an
-        entropy source — the generic timer's low bits are a starting point.
+        entropy source: the DTB describes the BCM2711's RNG200
+        (brcm,bcm2711-rng200), and the generic timer's low bits are the fallback.
 
    3. RTC / wall-clock driver
       Effort: S-M | Unlocks: real timestamps; makes gettimeofday meaningful
       Done: file mtimes and `date` survive a reboot.
-      Note: timer_get_wall_time() already returns build-date + uptime, which is
-        what stamps file mtimes. The work is replacing that base with a real
-        clock, not introducing one.
+      Note: timer_get_wall_time() returns the build day plus uptime and stamps
+        FAT32 mtimes and /proc/stat's btime, but gettimeofday and CLOCK_REALTIME
+        return uptime (core/syscall.c). The work is a real clock base and routing
+        both syscalls through it.
 
    4. Shell quality of life: globbing, history, tab completion, then scripting
       Effort: M | Unlocks: an interactive environment you don't fight
-      Scope: glob (*, ?, [..]); line editing w/ history; then if/for/while, &&/||,
-        subshells; job control (fg/bg/jobs) once Phase 1 item 2 lands.
+      Scope: glob (*, ?, [..]); if/for/while and subshells; a script file given
+        as an argument; jobs and bg.
       Done: a multi-line shell script runs correctly.
+      Note: line editing with a 32-entry history, tab completion, ;, &, && and
+        ||, descriptor redirections (2>, 2>&1) and fg over up to eight stopped
+        jobs exist (user/apps/sh/). sh runs a script from stdin or -c, but takes
+        no script file argument.
 
    5. Ramdisk block backend + tmpfs
       Effort: S-M | Unlocks: fast scratch space; deterministic FS test fixtures
@@ -333,7 +341,10 @@ Goal: Make Perspicua a place you can actually work in and observe.
       Effort: S-M | Unlocks: debugging userspace without a debugger
       Scope: an opt-in trace of syscall entry/exit per process; runtime log levels.
       Done: you can see why a ported program fails without adding printfs.
-      Note: emit these as records into the Phase 2 item 8 ring rather than
+      Depends: Phase 2 item 8 (the ring).
+      Note: log levels are compile-time today: pr_debug is in or out with
+        CONFIG_DEBUG_LOG (libc/include/stdio.h). Emit these as records into the
+        Phase 2 item 8 ring rather than
         printing — syscall entry/exit are two of the flight recorder's core
         event types (vision.txt, V1), and a separate trace path would be the
         first private ring buffer the vision forbids.
@@ -359,20 +370,26 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
         it down.
       Done: a program can map, protect, and unmap; nothing leaks across the cycle.
       Note: SYS_MMAP exists but there is NO munmap or mprotect — mapped regions
-        can never be released. The va_allocator is a bump allocator with a 64-region
-        array (process_va_free exists but is only used on the mmap failure path).
-        It cannot express protection flags, file backing, or gaps, which is why
-        munmap, mprotect, MAP_FIXED, MAP_SHARED and shared memory are ALL absent;
-        most of this phase is blocked behind it.
+        can never be released — and it ignores its addr and offset arguments.
+        The va_allocator (sched/process.h) is a first-fit, address-sorted array
+        of at most 64 regions holding the user stack and each mmap;
+        process_va_free runs only on failure paths, and ELF segments are mapped
+        outside it. It cannot express protection flags or file backing, which is
+        why munmap, mprotect, MAP_FIXED and shared memory are absent; MAP_SHARED
+        is accepted and ignored for anonymous mappings. Most of this phase is
+        blocked behind it.
         munmap/mprotect must broadcast-invalidate (TLBI ...IS by ASID) BEFORE
         freeing pages back to the PMM, or a stale entry on another core becomes
         a use-after-free.
-        /proc/<pid>/maps falls out of it for free.
+        /proc/<pid>/maps (fs/procfs.c) lists the va_allocator regions today and
+        moves onto the VMA list.
 
    2. brk / sbrk (or an anonymous-VMA heap)
       Effort: S-M | Unlocks: a normal libc malloc
-      Note: userspace malloc currently mmaps 1MB chunks and can never return them
-        (no munmap), so every process's footprint only grows.
+      Note: userspace malloc mmaps chunks rounded up to 1 MB and never returns
+        them (no munmap), so every process's footprint only grows; each chunk
+        takes one of the 64 va_allocator slots, so the 64th mapping fails with
+        -ENOMEM even with RAM free.
 
    3. Demand paging and lazy stack growth                              (IMP-001)
       Effort: L | Unlocks: fast process start, big binaries, low RAM use
@@ -387,34 +404,35 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
       Note: handle_abort() already routes permission faults to COW — the
         translation-fault path is the natural hook, and mmu_handle_cow's structure
         (with its locked re-check) is the right shape to reuse. Every mapping is
-        populated eagerly today: process_create_from_file allocates and maps 32
-        pages of stack up front, SYS_MMAP allocates every page of an anonymous
-        region before returning, and elf_load reads every segment at exec time. A
-        256 MB mmap — the current cap — therefore allocates 65,536 physical pages
-        synchronously inside a syscall, which is also why Phase 2 item 3 matters
-        so much: today that runs with interrupts masked.
+        populated eagerly today: process_create_from_file and process_exec
+        allocate and map 32 pages of stack up front, SYS_MMAP allocates every
+        page of an anonymous region before returning, and elf_load reads every
+        segment at exec time. A 256 MB mmap — the current cap — therefore
+        allocates 65,536 physical pages synchronously inside one syscall,
+        preemptible between pages.
 
    4. File-backed mmap
       Effort: M | Unlocks: mmap'd I/O; a prerequisite for dynamic linking
       Note: the vnode ops table already has an ->mmap hook, SYS_MMAP already
         calls it when present, and the framebuffer ALREADY implements it (fb.c
-        wires fb_mmap) — but no filesystem does. Beware: mmap of a regular-file
-        fd today "succeeds" while mapping zero pages (the hook is simply absent),
-        so the first access faults.
+        wires fb_mmap) — but no filesystem does, so mmap of a regular file fails
+        with -ENODEV. SYS_MMAP drops the offset argument, which this item needs.
 
    5. Shared-memory IPC (MAP_SHARED, shm_open)
       Effort: M | Unlocks: high-performance IPC; the graphics server
       Depends: Phase 4 items 1 and 3.
+      Note: today MAP_SHARED with MAP_ANONYMOUS gives a private mapping that fork
+        makes copy-on-write.
 
    6. COW and reclaim refinements
       Effort: M | Unlocks: lower memory pressure
-      Scope: skip the copy when refcount == 1; demand-zero pages; an LRU reclaim
-        path under pressure; guard pages + auto-grow for user stacks.
-      Note: mmu_handle_cow() always allocates and copies, even when the faulting
-        process is the only owner of the page. The guard-page and stack-growth
-        half arrives with Phase 4 item 3; this item is the refcount==1 fast path
-        and reclaim. user/apps/stress.c `cow` exercises the isolation invariant in
-        both directions and is the regression check for changes here.
+      Scope: demand-zero pages; an LRU reclaim path under pressure; guard pages +
+        auto-grow for user stacks.
+      Note: mmu_handle_cow (mm/mmu.c) already promotes a sole-owner page in place
+        without copying. The guard-page and stack-growth half arrives with Phase 4
+        item 3; this item is demand-zero and reclaim. user/apps/stress.c `cow`
+        exercises the isolation invariant in both directions and is the
+        regression check for changes here.
 
    7. A second, inode-based filesystem (ext2, or a small journaling FS)
       Effort: L | Unlocks: proof the VFS is generic; crash consistency
@@ -427,19 +445,21 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
       Effort: L | Unlocks: surviving power loss
       Scope: ordered metadata writes / a journal; or an fsck-lite pass at mount.
       Note: FAT32 today can cross-link clusters or corrupt a directory if it panics
-        mid-write. The per-FS lock makes operations atomic against each other, not
-        against a crash.
+        mid-write. The per-FS lock makes operations atomic against each other
+        within one vnode op (open with O_CREAT and an O_APPEND write span two),
+        and not against a crash.
 
-   9. Storage breadth: GPT, multiple partitions/mounts, >1GB RAM  (IMP-009, part 2)
+   9. Storage breadth: GPT, multiple partitions/mounts, RAM above 4 GB
+                                                              (IMP-009, part 2)
       Effort: M | Unlocks: real hardware configurations
       Scope: make current_fs an allocated per-mount structure hanging off the
         superblock so more than one volume can be mounted at a time.
       Note: fat32.c reads through a single global current_fs, so exactly ONE FAT32
         volume can ever be mounted — the mount table can hold several entries but
-        the driver cannot back them. pmm_init() reads a SINGLE size cell from
-        /memory@0 (reg[2]) and the MMU maps a fixed 4GB — so a 4GB/8GB Pi 4 is
-        capped at 1GB usable today. Fix the DTB parse (honor
-        #address-cells/#size-cells) alongside this.
+        the driver cannot back them — and only the first FAT32 MBR partition is
+        found. pmm_init takes every /memory range with the root's cell widths but
+        drops RAM above 4 GB: TCR_EL1.IPS is 32 bits and mmu_init maps a fixed
+        4 GB, so an 8 GB Pi 4 uses under 4 GB.
 
 
 ================================================================================
@@ -453,12 +473,14 @@ Goal: Use the hardware fully and safely.
         tpidr_el0; per-thread signal mask.
       Done: a multi-threaded program measurably uses more than one core.
       Note: several structures assume ONE task per process and must be revisited:
-        schedule() reads process_table[next->pid] lock-free (only safe because a
-        task's process can't be exec/exit-ing itself), signal delivery targets
-        p->main_task, and signal state lives on the process not the task.
+        process_current() reads process_table[t->pid] lock-free (safe only
+        because a task's own process cannot exit under it), signal delivery
+        wakes p->main_task, and signal state lives on the process, not the task.
+        TPIDR_EL0 is not saved across switches yet.
 
    2. Futexes -> a real pthreads library
-      Effort: L | Depends: Phase 2 item 1 (wait queue), Phase 4 item 5 (shm).
+      Effort: L | Depends: Phase 5 item 1 (threads), Phase 2 item 1 (wait queue);
+        Phase 4 item 5 for process-shared futexes.
 
    3. Preemptive, priority/MLFQ scheduling + load balancing            (IMP-006)
       Effort: L | Unlocks: responsiveness under load
@@ -466,21 +488,19 @@ Goal: Use the hardware fully and safely.
       Scope: add a nice level and per-task vruntime, picking the minimum-vruntime
         runnable task (a small per-core binary heap is enough at this scale).
         Track per-core queue lengths in a lock-free array so stealing consults the
-        counters before taking any lock, and only steal from the busiest core. Add
-        per-task accumulated runtime.
+        counters before taking any lock, and only steal from the busiest core.
       Done: a CPU-bound task cannot starve an interactive one, and stealing does
         not touch another core's lock on a miss.
       Note: per-core runqueues and work stealing already exist; what's missing is
         priorities, fairness, and a real balancing policy (today it's round-robin
-        with an on_core guard). Work stealing currently scans every other core's
-        queue on every miss (sched.c:574-581) while holding that core's rq_lock —
-        pure contention as core count grows. There is also no accounting of how
-        long a task has run, so ptop-style tooling has nothing real to display;
-        the accumulated runtime feeds both /proc and ptop. A wakeup on another
-        core waits up to a tick, because there's no reschedule IPI yet:
-        need_resched belongs to the task, so sending an SGI to the target core
-        would serve it (that's the piece fairness work will want). Tickless idle
-        is the remaining piece of this and lives in Phase 7 item 10.
+        with an on_core guard). On a local miss, work stealing tries every other
+        core's queue in turn, taking each one's rq_lock — pure contention as core
+        count grows. Per-task CPU time is banked at every switch and feeds
+        /proc/<pid>/status, /proc/stat and ptop; vruntime can build on it.
+        sched_unblock queues a woken task on the waker's core, and an idle core
+        picks it up only at its next tick, because there is no reschedule IPI to
+        kick it. Tickless idle is the remaining piece of this and lives in
+        Phase 7 item 10.
 
    4. RCU / seqlocks for read-mostly state
       Effort: L | Unlocks: SMP scalability
@@ -492,10 +512,11 @@ Goal: Use the hardware fully and safely.
       Effort: M-L | Unlocks: resilience against memory-corruption bugs
       Scope: W^X audit of user mappings; ASLR (stack/mmap/PIE) + user stack
         canaries; KASLR later.
-      Note: the kernel already sets PXN/UXN and enforces per-segment permissions —
-        this is about extending the same discipline to userspace. PAN itself lands
-        earlier, with Phase 2 item 7, because the check-free uaccess design
-        depends on it; what remains here is everything built on top.
+      Note: the kernel already sets PXN/UXN and enforces per-segment permissions,
+        and user mappings are already W^X: ELF code is RO+X; data, stack and
+        anonymous mmaps are UXN; PROT_EXEC does not exist. .rodata shares the
+        executable text segment (user/user.ld). The A72 has no PAN (Phase 2
+        item 7).
 
    6. Multi-user: uid/gid + a permission model
       Effort: L | Unlocks: login, real access control
@@ -550,7 +571,8 @@ capability, not an internal refactor.
         health monitor: its own timer, the Phase 2 item 9 hung-task sweeps,
         SGI pings that declare a peer core hung on missed replies, PMU
         sampling, VideoCore telemetry (temperature, voltage, throttling) via
-        the mailbox into the ring, and sole ownership of the hardware
+        the mailbox into the ring — /proc/clock already makes those queries
+        through mbox_query — and sole ownership of the hardware
         watchdog — stroked only while the system passes its checks, so a
         wedged supervisor also reboots.
       Done: a spinloop-with-IRQs-masked on one core is detected, attributed,
@@ -594,15 +616,15 @@ capability, not an internal refactor.
       Done: a fault-injection test corrupting a cell-owned structure is
         caught by an invariant AT the corrupting transition, not at the later
         crash site, and the cell restarts.
-      Note: vision.txt's DESIGN RULES have new subsystems declaring their
-        invariants in comments from Phase 1 onward — this item is when those
-        comments become code.
+      Note: vision.txt DESIGN RULE 1 asks each new subsystem to declare its
+        invariants at the top of the file; none does yet, so this item starts by
+        writing them down.
 
    6. kdb time travel                                                       (V3)
       Effort: M | Unlocks: "what happened" answered by replay, not archaeology
       Scope: teach kdb to walk the ring backwards from any point (a fault, a
         mark, "now") with filters by cell, lock, task, and CPU, correlated
-        with the symbolized backtraces from Phase 2 item 8. Add a `blame`
+        with the symbolized backtraces panic and kdb already print. Add a `blame`
         command: from a fault event, walk back to the most recent suspicious
         transition touching the same object.
       Done: a real bug found during Phase 7 development is diagnosed by
@@ -623,8 +645,9 @@ capability, not an internal refactor.
         EL1 with the ring intact across the event, on hardware.
       Depends: items 1-3. Keep it LAST — every earlier pillar works without
         it, and the design will be better for the delay.
-      Note: the Pi 4 boots via armstub8 at EL3 and enters the kernel at EL2,
-        so the hook point already exists in pi4-boot. Cortex-A72 is ARMv8.0 —
+      Note: the firmware's built-in armstub8 enters the kernel at EL2 (pi4-boot
+        ships no stub of its own), and boot.S drops to EL1 there; that drop is
+        the warden's hook point. Cortex-A72 is ARMv8.0 —
         no VHE — so the split-EL2 design is mandatory, not chosen. The warden
         is also the first step of Phase 7 item 9: guests later become tenants
         beside the EL1 kernel under the same monitor.
@@ -632,11 +655,12 @@ capability, not an internal refactor.
    8. The fault-injection campaign + health dashboard                    (V1-V3)
       Effort: M | Unlocks: the published numbers that keep the claims honest
       Scope: a repeatable campaign — bit flips in cell arenas, failed Nth
-        allocations (Phase 2 item 4's hooks), wedged-hardware simulation,
-        corrupt FS images (Phase 1 item 7's fixtures) — reporting per-cell
-        recovery and misattribution rates into docs/ per release. Render the
-        live system view (cells, invariant status, temperatures, recovery
-        counters) on the framebuffer via the supervisor core.
+        allocations (the CONFIG_TESTS fail_arm hooks in mm/pmm.c and mm/heap.c,
+        which today refuse one request of the arming task), wedged-hardware
+        simulation, corrupt FS images (Phase 1 item 7's fixtures) — reporting
+        per-cell recovery and misattribution rates into docs/ per release.
+        Render the live system view (cells, invariant status, temperatures,
+        recovery counters) on the framebuffer via the supervisor core.
       Done: a test-suite mode emits the campaign report; the dashboard runs
         on hardware.
       Note: misattributed faults are first-class bugs (vision.txt, MEASURES
@@ -683,9 +707,12 @@ arriving cell-shaped and recorder-fed from birth, per vision.txt DESIGN RULES.
    6. POSIX ABI compatibility
       Effort: M-L | Unlocks: porting prebuilt software
       Scope: align syscall numbers and struct layouts with Linux/AArch64.
+      Depends: FP/SIMD for userspace (BACKLOG): prebuilt AArch64 binaries use it,
+        and the kernel traps it and saves none of its state.
 
    7. Self-hosting toolchain
       Effort: XL | Unlocks: the classic milestone — build Perspicua on Perspicua.
+      Depends: FP/SIMD for userspace (BACKLOG).
       Note: a good forcing function; it will surface every libc and FS gap at once.
 
    8. Namespaces / containers, cgroup-style limits
@@ -716,15 +743,20 @@ Ideas with no phase yet. Everything else that used to live in a separate ideas
 file is either sequenced above or already built, so it is not repeated here.
 Promote an item into a phase when something depends on it.
 
-  - Symlinks and hardlinks, atime/mtime, statfs.
-      Needs an inode-based filesystem; FAT32 cannot express any of it.
+  - Symlinks and hardlinks: need an inode-based filesystem. statfs and
+      utimes. FAT32 already keeps mtime and ctime; st_atime reports mtime.
 
-  - Proper buffered stdio: FILE*, fgets/fputs, the scanf family, snprintf
-      bounds. The libc has the unbuffered half only.
+  - Buffered stdio beyond stdout (per-FILE buffers, buffered input) and the
+      scanf family. Only stdout buffers today, when it is not a terminal.
 
-  - qsort and bsearch; printf float support; a minimal libm.
+  - FP/SIMD for userspace: a lazy FPEN trap and per-task q0-q31/FPCR/FPSR
+      saved on switch. Every target is built -mgeneral-regs-only and boot.S
+      leaves FP trapping, so printf float support, a minimal libm and
+      Phase 7 items 6 and 7 all wait on it.
 
-  - Framebuffer double-buffering and vsync, plus a /dev/fb ioctl set.
+  - Framebuffer double-buffering and vsync. There is no ioctl syscall:
+      programs read the geometry from /proc/fb and take the screen by
+      mmapping /dev/fb0.
 
   - ftrace-lite: function and latency tracing, per-subsystem counters.
       Overlaps the Phase 6 recorder; worth doing separately only if that

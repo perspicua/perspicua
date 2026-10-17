@@ -10,7 +10,8 @@ THE MAP  (what to read, and when)
 
   architecture.txt
       How the system fits together: the source-tree layout, the boot sequence,
-      and a tour of the major subsystems (mm, sched, fs, drivers, libc).
+      and a tour of the major subsystems (mm, sched, fs, drivers, and the
+      user/kernel boundary).
       READ THIS FIRST if you are new to the codebase.
 
   vision.txt
@@ -30,8 +31,9 @@ THE MAP  (what to read, and when)
       the commenting philosophy. Follow it for every change.
 
   branch_workflow.txt
-      Git branch model: feature/* -> dev -> main, hotfixes, tags, and the
-      branch-protection rules. How code physically moves toward a release.
+      Git branch model: topic branches (feature/*, fix/*, ...) -> dev -> main,
+      hotfixes, tags, and the branch-protection rules. How code physically
+      moves toward a release.
 
   testing.txt
       How the in-kernel test suites are built and run, what a passing run looks
@@ -41,6 +43,9 @@ THE MAP  (what to read, and when)
       Running on a real Raspberry Pi 4B: wiring a serial console (USB-to-TTL
       adapter or tcpuart over Wi-Fi), the remote-reset pin, preparing the SD
       card, and what to check when it does not boot.
+
+  img/
+      Images the docs use (README.md's boot screenshot).
 
 Process files that live at the repository ROOT (by convention, not here):
 
@@ -54,4 +59,5 @@ NAMING CONVENTION FOR THESE DOCS
 --------------------------------------------------------------------------------
 ALL-CAPS names are reserved for the "meta" files a repository root is expected
 to have (README, LICENSE, CONTRIBUTING, CREDITS, and a future CHANGELOG).
-Everything inside docs/ is lowercase. New docs follow the same rule.
+Everything else inside docs/ is lowercase; README.txt is this directory's index.
+New docs follow the same rule.

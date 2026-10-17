@@ -16,7 +16,7 @@ option(CONFIG_SMP      "Enable symmetric multiprocessing (multi-core)" ON)
 option(CONFIG_LOCKDEP  "Enable lock dependency validator (debug)" ON)
 # OFF halts in a wfe loop instead: there is no watchdog driver yet to reboot
 # from, so this is "let an unattended board sit dark" rather than "recover" --
-# see order.txt Phase 0 item 14.
+# see order.txt Phase 2 item 9.
 option(CONFIG_KDB_ON_PANIC "Drop into the interactive debugger on a kernel panic (blocks on UART input)" ON)
 option(CONFIG_TESTS    "Build in-kernel test suites and run them at boot" OFF)
 option(CONFIG_DEBUG_LOG "Print pr_debug messages, e.g. every fork, exec and exit" OFF)

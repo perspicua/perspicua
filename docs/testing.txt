@@ -12,8 +12,9 @@ tests itself on the target (QEMU, or real hardware), printing assertions to the
 serial console, and the harness reads that console output to decide pass or
 fail. Tests run in two phases.
 
-KERNEL PHASE. Compiled INTO the kernel, gated behind CONFIG_TESTS, run at boot
-before userspace starts. These live in kernel/tests/ (test_pmm, test_slab,
+KERNEL PHASE. Compiled INTO the kernel, gated behind CONFIG_TESTS, run at boot:
+before init starts, except the post-init suites, which run just after it is
+created. These live in kernel/tests/ (test_pmm, test_slab,
 test_mmu, test_sched, test_vfs, test_fat32, test_pipe, test_mutex,
 test_signals, test_uaccess, and others). test.c wires them together; test.h
 declares the entry points.
@@ -43,9 +44,9 @@ RUNNING THE TESTS
 --------------------------------------------------------------------------------
   just test              Build the test kernel (CONFIG_TESTS=ON) into
                          build-test/, build the SD image, and run headless in
-                         QEMU via scripts/run_tests.sh. Exits non-zero if any
-                         assertion fails, the kernel panics, or the run times
-                         out. This is the command CI and the pre-merge gate use.
+                         QEMU via scripts/run_tests.sh. Exits non-zero unless
+                         every check in WHAT A RUN LOOKS LIKE holds. This is the
+                         command CI and the pre-merge gate use.
 
   just build-tests       Build the test kernel without running it.
 
@@ -56,6 +57,8 @@ RUNNING THE TESTS
 
 Override configuration the same way as a normal build, e.g.:
   just cmake_args="-DCONFIG_SMP=OFF -DCONFIG_LOCKDEP=OFF" test
+An override lasts for that one command; the next `just test` without it builds
+the defaults again. `just config build-test` shows what the tree last built.
 
 --------------------------------------------------------------------------------
 WHAT A RUN LOOKS LIKE
@@ -66,7 +69,8 @@ when ALL of the following are true:
 
   - No suite printed "[FAILED]".
   - The kernel did not print "KERNEL PANIC".
-  - It did not time out (default 180s for the whole run).
+  - It did not time out (180 s for the whole run by default; just's
+    test_timeout raises it, as CI does for its slower runners).
   - Every kernel completion marker was reached:
       "reached target: kernel self-test complete"
       "reached target: scheduler test complete"
@@ -76,10 +80,13 @@ when ALL of the following are true:
   - Every userspace suite in USER_SUITES printed "<name>: all N tests passed"
     with N at least its minimum, and exited with status 0.
   - The kernel printed none of FAIL_MARKERS, the errors that do not panic.
-  - Job control at the live prompt held: Ctrl-Z at an idle prompt and a
-    background `sh &` leave the shell reading, and `fg` on a stopped pipeline
-    waits for every stage.
-  - Every line of the console burst came back.
+  - Job control and line editing at the live prompt held: Ctrl-Z at an idle
+    prompt and a background `sh &` leave the shell reading, `fg` on a stopped
+    pipeline waits for every stage, and a terminal size report, the Delete key
+    and a lone Esc leave no stray bytes on the command line.
+  - Every line of the console burst, typed without waiting for each echo, came
+    back intact. On a failure the harness prints /proc/tty's drop and error
+    counts.
 
 The minimums catch a suite that stops running some of its tests: a dropped
 call or an early return still prints [OK], just with a smaller N.
@@ -106,13 +113,13 @@ could flash to a board right now. hardware.txt covers the board setup.
 ADDING A SUITE
 --------------------------------------------------------------------------------
 In the kernel:
-  1. Add kernel/tests/test_<thing>.c with your assertions, following the
-     existing suites' reporting style ([FAILED] on failure, an "all N tests
-     passed" summary on success).
+  1. Add kernel/tests/test_<thing>.c, using TEST_SUITE_BEGIN, TEST_ASSERT* and
+     TEST_SUITE_END from test.h: they print [FAILED] per failed assertion and
+     "test: <name>: N tests [OK]" for a clean suite. The tests/*.c glob in
+     kernel/CMakeLists.txt picks the file up.
   2. Register it so it runs from the appropriate phase (self-test, scheduler, or
      post-init) in test.c / test.h.
-  3. Wire the new source into kernel/CMakeLists.txt under the CONFIG_TESTS path.
-  4. Run `just test`, then add "<name>:<N>" to KERNEL_SUITES in
+  3. Run `just test`, then add "<name>:<N>" to KERNEL_SUITES in
      scripts/run_tests.sh with the N its [OK] line printed.
 
 In userspace:

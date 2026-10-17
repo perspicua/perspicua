@@ -9,8 +9,9 @@ BRANCH STRUCTURE
               first. This is where integration testing and hardware
               validation happen before anything reaches main.
 
-  feature/*   Short-lived branches for individual features or fixes.
-              Always branch off dev, not main.
+  feature/*, fix/*, test/*, refactor/*
+              Short-lived topic branches for one feature, fix, test or
+              cleanup. Always branch off dev, not main.
 
   hotfix/*    Urgent fixes for bugs found in a stable main release.
               Branch off main, merge back into BOTH main and dev.
@@ -45,6 +46,9 @@ PROMOTING DEV TO MAIN (Stable Release)
        git tag -a v1.2.0 -m "Stable: brief description of what's in this release"
        git push origin v1.2.0
 
+  4. Fast-forward dev to main, so the next round starts from the release:
+       git checkout dev && git merge --ff-only main && git push origin dev
+
 
 HOTFIX WORKFLOW
 ---------------
@@ -71,14 +75,17 @@ BRANCH PROTECTION RULES (set these up in GitHub)
 -------------------------------------------------
 
   main:   Require PR + at least 1 review. No direct pushes.
-  dev:    Require PR. Direct pushes only by maintainers if needed.
+  dev:    Unprotected. Maintainers push directly; contributors open a PR
+          into dev.
 
 
 NAMING CONVENTIONS
 ------------------
 
-  feature/uart-dma-fix
   feature/gpio-irq-handler
+  fix/uart-dma-overrun
+  test/pipe-wraparound
+  refactor/sched-runqueue
   hotfix/boot-hang-fix
   v1.0.0, v1.1.0, v1.1.1   (major.minor.patch)
 
