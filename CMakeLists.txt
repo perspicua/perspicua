@@ -43,11 +43,10 @@ endif()
 # Dependency Checks (Configuration Phase)
 find_program(MFORMAT mformat)
 find_program(MCOPY mcopy)
-find_program(MMD mmd)
 find_program(QEMU qemu-system-aarch64)
 
-if(NOT MFORMAT OR NOT MCOPY OR NOT MMD)
-    message(FATAL_ERROR "mtools (mformat, mcopy, mmd) not found. Required for SD image generation.")
+if(NOT MFORMAT OR NOT MCOPY)
+    message(FATAL_ERROR "mtools (mformat, mcopy) not found. Required for SD image generation.")
 endif()
 
 if(NOT QEMU)
@@ -70,23 +69,34 @@ set(QEMU_FLAGS -M raspi4b -serial stdio -display none -dtb ${DTB} -kernel ${KERN
 set(QEMU_FLAGS_GUI -M raspi4b -serial vc -dtb ${DTB} -kernel ${KERNEL_IMG})
 set(QEMU_SD_FLAGS -drive file=${SD_IMAGE},format=raw,if=sd)
 
-# SD Card Image: create once, then incrementally update only changed files
+# SD card image, built whole from a fresh staging directory whenever a program or
+# README.md changes: a removed or renamed program leaves nothing behind, and an
+# unchanged tree leaves the image alone. Programs go on without debug info, keeping
+# their link times (-p, then mcopy -m); the volume serial is fixed (-N 0).
+set(SD_STAGE ${CMAKE_BINARY_DIR}/sdcard-stage)
+set(SD_STAGE_CMDS "")
+foreach(elf ${USER_ELFS})
+    get_filename_component(elf_name ${elf} NAME)
+    list(APPEND SD_STAGE_CMDS COMMAND ${CMAKE_OBJCOPY} -p --strip-debug ${elf} ${SD_STAGE}/bin/${elf_name})
+endforeach()
+
 add_custom_command(
     OUTPUT ${SD_IMAGE}
-    COMMAND dd if=/dev/zero of=${SD_IMAGE} bs=1M count=32 status=none
-    COMMAND ${MFORMAT} -i "${SD_IMAGE}" -F ::
-    COMMAND ${MMD} -i "${SD_IMAGE}" ::/bin
-    COMMENT "Creating FAT32 SD card image"
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${SD_STAGE}
+    COMMAND ${CMAKE_COMMAND} -E remove -f ${SD_IMAGE}.tmp
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${SD_STAGE}/bin
+    ${SD_STAGE_CMDS}
+    COMMAND dd if=/dev/zero of=${SD_IMAGE}.tmp bs=1M count=32 status=none
+    COMMAND ${MFORMAT} -i ${SD_IMAGE}.tmp -N 0 -F ::
+    COMMAND ${MCOPY} -m -s -i ${SD_IMAGE}.tmp ${SD_STAGE}/bin ::/
+    COMMAND ${MCOPY} -m -i ${SD_IMAGE}.tmp ${CMAKE_SOURCE_DIR}/README.md ::/
+    COMMAND ${CMAKE_COMMAND} -E rename ${SD_IMAGE}.tmp ${SD_IMAGE}
+    DEPENDS ${USER_ELFS} ${CMAKE_SOURCE_DIR}/README.md
+    COMMENT "Building FAT32 SD card image"
     VERBATIM
 )
 
-add_custom_target(sdcard
-    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" ${USER_ELFS} ::/bin/
-    COMMAND ${MCOPY} -o -i "${SD_IMAGE}" "${CMAKE_SOURCE_DIR}/README.md" ::/
-    DEPENDS ${SD_IMAGE} ${USER_ELFS}
-    VERBATIM
-    COMMENT "Updating SD card image (incremental)"
-)
+add_custom_target(sdcard DEPENDS ${SD_IMAGE})
 
 # QEMU Run target
 add_custom_target(run
@@ -107,17 +117,26 @@ add_custom_target(debug
     USES_TERMINAL
 )
 
-# Provide the GDB command directly as a target for convenience (run debug target in another terminal)
+# Provide the GDB command directly as a target for convenience (run debug target in another terminal).
+# A distribution's hosted cross toolchain ships no gdb of its own: gdb-multiarch stands in.
+find_program(GDB NAMES ${CROSS_COMPILE}gdb aarch64-none-elf-gdb aarch64-elf-gdb gdb-multiarch)
 set(GDB_HELPERS "${CMAKE_SOURCE_DIR}/scripts/gdb_helpers.py")
-add_custom_target(gdb
-    COMMAND ${CROSS_COMPILE}gdb
-        -ex "source ${GDB_HELPERS}"
-        -ex "target remote :1234"
-        -ex "layout split"
-        ${KERNEL_ELF}
-    DEPENDS kernel8.elf
-    USES_TERMINAL
-)
+if(GDB)
+    add_custom_target(gdb
+        COMMAND ${GDB}
+            -ex "source ${GDB_HELPERS}"
+            -ex "target remote :1234"
+            -ex "layout split"
+            ${KERNEL_ELF}
+        DEPENDS kernel8.elf
+        USES_TERMINAL
+    )
+else()
+    add_custom_target(gdb
+        COMMAND ${CMAKE_COMMAND} -E echo "No AArch64 gdb found: install ${CROSS_COMPILE}gdb or gdb-multiarch"
+        COMMAND ${CMAKE_COMMAND} -E false
+    )
+endif()
 
 add_custom_target(disasm
     COMMAND ${CMAKE_OBJDUMP} -d -S ${KERNEL_ELF}

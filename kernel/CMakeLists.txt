@@ -98,11 +98,5 @@ add_custom_command(TARGET kernel8.elf POST_BUILD
     COMMENT "Generating kernel8.img binary"
 )
 
-# pi4-boot is what gets flashed to real hardware, so only a normal build
-# publishes there; a CONFIG_TESTS image stays inside its own build tree.
-if(NOT CONFIG_TESTS)
-    add_custom_command(TARGET kernel8.elf POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy kernel8.img ${CMAKE_SOURCE_DIR}/pi4-boot/kernel8.img
-        COMMENT "Copying kernel8.img to pi4-boot"
-    )
-endif()
+# pi4-boot is what gets flashed to real hardware: `just build` copies the image
+# there, so no other tree, whatever its configuration, can replace it.

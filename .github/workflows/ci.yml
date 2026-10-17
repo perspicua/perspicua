@@ -6,27 +6,86 @@ on:
   pull_request:
     branches: [ "main", "dev" ]
 
+permissions:
+  contents: read
+
+# Both jobs run in Docker Hub's official image via AWS's mirror, since shared runner IPs hit Docker
+# Hub's anonymous pull limit: 26.04 LTS, pinned by digest, so the toolchain and QEMU change only
+# when that line does. Keep the two image lines the same.
 jobs:
-  build-and-test:
+  test:
+    name: test (${{ matrix.name }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
-      # Docker Hub's official image via AWS's mirror: shared runner IPs hit Docker Hub's anonymous pull limit.
-      image: public.ecr.aws/docker/library/ubuntu:25.04
+      image: public.ecr.aws/docker/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: default, type: RelWithDebInfo, args: "" }
+          - { name: smp-off, type: RelWithDebInfo, args: "-DCONFIG_SMP=OFF" }
+          - { name: lockdep-off, type: RelWithDebInfo, args: "-DCONFIG_LOCKDEP=OFF" }
+          - { name: debug, type: Debug, args: "" }
 
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: extractions/setup-just@v2
-
+      # git before checkout, or checkout fetches a tarball and the kernel's version reads "unknown".
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git
+          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git python3
           pipx install clang-format==22.1.8
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      # The whole history and its tags, which git describe needs for the version.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # The container runs as root over a checkout the runner's user owns.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.55.1
+
       - name: Check Format
+        if: matrix.name == 'default'
         run: just check-format
 
+      # A shared runner emulates the Pi far slower than a desktop, -O0 slower still.
       - name: Run Tests
-        run: just test
+        run: just cmake_args="${{ matrix.args }}" test_timeout=600 test ${{ matrix.type }}
+
+  # The kernel that ships has no test code compiled in, so it is built on its own.
+  build:
+    name: build (${{ matrix.type }}, CONFIG_TESTS=OFF)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: public.ecr.aws/docker/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+    strategy:
+      fail-fast: false
+      matrix:
+        type: [ RelWithDebInfo, Release ]
+
+    steps:
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y cmake gcc-aarch64-linux-gnu mtools git python3
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - uses: extractions/setup-just@v4
+        with:
+          just-version: 1.55.1
+
+      - name: Build
+        run: just build ${{ matrix.type }}

@@ -98,7 +98,14 @@ Full detail is in [`docs/architecture.txt`](docs/architecture.txt).
 ## Building
 
 Requires an AArch64 cross-compiler, CMake, [just](https://github.com/casey/just),
-and mtools.
+mtools, and clang-format 22.1.8 for `just format`.
+
+The toolchain file, `cmake/aarch64-none-elf.cmake`, uses the first of
+`aarch64-none-elf-gcc` (Arm's bare-metal toolchain), `aarch64-elf-gcc` (Homebrew)
+and `aarch64-linux-gnu-gcc` (the `gcc-aarch64-linux-gnu` package on Debian and
+Ubuntu) that it finds on PATH. To pick one, give its prefix the first time a tree
+is configured: `just cmake_args="-DCROSS_COMPILE=aarch64-elf-" build`. `just gdb`
+uses that toolchain's gdb, or `gdb-multiarch` where there is none.
 
 ```
 just build [type]   Build the project (default: RelWithDebInfo)
@@ -121,7 +128,9 @@ just build Debug      # unoptimized, for stepping through in GDB
 just build Release    # optimized, no debug info
 ```
 
-The output image is `pi4-boot/kernel8.img`.
+The output image is `pi4-boot/kernel8.img`, which only `just build` writes. A
+configuration given in `cmake_args` lasts for that one command; `just config`
+(or `just config build-test`) shows what a tree was last built with.
 
 ## Testing
 

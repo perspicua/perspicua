@@ -15,8 +15,9 @@ detailed docs rather than repeating them — follow the links for specifics.
 --------------------------------------------------------------------------------
 PREREQUISITES
 --------------------------------------------------------------------------------
-An AArch64 cross-compiler (aarch64-none-elf), CMake, Just, and mtools.
-QEMU (qemu-system-aarch64) for running. See README.md for the toolchain file.
+An AArch64 cross-compiler (aarch64-none-elf, aarch64-elf or aarch64-linux-gnu),
+CMake, Just, mtools, and clang-format 22.1.8. QEMU (qemu-system-aarch64) for
+running. README.md says how the toolchain file picks the compiler.
 
 
 --------------------------------------------------------------------------------
@@ -27,7 +28,7 @@ THE LOOP
        git checkout -b feature/short-descriptive-name
 
   2. Build and iterate:
-       just build            # Debug by default; `just build release` for opt
+       just build            # RelWithDebInfo by default; `just build Debug` to step through
        just run              # headless in QEMU
        just run-gui          # windowed
        just debug / just gdb # start under GDB and attach

@@ -1,13 +1,23 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-if(APPLE)
-    set(DEFAULT_CROSS_COMPILE "aarch64-elf-")
-else()
-    set(DEFAULT_CROSS_COMPILE "aarch64-linux-gnu-")
+# The compiler prefix: the first of these on PATH, unless -DCROSS_COMPILE= names one.
+# aarch64-none-elf is Arm's bare-metal toolchain, aarch64-elf is Homebrew's, and
+# aarch64-linux-gnu is the hosted cross compiler Linux distributions package.
+if(NOT CROSS_COMPILE)
+    foreach(prefix aarch64-none-elf- aarch64-elf- aarch64-linux-gnu-)
+        find_program(PERSPICUA_CC_${prefix} ${prefix}gcc)
+        if(PERSPICUA_CC_${prefix})
+            set(found_prefix ${prefix})
+            break()
+        endif()
+    endforeach()
+    if(NOT found_prefix)
+        message(FATAL_ERROR "No AArch64 cross compiler on PATH: install aarch64-none-elf-gcc, "
+                            "aarch64-elf-gcc or aarch64-linux-gnu-gcc, or pass -DCROSS_COMPILE=<prefix>")
+    endif()
+    set(CROSS_COMPILE ${found_prefix} CACHE STRING "Cross-compiler prefix")
 endif()
-
-set(CROSS_COMPILE ${DEFAULT_CROSS_COMPILE} CACHE STRING "Cross-compiler prefix")
 
 set(CMAKE_C_COMPILER ${CROSS_COMPILE}gcc)
 set(CMAKE_ASM_COMPILER ${CROSS_COMPILE}gcc)
@@ -27,14 +37,22 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 # registers the trap frame does not save. Lifting this means implementing lazy
 # FP first -- see the note on struct exception_trap_frame.
 set(ARCH_FLAGS "-mcpu=cortex-a72+nosimd -mgeneral-regs-only")
+# Only the compiler's own headers (stddef.h, stdint.h, stdarg.h and the like):
+# a hosted cross gcc would otherwise also search glibc's, and anything the tree
+# does not provide would quietly come from there. libc/include has the rest.
+execute_process(COMMAND ${CROSS_COMPILE}gcc -print-file-name=include
+                OUTPUT_VARIABLE GCC_INCLUDE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+set(INCLUDE_FLAGS "-nostdinc -isystem ${GCC_INCLUDE}")
+
 # Never PIE: a hosted Linux cross gcc defaults to it, which puts const pointer
 # tables such as syscall_table in writable .data and links in relocations
-# nothing applies.
-set(COMMON_FLAGS "${ARCH_FLAGS} -Wall -Wextra -Werror -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics -fno-pie")
+# nothing applies. -Wdate-time: the build date comes from build_info.h, which
+# every build refreshes, never from __DATE__ in whichever file last recompiled.
+set(COMMON_FLAGS "${ARCH_FLAGS} ${INCLUDE_FLAGS} -Wall -Wextra -Werror -Wdate-time -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics -fno-pie")
 
 # FORCE on every flag variable here, for the reason given at the build-type flags below.
 set(CMAKE_C_FLAGS "${COMMON_FLAGS}" CACHE STRING "Common C flags" FORCE)
-set(CMAKE_ASM_FLAGS "${ARCH_FLAGS}" CACHE STRING "Common ASM flags" FORCE)
+set(CMAKE_ASM_FLAGS "${ARCH_FLAGS} ${INCLUDE_FLAGS}" CACHE STRING "Common ASM flags" FORCE)
 
 # Build type specific flags.
 #

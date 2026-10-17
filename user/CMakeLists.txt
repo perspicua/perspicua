@@ -29,8 +29,10 @@ foreach(APP_SRC ${APP_SRCS})
     add_executable(${APP_NAME}.elf ${APP_FILES})
     target_link_libraries(${APP_NAME}.elf PRIVATE libc crt0)
     target_include_directories(${APP_NAME}.elf PRIVATE include ../libc/include ..)
+    # 4 KB pages, not ld's 64 KB default, so no segment is padded to a 64 KB boundary in the file.
     target_link_options(${APP_NAME}.elf PRIVATE
         -nostdlib
+        -Wl,-z,max-page-size=4096
         -T ${CMAKE_CURRENT_SOURCE_DIR}/user.ld
     )
     set_target_properties(${APP_NAME}.elf PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/user.ld)

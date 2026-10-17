@@ -5,10 +5,12 @@
 #ifndef PERSPICUA_FS_PIPE_H
 #define PERSPICUA_FS_PIPE_H
 
+#include <limits.h>
+
 struct vfs_vnode;
 
-// Capacity, and the largest write that is never interleaved with another.
-#define PIPE_BUF_SIZE 4096
+// Capacity, and the largest write that is never interleaved with another: POSIX's PIPE_BUF.
+#define PIPE_BUF_SIZE PIPE_BUF
 
 /*
  * pipe_create - Internal implementation of the pipe() system call.

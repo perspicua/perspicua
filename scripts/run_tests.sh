@@ -112,6 +112,9 @@ USER_SUITES=(
 #
 # Against a kernel with that bug put back this caught it in 6 of 18 runs, and
 # in 0 of 8 against the fixed one. A failure here is real; a pass is not proof.
+# It depends on timing: QEMU 10 and later hand the guest up to a FIFO of stdin
+# at once, where 9.x handed it one byte, so a slow guest can overflow the tty's
+# input ring. That loss is counted in /proc/tty, which a failure prints.
 CONSOLE_BURST_LINES=20
 CONSOLE_BURST_GAP=0.05
 CONSOLE_BURST_PAD=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789
@@ -282,6 +285,11 @@ if [ "$suites_finished" -eq 1 ]; then
         [ "$(date +%s)" -ge "$burst_deadline" ] && break
         sleep 0.2
     done
+    # Where the bytes went: dropped from a full input ring, or lost at the UART.
+    if [ "$(burst_lines_back)" -lt "$CONSOLE_BURST_LINES" ]; then
+        printf 'cat /proc/tty\n' >&3
+        wait_briefly '^break [0-9]+$' 10
+    fi
 fi
 
 kill "$qemu_pid" 2>/dev/null
@@ -385,6 +393,7 @@ if [ "$console_burst_ran" -eq 1 ]; then
     if [ "$burst_missing" -gt 0 ]; then
         echo "FAIL: console burst: $burst_missing of $CONSOLE_BURST_LINES lines did not come back" \
             "($(qemu-system-aarch64 --version | head -n 1))"
+        grep -E '^(rx_dropped|overrun|framing|parity|break) [0-9]+$' "$CLEAN" | sed 's/^/  \/proc\/tty: /'
         status=1
     fi
 fi
