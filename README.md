@@ -17,7 +17,7 @@ hardware before release.
 <p align="center">
   <img src="docs/img/boot.png" alt="Perspicua booting to a shell" width="760">
   <br>
-  <sub>Booting under QEMU (<code>just run</code>), then <code>kfetch</code></sub>
+  <sub>Booting on a Raspberry Pi 4, then <code>kfetch</code></sub>
 </p>
 
 ## Status
