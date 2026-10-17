@@ -41,6 +41,7 @@ PANIC_MARKER="KERNEL PANIC"
 # A kernel that prints one of these has gone wrong without panicking.
 FAIL_MARKERS=(
     "lockdep: attempting to release unheld"
+    "lockdep: node table full"
     "user abort with no owning process"
 )
 
@@ -57,7 +58,7 @@ KERNEL_SUITES=(
     "Heap Properties:16"
     "Timer:19"
     "SD Driver:545"
-    "MMU Dynamic Mapping:40"
+    "MMU Dynamic Mapping:46"
     "MMU Per-Process Page Tables:86"
     "VFS:89"
     "FAT32:1524"
@@ -78,6 +79,7 @@ KERNEL_SUITES=(
     "Completion-MultiTask:36"
     "RWSEM-MultiTask:48"
     "Spinlock-MultiTask:3"
+    "TTY:9"
     "Signals:54"
 )
 
@@ -95,7 +97,7 @@ USER_SUITES=(
     "test_restart:20"
     "test_tools:94"
     "test_libc:377"
-    "test_syscall:167"
+    "test_syscall:170"
     "test_fcntl:8"
     "test_stop_cont:39"
     "test_sh:17"

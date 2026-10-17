@@ -45,6 +45,15 @@ extern int uart_ready;
 
 typedef void (*uart_rx_cb_t)(char c);
 typedef void (*uart_tx_cb_t)(void);
+typedef int (*uart_flush_cb_t)(void);
+
+// Received bytes the PL011 flagged, by error.
+struct uart_rx_errors {
+    unsigned long framing;
+    unsigned long parity;
+    unsigned long brk;
+    unsigned long overrun;
+};
 
 void uart_send(char c);
 
@@ -53,6 +62,18 @@ void uart_send_raw(char c);
 char uart_getc(void);
 
 void uart_write_locked(const char *buf, size_t len);
+
+// With uart_tx_lock held: a kernel message is part-way out, and the tty ring must wait.
+int uart_tx_paused_locked(void);
+
+// With uart_tx_lock held: arms or disarms the TX interrupt.
+void uart_tx_irq_locked(int on);
+
+void uart_get_rx_errors(struct uart_rx_errors *out);
+
+// Masks the RX interrupts, returning what was set for uart_rx_irq_restore.
+uint32_t uart_rx_irq_save(void);
+void uart_rx_irq_restore(uint32_t saved);
 
 void uart_write_raw(const char *buf, size_t len);
 
@@ -68,8 +89,8 @@ void uart_reg_rx_callback(uart_rx_cb_t f);
 
 void uart_reg_tx_callback(uart_tx_cb_t f);
 
-// Runs under uart_tx_lock before every direct write, to send output queued ahead of it.
-void uart_reg_flush_callback(uart_tx_cb_t f);
+// Under uart_tx_lock: sends queued output until the FIFO fills; nonzero while some is left.
+void uart_reg_flush_callback(uart_flush_cb_t f);
 
 void uart_handle_irq(void);
 

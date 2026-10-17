@@ -583,7 +583,7 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
     unsigned long ms =
         (unsigned long)kreq.tv_sec * 1000 + ((unsigned long)kreq.tv_nsec + 999999) / 1000000;
 
-    unsigned long deadline = resume_at ? resume_at : timer_get_system_time() + ms;
+    unsigned long deadline = resume_at ? resume_at : sched_deadline(ms);
 
     // Only a signal ends the sleep early; anything else re-sleeps the rest.
     unsigned long left;

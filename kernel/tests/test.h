@@ -129,6 +129,7 @@ void test_semaphore_scheduler(void);
 void test_completion_scheduler(void);
 void test_rwsem_scheduler(void);
 void test_spinlock_scheduler(void);
+void test_tty_scheduler(void);
 #ifdef CONFIG_LOCKDEP
 void test_lockdep_scheduler(void);
 void test_lockdep_spin(void);

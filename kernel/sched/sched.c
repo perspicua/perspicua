@@ -512,6 +512,11 @@ void sched_exit_current(void)
     }
 }
 
+unsigned long sched_deadline(unsigned long ms)
+{
+    return timer_get_system_time() + (ms < SCHED_SLEEP_MAX_MS ? ms : SCHED_SLEEP_MAX_MS);
+}
+
 void sched_sleep_ms(unsigned long ms)
 {
     unsigned long flags = irq_save();
@@ -526,7 +531,7 @@ void sched_sleep_ms(unsigned long ms)
     while (!sched_task_set_blocked(curr)) {
         sched_schedule();
     }
-    sleep_enqueue(curr, timer_get_system_time() + ms);
+    sleep_enqueue(curr, sched_deadline(ms));
 
     sched_schedule();
     irq_restore(flags);
@@ -547,7 +552,7 @@ unsigned long sched_sleep_ms_interruptible(unsigned long ms)
         return 0;
     }
 
-    unsigned long deadline = timer_get_system_time() + ms;
+    unsigned long deadline = sched_deadline(ms);
 
     // Published before the check, as in sigsuspend: a sender on another core
     // sets the pending bit and then reads this state.

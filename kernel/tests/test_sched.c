@@ -546,8 +546,10 @@ void test_scheduler(void)
             int cpu = cpu_id();
             uint64_t before = core_sched_stats[cpu].context_switches;
 
+            // Until a tick lands, not for a fixed span: under host load the span can end before it.
             unsigned long start_ms = timer_get_system_time();
-            while (timer_get_system_time() - start_ms < 30) {
+            while (!__atomic_load_n(&t->need_resched, __ATOMIC_RELAXED)
+                   && timer_get_system_time() - start_ms < 200) {
                 asm volatile("" ::: "memory");
             }
             uint64_t after = core_sched_stats[cpu].context_switches;

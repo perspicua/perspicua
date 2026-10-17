@@ -42,7 +42,13 @@ static volatile uint32_t *uart_icr = NULL;
 // Registered interrupt callbacks
 static uart_rx_cb_t uart_rx_callback = NULL;
 static uart_tx_cb_t uart_tx_callback = NULL;
-static uart_tx_cb_t uart_flush_callback = NULL;
+static uart_flush_cb_t uart_flush_callback = NULL;
+
+// Under uart_tx_lock: kernel messages part-way out, which the tty ring waits behind.
+static int uart_tx_writers;
+
+// Indexed by the DR error bit less 8: framing, parity, break, overrun.
+static unsigned long uart_rx_error_counts[4];
 
 static irq_result_t uart_irq_handler(void *ctx)
 {
@@ -139,21 +145,21 @@ static inline int uart_tx_unserialized(void)
 
 void uart_send(char c)
 {
-    if (uart_tx_unserialized()) {
-        uart_send_raw(c);
-        return;
-    }
-
-    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-    if (uart_flush_callback) {
-        uart_flush_callback();
-    }
-    uart_send_raw(c);
-    spin_unlock_irqrestore(&uart_tx_lock, flags);
+    uart_write_locked(&c, 1);
 }
 
-// Holds uart_tx_lock across the whole buffer so no other core can interleave
-// bytes into it.
+int uart_tx_paused_locked(void)
+{
+    return uart_tx_writers > 0;
+}
+
+void uart_tx_irq_locked(int on)
+{
+    uint32_t mask = mmio_read(uart_imsc);
+    mmio_write(uart_imsc, on ? (mask | UART_IMSC_TXIM) : (mask & ~UART_IMSC_TXIM));
+}
+
+// After the queued tty output, a FIFO at a time: IRQs are masked for the register writes only.
 void uart_write_locked(const char *buf, size_t len)
 {
     if (uart_tx_unserialized()) {
@@ -162,10 +168,32 @@ void uart_write_locked(const char *buf, size_t len)
     }
 
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
-    if (uart_flush_callback) {
-        uart_flush_callback();
+    uart_tx_writers++;
+
+    int ring_left = uart_flush_callback != NULL;
+    size_t i = 0;
+    for (;;) {
+        if (ring_left) {
+            ring_left = uart_flush_callback();
+        }
+        while (!ring_left && i < len && !(mmio_read(uart_fr) & UART_FR_TXFF)) {
+            mmio_write(uart_dr, (unsigned int)buf[i++]);
+        }
+        if (!ring_left && i == len) {
+            break;
+        }
+
+        spin_unlock_irqrestore(&uart_tx_lock, flags);
+        while (mmio_read(uart_fr) & UART_FR_TXFF) {
+            asm volatile("yield");
+        }
+        flags = spin_lock_irqsave(&uart_tx_lock);
     }
-    uart_write_raw(buf, len);
+
+    // The tty ring stood still for this message; its interrupt starts it again.
+    if (--uart_tx_writers == 0 && uart_tx_callback) {
+        uart_tx_irq_locked(1);
+    }
     spin_unlock_irqrestore(&uart_tx_lock, flags);
 }
 
@@ -184,7 +212,40 @@ int uart_data_ready(void)
 
 void uart_enable_interrupts(void)
 {
-    mmio_write(uart_imsc, UART_IMSC_RXIM | UART_IMSC_RTIM);
+    unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
+    mmio_write(uart_imsc, mmio_read(uart_imsc) | UART_IMSC_RXIM | UART_IMSC_RTIM);
+    spin_unlock_irqrestore(&uart_tx_lock, flags);
+}
+
+uint32_t uart_rx_irq_save(void)
+{
+    // A panic may have halted the core holding uart_tx_lock.
+    int locked = !kernel_panicked;
+    unsigned long flags = locked ? spin_lock_irqsave(&uart_tx_lock) : 0;
+    uint32_t mask = mmio_read(uart_imsc);
+    mmio_write(uart_imsc, mask & ~(UART_IMSC_RXIM | UART_IMSC_RTIM));
+    if (locked) {
+        spin_unlock_irqrestore(&uart_tx_lock, flags);
+    }
+    return mask & (UART_IMSC_RXIM | UART_IMSC_RTIM);
+}
+
+void uart_rx_irq_restore(uint32_t saved)
+{
+    int locked = !kernel_panicked;
+    unsigned long flags = locked ? spin_lock_irqsave(&uart_tx_lock) : 0;
+    mmio_write(uart_imsc, mmio_read(uart_imsc) | saved);
+    if (locked) {
+        spin_unlock_irqrestore(&uart_tx_lock, flags);
+    }
+}
+
+void uart_get_rx_errors(struct uart_rx_errors *out)
+{
+    out->framing = __atomic_load_n(&uart_rx_error_counts[0], __ATOMIC_RELAXED);
+    out->parity = __atomic_load_n(&uart_rx_error_counts[1], __ATOMIC_RELAXED);
+    out->brk = __atomic_load_n(&uart_rx_error_counts[2], __ATOMIC_RELAXED);
+    out->overrun = __atomic_load_n(&uart_rx_error_counts[3], __ATOMIC_RELAXED);
 }
 
 void uart_clear_interrupt(uint32_t mask)
@@ -207,7 +268,7 @@ void uart_reg_tx_callback(uart_tx_cb_t f)
     uart_tx_callback = f;
 }
 
-void uart_reg_flush_callback(uart_tx_cb_t f)
+void uart_reg_flush_callback(uart_flush_cb_t f)
 {
     uart_flush_callback = f;
 }
@@ -223,9 +284,14 @@ void uart_handle_irq(void)
 
     if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
         while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
-            char c = (char)(mmio_read(uart_dr) & 0xFF);
+            uint32_t dr = mmio_read(uart_dr);
+            for (int bit = 0; bit < 4; bit++) {
+                if (dr & (1u << (8 + bit))) {
+                    __atomic_fetch_add(&uart_rx_error_counts[bit], 1, __ATOMIC_RELAXED);
+                }
+            }
             if (uart_rx_callback != NULL) {
-                uart_rx_callback(c);
+                uart_rx_callback((char)(dr & 0xFF));
             }
         }
     }

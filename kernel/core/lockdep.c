@@ -19,10 +19,8 @@
 #ifdef CONFIG_LOCKDEP
 
     #define MAX_HELD_LOCKS 16
-    /* Distinct lock addresses tracked. The graph is N^2/8 bytes, so 1024 cost
-     * 128 KB in every debug build; 256 covers far more locks than exist and
-     * degrades gracefully (new locks stop being tracked) if it ever fills. */
-    #define MAX_LOCK_NODES 256
+    // Distinct lock addresses: a full test run takes about 300, and the graph costs N^2/8 bytes.
+    #define MAX_LOCK_NODES 1024
 
 static spinlock_t lockdep_lock = SPINLOCK_INIT;
 static int lockdep_disabled[CPU_MAX_CORES] = {0}; // Indexed by core ID
@@ -32,6 +30,9 @@ static int held_count[CPU_MAX_CORES] = {0};
 
 static uintptr_t lock_nodes[MAX_LOCK_NODES];
 static int num_lock_nodes = 0;
+
+// 1 once a lock found the table full, 2 once that has been reported.
+static int lockdep_table_full;
 
 // graph_edges[A][B] == 1 means lock A was acquired before lock B globally
 static uint8_t graph_edges[MAX_LOCK_NODES][MAX_LOCK_NODES / 8];
@@ -50,6 +51,18 @@ int lockdep_test_violations(void)
     return lockdep_violation_count;
 }
     #endif
+
+// Called with lockdep_lock dropped, since printing takes locks of its own.
+static void lockdep_report_full(void)
+{
+    int expected = 1;
+    if (__atomic_load_n(&lockdep_table_full, __ATOMIC_RELAXED) == 1
+        && __atomic_compare_exchange_n(&lockdep_table_full, &expected, 2, 0, __ATOMIC_RELAXED,
+                                       __ATOMIC_RELAXED)) {
+        pr_warn("lockdep: node table full at %d locks; locks seen from now on go unchecked\n",
+                MAX_LOCK_NODES);
+    }
+}
 
 static void lockdep_violation(const char *msg)
 {
@@ -81,7 +94,10 @@ static int get_or_create_node(uintptr_t lock)
         }
     }
     if (num_lock_nodes >= MAX_LOCK_NODES) {
-        return -1; // Graph full, quietly stop tracking new locks
+        if (lockdep_table_full == 0) {
+            lockdep_table_full = 1;
+        }
+        return -1;
     }
     int idx = num_lock_nodes++;
     lock_nodes[idx] = lock;
@@ -166,7 +182,8 @@ void lockdep_acquire(spinlock_t *lock)
 {
     int core = cpu_id();
 
-    if (lockdep_disabled[core]) {
+    // After a panic a halted core may hold lockdep_lock, and nothing is left to validate.
+    if (lockdep_disabled[core] || kernel_panicked) {
         return;
     }
 
@@ -211,6 +228,7 @@ void lockdep_acquire(spinlock_t *lock)
     raw_spin_unlock(&lockdep_lock);
     lockdep_disabled[core] = 0;
 
+    lockdep_report_full();
     if (violation) {
         lockdep_violation(violation);
     }
@@ -220,7 +238,8 @@ void lockdep_release(spinlock_t *lock)
 {
     int core = cpu_id();
 
-    if (lockdep_disabled[core]) {
+    // After a panic a halted core may hold lockdep_lock, and nothing is left to validate.
+    if (lockdep_disabled[core] || kernel_panicked) {
         return;
     }
 
@@ -317,6 +336,7 @@ void lockdep_acquire_sleep(const void *lock)
     lockdep_disabled[core] = 0;
     irq_restore(flags);
 
+    lockdep_report_full();
     if (violation) {
         lockdep_violation(violation);
     }

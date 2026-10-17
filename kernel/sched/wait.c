@@ -146,7 +146,7 @@ int wq_signal_pending(void)
 
 unsigned long wq_deadline(unsigned long timeout_ms)
 {
-    return timeout_ms ? timer_get_system_time() + timeout_ms : 0;
+    return timeout_ms ? sched_deadline(timeout_ms) : 0;
 }
 
 int wq_timed_out(unsigned long deadline)

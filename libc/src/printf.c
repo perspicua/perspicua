@@ -12,9 +12,50 @@
 #include "uapi/types.h"
 
 #ifdef __KERNEL__
+    #include "arch/cpu.h"
+    #include "arch/irq.h"
     #include "core/lock.h"
     #include "core/timer.h"
+    #include "panic.h"
+
+// Whole messages go out one at a time, with IRQs left on while one is written.
 static spinlock_t printf_lock = SPINLOCK_INIT;
+static int printf_owner = -1;
+
+// An IRQ that prints on the core already writing goes straight through rather than wait on itself.
+static int printf_lock_take(void)
+{
+    // A core halted by a panic may hold it for good.
+    if (kernel_panicked) {
+        return 0;
+    }
+    for (;;) {
+        unsigned long flags = irq_save();
+        int core = cpu_id();
+        if (__atomic_load_n(&printf_owner, __ATOMIC_RELAXED) == core) {
+            irq_restore(flags);
+            return 0;
+        }
+        if (spin_trylock(&printf_lock)) {
+            __atomic_store_n(&printf_owner, core, __ATOMIC_RELAXED);
+            irq_restore(flags);
+            return 1;
+        }
+        irq_restore(flags);
+        while (__atomic_load_n(&printf_lock.locked, __ATOMIC_RELAXED)) {
+            asm volatile("yield");
+        }
+    }
+}
+
+static void printf_lock_drop(int taken)
+{
+    if (taken) {
+        unsigned long flags = irq_save();
+        __atomic_store_n(&printf_owner, -1, __ATOMIC_RELAXED);
+        spin_unlock_irqrestore(&printf_lock, flags);
+    }
+}
 #endif
 
 extern void __libc_write(const char *buf, size_t len);
@@ -523,7 +564,7 @@ int vprintf(const char *fmt, va_list args)
 int printf(const char *fmt, ...)
 {
 #ifdef __KERNEL__
-    unsigned long irqflags = spin_lock_irqsave(&printf_lock);
+    int taken = printf_lock_take();
 #endif
 
     va_list args;
@@ -532,7 +573,7 @@ int printf(const char *fmt, ...)
     va_end(args);
 
 #ifdef __KERNEL__
-    spin_unlock_irqrestore(&printf_lock, irqflags);
+    printf_lock_drop(taken);
 #endif
 
     return ret;
@@ -541,7 +582,7 @@ int printf(const char *fmt, ...)
 #ifdef __KERNEL__
 int printk(const char *fmt, ...)
 {
-    unsigned long irqflags = spin_lock_irqsave(&printf_lock);
+    int taken = printf_lock_take();
 
     unsigned long ms = timer_get_system_time();
     unsigned long sec = ms / 1000;
@@ -571,7 +612,7 @@ int printk(const char *fmt, ...)
 
     fb_flush(&fb);
 
-    spin_unlock_irqrestore(&printf_lock, irqflags);
+    printf_lock_drop(taken);
 
     return (int)(fb.total - ts_len);
 }

@@ -19,6 +19,7 @@
 
 static unsigned int cursor_x = 0;
 static unsigned int cursor_y = CONSOLE_Y_OFFSET;
+// Never taken from IRQ context, so a scroll moving megabytes leaves IRQs on.
 static spinlock_t fb_console_lock = SPINLOCK_INIT;
 static int console_hidden;
 
@@ -120,25 +121,25 @@ void fb_console_init(void)
 
 void fb_console_putc(char c)
 {
-    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+    spin_lock(&fb_console_lock);
     fb_console_putc_unlocked(c);
-    spin_unlock_irqrestore(&fb_console_lock, flags);
+    spin_unlock(&fb_console_lock);
 }
 
 void fb_console_puts(const char *s)
 {
-    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+    spin_lock(&fb_console_lock);
     while (*s) {
         fb_console_putc_unlocked(*s++);
     }
-    spin_unlock_irqrestore(&fb_console_lock, flags);
+    spin_unlock(&fb_console_lock);
 }
 
 void fb_console_hide(int hidden)
 {
-    unsigned long flags = spin_lock_irqsave(&fb_console_lock);
+    spin_lock(&fb_console_lock);
     console_hidden = hidden;
     // A sequence cut off while hidden must not swallow what comes after it.
     ansi_state = 0;
-    spin_unlock_irqrestore(&fb_console_lock, flags);
+    spin_unlock(&fb_console_lock);
 }

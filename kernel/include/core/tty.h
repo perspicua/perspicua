@@ -35,10 +35,11 @@ struct tty {
     struct wait_queue tx_wq;
 
     spinlock_t lock;
-    int echo_enabled;
-    int canon_enabled;
     uint32_t foreground_pgid;
     uint32_t session_id;
+
+    // Bytes that arrived with the RX ring full and were lost.
+    unsigned long rx_dropped;
 };
 
 // The system console, initialised at boot and never freed.
@@ -67,6 +68,13 @@ void tty_handle_tx(struct tty *tty);
 
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count);
 
+// A signal ends the wait for ring space: what was queued by then is written, and none is
+// -ERESTARTSYS.
 int tty_write(struct tty *tty, const char *buf, size_t count);
+
+#ifdef CONFIG_TESTS
+// While on, nothing leaves the TX ring, so a writer can be made to wait for space.
+void tty_test_stall_tx(int on);
+#endif
 
 #endif // PERSPICUA_CORE_TTY_H

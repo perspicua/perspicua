@@ -155,6 +155,20 @@ void test_nanosleep(void)
     // 4. Zero sleep returns immediately
     struct timespec req_zero = {0, 0};
     CHECK(nanosleep(&req_zero, NULL) == 0);
+
+    // 5. The longest sleep accepted sleeps, rather than overflowing into one that is already over
+    int pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        struct timespec longest = {(time_t)(0x7FFFFFFFFFFFFFFFLL / 1000), 999999999};
+        nanosleep(&longest, NULL);
+        _exit(0);
+    }
+    usleep(200 * 1000);
+    int status = 0;
+    CHECK(waitpid(pid, &status, WNOHANG) == 0);
+    kill(pid, SIGKILL);
+    CHECK(waitpid(pid, &status, 0) == pid);
 }
 
 void test_fstat(void)

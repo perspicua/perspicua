@@ -8,7 +8,8 @@
  *   kdb_enter(reason)       -- from arbitrary kernel code
  *   kdb_enter_tf(reason,tf) -- from exception / panic handler
  *
- * Both disable interrupts and block until the user types 'continue'.
+ * Both mask interrupts, and the UART's receive interrupt, until the user types
+ * 'continue', then restore them.
  */
 
 #include "debug/kdb.h"
@@ -37,6 +38,35 @@
 
 // Trap frame saved on entry (NULL when entered without an exception frame).
 static struct exception_trap_frame *kdb_tf;
+
+// A faulting access resumes at the label after it, through the fixup table.
+asm(".pushsection .text\n"
+    ".balign 4\n"
+    ".global kdb_peek\n"
+    ".type kdb_peek, %function\n"
+    "kdb_peek:\n"
+    "1:  ldr x2, [x0]\n"
+    "    str x2, [x1]\n"
+    "    mov w0, #0\n"
+    "    ret\n"
+    "2:  mov w0, #-1\n"
+    "    ret\n"
+    ".size kdb_peek, . - kdb_peek\n"
+    ".global kdb_poke\n"
+    ".type kdb_poke, %function\n"
+    "kdb_poke:\n"
+    "3:  str x1, [x0]\n"
+    "    mov w0, #0\n"
+    "    ret\n"
+    "4:  mov w0, #-1\n"
+    "    ret\n"
+    ".size kdb_poke, . - kdb_poke\n"
+    ".pushsection __ex_table, \"a\"\n"
+    ".align 3\n"
+    ".quad 1b, 2b\n"
+    ".quad 3b, 4b\n"
+    ".popsection\n"
+    ".popsection\n");
 
 // Low-level I/O – bypass the TTY layer so KDB works in broken states
 
@@ -276,7 +306,11 @@ static void cmd_tasks(void)
     kdb_printf("  %-5s %-8s %-5s %-18s %-18s  %s\n", "PID", "STATE", "PPID", "CODE_VA", "KSTACK_VA",
                "NAME");
 
-    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    // A panic can leave the table locked by this core or a halted one; it is read either way.
+    int locked = spin_trylock(&process_table_lock);
+    if (!locked) {
+        kdb_puts("  (the process table is locked; reading it anyway)\n");
+    }
 
     int shown = 0;
     for (int i = 0; i < PROCESS_TABLE_SIZE; i++) {
@@ -297,7 +331,9 @@ static void cmd_tasks(void)
         }
     }
 
-    spin_unlock_irqrestore(&process_table_lock, flags);
+    if (locked) {
+        spin_unlock(&process_table_lock);
+    }
 
     if (!shown) {
         kdb_puts("  (no user processes)\n");
@@ -400,8 +436,13 @@ static void cmd_rd(int argc, char **argv)
 
     kdb_puts("\n");
     for (unsigned long i = 0; i < count; i++) {
-        volatile unsigned long *p = (volatile unsigned long *)(addr + i * 8);
-        kdb_printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, *p);
+        const unsigned long *p = (const unsigned long *)(addr + i * 8);
+        unsigned long val;
+        if (kdb_peek(p, &val) != 0) {
+            kdb_printf("  0x%016lx :  (unreadable)\n", (unsigned long)p);
+            break;
+        }
+        kdb_printf("  0x%016lx :  0x%016lx\n", (unsigned long)p, val);
     }
 }
 
@@ -414,9 +455,10 @@ static void cmd_wr(int argc, char **argv)
 
     unsigned long addr = kdb_parse_hex(argv[1]);
     unsigned long val = kdb_parse_hex(argv[2]);
-    unsigned long *p = (unsigned long *)addr;
-
-    *p = val;
+    if (kdb_poke((unsigned long *)addr, val) != 0) {
+        kdb_printf("  [0x%016lx] is not writable\n", addr);
+        return;
+    }
     asm volatile("dsb sy" ::: "memory");
     kdb_printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
 }
@@ -468,24 +510,28 @@ static void kdb_repl(void)
 
 // Public entry points
 
-void kdb_enter(const char *reason)
+static void kdb_session(const char *reason, struct exception_trap_frame *tf)
 {
-    disable_interrupts();
-    kdb_tf = NULL;
-
-    kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
-               timer_get_system_time(), cpu_id());
-    cmd_help();
-    kdb_repl();
-}
-
-void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf)
-{
-    disable_interrupts();
+    unsigned long flags = irq_save();
+    // Keystrokes belong to the prompt, not to a UART interrupt taken on another core.
+    uint32_t rx_irqs = uart_rx_irq_save();
     kdb_tf = tf;
 
     kdb_printf("\n======== KDB: %s  [uptime %lu ms, core %d] ========\n", reason,
                timer_get_system_time(), cpu_id());
     cmd_help();
     kdb_repl();
+
+    uart_rx_irq_restore(rx_irqs);
+    irq_restore(flags);
+}
+
+void kdb_enter(const char *reason)
+{
+    kdb_session(reason, NULL);
+}
+
+void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf)
+{
+    kdb_session(reason, tf);
 }

@@ -107,6 +107,12 @@ void sched_secondary_init(void);
 int sched_create_task(void (*entry)(void));
 struct task *sched_create_user_task(unsigned long forged_sp, unsigned long forged_lr,
                                     uintptr_t kstack_base, uint32_t pid);
+// Longer sleeps are cut to this, so every live deadline stays within the queue's signed compare.
+#define SCHED_SLEEP_MAX_MS (0x7FFFFFFFFFFFFFFFUL / 4)
+
+// The tick at which ms from now ends, ms capped at SCHED_SLEEP_MAX_MS.
+unsigned long sched_deadline(unsigned long ms);
+
 void sched_sleep_ms(unsigned long ms);
 unsigned long sched_sleep_ms_interruptible(unsigned long ms);
 void sched_schedule(void);

@@ -1,7 +1,8 @@
 /*
  * kdb.h - Kernel Debugger (KDB) public API.
  *
- * Entered automatically on kernel panic, or explicitly from kernel code.
+ * Entered on a kernel panic, with the other cores halted. Called directly, it
+ * stops only the calling core: the others keep running.
  *
  * Commands available in the KDB prompt:
  *   help              List all commands
@@ -23,8 +24,8 @@
 /*
  * kdb_enter - Enter the kernel debugger from an arbitrary kernel context.
  *
- * Disables interrupts and drops into the interactive REPL. The 'continue'
- * command returns from this function and resumes normal execution.
+ * Masks this core's interrupts and the UART's receive interrupt, and drops into
+ * the REPL. 'continue' restores both and returns.
  */
 void kdb_enter(const char *reason);
 
@@ -36,5 +37,11 @@ void kdb_enter(const char *reason);
  * Used by the panic handler and exception vectors.
  */
 void kdb_enter_tf(const char *reason, struct exception_trap_frame *tf);
+
+// Reads the word at addr into *val, or returns -1 if the read faults.
+int kdb_peek(const unsigned long *addr, unsigned long *val);
+
+// Writes val to the word at addr, or returns -1 if the write faults.
+int kdb_poke(unsigned long *addr, unsigned long val);
 
 #endif // PERSPICUA_DEBUG_KDB_H

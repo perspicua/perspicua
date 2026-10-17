@@ -76,6 +76,34 @@ void spin_lock(spinlock_t *lock)
                  : "memory");
 }
 
+int spin_trylock(spinlock_t *lock)
+{
+    preempt_disable();
+
+    unsigned int old;
+    unsigned int tmp;
+    unsigned int one = 1;
+
+    asm volatile("1: ldaxr   %w0, [%2]\n"
+                 "   cbnz    %w0, 2f\n"
+                 "   stxr    %w1, %w3, [%2]\n"
+                 "   cbnz    %w1, 1b\n"
+                 "   b       3f\n"
+                 "2: clrex\n"
+                 "3:\n"
+                 : "=&r"(old), "=&r"(tmp)
+                 : "r"(&lock->locked), "r"(one)
+                 : "memory");
+
+    if (old) {
+        preempt_enable();
+        return 0;
+    }
+    // After the fact: a trylock cannot deadlock, but it is held like any other lock.
+    lockdep_acquire(lock);
+    return 1;
+}
+
 static inline void spin_unlock_raw(spinlock_t *lock)
 {
     lockdep_release(lock);

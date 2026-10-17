@@ -18,6 +18,7 @@
 
 #include "core/lock.h"
 #include "core/timer.h"
+#include "core/tty.h"
 #include "mm/pmm.h"
 #include "mm/slab.h"
 #include "mm/heap.h"
@@ -30,6 +31,7 @@
 #include "devicetree/fdt.h"
 #include "driver/fb.h"
 #include "driver/mailbox.h"
+#include "driver/uart.h"
 
 static struct vfs_vnode root_vnode_struct;
 static struct vfs_vnode *procfs_root_vnode = &root_vnode_struct;
@@ -271,6 +273,20 @@ static int procfs_gen_fb(char *buf, int size)
         procfs_append(buf, &pos, size, "width %u\nheight %u\npitch %u\n", fb_info.width,
                       fb_info.height, fb_info.pitch);
     }
+    return pos;
+}
+
+// Console input lost before a reader saw it: ring overflow, then what the PL011 flagged.
+static int procfs_gen_tty(char *buf, int size)
+{
+    struct uart_rx_errors err;
+    uart_get_rx_errors(&err);
+
+    int pos = 0;
+    procfs_append(buf, &pos, size,
+                  "rx_dropped %lu\noverrun %lu\nframing %lu\nparity %lu\nbreak %lu\n",
+                  __atomic_load_n(&console_tty.rx_dropped, __ATOMIC_RELAXED), err.overrun,
+                  err.framing, err.parity, err.brk);
     return pos;
 }
 
@@ -531,11 +547,17 @@ static const struct procfs_static_file {
     const char *name;
     procfs_generate_fn generate;
 } procfs_static_files[] = {
-    {"version", procfs_gen_version},     {"uptime", procfs_gen_uptime},
-    {"meminfo", procfs_gen_meminfo},     {"interrupts", procfs_gen_interrupts},
-    {"schedstat", procfs_gen_schedstat}, {"mounts", procfs_gen_mounts},
-    {"cpuinfo", procfs_gen_cpuinfo},     {"stat", procfs_gen_stat},
-    {"clock", procfs_gen_clock},         {"fb", procfs_gen_fb},
+    {"version", procfs_gen_version},
+    {"uptime", procfs_gen_uptime},
+    {"meminfo", procfs_gen_meminfo},
+    {"interrupts", procfs_gen_interrupts},
+    {"schedstat", procfs_gen_schedstat},
+    {"mounts", procfs_gen_mounts},
+    {"cpuinfo", procfs_gen_cpuinfo},
+    {"stat", procfs_gen_stat},
+    {"clock", procfs_gen_clock},
+    {"fb", procfs_gen_fb},
+    {"tty", procfs_gen_tty},
 };
 
 #define PROCFS_STATIC_COUNT (sizeof(procfs_static_files) / sizeof(procfs_static_files[0]))
