@@ -9,16 +9,16 @@ on:
 permissions:
   contents: read
 
-# Both jobs run in Docker Hub's official image via AWS's mirror, since shared runner IPs hit Docker
-# Hub's anonymous pull limit: 26.04 LTS, pinned by digest, so the toolchain and QEMU change only
-# when that line does. Keep the two image lines the same.
+# Both jobs run in Docker Hub's official image through Google's mirror: shared runner IPs exhaust
+# both Docker Hub's anonymous pull limit and AWS's mirror's data limit. 26.04 LTS, pinned by
+# digest, so the toolchain and QEMU change only when that line does. Keep the two image lines the same.
 jobs:
   test:
     name: test (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     container:
-      image: public.ecr.aws/docker/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+      image: mirror.gcr.io/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
     strategy:
       fail-fast: false
       matrix:
@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     container:
-      image: public.ecr.aws/docker/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+      image: mirror.gcr.io/library/ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
     strategy:
       fail-fast: false
       matrix:
