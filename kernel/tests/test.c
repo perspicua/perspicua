@@ -39,6 +39,7 @@ void run_all_tests(void)
     test_wait();
     test_uaccess();
     test_process();
+    test_elf();
     test_syscall_bounds();
     test_faultinject();
 

@@ -121,6 +121,7 @@ void test_rwsem(void);
 void test_wait(void);
 void test_uaccess(void);
 void test_process(void);
+void test_elf(void);
 void test_syscall_bounds(void);
 void test_faultinject(void);
 void test_scheduler(void);

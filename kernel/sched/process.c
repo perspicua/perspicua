@@ -450,7 +450,8 @@ static void free_vector(char **vec, int count)
  * copy_user_vector - Copies a NULL-terminated user argv/envp into kernel memory.
  *
  * Stops at the first NULL entry. *out_count excludes the terminator, and out[]
- * is left NULL-terminated so it can be walked directly.
+ * is left NULL-terminated so it can be walked directly. A vector or an entry
+ * past the limits is -E2BIG.
  */
 static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
 {
@@ -462,13 +463,17 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
         return 0;
     }
 
-    while (count < EXEC_MAX_VECTOR - 1) {
+    for (;;) {
         char *uentry;
         if (copy_from_user(&uentry, &user_vec[count], sizeof(char *)) != 0) {
             return -EINVAL;
         }
         if (!uentry) {
             break;
+        }
+        // The last slot of out[] is the terminator's.
+        if (count == EXEC_MAX_VECTOR - 1) {
+            return -E2BIG;
         }
 
         char *kentry = heap_malloc(EXEC_MAX_ARG);
@@ -479,7 +484,7 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
         long len = strncpy_from_user(kentry, uentry, EXEC_MAX_ARG);
         if (len < 0) {
             heap_free(kentry);
-            return (int)len;
+            return len == -ENAMETOOLONG ? -E2BIG : (int)len;
         }
 
         out[count++] = kentry;
@@ -587,7 +592,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     // Set up user stack with argc/argv (top-down)
     uintptr_t user_sp = new_stack_base + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
-    uintptr_t karg_user_vaddrs[128];
+    uintptr_t karg_user_vaddrs[EXEC_MAX_VECTOR];
 
     for (int i = 0; i < argc; i++) {
         size_t len = strlen(kargv[i]) + 1;
@@ -613,7 +618,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     free_vector(kargv, argc);
 
     // Set up user stack with envp (top-down)
-    uintptr_t kenv_user_vaddrs[128];
+    uintptr_t kenv_user_vaddrs[EXEC_MAX_VECTOR];
 
     for (int i = 0; i < envc; i++) {
         size_t len = strlen(kenvp[i]) + 1;

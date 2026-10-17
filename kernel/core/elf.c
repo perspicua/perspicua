@@ -111,6 +111,13 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     *entry_point = ehdr.entry;
 
     size_t phdr_table_size = ehdr.ph_num * sizeof(struct elf64_program_header);
+    // An offset no off_t can hold is a malformed image, not a read error.
+    if (ehdr.ph_offset > (uint64_t)INT64_MAX - phdr_table_size) {
+        pr_err("elf: program header offset 0x%lx out of range\n", (unsigned long)ehdr.ph_offset);
+        vfs_close(fd);
+        return -ENOEXEC;
+    }
+
     struct elf64_program_header *phdrs = heap_malloc(phdr_table_size);
     if (!phdrs) {
         pr_err("elf: could not allocate memory for program headers\n");
@@ -118,14 +125,13 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         return -ENOMEM;
     }
 
-    vfs_lseek(fd, ehdr.ph_offset, SEEK_SET);
-    rc = vfs_read(fd, phdrs, phdr_table_size);
+    rc = vfs_pread(fd, phdrs, phdr_table_size, (vfs_off_t)ehdr.ph_offset);
     if (rc != (int)phdr_table_size) {
         pr_err("elf: could not read program headers\n");
-        heap_free(phdrs);
-        vfs_close(fd);
-        return rc < 0 ? rc : -ENOEXEC;
+        rc = rc < 0 ? rc : -ENOEXEC;
+        goto out;
     }
+    rc = 0;
 
     for (int i = 0; i < ehdr.ph_num; i++) {
         if (phdrs[i].type != ELF_PROG_LOAD) {
@@ -140,9 +146,8 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 
         if (filesz > memsz) {
             pr_err("elf: segment filesz > memsz\n");
-            heap_free(phdrs);
-            vfs_close(fd);
-            return -ENOEXEC;
+            rc = -ENOEXEC;
+            goto out;
         }
         if (memsz == 0) {
             continue;
@@ -155,9 +160,13 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         if (vaddr + memsz < vaddr || vaddr + memsz > USER_VA_BASE) {
             pr_err("elf: segment [0x%lx,0x%lx) outside the image region\n", (unsigned long)vaddr,
                    (unsigned long)(vaddr + memsz));
-            heap_free(phdrs);
-            vfs_close(fd);
-            return -ENOEXEC;
+            rc = -ENOEXEC;
+            goto out;
+        }
+        if (offset > (uint64_t)INT64_MAX - filesz) {
+            pr_err("elf: segment file offset 0x%lx out of range\n", (unsigned long)offset);
+            rc = -ENOEXEC;
+            goto out;
         }
 
         uint64_t start_vpage = vaddr & ~0xFFFULL;
@@ -173,33 +182,26 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
             int is_mapped = mmu_user_query(pgd, page, &current_paddr, &current_flags);
 
             if (is_mapped) {
-                kernel_vaddr = (void *)P2V(current_paddr);
-                // Upgrade permissions if we're loading data into an existing page
-                if ((mmu_flags & MMU_PAGE_USER_DATA) && !(current_flags & MMU_UXN)) {
-                    pmm_hold_page((void *)P2V(current_paddr));
-                    if (mmu_user_map_page(pgd, page, current_paddr, current_flags | mmu_flags)
-                        != 0) {
-                        pmm_free_page((void *)P2V(current_paddr));
-                        heap_free(phdrs);
-                        vfs_close(fd);
-                        return -ENOMEM;
-                    }
+                // Code and data may not share a page: no entry is both writable and executable.
+                if ((current_flags ^ mmu_flags) & MMU_UXN) {
+                    pr_err("elf: code and data share the page at 0x%lx\n", (unsigned long)page);
+                    rc = -ENOEXEC;
+                    goto out;
                 }
+                kernel_vaddr = (void *)P2V(current_paddr);
             } else {
                 kernel_vaddr = pmm_alloc_pages_nozero(1);
                 if (!kernel_vaddr) {
-                    heap_free(phdrs);
-                    vfs_close(fd);
-                    return -ENOMEM;
+                    rc = -ENOMEM;
+                    goto out;
                 }
                 /* Zeroed here rather than by the allocator: the bytes past
                  * filesz are the segment's BSS and must read as zero. */
                 memset(kernel_vaddr, 0, PAGE_SIZE);
                 if (mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags) != 0) {
                     pmm_free_page(kernel_vaddr);
-                    heap_free(phdrs);
-                    vfs_close(fd);
-                    return -ENOMEM;
+                    rc = -ENOMEM;
+                    goto out;
                 }
             }
 
@@ -220,15 +222,14 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 uint64_t bytes_to_read = copy_end_in_page - copy_start_in_page;
                 uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
 
-                vfs_lseek(fd, file_offset, SEEK_SET);
-                rc = vfs_read(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
-                              bytes_to_read);
+                rc = vfs_pread(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
+                               bytes_to_read, (vfs_off_t)file_offset);
                 if (rc != (int)bytes_to_read) {
                     pr_err("elf: failed to read segment data\n");
-                    heap_free(phdrs);
-                    vfs_close(fd);
-                    return rc < 0 ? rc : -ENOEXEC;
+                    rc = rc < 0 ? rc : -ENOEXEC;
+                    goto out;
                 }
+                rc = 0;
             }
 
             if (flags & ELF_PROG_FLAG_X) {
@@ -237,7 +238,8 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         }
     }
 
+out:
     heap_free(phdrs);
     vfs_close(fd);
-    return 0;
+    return rc;
 }

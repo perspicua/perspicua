@@ -1444,7 +1444,7 @@ static int64_t getcwd_handler(struct exception_trap_frame *tf)
     if (res == 0) {
         size_t len = strlen(kbuf) + 1;
         if (len > size) {
-            res = -EINVAL;
+            res = -ERANGE;
         } else {
             int err = copy_buf_to_user(buf, kbuf, len);
             if (err != 0) {

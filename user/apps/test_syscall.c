@@ -444,6 +444,24 @@ void test_review_bugfixes(void)
     }
 }
 
+// Entries an exec vector may hold, the terminator not counted.
+#define EXEC_LIMIT 127
+
+// 0 when exec refuses with E2BIG, 98 for any other refusal, else the status of the sh that ran.
+static int exec_sh_status(char *const argv[], char *const envp[])
+{
+    int pid = fork();
+    if (pid == 0) {
+        execve("/bin/sh.elf", argv, envp);
+        _exit(errno == E2BIG ? 0 : 98);
+    }
+    int st = 0;
+    if (pid < 0 || waitpid(pid, &st, 0) != pid || !WIFEXITED(st)) {
+        return -1;
+    }
+    return WEXITSTATUS(st);
+}
+
 static char e2big_arg[1000];
 
 // Regressions from the pre-merge audit.
@@ -466,6 +484,31 @@ void test_audit_fixes(void)
         CHECK(errno == E2BIG);
     }
 
+    // Vectors past 127 entries, and entries past the per-entry limit, are refused, never cut short.
+    {
+        static char *vec[EXEC_LIMIT + 2];
+        static char *quiet[] = {"sh", "-c", "exit 7", NULL};
+        static char long_arg[1100];
+        static char *one[] = {"sh", "-c", "exit 7", long_arg, NULL};
+
+        vec[0] = "sh";
+        vec[1] = "-c";
+        vec[2] = "exit 7";
+        for (int i = 3; i < EXEC_LIMIT + 1; i++) {
+            vec[i] = "x";
+        }
+        vec[EXEC_LIMIT + 1] = NULL;
+        memset(long_arg, 'x', sizeof(long_arg) - 1);
+
+        CHECK(exec_sh_status(vec, NULL) == 0);
+        CHECK(exec_sh_status(quiet, vec) == 0);
+        CHECK(exec_sh_status(one, NULL) == 0);
+
+        vec[EXEC_LIMIT] = NULL;
+        CHECK(exec_sh_status(vec, NULL) == 7);
+        CHECK(exec_sh_status(quiet, vec) == 7);
+    }
+
     // Every image has to provide it, so the test makes its own regular file.
     const char *plain = "audit_plain.txt";
     int made = open(plain, O_CREAT | O_RDWR | O_TRUNC);
@@ -486,6 +529,13 @@ void test_audit_fixes(void)
         CHECK(fcntl(fd, F_SETFD, 0xFF) == 0);
         CHECK(fcntl(fd, F_GETFD, 0) == FD_CLOEXEC);
         close(fd);
+    }
+
+    // A buffer too small for the cwd is ERANGE, which tells the caller to grow it.
+    {
+        char small[1];
+        errno = 0;
+        CHECK(getcwd(small, sizeof(small)) == NULL && errno == ERANGE);
     }
 
     // An unknown whence is EINVAL.
