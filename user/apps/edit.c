@@ -17,6 +17,7 @@
 #include "stdio.h"
 #include "stdlib.h"
 #include "string.h"
+#include "sys/stat.h"
 #include "term.h"
 #include "unistd.h"
 
@@ -51,6 +52,7 @@ static int row_off, col_off;
 
 static char filename[PATH_LEN];
 static int dirty;
+static int loaded_bytes; // a file of one newline loads as one empty line, and saves as one
 static char message[TERM_MAX_COLS + 1];
 static int prompt_col = -1; // the cursor's column on the message row while a prompt is open
 
@@ -233,6 +235,7 @@ static int load(const char *path)
         return -1;
     }
 
+    loaded_bytes = len > 0;
     size_t start = 0;
     for (size_t i = 0; i <= len; i++) {
         // A final newline ends the last line rather than starting another.
@@ -284,20 +287,29 @@ static int put(int fd, const char *s, size_t n)
 }
 
 static int prompt(const char *label, char *buf, size_t size, void (*on_key)(const char *, int));
+static int ask_yes(const char *question);
 
 static void save(void)
 {
-    if (!filename[0]) {
-        char name[PATH_LEN] = "";
+    // The buffer takes the name only once a save under it succeeds.
+    char name[PATH_LEN];
+    strcpy(name, filename);
+    if (!name[0]) {
         if (prompt("save as: ", name, sizeof(name), NULL) != 0 || !name[0]) {
             set_message("not saved");
             return;
         }
-        strcpy(filename, name);
+        struct stat st;
+        char question[PATH_LEN + 32];
+        snprintf(question, sizeof(question), "%s exists: overwrite it? (y/n)", name);
+        if (stat(name, &st) == 0 && !ask_yes(question)) {
+            set_message("not saved");
+            return;
+        }
     }
 
     char tmp[PATH_LEN + 8];
-    snprintf(tmp, sizeof(tmp), "%s.tmp", filename);
+    snprintf(tmp, sizeof(tmp), "%s.tmp", name);
     int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) {
         set_message("cannot write %s: %s", tmp, strerror(errno));
@@ -307,8 +319,8 @@ static void save(void)
     unsigned long bytes = 0;
     int ok = 1;
     wlen = 0;
-    // An empty buffer is an empty file, not one blank line.
-    if (nlines > 1 || lines[0].len > 0) {
+    // An empty buffer is an empty file, not one blank line, unless it was loaded from one.
+    if (nlines > 1 || lines[0].len > 0 || loaded_bytes) {
         for (int i = 0; i < nlines && ok; i++) {
             ok = put(fd, lines[i].s, lines[i].len) == 0 && put(fd, "\n", 1) == 0;
             bytes += lines[i].len + 1;
@@ -317,7 +329,7 @@ static void save(void)
     ok = ok && write_all(fd, wbuf, wlen) == 0 && fsync(fd) == 0;
     int err = errno;
     close(fd);
-    if (ok && rename(tmp, filename) != 0) {
+    if (ok && rename(tmp, name) != 0) {
         ok = 0;
         err = errno;
     }
@@ -327,6 +339,7 @@ static void save(void)
         return;
     }
     dirty = 0;
+    strcpy(filename, name);
     set_message("wrote %d lines, %lu bytes to %s", nlines, bytes, filename);
 }
 
@@ -459,6 +472,23 @@ static int prompt(const char *label, char *buf, size_t size, void (*on_key)(cons
             message[0] = '\0';
             return result;
         }
+    }
+}
+
+// Shows question on the message row and waits for one key; 1 for y.
+static int ask_yes(const char *question)
+{
+    for (;;) {
+        set_message("%s", question);
+        prompt_col = (int)strlen(message);
+        refresh();
+        int key = term_key(-1);
+        if (key == TERM_KEY_NONE || key == TERM_KEY_RESIZE) {
+            continue;
+        }
+        prompt_col = -1;
+        message[0] = '\0';
+        return key == 'y' || key == 'Y';
     }
 }
 

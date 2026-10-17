@@ -141,7 +141,7 @@ static void draw_rows(const struct view *v, int first, int step)
     }
 }
 
-// Renders the view with the given number of workers; the time in ms, or -1 if a fork failed.
+// Renders the view with the given number of workers; the time in ms, or -1 if one failed.
 static long render(const struct view *v, int workers)
 {
     unsigned long start = term_ms();
@@ -158,11 +158,15 @@ static long render(const struct view *v, int workers)
         }
         pids[started++] = pid;
     }
+    int finished = 0;
     for (int k = 0; k < started; k++) {
-        int status;
-        waitpid(pids[k], &status, 0);
+        int status = -1;
+        if (waitpid(pids[k], &status, 0) == pids[k] && WIFEXITED(status)
+            && WEXITSTATUS(status) == 0) {
+            finished++;
+        }
     }
-    return started == workers ? (long)(term_ms() - start) : -1;
+    return finished == workers ? (long)(term_ms() - start) : -1;
 }
 
 static struct view home(void)
@@ -181,7 +185,7 @@ static int benchmark(void)
     for (int workers = 1; workers <= MAX_WORKERS; workers++) {
         long ms = render(&v, workers);
         if (ms < 0) {
-            printf("  %7d  could not fork\n", workers);
+            printf("  %7d  a worker failed\n", workers);
             return 1;
         }
         if (workers == 1) {
@@ -225,13 +229,13 @@ static int check(void)
     clear_screen();
     uint32_t blank = screen_hash();
     if (render(&v, 1) < 0) {
-        printf("mandel: could not fork\n");
+        printf("mandel: a worker failed\n");
         return 1;
     }
     uint32_t alone = screen_hash();
     clear_screen();
     if (render(&v, MAX_WORKERS) < 0) {
-        printf("mandel: could not fork\n");
+        printf("mandel: a worker failed\n");
         return 1;
     }
     uint32_t shared = screen_hash();
@@ -297,7 +301,7 @@ static int explore(void)
     }
     for (;;) {
         long ms = render(&v, workers);
-        show_status(&v, workers, ms, ms < 0 ? "could not fork" : note);
+        show_status(&v, workers, ms, ms < 0 ? "a worker failed" : note);
         note = "";
 
         int key = TERM_KEY_NONE;

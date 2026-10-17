@@ -22,6 +22,7 @@
 #include "arch/irq.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "core/timer.h"
 #include "core/tty.h"
 #include "fs/vfs.h"
 #include "arch/uaccess.h"
@@ -309,6 +310,7 @@ static struct process *process_alloc_pcb(uint32_t pid)
     p->has_execed = 0;
     p->state = PROCESS_STATE_RUNNING;
     p->fd_lock = (spinlock_t)SPINLOCK_INIT;
+    p->start_ticks = timer_ticks();
     return p;
 }
 

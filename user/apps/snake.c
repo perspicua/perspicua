@@ -234,9 +234,12 @@ static void play(struct game *g)
         }
 
         int key = term_key(wait);
+        // Waiting forever, NONE only asks for a redraw after a resume; it is no step.
         if (key == TERM_KEY_NONE) {
-            step(g);
-            next_step = term_ms() + (unsigned long)step_interval_ms(g->score);
+            if (wait >= 0) {
+                step(g);
+                next_step = term_ms() + (unsigned long)step_interval_ms(g->score);
+            }
             continue;
         }
 

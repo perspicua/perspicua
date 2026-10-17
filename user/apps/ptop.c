@@ -62,6 +62,7 @@ struct proc {
     unsigned long mem_kb;
     unsigned long cpu_ms;
     unsigned long pct10; // tenths of a percent of one core over the last interval
+    unsigned long start; // with the pid, names the process: a freed pid is reused at once
 };
 
 struct sample {
@@ -102,6 +103,7 @@ static int sort_key = SORT_CPU;
 static int sel, sel_pid = -1, scroll, list_rows;
 
 static int pending_sig, pending_pid;
+static unsigned long pending_start;
 static char pending_name[32];
 static char message[TERM_MAX_COLS + 1];
 static unsigned long message_until;
@@ -334,6 +336,7 @@ static void read_procs(struct sample *s)
         pr->ppid = (int)field_ul(buf, "PPid");
         pr->mem_kb = field_ul(buf, "VmSize");
         pr->cpu_ms = field_ul(buf, "CpuTime");
+        pr->start = field_ul(buf, "StartTicks");
         pr->pct10 = 0;
         field_str(buf, "Name", pr->name, sizeof(pr->name));
         field_str(buf, "State", pr->state, sizeof(pr->state));
@@ -906,8 +909,17 @@ static void ask_kill(int sig)
     }
     pending_sig = sig;
     pending_pid = cur->procs[sel].pid;
+    pending_start = cur->procs[sel].start;
     strncpy(pending_name, cur->procs[sel].name, sizeof(pending_name) - 1);
     pending_name[sizeof(pending_name) - 1] = '\0';
+}
+
+// Whether the pid still names the process the dialog asked about, not one that took it since.
+static int still_pending(void)
+{
+    char path[48], buf[READ_BUF];
+    snprintf(path, sizeof(path), "/proc/%d/status", pending_pid);
+    return read_file(path, buf, sizeof(buf)) > 0 && field_ul(buf, "StartTicks") == pending_start;
 }
 
 static void answer_kill(int key)
@@ -915,6 +927,8 @@ static void answer_kill(int key)
     const char *name = pending_sig == SIGKILL ? "SIGKILL" : "SIGTERM";
     if (key != 'y' && key != 'Y') {
         message[0] = '\0';
+    } else if (!still_pending()) {
+        set_message("%d (%s) has exited; nothing sent", pending_pid, pending_name);
     } else if (kill(pending_pid, pending_sig) == 0) {
         set_message("sent %s to %d (%s)", name, pending_pid, pending_name);
     } else {

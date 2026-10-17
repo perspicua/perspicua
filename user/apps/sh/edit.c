@@ -22,6 +22,7 @@
 #define KEY_DOWN      1002
 #define KEY_TAB       '\t'
 #define KEY_BACKSPACE 127
+#define CSI_MAX       16 // longest escape sequence read whole
 
 static char *history[MAX_HISTORY];
 static int history_count = 0;
@@ -81,21 +82,26 @@ int read_key(void)
     }
 
     if (c == 27) {
-        char seq[2];
-        if (read(0, &seq[0], 1) <= 0) {
+        char intro, final;
+        if (read(0, &intro, 1) <= 0) {
             return 27;
         }
-        if (read(0, &seq[1], 1) <= 0) {
+        if (intro != '[' && intro != 'O') {
             return 27;
         }
-
-        if (seq[0] == '[') {
-            switch (seq[1]) {
-                case 'A':
-                    return KEY_UP;
-                case 'B':
-                    return KEY_DOWN;
+        // Read whole, so an unused sequence (a late size report) leaves no bytes as typed text.
+        int n = 0;
+        do {
+            if (read(0, &final, 1) <= 0) {
+                return 27;
             }
+        } while (intro == '[' && final >= 0x20 && final <= 0x3f && ++n < CSI_MAX);
+
+        if (final == 'A') {
+            return KEY_UP;
+        }
+        if (final == 'B') {
+            return KEY_DOWN;
         }
         return 27;
     }
@@ -605,6 +611,8 @@ int sh_read_line(char *buf, size_t size)
     if (flags >= 0 && (flags & O_NONBLOCK)) {
         fcntl(0, F_SETFL, flags & ~O_NONBLOCK);
     }
+    // A full-screen program killed outright leaves the cursor hidden and line wrap off.
+    printf("\033[?25h\033[?7h");
 
     while (1) {
         int key = read_key();

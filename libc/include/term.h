@@ -2,8 +2,9 @@
  * term.h - Full-screen terminal programs: decoded keys and a diffed screen.
  *
  * The console is a raw terminal of whatever size it reports when asked, 80x24
- * if it never answers. term_open() takes it over, and term_close(), exit(),
- * Ctrl-C and Ctrl-Z all hand it back as they found it.
+ * if it never answers. term_open() takes it over, and term_close(), exit() and
+ * every signal that stops or ends the program but SIGKILL hand it back as they
+ * found it; after SIGKILL, sh puts the cursor and line wrap back.
  * Drawing goes to an off-screen buffer; term_present() sends only the cells
  * that changed, which is what keeps a game playable over a 115200 baud line.
  */
@@ -77,6 +78,7 @@ int term_cols(void);
 // Asks the terminal for its size; a change comes back from term_key() as TERM_KEY_RESIZE.
 void term_request_size(void);
 // Asks and waits for the answer, without taking the screen over; 0 if the terminal answered.
+// Keys typed before the answer arrives are lost: there is no way to give them back.
 int term_query_size(int *rows, int *cols);
 // Parses a size report "ESC[rows;colsR" at buf: its length, 0 if incomplete, -1 if it is not one.
 int term_parse_size(const unsigned char *buf, int len, int *rows, int *cols);

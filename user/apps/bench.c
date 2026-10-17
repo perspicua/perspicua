@@ -337,7 +337,8 @@ static void measure(const struct bench *b)
 }
 
 // Each test runs in its own process: fork costs grow with the memory a parent has mapped.
-static void measure_isolated(const struct bench *b)
+// Returns 0 if the test ran to the end.
+static int measure_isolated(const struct bench *b)
 {
     int pid = fork();
     if (pid == 0) {
@@ -347,10 +348,19 @@ static void measure_isolated(const struct bench *b)
     }
     if (pid < 0) {
         printf("  %-8s could not fork\n", b->name);
-        return;
+        return -1;
     }
-    int status;
-    waitpid(pid, &status, 0);
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) {
+        printf("  %-8s lost its process\n", b->name);
+        return -1;
+    }
+    // A signal's death reads as 128 + its number, as sh shows it.
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        printf("  %-8s failed (status %d)\n", b->name, WEXITSTATUS(status));
+        return -1;
+    }
+    return 0;
 }
 
 static const struct bench *find(const char *name)
@@ -460,15 +470,16 @@ int main(int argc, char **argv)
     unsigned long start = now_ms();
     print_clock();
     printf("  %-8s %9s %11s %12s   %s\n", "test", "runs", "per run", "rate", "what");
+    int failed = 0;
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {
-            measure_isolated(find(argv[i]));
+            failed |= measure_isolated(find(argv[i])) != 0;
         }
     } else {
         for (size_t i = 0; i < NBENCH; i++) {
-            measure_isolated(&benches[i]);
+            failed |= measure_isolated(&benches[i]) != 0;
         }
     }
     printf("bench: done in %lu ms (clock resolution 1 ms)\n", now_ms() - start);
-    return 0;
+    return failed;
 }

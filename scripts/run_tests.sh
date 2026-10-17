@@ -81,7 +81,7 @@ KERNEL_SUITES=(
     "Completion-MultiTask:36"
     "RWSEM-MultiTask:48"
     "Spinlock-MultiTask:3"
-    "TTY:9"
+    "TTY:16"
     "Signals:54"
 )
 
@@ -97,9 +97,9 @@ LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
 # command's first word names the suite: it must print "<name>: all N tests passed" and exit 0.
 USER_SUITES=(
     "test_restart:20"
-    "test_tools:94"
+    "test_tools:106"
     "test_libc:377"
-    "test_syscall:183"
+    "test_syscall:187"
     "test_fcntl:8"
     "test_stop_cont:39"
     "test_sh:17"
@@ -231,6 +231,10 @@ if [ "$suites_finished" -eq 1 ]; then
     printf '\032' >&3
     printf 'echo JC-CTRLZ\n' >&3
     wait_briefly '^JC-CTRLZ$' 10 || job_control_failures+=("Ctrl-Z at the prompt stopped the shell")
+
+    # A terminal's size report that lands at the prompt is read whole and dropped, not typed.
+    printf '\033[24;80Recho LE-CPR\n' >&3
+    wait_briefly '^LE-CPR$' 10 || job_control_failures+=("a size report at the prompt became typed text")
 
     printf 'sh &\n' >&3
     printf 'echo JC-BGSH\n' >&3

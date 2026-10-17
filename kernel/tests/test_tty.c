@@ -11,6 +11,8 @@
 
 #include "core/signals.h"
 #include "core/tty.h"
+#include "driver/fb.h"
+#include "driver/fb_console.h"
 #include "driver/uart.h"
 #include "sched/process.h"
 
@@ -49,6 +51,16 @@ static void tx_discard(void)
     console_tty.tx_tail = console_tty.tx_head;
     spin_unlock_irqrestore(&uart_tx_lock, uart_flags);
     spin_unlock_irqrestore(&console_tty.lock, flags);
+}
+
+struct at {
+    unsigned int x, y;
+};
+
+static struct at feed(const char *s, struct at from)
+{
+    fb_console_test_feed(s, &from.x, &from.y);
+    return from;
 }
 
 static uint32_t set_foreground(uint32_t pgid)
@@ -142,6 +154,31 @@ void test_tty_scheduler(void)
             sched_sleep_ms(5);
         }
         tx_discard();
+    }
+
+    // the framebuffer console reads a CSI sequence whole: parameters, private modes and all
+    if (fb_info.width == 0) {
+        pr_info("test: no framebuffer; console escape checks skipped\n");
+    } else {
+        struct at home = feed("\033[H", (struct at){40, 200});
+        struct at one = feed("x", home);
+        unsigned int w = one.x - home.x;
+        unsigned int h = feed("\n", home).y - home.y;
+        struct at mid = {3 * w, home.y + 4 * h};
+
+        TEST_ASSERT("fb: a glyph and a newline step the cursor", w > 0 && h > 0);
+        struct at r = feed("\033[0J\033[1K\033[2K", mid);
+        TEST_ASSERT("fb: erases draw nothing", r.x == mid.x && r.y == mid.y);
+        r = feed("\033[12;5H", mid);
+        TEST_ASSERT("fb: CUP goes to row 12, column 5", r.x == 4 * w && r.y == home.y + 11 * h);
+        r = feed("\033[2A\033[3C", mid);
+        TEST_ASSERT("fb: up 2, right 3", r.x == 6 * w && r.y == home.y + 2 * h);
+        r = feed("\033[9A\033[9D", mid);
+        TEST_ASSERT("fb: moves stop at the edges", r.x == 0 && r.y == home.y);
+        r = feed("\033[?25l\033[?7h\033[0;31;1m", mid);
+        TEST_ASSERT("fb: modes and colours draw nothing", r.x == mid.x && r.y == mid.y);
+        r = feed("\0337y", mid);
+        TEST_ASSERT("fb: a two-byte escape is dropped, not drawn", r.x == mid.x + w);
     }
 
     TEST_SUITE_END("TTY");

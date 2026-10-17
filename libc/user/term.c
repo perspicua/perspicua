@@ -43,6 +43,8 @@ static int repaint;
 static unsigned char kbuf[KBUF_MAX];
 static int klen;
 static unsigned long esc_since;
+static int size_asked;    // a size query is out and its answer has not come back
+static int size_answered; // the terminal has answered one, so an answer still out is coming
 
 static char out_buf[OUT_MAX];
 static int out_len;
@@ -51,7 +53,9 @@ static int cur_attr = -1;
 static int cursor_row = -1, cursor_col;
 static int cursor_shown;
 
-static const int caught[] = {SIGINT, SIGTERM, SIGTSTP, SIGCONT};
+// Every signal that stops or ends the program hands the terminal back first; SIGKILL cannot.
+static const int caught[] = {SIGINT,  SIGTERM, SIGTSTP, SIGCONT, SIGQUIT, SIGHUP,
+                             SIGSEGV, SIGBUS,  SIGILL,  SIGPIPE, SIGABRT};
 static struct sigaction old_actions[sizeof(caught) / sizeof(caught[0])];
 
 static void write_all(const char *s, size_t n)
@@ -104,7 +108,8 @@ static void emit_utf8(uint32_t cp)
 {
     char b[4];
     int n;
-    if (cp < 0x20 || cp == 0x7f || cp > 0x10ffff) {
+    // C1 controls are as live as C0 ones: U+009B is CSI to a UTF-8 terminal.
+    if (cp < 0x20 || (cp >= 0x7f && cp < 0xa0) || (cp >= 0xd800 && cp < 0xe000) || cp > 0x10ffff) {
         cp = '?';
     }
     if (cp < 0x80) {
@@ -190,6 +195,7 @@ static void take_terminal(void)
     // The window may have changed while the program was stopped.
     if (can_ask) {
         write_str(SIZE_QUERY);
+        size_asked = 1;
     }
 }
 
@@ -273,11 +279,30 @@ static int take_size_report(void)
         if (used > 0) {
             memmove(kbuf + p, kbuf + p + used, (size_t)(klen - p - used));
             klen -= used;
+            size_asked = 0;
+            size_answered = 1;
             set_size(r, c);
             return 1;
         }
     }
     return 0;
+}
+
+// Reads a byte at a time until a size report is whole, so nothing typed after it is taken.
+static int wait_size_report(void)
+{
+    unsigned long asked = term_ms();
+    while (!take_size_report()) {
+        if (term_ms() - asked >= SIZE_WAIT_MS || klen == KBUF_MAX) {
+            return 0;
+        }
+        if (read(0, kbuf + klen, 1) == 1) {
+            klen++;
+        } else {
+            usleep(2000);
+        }
+    }
+    return 1;
 }
 
 int term_open(void)
@@ -308,14 +333,8 @@ int term_open(void)
     is_open = 1;
 
     // The first answer sizes the screen before anything is drawn; keys typed meanwhile stay queued.
-    unsigned long asked = term_ms();
-    while (can_ask && term_ms() - asked < SIZE_WAIT_MS && !take_size_report()) {
-        int n = read(0, kbuf + klen, (size_t)(KBUF_MAX - klen));
-        if (n > 0) {
-            klen += n;
-        } else {
-            usleep(2000);
-        }
+    if (can_ask) {
+        wait_size_report();
     }
     return 0;
 }
@@ -331,6 +350,10 @@ void term_close(void)
         sigaction(caught[i], &old_actions[i], NULL);
     }
     flush();
+    // An answer still on its way would land in whatever reads the console next.
+    if (size_asked && size_answered) {
+        wait_size_report();
+    }
     release_terminal();
 }
 
@@ -461,6 +484,8 @@ int term_key(int timeout_ms)
             if (report > 0) {
                 memmove(kbuf, kbuf + report, (size_t)(klen - report));
                 klen -= report;
+                size_asked = 0;
+                size_answered = 1;
                 if (set_size(r, c)) {
                     return TERM_KEY_RESIZE;
                 }
@@ -521,17 +546,8 @@ int term_query_size(int *out_rows, int *out_cols)
     int flags = fcntl(0, F_GETFL, 0);
     fcntl(0, F_SETFL, flags | O_NONBLOCK);
     write_str(SIZE_QUERY);
-
-    unsigned long asked = term_ms();
-    int found = 0;
-    while (term_ms() - asked < SIZE_WAIT_MS && !(found = take_size_report())) {
-        int n = read(0, kbuf + klen, (size_t)(KBUF_MAX - klen));
-        if (n > 0) {
-            klen += n;
-        } else {
-            usleep(2000);
-        }
-    }
+    size_asked = 1;
+    int found = wait_size_report();
     fcntl(0, F_SETFL, flags);
     if (!found) {
         return -1;
@@ -556,6 +572,7 @@ void term_request_size(void)
     if (is_open && can_ask) {
         flush();
         write_str(SIZE_QUERY);
+        size_asked = 1;
     }
 }
 

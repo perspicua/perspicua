@@ -416,10 +416,12 @@ static int procfs_pid_status_read(struct vfs_file *file, void *buffer, size_t si
              "State:  %s\n"
              "VmSize: %lu kB\n"
              "CpuTime: %lu ms\n"
+             "StartTicks: %lu\n"
              "SigPnd: %08x\n"
              "SigBlk: %08x\n",
              process_table[pid]->name, pid, process_table[pid]->parent_pid, state_str, vm_size,
              (unsigned long)timer_ticks_to_ms(cpu_ticks),
+             (unsigned long)process_table[pid]->start_ticks,
              (unsigned int)process_table[pid]->pending_signals,
              (unsigned int)process_table[pid]->blocked_signals);
     spin_unlock_irqrestore(&process_table_lock, flags);

@@ -354,9 +354,68 @@ static void test_edit(void)
           status == 0 && read_text(EDIT "/named.txt", got, sizeof(got)) >= 0
               && strcmp(got, "hi\n") == 0);
 
+    check("edit keeps a file of one newline", edits("\n", SAVE QUIT, "\n"));
+
+    write_text(EDIT "/exists.txt", "keep\n");
+    run("hi" SAVE EDIT "/exists.txt" ENTER "n" QUIT QUIT, out, (char *[]){"edit", NULL});
+    check("edit's save as leaves a file it was told not to overwrite",
+          read_text(EDIT "/exists.txt", got, sizeof(got)) >= 0 && strcmp(got, "keep\n") == 0);
+    run("hi" SAVE EDIT "/exists.txt" ENTER "y" QUIT, out, (char *[]){"edit", NULL});
+    check("edit's save as overwrites once told to",
+          read_text(EDIT "/exists.txt", got, sizeof(got)) >= 0 && strcmp(got, "hi\n") == 0);
+
+    unlink(EDIT "/second.txt");
+    run("hi" SAVE "/tt_no_dir/x.txt" ENTER SAVE EDIT "/second.txt" ENTER QUIT, out,
+        (char *[]){"edit", NULL});
+    check("edit asks for a name again after a save under one failed",
+          read_text(EDIT "/second.txt", got, sizeof(got)) >= 0 && strcmp(got, "hi\n") == 0);
+
+    unlink(EDIT "/second.txt");
+    unlink(EDIT "/exists.txt");
     unlink(EDIT "/named.txt");
     unlink(EDIT "/f.txt");
     rmdir(EDIT);
+}
+
+#define LESS_FILE "/tt_less.txt"
+#define MATCH     "\033[0;30;43m"
+
+static void test_less(void)
+{
+    char out[OUT_MAX];
+
+    // A line 30 rows down wraps inside "needle"; only a found match scrolls up, lit across the wrap.
+    static char text[512];
+    text[0] = '\0';
+    for (int i = 0; i < 30; i++) {
+        strcat(text, "x\n");
+    }
+    size_t at = strlen(text);
+    memset(text + at, 'a', 77);
+    strcpy(text + at + 77, "needle\n");
+    for (int i = 0; i < 30; i++) {
+        strcat(text, "x\n");
+    }
+    write_text(LESS_FILE, text);
+    int status = run("/needle" ENTER "q", out, (char *[]){"less", LESS_FILE, NULL});
+    check("less finds a match across a wrapped row, and lights both halves",
+          status == 0 && strstr(out, MATCH "nee\033[2;1Hdle") != NULL);
+
+    // After a resize to 40 columns the 60-column line takes two rows, prompt open or not.
+    memset(text, 'b', 60);
+    strcpy(text + 60, "\n");
+    write_text(LESS_FILE, text);
+    status = run("/\033[24;40R" ESC "q", out, (char *[]){"less", LESS_FILE, NULL});
+    check("less wraps again on a resize during the search prompt",
+          status == 0 && strstr(out, "\033[2;1Hbbbbbbbbbbbbbbbbbbbb") != NULL);
+
+    write_text(LESS_FILE, "abc\xc2\x9b"
+                          "31mRED\n");
+    status = run("q", out, (char *[]){"less", LESS_FILE, NULL});
+    check("less shows a C1 control as ?, never sends it",
+          status == 0 && strstr(out, "abc?31mRED") != NULL && strstr(out, "\xc2\x9b") == NULL);
+
+    unlink(LESS_FILE);
 }
 
 static void test_find_du(void)
@@ -515,6 +574,135 @@ static void test_kill(void)
 }
 
 // Each game checks its own rules with --selftest, without touching the terminal.
+static char game_out[1 << 18];
+static int game_len;
+
+// Reads what is there without waiting; 0 once the writer is gone.
+static int drain(int fd)
+{
+    for (;;) {
+        int room = (int)sizeof(game_out) - game_len;
+        char spill[256];
+        int r =
+            room > 0 ? read(fd, game_out + game_len, (size_t)room) : read(fd, spill, sizeof(spill));
+        if (r == 0) {
+            return 0;
+        }
+        if (r < 0) {
+            return 1;
+        }
+        if (room > 0) {
+            game_len += r;
+        }
+    }
+}
+
+// Starts game with stdin and stdout on pipes, its output drained into game_out as it runs.
+static int spawn_game(const char *game, int *in_fd, int *out_fd)
+{
+    int in[2], outp[2];
+    if (pipe(in) != 0 || pipe(outp) != 0) {
+        return -1;
+    }
+    int pid = fork();
+    if (pid == 0) {
+        dup2(in[0], 0);
+        dup2(outp[1], 1);
+        close(in[0]);
+        close(in[1]);
+        close(outp[0]);
+        close(outp[1]);
+        execvp(game, (char *[]){(char *)game, NULL});
+        _exit(127);
+    }
+    close(in[0]);
+    close(outp[1]);
+    fcntl(outp[0], F_SETFL, O_NONBLOCK);
+    game_len = 0;
+    *in_fd = in[1];
+    *out_fd = outp[0];
+    return pid;
+}
+
+static void drain_for(int fd, int ms)
+{
+    for (int t = 0; t < ms; t += 10) {
+        drain(fd);
+        usleep(10000);
+    }
+}
+
+// Waits for the game to end, keeping its output; its exit status.
+static int finish_game(int pid, int in_fd, int out_fd)
+{
+    close(in_fd);
+    while (drain(out_fd)) {
+        usleep(10000);
+    }
+    close(out_fd);
+    int status = -1;
+    waitpid(pid, &status, 0);
+    game_out[game_len < (int)sizeof(game_out) ? game_len : (int)sizeof(game_out) - 1] = '\0';
+    return status;
+}
+
+// Pauses game, resumes it with SIGCONT a few times, and reports whether every repaint matched.
+static int stays_paused(const char *game)
+{
+    int in, outp;
+    int pid = spawn_game(game, &in, &outp);
+    if (pid < 0) {
+        return 0;
+    }
+
+    write(in, "p", 1);
+    drain_for(outp, 300);
+    for (int k = 0; k < 8; k++) {
+        kill(pid, SIGCONT);
+        drain_for(outp, 100);
+    }
+    write(in, "q", 1);
+    int status = finish_game(pid, in, outp);
+
+    // Each resume repaints the whole screen after a clear; a paused board repaints the same.
+    const char *first = NULL, *last = NULL;
+    size_t first_len = 0, last_len = 0;
+    int repaints = 0;
+    for (char *p = strstr(game_out, "\033[2J"); p;) {
+        char *next = strstr(p + 4, "\033[2J");
+        size_t len = next ? (size_t)(next - p) : strlen(p);
+        if (len > 200) {
+            repaints++;
+            if (repaints == 2) {
+                first = p;
+                first_len = len;
+            }
+            last = p;
+            last_len = len;
+        }
+        p = next;
+    }
+    return status == 0 && repaints >= 9 && first && first_len == last_len
+           && memcmp(first, last, first_len) == 0;
+}
+
+// Kills a running game with sig: the terminal must come back, cursor and line wrap on.
+static int restores_on(int sig)
+{
+    int in, outp;
+    int pid = spawn_game("snake", &in, &outp);
+    if (pid < 0) {
+        return 0;
+    }
+    drain_for(outp, 300);
+    kill(pid, sig);
+    int status = finish_game(pid, in, outp);
+    const char *release = "\033[0m\033[2J\033[H\033[?25h\033[?7h";
+    size_t n = strlen(release);
+    return WEXITSTATUS(status) == 128 + sig && (size_t)game_len >= n
+           && memcmp(game_out + game_len - n, release, n) == 0;
+}
+
 static void test_game_selftests(void)
 {
     check("2048 --selftest",
@@ -525,6 +713,11 @@ static void test_game_selftests(void)
                                        (char *[]){"tetris", "--selftest", NULL}));
     check("mines --selftest", outputs(NULL, "mines selftest: ok (0 failed)\n",
                                       (char *[]){"mines", "--selftest", NULL}));
+    check("snake stays put while paused, however often it is resumed", stays_paused("snake"));
+    check("tetris stays put while paused, however often it is resumed", stays_paused("tetris"));
+    check("a term program killed by SIGQUIT gives the terminal back", restores_on(SIGQUIT));
+    check("a term program killed by SIGHUP gives the terminal back", restores_on(SIGHUP));
+    check("a term program killed by SIGSEGV gives the terminal back", restores_on(SIGSEGV));
 }
 
 int main(void)
@@ -538,6 +731,7 @@ int main(void)
     test_mandel();
     test_ptop();
     test_edit();
+    test_less();
     test_find_du();
     test_game_selftests();
     test_cp_mv();

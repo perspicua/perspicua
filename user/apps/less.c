@@ -152,14 +152,37 @@ static void set_top(int t)
     top = t < 0 ? 0 : (t > max_top() ? max_top() : t);
 }
 
-static int row_has_match(int r)
+// Cuts the rows again at the width the terminal now reports; -1 if memory ran out.
+static int relayout(void)
+{
+    if (rewrap() < 0) {
+        return -1;
+    }
+    set_top(top);
+    return 0;
+}
+
+// The end of row r's logical line: a match may run on past the row's wrap.
+static size_t line_end(int r)
+{
+    while (r + 1 < nrows && rows[r + 1].line == rows[r].line) {
+        r++;
+    }
+    return rows[r].end;
+}
+
+static int match_at(size_t p, size_t end)
 {
     size_t len = strlen(search);
-    if (!len) {
-        return 0;
-    }
-    for (size_t p = rows[r].start; p + len <= rows[r].end; p++) {
-        if (memcmp(text + p, search, len) == 0) {
+    return len && p + len <= end && memcmp(text + p, search, len) == 0;
+}
+
+// Whether a match starts in row r.
+static int row_has_match(int r)
+{
+    size_t end = line_end(r);
+    for (size_t p = rows[r].start; p < rows[r].end; p++) {
+        if (match_at(p, end)) {
             return 1;
         }
     }
@@ -181,14 +204,23 @@ static void find_next(int dir)
     message = "pattern not found";
 }
 
-static void draw_row(int screen_row, const struct row *row)
+static void draw_row(int screen_row, int r)
 {
+    const struct row *row = &rows[r];
     size_t len = strlen(search);
+    size_t end = line_end(r);
     size_t highlight_until = 0;
     int col = 0;
 
+    // A match that began on the row above stays lit past the wrap.
+    for (size_t p = row->start >= len ? row->start - len + 1 : 0; len && p < row->start; p++) {
+        if (match_at(p, end)) {
+            highlight_until = p + len;
+        }
+    }
+
     for (size_t p = row->start; p < row->end && col < term_cols();) {
-        if (len && p + len <= row->end && memcmp(text + p, search, len) == 0) {
+        if (match_at(p, end)) {
             highlight_until = p + len;
         }
         unsigned attr = p < highlight_until ? MATCH_ATTR : TERM_NORMAL;
@@ -242,7 +274,7 @@ static void draw(const char *name, const char *prompt)
     term_clear(TERM_NORMAL);
     for (int r = 0; r < VIEW_ROWS; r++) {
         if (top + r < nrows) {
-            draw_row(r, &rows[top + r]);
+            draw_row(r, top + r);
         } else {
             term_put(r, 0, '~', TERM_FG(TERM_BLUE));
         }
@@ -251,7 +283,7 @@ static void draw(const char *name, const char *prompt)
     term_present();
 }
 
-// Reads a search pattern on the status line; Enter keeps it, Esc cancels.
+// Reads a search pattern on the status line: 1 if Enter kept one, 0 if cancelled, -1 out of memory.
 static int read_pattern(const char *name)
 {
     char typed[SEARCH_MAX] = "";
@@ -268,6 +300,9 @@ static int read_pattern(const char *name)
         if (key == TERM_KEY_ESC || key == TERM_KEY_EOF) {
             return 0;
         }
+        if (key == TERM_KEY_RESIZE && relayout() < 0) {
+            return -1;
+        }
         if (key == TERM_KEY_BACKSPACE) {
             if (len) {
                 typed[--len] = '\0';
@@ -277,6 +312,13 @@ static int read_pattern(const char *name)
             typed[len] = '\0';
         }
     }
+}
+
+static int out_of_memory(void)
+{
+    term_close();
+    fprintf(stderr, "less: out of memory\n");
+    return 1;
 }
 
 int main(int argc, char **argv)
@@ -314,9 +356,7 @@ int main(int argc, char **argv)
     // Rows are cut at the window's width, which the terminal reports when it is opened.
     term_open();
     if (build_rows() < 0) {
-        term_close();
-        fprintf(stderr, "less: out of memory\n");
-        return 1;
+        return out_of_memory();
     }
 
     for (;;) {
@@ -331,12 +371,9 @@ int main(int argc, char **argv)
                 term_close();
                 return 0;
             case TERM_KEY_RESIZE:
-                if (rewrap() < 0) {
-                    term_close();
-                    fprintf(stderr, "less: out of memory\n");
-                    return 1;
+                if (relayout() < 0) {
+                    return out_of_memory();
                 }
-                set_top(top);
                 break;
             case 'L' & 0x1f:
                 term_redraw();
@@ -367,11 +404,16 @@ int main(int argc, char **argv)
             case TERM_KEY_END:
                 set_top(max_top());
                 break;
-            case '/':
-                if (read_pattern(name)) {
+            case '/': {
+                int got = read_pattern(name);
+                if (got < 0) {
+                    return out_of_memory();
+                }
+                if (got) {
                     find_next(1);
                 }
                 break;
+            }
             case 'n':
                 find_next(1);
                 break;

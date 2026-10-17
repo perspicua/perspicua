@@ -387,6 +387,40 @@ void test_procfs(void)
         int st = 0;
         CHECK(waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0);
     }
+
+    // 6. StartTicks tells apart two processes that held the same pid one after the other
+    {
+        unsigned long start[2] = {0, 0};
+        for (int k = 0; k < 2; k++) {
+            int gate[2];
+            CHECK(pipe(gate) == 0);
+            int pid = fork();
+            if (pid == 0) {
+                char c;
+                close(gate[1]);
+                read(gate[0], &c, 1);
+                _exit(0);
+            }
+            close(gate[0]);
+            char path[48];
+            snprintf(path, sizeof(path), "/proc/%d/status", pid);
+            fd = open(path, O_RDONLY);
+            memset(buf, 0, sizeof(buf));
+            if (fd >= 0) {
+                read(fd, buf, sizeof(buf) - 1);
+                close(fd);
+            }
+            const char *p = strstr(buf, "StartTicks:");
+            for (p = p ? p + 11 : ""; *p == ' '; p++) {}
+            for (; *p >= '0' && *p <= '9'; p++) {
+                start[k] = start[k] * 10 + (unsigned long)(*p - '0');
+            }
+            close(gate[1]);
+            waitpid(pid, NULL, 0);
+        }
+        CHECK(start[0] != 0 && start[1] != 0);
+        CHECK(start[0] != start[1]);
+    }
 }
 
 // Issues a syscall directly so an unassigned number can be reached.
