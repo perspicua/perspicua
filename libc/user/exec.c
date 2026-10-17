@@ -23,6 +23,7 @@ int execvp(const char *file, char *const argv[])
     static const char *const suffixes[] = {".elf", ""};
     size_t flen = strlen(file);
     char buf[PATH_BUF];
+    int denied = 0;
 
     while (*path) {
         const char *colon = strchr(path, ':');
@@ -42,11 +43,17 @@ int execvp(const char *file, char *const argv[])
             memcpy(buf + at, file, flen);
             memcpy(buf + at + flen, suffixes[k], slen + 1);
             execve(buf, argv, environ);
+            // Not there: look further. Found but refused: that is the answer, unless it is EACCES.
+            if (errno == EACCES) {
+                denied = 1;
+            } else if (errno != ENOENT && errno != ENOTDIR) {
+                return -1;
+            }
         }
 
         path = colon ? colon + 1 : path + dlen;
     }
 
-    errno = ENOENT;
+    errno = denied ? EACCES : ENOENT;
     return -1;
 }

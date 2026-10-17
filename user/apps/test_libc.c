@@ -9,6 +9,7 @@
  * Exit status: 0 if all checks pass, 1 if any fail.
  */
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -1352,6 +1353,188 @@ static void test_term_size_report(void)
 
 // Entry point
 
+static unsigned long mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long)ts.tv_sec * 1000 + (unsigned long)ts.tv_nsec / 1000000;
+}
+
+// A size near SIZE_MAX is refused at once, not after mapping chunk after chunk.
+static void test_malloc_huge(void)
+{
+    unsigned long start = mono_ms();
+    errno = 0;
+    void *p = malloc(SIZE_MAX - 20);
+    unsigned long took = mono_ms() - start;
+    CHECK(p == NULL && errno == ENOMEM);
+    CHECK(took < 100);
+    CHECK(malloc(SIZE_MAX - (1u << 20)) == NULL);
+    errno = 0;
+    CHECK(calloc(SIZE_MAX / 2, 3) == NULL && errno == ENOMEM);
+}
+
+// Overwriting a variable frees the string the last setenv made, so a loop of them stays put.
+static void test_setenv_no_leak(void)
+{
+    char *before = malloc(16);
+    free(before);
+    char value[41];
+    for (int i = 0; i < 20000; i++) {
+        snprintf(value, sizeof(value), "%040d", i);
+        setenv("TLP_LEAK", value, 1);
+    }
+    char *after = malloc(16);
+    free(after);
+    CHECK(strcmp(getenv("TLP_LEAK"), "0000000000000000000000000000000000019999") == 0);
+    CHECK((size_t)(after > before ? after - before : before - after) < 64 * 1024);
+    unsetenv("TLP_LEAK");
+}
+
+// putenv matches the whole name, and unsetenv every copy of one.
+static void test_putenv_unsetenv(void)
+{
+    static char n127[140], n200[220];
+    memset(n127, 'N', 127);
+    n127[127] = '\0';
+    CHECK(setenv(n127, "keep", 1) == 0);
+    memset(n200, 'N', 200);
+    strcpy(n200 + 200, "=x");
+    CHECK(putenv(n200) == 0);
+    char *kept = getenv(n127);
+    CHECK(kept && strcmp(kept, "keep") == 0);
+    // putenv keeps n200 itself as the entry, so the name to look up is a copy.
+    static char name200[201];
+    memcpy(name200, n200, 200);
+    char *got = getenv(name200);
+    CHECK(got && strcmp(got, "x") == 0);
+    unsetenv(name200);
+    unsetenv(n127);
+
+    char **saved = environ;
+    char *dup[] = {"TLP_DUP=1", "TLP_OTHER=y", "TLP_DUP=2", NULL};
+    environ = dup;
+    CHECK(unsetenv("TLP_DUP") == 0);
+    CHECK(getenv("TLP_DUP") == NULL);
+    char *other = getenv("TLP_OTHER");
+    CHECK(other && strcmp(other, "y") == 0);
+    environ = saved;
+
+    errno = 0;
+    CHECK(setenv("A=B", "x", 1) == -1 && errno == EINVAL);
+    errno = 0;
+    CHECK(putenv("noequals") == -1 && errno == EINVAL);
+}
+
+static void test_strtol(void)
+{
+    char *end;
+    CHECK(atoi("+5") == 5);
+    CHECK(atoi("\t7") == 7 && atoi("\n8") == 8 && atoi("  -12") == -12);
+    CHECK(strtol("0x1f", &end, 0) == 31 && *end == '\0');
+    CHECK(strtol("077", NULL, 0) == 63 && strtol("ff", NULL, 16) == 255);
+    CHECK(strtol("  12abc", &end, 10) == 12 && strcmp(end, "abc") == 0);
+    const char *none = "xyz";
+    CHECK(strtol(none, &end, 10) == 0 && end == none);
+    errno = 0;
+    CHECK(strtol("99999999999999999999", NULL, 10) == LONG_MAX && errno == ERANGE);
+    errno = 0;
+    CHECK(strtol("-9223372036854775808", NULL, 10) == LONG_MIN && errno == 0);
+    errno = 0;
+    CHECK(strtol("-9223372036854775809", NULL, 10) == LONG_MIN && errno == ERANGE);
+    CHECK(strtoul("-1", NULL, 10) == ULONG_MAX);
+    errno = 0;
+    CHECK(strtoul("18446744073709551616", NULL, 10) == ULONG_MAX && errno == ERANGE);
+    CHECK(abs(-3) == 3 && labs(-4L) == 4L);
+}
+
+static int cmp_int(const void *a, const void *b)
+{
+    int x = *(const int *)a, y = *(const int *)b;
+    return x < y ? -1 : x > y;
+}
+
+static void test_bsearch(void)
+{
+    static const int sorted[] = {1, 3, 5, 7, 9, 11};
+    for (int i = 0; i < 6; i++) {
+        const int *hit = bsearch(&sorted[i], sorted, 6, sizeof(int), cmp_int);
+        CHECK(hit == &sorted[i]);
+    }
+    int missing = 4;
+    CHECK(bsearch(&missing, sorted, 6, sizeof(int), cmp_int) == NULL);
+    CHECK(bsearch(&missing, sorted, 0, sizeof(int), cmp_int) == NULL);
+}
+
+// execvp stops at the first file it finds that will not run, with that errno.
+static void test_execvp_errors(void)
+{
+    mkdir("/tlp_dir", 0755);
+    int fd = open("/tlp_dir/sleep.elf", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    CHECK(fd >= 0);
+    if (fd >= 0) {
+        write(fd, "not an ELF\n", 11);
+        close(fd);
+    }
+    int pid = fork();
+    if (pid == 0) {
+        setenv("PATH", "/tlp_dir:/bin", 1);
+        execvp("sleep", (char *[]){"sleep", "0", NULL});
+        _exit(errno == ENOEXEC ? 42 : 1);
+    }
+    int st = 0;
+    CHECK(waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 42);
+    unlink("/tlp_dir/sleep.elf");
+    rmdir("/tlp_dir");
+
+    errno = 0;
+    CHECK(execvp("tlp_no_such_program", (char *[]){"x", NULL}) == -1 && errno == ENOENT);
+}
+
+static void on_abort(int sig)
+{
+    (void)sig;
+}
+
+// abort ends the program even when a handler for SIGABRT returns.
+static void test_abort(void)
+{
+    for (int handled = 0; handled < 2; handled++) {
+        int pid = fork();
+        if (pid == 0) {
+            if (handled) {
+                signal(SIGABRT, on_abort);
+            }
+            abort();
+        }
+        int st = 0;
+        CHECK(waitpid(pid, &st, 0) == pid && WEXITSTATUS(st) == 128 + SIGABRT);
+    }
+}
+
+// The stdio calls POSIX code expects: line reads, a pushed-back byte, puts and setvbuf.
+static void test_stdio_lines(void)
+{
+    int p[2];
+    CHECK(pipe(p) == 0);
+    int x = 0x0a6463; // "cd\n" as bytes, through a const void * write
+    CHECK(write(p[1], "ab\n", 3) == 3 && write(p[1], &x, 2) == 2);
+    close(p[1]);
+
+    FILE in = {.fd = p[0]};
+    char line[8];
+    CHECK(fgets(line, sizeof(line), &in) && strcmp(line, "ab\n") == 0);
+    int c = fgetc(&in);
+    CHECK(c == 'c' && ungetc(c, &in) == 'c' && ungetc('z', &in) == EOF);
+    CHECK(fgets(line, sizeof(line), &in) && strcmp(line, "cd") == 0);
+    CHECK(fgets(line, sizeof(line), &in) == NULL && feof(&in));
+    close(p[0]);
+
+    CHECK(setvbuf(stdout, NULL, _IOFBF, BUFSIZ) == 0);
+    CHECK(fputs("", stdout) == 0 && puts("[stdio] puts writes a line") == 0);
+    CHECK(setvbuf(stdout, NULL, 99, 0) == -1);
+}
+
 int main(int argc, char **argv)
 {
     // Child of test_atexit: the handlers must run on the return from main.
@@ -1437,6 +1620,14 @@ int main(int argc, char **argv)
     run_group("term_decode", test_term_decode);
     run_group("term_present", test_term_present);
     run_group("term size reports", test_term_size_report);
+    run_group("malloc near SIZE_MAX", test_malloc_huge);
+    run_group("setenv frees what it replaces", test_setenv_no_leak);
+    run_group("putenv and unsetenv", test_putenv_unsetenv);
+    run_group("strtol and atoi", test_strtol);
+    run_group("bsearch", test_bsearch);
+    run_group("execvp errors", test_execvp_errors);
+    run_group("abort", test_abort);
+    run_group("stdio lines", test_stdio_lines);
 
     if (g_failed) {
         printf("test_libc: %d of %d tests failed\n", g_failed, g_passed + g_failed);

@@ -116,6 +116,7 @@ FILE *fopen(const char *pathname, const char *mode)
     stream->fd = fd;
     stream->error = 0;
     stream->eof = 0;
+    stream->ungot = 0;
 
     return stream;
 }
@@ -150,6 +151,11 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
 
     // A short count must mean end of file or an error, so a pipe is read until either.
     size_t want = size * nmemb, got = 0;
+    if (stream->ungot) {
+        *(unsigned char *)ptr = (unsigned char)(stream->ungot - 1);
+        stream->ungot = 0;
+        got = 1;
+    }
     while (got < want) {
         int r = read(stream->fd, (char *)ptr + got, want - got);
         if (r < 0 && errno == EINTR) {
@@ -215,6 +221,7 @@ int fseek(FILE *stream, off_t offset, int whence)
     }
 
     stream->eof = 0;
+    stream->ungot = 0;
     return 0;
 }
 
@@ -224,7 +231,9 @@ off_t ftell(FILE *stream)
         return -1;
     }
 
-    return lseek(stream->fd, 0, SEEK_CUR);
+    // A byte ungetc pushed back has not been read yet.
+    off_t at = lseek(stream->fd, 0, SEEK_CUR);
+    return at > 0 && stream->ungot ? at - 1 : at;
 }
 
 int fgetc(FILE *stream)
@@ -243,6 +252,74 @@ int fputc(int c, FILE *stream)
         return uc;
     }
     return EOF;
+}
+
+int getchar(void)
+{
+    return fgetc(stdin);
+}
+
+int putchar(int c)
+{
+    return fputc(c, stdout);
+}
+
+int ungetc(int c, FILE *stream)
+{
+    if (!stream || c == EOF || stream->ungot) {
+        return EOF;
+    }
+    stream->ungot = 1 + (unsigned char)c;
+    stream->eof = 0;
+    return (unsigned char)c;
+}
+
+char *fgets(char *s, int size, FILE *stream)
+{
+    if (!s || size <= 0 || !stream) {
+        return NULL;
+    }
+    int n = 0;
+    while (n < size - 1) {
+        int c = fgetc(stream);
+        if (c == EOF) {
+            break;
+        }
+        s[n++] = (char)c;
+        if (c == '\n') {
+            break;
+        }
+    }
+    if (n == 0 && size > 1) {
+        return NULL;
+    }
+    s[n] = '\0';
+    return s;
+}
+
+int fputs(const char *s, FILE *stream)
+{
+    size_t n = strlen(s);
+    return n == 0 || fwrite(s, 1, n, stream) == n ? 0 : EOF;
+}
+
+int puts(const char *s)
+{
+    return fputs(s, stdout) == 0 && fputc('\n', stdout) != EOF ? 0 : EOF;
+}
+
+int setvbuf(FILE *stream, char *buf, int mode, size_t size)
+{
+    (void)buf;
+    (void)size;
+    if (!stream || mode < _IOFBF || mode > _IONBF) {
+        return -1;
+    }
+    if (stream == stdout) {
+        fflush(stdout);
+        stdout_mode = mode == _IOFBF;
+    }
+    return 0;
 }
 
 int feof(FILE *stream)

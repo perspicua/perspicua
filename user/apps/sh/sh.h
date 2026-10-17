@@ -13,20 +13,25 @@
 #include <stddef.h>
 
 #define MAX_ARGS    32
+#define MAX_REDIRS  8
 #define CMD_MAX_LEN 512
 #define MAX_CMDS    16
+#define EXPAND_MAX  4096 // a line after $-expansion
 
-/*
- * One command in a pipeline: its arguments, its redirections, and whether the
- * pipeline it belongs to was backgrounded.
- */
+// One redirection: fd opened on path with flags, or, with no path, fd made a copy of dup_from.
+struct redir {
+    int fd;
+    int flags;
+    const char *path;
+    int dup_from;
+};
+
+// One command in a pipeline: its arguments and its redirections, applied in order.
 typedef struct {
     char *argv[MAX_ARGS];
     int argc;
-    char *infile;
-    char *outfile;
-    int append;
-    int background;
+    struct redir redirs[MAX_REDIRS];
+    int nredirs;
 } Command;
 
 // main.c
@@ -44,10 +49,11 @@ int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos);
 void clear_completion_matches(void);
 
 // parse.c
+// Each returns -1, having said why on stderr, when the line cannot run as written.
 void strip_comment(char *line);
-void expand_variables(const char *src, char *dst, size_t dst_size);
-void expand_operators(const char *line, char *expanded, size_t size);
-void parse_command(char *str, Command *cmd);
+int expand_variables(const char *src, char *dst, size_t dst_size);
+int expand_operators(const char *line, char *expanded, size_t size);
+int parse_command(char *str, Command *cmd);
 
 // exec.c
 extern int g_last_status;

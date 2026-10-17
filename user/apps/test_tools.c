@@ -380,6 +380,37 @@ static void test_edit(void)
 #define LESS_FILE "/tt_less.txt"
 #define MATCH     "\033[0;30;43m"
 
+#define MANY "/tt_many"
+
+// Past the old fixed sizes: ls kept 512 names, tree 256, and uniq compared 1023 bytes of a line.
+static void test_limits(void)
+{
+    char out[OUT_MAX], path[32];
+    mkdir(MANY, 0755);
+    for (int i = 0; i < 520; i++) {
+        snprintf(path, sizeof(path), MANY "/f%03d", i);
+        write_text(path, "");
+    }
+    check("ls lists every name in a big directory",
+          outputs(NULL, "     520\n", (char *[]){"sh", "-c", "ls " MANY " | wc -l", NULL}));
+    check("tree counts every name in a big directory",
+          outputs(NULL, "0 directories, 520 files\n",
+                  (char *[]){"sh", "-c", "tree " MANY " | tail -n 1", NULL}));
+    for (int i = 0; i < 520; i++) {
+        snprintf(path, sizeof(path), MANY "/f%03d", i);
+        unlink(path);
+    }
+    rmdir(MANY);
+
+    static char lines[3200];
+    memset(lines, 'A', 1500);
+    strcpy(lines + 1500, "x\n");
+    memset(lines + 1502, 'A', 1500);
+    strcpy(lines + 3002, "y\n");
+    int status = run(lines, out, (char *[]){"uniq", NULL});
+    check("uniq compares long lines whole", status == 0 && strcmp(out, lines) == 0);
+}
+
 static void test_less(void)
 {
     char out[OUT_MAX];
@@ -732,6 +763,7 @@ int main(void)
     test_ptop();
     test_edit();
     test_less();
+    test_limits();
     test_find_du();
     test_game_selftests();
     test_cp_mv();

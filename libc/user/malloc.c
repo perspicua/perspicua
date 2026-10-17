@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include "errno.h"
 #include "stdlib.h"
 #include "string.h"
 #include "syscall.h"
@@ -68,17 +69,9 @@ static struct block_header *request_space(size_t size)
     return new_chunk;
 }
 
-void *malloc(size_t size)
+// Hands out the first free block that fits, split to size; NULL if none does.
+static void *take_free(size_t size)
 {
-    if (size == 0) {
-        return NULL;
-    }
-    // A wrapped HEAP_ALIGN matches the first free block, however big the ask.
-    if (size > SIZE_MAX - 15) {
-        return NULL;
-    }
-    size = HEAP_ALIGN(size);
-
     struct block_header *curr = block_list;
     while (curr) {
         if (curr->is_free && curr->size >= size) {
@@ -97,11 +90,26 @@ void *malloc(size_t size)
         }
         curr = curr->next;
     }
+    return NULL;
+}
 
-    if (!request_space(size)) {
+void *malloc(size_t size)
+{
+    if (size == 0) {
         return NULL;
     }
-    return malloc(size);
+    // Past this, request_space's header and chunk rounding would wrap to a chunk too small.
+    if (size > SIZE_MAX - HEADER_SIZE - CHUNK_SIZE) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    size = HEAP_ALIGN(size);
+
+    void *p = take_free(size);
+    if (!p && request_space(size)) {
+        p = take_free(size);
+    }
+    return p;
 }
 
 void free(void *ptr)
@@ -119,6 +127,7 @@ void *calloc(size_t nmemb, size_t size)
 {
     // Reject nmemb * size overflow before it produces an undersized buffer.
     if (size != 0 && nmemb > (size_t)-1 / size) {
+        errno = ENOMEM;
         return NULL;
     }
     size_t total = nmemb * size;

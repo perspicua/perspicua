@@ -7,11 +7,19 @@
 #include "syscall.h"
 #include "string.h"
 #include "signal.h"
+#include "time.h"
 #include "wait.h"
 
 static void print_string(const char *s)
 {
     write(1, s, strlen(s));
+}
+
+static unsigned long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long)ts.tv_sec * 1000 + (unsigned long)ts.tv_nsec / 1000000;
 }
 
 int main(int argc, char *argv[], char *envp[])
@@ -28,8 +36,11 @@ int main(int argc, char *argv[], char *envp[])
     char *default_env[] = {"PATH=/bin:/", "USER=root", "HOME=/", "SHELL=/bin/sh.elf", NULL};
     char **current_env = (envp && envp[0]) ? envp : default_env;
 
+    // A shell that cannot even start waits longer each time, so a card without one is not flooded.
+    unsigned int backoff_ms = 500;
     while (1) {
         print_string("[ INIT ] Forking shell...\n");
+        unsigned long started = now_ms();
         int shell_pid = fork();
 
         if (shell_pid < 0) {
@@ -44,32 +55,40 @@ int main(int argc, char *argv[], char *envp[])
             char *argv[] = {"/bin/sh.elf", NULL};
             execve("/bin/sh.elf", argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
-            _exit(1);
-        } else {
-            /* Parent process: wait for the shell to terminate,
-               but also reap any orphaned zombies that get reparented to us. */
-            while (1) {
-                int status = 0;
-                int reaped = waitpid(-1, &status, WUNTRACED);
-                if (reaped == shell_pid && WIFSTOPPED(status)) {
-                    // A stopped login shell leaves nothing reading the console.
-                    kill(shell_pid, SIGCONT);
-                    continue;
-                }
-                if (reaped == shell_pid) {
-                    // The shell itself exited
-                    break;
-                } else if (reaped > 0) {
-                    // We reaped an orphan! Just continue waiting.
-                    continue;
-                } else {
-                    // Error or no more children (shouldn't happen as we have shell_pid)
-                    break;
+            _exit(127);
+        }
+
+        int shell_status = 0;
+        while (1) {
+            int status = 0;
+            int reaped = waitpid(-1, &status, WUNTRACED);
+            if (reaped == shell_pid && WIFSTOPPED(status)) {
+                // A stopped login shell leaves nothing reading the console.
+                kill(shell_pid, SIGCONT);
+                continue;
+            }
+            if (reaped == shell_pid) {
+                shell_status = status;
+                break;
+            }
+            if (reaped < 0) {
+                break;
+            }
+            // An orphan, reparented to init; reaping it is all there is to do.
+        }
+
+        if (WEXITSTATUS(shell_status) == 127 && now_ms() - started < 1000) {
+            if (backoff_ms < 30000) {
+                backoff_ms = backoff_ms * 2 > 30000 ? 30000 : backoff_ms * 2;
+                if (backoff_ms == 30000) {
+                    print_string("[ INIT ] The shell will not start; retrying every 30 s\n");
                 }
             }
+        } else {
+            backoff_ms = 500;
             print_string("[ INIT ] Shell exited, restarting...\n");
-            usleep((500) * 1000);
         }
+        usleep(backoff_ms * 1000);
     }
 
     return 0;

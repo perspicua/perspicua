@@ -11,10 +11,9 @@
 #include <string.h>
 #include <unistd.h>
 
-#define LINE_MAX 1024
-
 static int show_count;
-static char prev[LINE_MAX];
+static char *prev;
+static size_t prev_len, prev_cap;
 static int have_prev;
 static long repeats;
 
@@ -24,49 +23,74 @@ static void flush_prev(void)
         return;
     }
     if (show_count) {
-        printf("%7ld %s\n", repeats, prev);
-    } else {
-        printf("%s\n", prev);
+        printf("%7ld ", repeats);
     }
+    fwrite(prev, 1, prev_len, stdout);
+    fwrite("\n", 1, 1, stdout);
 }
 
-static void take_line(const char *line)
+// Lines compare whole, however long; -1 if there was no memory to keep this one.
+static int take_line(const char *line, size_t len)
 {
-    if (have_prev && strcmp(line, prev) == 0) {
+    if (have_prev && len == prev_len && memcmp(line, prev, len) == 0) {
         repeats++;
-        return;
+        return 0;
     }
     flush_prev();
-    strncpy(prev, line, sizeof(prev) - 1);
-    prev[sizeof(prev) - 1] = '\0';
+    if (len + 1 > prev_cap) {
+        char *bigger = realloc(prev, len + 1);
+        if (!bigger) {
+            return -1;
+        }
+        prev = bigger;
+        prev_cap = len + 1;
+    }
+    memcpy(prev, line, len);
+    prev_len = len;
     have_prev = 1;
     repeats = 1;
+    return 0;
 }
 
-// Splits the input into lines as it arrives; longer lines are cut at LINE_MAX - 1.
+// Splits the input into lines as it arrives; -1 with errno set on a read error or no memory.
 static int uniq_fd(int fd)
 {
     char buf[4096];
-    char line[LINE_MAX];
-    size_t len = 0;
-    int n;
+    char *line = NULL;
+    size_t len = 0, cap = 0;
+    int n, rc = 0;
 
-    while ((n = read(fd, buf, sizeof(buf))) > 0) {
-        for (int k = 0; k < n; k++) {
+    while (rc == 0 && (n = read(fd, buf, sizeof(buf))) > 0) {
+        for (int k = 0; k < n && rc == 0; k++) {
             if (buf[k] == '\n') {
-                line[len] = '\0';
-                take_line(line);
+                rc = take_line(line ? line : "", len);
                 len = 0;
-            } else if (len < sizeof(line) - 1) {
-                line[len++] = buf[k];
+                continue;
             }
+            if (len == cap) {
+                char *bigger = realloc(line, cap ? cap * 2 : 256);
+                if (!bigger) {
+                    rc = -1;
+                    break;
+                }
+                line = bigger;
+                cap = cap ? cap * 2 : 256;
+            }
+            line[len++] = buf[k];
         }
     }
-    if (len > 0) {
-        line[len] = '\0';
-        take_line(line);
+    if (rc == 0 && n < 0) {
+        rc = -1;
+    } else if (rc != 0) {
+        errno = ENOMEM;
+    } else if (len > 0) {
+        rc = take_line(line, len);
+        if (rc != 0) {
+            errno = ENOMEM;
+        }
     }
-    return n < 0 ? -1 : 0;
+    free(line);
+    return rc;
 }
 
 int main(int argc, char **argv)

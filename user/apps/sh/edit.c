@@ -9,6 +9,7 @@
 
 #include "dirent.h"
 #include "errno.h"
+#include "fcntl.h"
 #include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
@@ -23,6 +24,7 @@
 #define KEY_TAB       '\t'
 #define KEY_BACKSPACE 127
 #define CSI_MAX       16 // longest escape sequence read whole
+#define ESC_WAIT_MS   50 // a lone Esc waits this long for the rest of a sequence
 
 static char *history[MAX_HISTORY];
 static int history_count = 0;
@@ -72,9 +74,38 @@ void redraw_line(const char *cmd)
     printf("%s", cmd);
 }
 
+// The byte after an ESC, if one comes within ESC_WAIT_MS; -1 when the Esc key stood alone.
+static int read_after_esc(void)
+{
+    int flags = fcntl(0, F_GETFL, 0);
+    fcntl(0, F_SETFL, flags | O_NONBLOCK);
+    int got = -1;
+    for (int waited = 0; waited < ESC_WAIT_MS; waited += 5) {
+        unsigned char b;
+        int r = read(0, &b, 1);
+        if (r == 1) {
+            got = b;
+            break;
+        }
+        if (r == 0) {
+            break;
+        }
+        usleep(5000);
+    }
+    fcntl(0, F_SETFL, flags);
+    return got;
+}
+
 int read_key(void)
 {
+    // A byte read after ESC that began no sequence: it is the next key.
+    static int held = -1;
     char c;
+    if (held >= 0) {
+        c = (char)held;
+        held = -1;
+        return (unsigned char)c;
+    }
     int r;
     while ((r = read(0, &c, 1)) < 0 && errno == EINTR) {}
     if (r <= 0) {
@@ -82,11 +113,13 @@ int read_key(void)
     }
 
     if (c == 27) {
-        char intro, final;
-        if (read(0, &intro, 1) <= 0) {
+        char final;
+        int intro = read_after_esc();
+        if (intro < 0) {
             return 27;
         }
         if (intro != '[' && intro != 'O') {
+            held = intro;
             return 27;
         }
         // Read whole, so an unused sequence (a late size report) leaves no bytes as typed text.

@@ -18,8 +18,8 @@
 __attribute__((noreturn)) void _exit(int status);
 int fork(void);
 int execve(const char *path, char *const argv[], char *const envp[]);
-// Runs file found on PATH (default /bin:/), trying name.elf before name; a name with '/' is used as
-// is.
+// Runs file from PATH (default /bin:/), name.elf before name; a name with '/' is used as it is.
+// The first file found that will not run ends the search, and its errno is the result.
 int execvp(const char *file, char *const argv[]);
 int getpid(void);
 int getppid(void);
@@ -31,10 +31,10 @@ int tcsetpgrp(int fd, int pgid);
 int tcgetpgrp(int fd);
 
 // File descriptors
-int read(int fd, void *buf, size_t len);
-int write(int fd, const char *buf, size_t len);
-int pread(int fd, void *buf, size_t count, off_t offset);
-int pwrite(int fd, const char *buf, size_t len, off_t offset);
+ssize_t read(int fd, void *buf, size_t len);
+ssize_t write(int fd, const void *buf, size_t len);
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t len, off_t offset);
 int close(int fd);
 off_t lseek(int fd, off_t offset, int whence);
 int pipe(int pipefd[2]);

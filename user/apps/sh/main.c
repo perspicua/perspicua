@@ -42,19 +42,21 @@ static bool stdin_is_terminal(void)
     return fstat(0, &st) == 0 && S_ISCHR(st.st_mode);
 }
 
-// One line of a script, without its newline; false once the input is used up.
-static bool read_script_line(char *buf, size_t size)
+// One line of a script, without its newline: 1 read, 0 too long to hold, -1 once input is used up.
+static int read_script_line(char *buf, size_t size)
 {
     size_t n = 0;
-    bool got = false;
+    int got = -1;
     char c;
     while (read(0, &c, 1) == 1) {
-        got = true;
+        got = got < 0 ? 1 : got;
         if (c == '\n') {
             break;
         }
         if (n < size - 1) {
             buf[n++] = c;
+        } else {
+            got = 0;
         }
     }
     buf[n] = '\0';
@@ -75,7 +77,13 @@ static int run_noninteractive(char *line)
         fprintf(stderr, "sh: memory allocation failed\n");
         return 1;
     }
-    while (read_script_line(buf, CMD_MAX_LEN)) {
+    int got;
+    while ((got = read_script_line(buf, CMD_MAX_LEN)) >= 0) {
+        if (got == 0) {
+            fprintf(stderr, "sh: line longer than %d bytes\n", CMD_MAX_LEN - 1);
+            g_last_status = 2;
+            continue;
+        }
         execute_line(buf);
     }
     free(buf);
@@ -124,7 +132,7 @@ int main(int argc, char *argv[], char *envp[])
 
     char *cmd_buffer = malloc(CMD_MAX_LEN);
     if (!cmd_buffer) {
-        printf("sh: memory allocation failed\n");
+        fprintf(stderr, "sh: memory allocation failed\n");
         _exit(1);
     }
 

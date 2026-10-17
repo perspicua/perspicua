@@ -113,6 +113,12 @@ static inline int __syscall_ret(long res)
     return res < 0 ? __set_errno_ret(res) : (int)res;
 }
 
+// A byte count, kept whole: a transfer over 2 GiB is no error.
+static inline ssize_t __syscall_size_ret(long res)
+{
+    return res < 0 ? __set_errno_ret(res) : (ssize_t)res;
+}
+
 static inline off_t __syscall_off_ret(long res)
 {
     if (res < 0) {
@@ -205,7 +211,7 @@ int tcgetpgrp(int fd)
 
 // Filesystem and I/O
 
-int open(const char *path, int flags)
+int open(const char *path, int flags, ...)
 {
     return __syscall_ret(__syscall2(SYS_OPEN, (long)path, flags));
 }
@@ -215,24 +221,24 @@ int close(int fd)
     return __syscall_ret(__syscall1(SYS_CLOSE, fd));
 }
 
-int read(int fd, void *buf, size_t len)
+ssize_t read(int fd, void *buf, size_t len)
 {
-    return __syscall_ret(__syscall3(SYS_READ, fd, (long)buf, (long)len));
+    return __syscall_size_ret(__syscall3(SYS_READ, fd, (long)buf, (long)len));
 }
 
-int write(int fd, const char *buf, size_t len)
+ssize_t write(int fd, const void *buf, size_t len)
 {
-    return __syscall_ret(__syscall3(SYS_WRITE, fd, (long)buf, (long)len));
+    return __syscall_size_ret(__syscall3(SYS_WRITE, fd, (long)buf, (long)len));
 }
 
-int pread(int fd, void *buf, size_t count, off_t offset)
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
 {
-    return __syscall_ret(__syscall4(SYS_PREAD, fd, (long)buf, (long)count, (long)offset));
+    return __syscall_size_ret(__syscall4(SYS_PREAD, fd, (long)buf, (long)count, (long)offset));
 }
 
-int pwrite(int fd, const char *buf, size_t len, off_t offset)
+ssize_t pwrite(int fd, const void *buf, size_t len, off_t offset)
 {
-    return __syscall_ret(__syscall4(SYS_PWRITE, fd, (long)buf, (long)len, (long)offset));
+    return __syscall_size_ret(__syscall4(SYS_PWRITE, fd, (long)buf, (long)len, (long)offset));
 }
 
 int getdents(int fd, void *buf, size_t count)
@@ -314,8 +320,16 @@ int rename(const char *oldpath, const char *newpath)
     return __syscall_ret(__syscall2(SYS_RENAME, (long)oldpath, (long)newpath));
 }
 
-int fcntl(int fd, int cmd, int arg)
+int fcntl(int fd, int cmd, ...)
 {
+    // Only the set commands take an argument, and reading one that was not passed is undefined.
+    int arg = 0;
+    if (cmd == F_SETFD || cmd == F_SETFL) {
+        va_list ap;
+        va_start(ap, cmd);
+        arg = va_arg(ap, int);
+        va_end(ap);
+    }
     return __syscall_ret(__syscall3(SYS_FCNTL, fd, cmd, arg));
 }
 

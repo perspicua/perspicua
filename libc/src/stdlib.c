@@ -4,36 +4,142 @@
 
 #include "stdlib.h"
 
+#include <limits.h>
+
+#include "ctype.h"
+
+#ifndef __KERNEL__
+    #include "errno.h"
+#endif
+
+static int digit_value(char c)
+{
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    }
+    if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 10;
+    }
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A' + 10;
+    }
+    return 99;
+}
+
+/*
+ * Parses [space][+|-][0x]digits in base (0 picks 8, 10 or 16 from the prefix)
+ * as an unsigned magnitude, saturating at limit. *end, if given, is set past
+ * the last digit used, or to s when there was none.
+ */
+static unsigned long parse_magnitude(const char *s, char **end, int base, unsigned long limit,
+                                     int *negative, int *overflow)
+{
+    const char *p = s;
+    while (isspace((unsigned char)*p)) {
+        p++;
+    }
+    *negative = *p == '-';
+    if (*p == '-' || *p == '+') {
+        p++;
+    }
+    if ((base == 0 || base == 16) && p[0] == '0' && (p[1] == 'x' || p[1] == 'X')
+        && digit_value(p[2]) < 16) {
+        p += 2;
+        base = 16;
+    } else if (base == 0) {
+        base = p[0] == '0' ? 8 : 10;
+    }
+
+    unsigned long value = 0;
+    const char *first = p;
+    *overflow = 0;
+    if (base >= 2 && base <= 36) {
+        for (int d; (d = digit_value(*p)) < base; p++) {
+            if (value > (limit - (unsigned long)d) / (unsigned long)base) {
+                *overflow = 1;
+                value = limit;
+            } else if (!*overflow) {
+                value = value * (unsigned long)base + (unsigned long)d;
+            }
+        }
+    }
+    if (end) {
+        *end = (char *)(p == first ? s : p);
+    }
+    return value;
+}
+
+long strtol(const char *nptr, char **endptr, int base)
+{
+    int negative, overflow;
+    // A negative number may reach one past LONG_MAX: LONG_MIN's magnitude.
+    unsigned long limit = (unsigned long)LONG_MAX + 1;
+    unsigned long mag = parse_magnitude(nptr, endptr, base, limit, &negative, &overflow);
+    if (!negative && mag > (unsigned long)LONG_MAX) {
+        mag = (unsigned long)LONG_MAX;
+        overflow = 1;
+    }
+    if (overflow) {
+#ifndef __KERNEL__
+        errno = ERANGE;
+#endif
+        return negative ? LONG_MIN : LONG_MAX;
+    }
+    return negative ? (long)(0 - mag) : (long)mag;
+}
+
+unsigned long strtoul(const char *nptr, char **endptr, int base)
+{
+    int negative, overflow;
+    unsigned long mag = parse_magnitude(nptr, endptr, base, ULONG_MAX, &negative, &overflow);
+    if (overflow) {
+#ifndef __KERNEL__
+        errno = ERANGE;
+#endif
+        return ULONG_MAX;
+    }
+    // As C has it: a minus sign negates the result in unsigned arithmetic.
+    return negative ? 0 - mag : mag;
+}
+
 int atoi(const char *nptr)
 {
-    int res = 0, sign = 1;
-    while (*nptr == ' ') {
-        nptr++;
-    }
-    if (*nptr == '-') {
-        sign = -1;
-        nptr++;
-    }
-    while (*nptr >= '0' && *nptr <= '9') {
-        res = res * 10 + (*nptr++ - '0');
-    }
-    return res * sign;
+    return (int)strtol(nptr, NULL, 10);
 }
 
 long atol(const char *nptr)
 {
-    long res = 0, sign = 1;
-    while (*nptr == ' ') {
-        nptr++;
+    return strtol(nptr, NULL, 10);
+}
+
+int abs(int j)
+{
+    return j < 0 ? -j : j;
+}
+
+long labs(long j)
+{
+    return j < 0 ? -j : j;
+}
+
+void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
+              int (*compar)(const void *, const void *))
+{
+    const char *lo = base;
+    while (nmemb > 0) {
+        const char *mid = lo + (nmemb / 2) * size;
+        int c = compar(key, mid);
+        if (c == 0) {
+            return (void *)mid;
+        }
+        if (c > 0) {
+            lo = mid + size;
+            nmemb -= nmemb / 2 + 1;
+        } else {
+            nmemb /= 2;
+        }
     }
-    if (*nptr == '-') {
-        sign = -1;
-        nptr++;
-    }
-    while (*nptr >= '0' && *nptr <= '9') {
-        res = res * 10 + (*nptr++ - '0');
-    }
-    return res * sign;
+    return NULL;
 }
 
 static unsigned long rand_state;

@@ -9,6 +9,7 @@
 
 #include "dirent.h"
 #include "errno.h"
+#include "fcntl.h"
 #include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
@@ -41,7 +42,7 @@ static int stopped_count = 0;
 static void remember_stopped(int pgid, const int *pids, int count)
 {
     if (stopped_count == MAX_JOBS) {
-        printf("sh: too many stopped jobs; group %d is not tracked\n", pgid);
+        fprintf(stderr, "sh: too many stopped jobs; group %d is not tracked\n", pgid);
         return;
     }
     struct job *job = &stopped_jobs[stopped_count++];
@@ -151,12 +152,12 @@ static void run_parent_builtin(Command *cmd)
         g_last_status = 1;
     } else if (strcmp(cmd->argv[0], "fg") == 0) {
         if (stopped_count == 0) {
-            printf("sh: fg: no stopped job\n");
+            fprintf(stderr, "sh: fg: no stopped job\n");
             g_last_status = 1;
         } else {
             struct job job = stopped_jobs[--stopped_count];
             if (kill(-job.pgid, SIGCONT) < 0) {
-                printf("sh: fg: job %d has ended\n", job.pgid);
+                fprintf(stderr, "sh: fg: job %d has ended\n", job.pgid);
                 g_last_status = 1;
             } else {
                 g_last_status = wait_foreground(job.pgid, job.pids, job.count);
@@ -165,7 +166,7 @@ static void run_parent_builtin(Command *cmd)
     } else if (strcmp(cmd->argv[0], "cd") == 0) {
         const char *target = (cmd->argc > 1) ? cmd->argv[1] : "/";
         if (chdir(target) < 0) {
-            printf("sh: cd: no such directory: %s\n", target);
+            fprintf(stderr, "sh: cd: %s: %s\n", target, strerror(errno));
             g_last_status = 1;
         } else {
             g_last_status = 0;
@@ -222,7 +223,7 @@ static void run_output_builtin(Command *cmd)
         printf("Perspicua Shell\n");
         printf("Built-ins: help, echo, clear, pwd, cd, exit, export, unset, env, "
                "true, false, :, fg\n");
-        printf("Operators: | > >> < & ; && ||\n");
+        printf("Operators: | < > >> 2> 2>> 2>&1 & ; && ||\n");
         printf("Scripting: $?  $$  $VAR  ${VAR}  'single'  \"double\"  # comments\n");
     } else if (strcmp(cmd->argv[0], "env") == 0) {
         if (environ) {
@@ -247,41 +248,47 @@ static void run_exec(Command *cmd)
     // A name containing a slash is a path: exec it directly, never via PATH.
     if (strchr(name, '/')) {
         execve(name, cmd->argv, environ);
-        fprintf(stderr, "sh: %s : no such file or directory\n", name);
+    } else {
+        execvp(name, cmd->argv);
+    }
+
+    // 127 when there is nothing by that name, 126 when there is and it will not run.
+    if (errno == ENOENT || errno == ENOTDIR) {
+        if (strchr(name, '/')) {
+            fprintf(stderr, "sh: %s: %s\n", name, strerror(errno));
+        } else {
+            fprintf(stderr, "sh: command not found: %s\n", name);
+        }
         _exit(127);
     }
-
-    execvp(name, cmd->argv);
-
-    fprintf(stderr, "sh: command not found: %s\n", name);
-    _exit(127);
+    fprintf(stderr, "sh: %s: %s\n", name, strerror(errno));
+    _exit(126);
 }
 
+// In order, so 2>&1 copies wherever fd 1 points by then.
 static int apply_redirections(Command *cmd)
 {
-    if (cmd->infile) {
-        int fd = open(cmd->infile, O_RDONLY);
-        if (fd < 0) {
-            printf("sh: cannot open input file\n");
+    for (int i = 0; i < cmd->nredirs; i++) {
+        const struct redir *r = &cmd->redirs[i];
+        if (r->path) {
+            int fd = open(r->path, r->flags);
+            if (fd < 0) {
+                fprintf(stderr, "sh: %s: %s\n", r->path, strerror(errno));
+                return -1;
+            }
+            if (fd != r->fd) {
+                dup2(fd, r->fd);
+                close(fd);
+            }
+        } else if (dup2(r->dup_from, r->fd) < 0) {
+            fprintf(stderr, "sh: %d: %s\n", r->dup_from, strerror(errno));
             return -1;
         }
-        dup2(fd, 0);
-        close(fd);
-    }
-    if (cmd->outfile) {
-        int flags = O_WRONLY | O_CREAT | (cmd->append ? O_APPEND : O_TRUNC);
-        int fd = open(cmd->outfile, flags);
-        if (fd < 0) {
-            printf("sh: cannot open output file\n");
-            return -1;
-        }
-        dup2(fd, 1);
-        close(fd);
     }
     return 0;
 }
 
-static void execute_pipeline(char *pipe_string)
+static void execute_pipeline(char *pipe_string, int background)
 {
     char *commands_str[MAX_CMDS];
     int num_cmds = 0;
@@ -296,7 +303,7 @@ static void execute_pipeline(char *pipe_string)
             in_double = !in_double;
         } else if (*p == '|' && !in_single && !in_double) {
             if (num_cmds == MAX_CMDS) {
-                printf("sh: more than %d commands in a pipeline\n", MAX_CMDS);
+                fprintf(stderr, "sh: more than %d commands in a pipeline\n", MAX_CMDS);
                 g_last_status = 2;
                 return;
             }
@@ -306,20 +313,21 @@ static void execute_pipeline(char *pipe_string)
     }
 
     static Command cmds[MAX_CMDS];
-    int background = 0;
     for (int i = 0; i < num_cmds; i++) {
-        parse_command(commands_str[i], &cmds[i]);
+        if (parse_command(commands_str[i], &cmds[i]) < 0) {
+            g_last_status = 2;
+            return;
+        }
         if (cmds[i].argc == 0) {
             if (num_cmds > 1) {
-                printf("sh: syntax error: empty command in a pipeline\n");
+                fprintf(stderr, "sh: syntax error: empty command in a pipeline\n");
                 g_last_status = 2;
             }
             return;
         }
-        background |= cmds[i].background;
     }
 
-    if (num_cmds == 1 && is_parent_builtin(cmds[0].argv[0])) {
+    if (num_cmds == 1 && !background && is_parent_builtin(cmds[0].argv[0])) {
         run_parent_builtin(&cmds[0]);
         return;
     }
@@ -342,14 +350,14 @@ static void execute_pipeline(char *pipe_string)
     for (int i = 0; i < num_cmds; i++) {
         int pipefd[2] = {-1, -1};
         if (i < num_cmds - 1 && pipe(pipefd) < 0) {
-            printf("sh: pipe failed\n");
+            fprintf(stderr, "sh: pipe: %s\n", strerror(errno));
             failed = 1;
             break;
         }
 
         int pid = fork();
         if (pid < 0) {
-            printf("sh: fork failed\n");
+            fprintf(stderr, "sh: fork: %s\n", strerror(errno));
             if (pipefd[0] >= 0) {
                 close(pipefd[0]);
                 close(pipefd[1]);
@@ -385,6 +393,12 @@ static void execute_pipeline(char *pipe_string)
                 run_output_builtin(&cmds[i]);
                 fflush(stdout);
                 _exit(0);
+            }
+            // In a pipeline or the background, true, cd and the rest run in a subshell (POSIX).
+            if (is_parent_builtin(cmds[i].argv[0])) {
+                run_parent_builtin(&cmds[i]);
+                fflush(stdout);
+                _exit(g_last_status);
             }
             run_exec(&cmds[i]);
             _exit(1);
@@ -429,13 +443,13 @@ static void execute_pipeline(char *pipe_string)
     sigprocmask(SIG_SETMASK, &old_mask, NULL);
 }
 
-/* Run one leaf command (already free of ; && ||) through $-expansion, operator
+/* Run one leaf command (already free of ; & && ||) through $-expansion, operator
  * spacing, and the pipeline executor. Whitespace-only segments are no-ops.
  *
  * Variable expansion happens HERE, per command, rather than once for the whole
  * line, so that $? and $VAR reflect commands run earlier in the same line
  * (e.g. `false; echo $?` and `export X=1; echo $X`). */
-static void run_pipeline_segment(char *cmd)
+static void run_pipeline_segment(char *cmd, int background)
 {
     char *s = cmd;
     while (*s == ' ' || *s == '\t') {
@@ -445,19 +459,44 @@ static void run_pipeline_segment(char *cmd)
         return;
     }
 
-    char *vexp = malloc(CMD_MAX_LEN * 2);
-    char *expanded = malloc(CMD_MAX_LEN * 2);
+    char *vexp = malloc(EXPAND_MAX);
+    char *expanded = malloc(EXPAND_MAX);
     if (!vexp || !expanded) {
-        printf("sh: memory allocation failed\n");
-        free(vexp);
-        free(expanded);
-        return;
+        fprintf(stderr, "sh: memory allocation failed\n");
+        g_last_status = 1;
+    } else if (expand_variables(cmd, vexp, EXPAND_MAX) < 0
+               || expand_operators(vexp, expanded, EXPAND_MAX) < 0) {
+        g_last_status = 2;
+    } else {
+        execute_pipeline(expanded, background);
     }
-    expand_variables(cmd, vexp, CMD_MAX_LEN * 2);
-    expand_operators(vexp, expanded, CMD_MAX_LEN * 2);
-    execute_pipeline(expanded);
     free(vexp);
     free(expanded);
+}
+
+enum {
+    CONN_ALWAYS,
+    CONN_AND,
+    CONN_OR
+};
+
+// Runs each command whose connector the status so far allows.
+static void run_links(char **cmds, const int *conn, int n, int background)
+{
+    for (int i = 0; i < n; i++) {
+        int run;
+        if (conn[i] == CONN_AND) {
+            run = (g_last_status == 0);
+        } else if (conn[i] == CONN_OR) {
+            run = (g_last_status != 0);
+        } else {
+            run = 1;
+        }
+
+        if (run) {
+            run_pipeline_segment(cmds[i], background);
+        }
+    }
 }
 
 /*
@@ -468,13 +507,8 @@ static void run_pipeline_segment(char *cmd)
  * connector and the running status. Skipping leaves the status untouched, which
  * makes mixed chains like `false && a || b` behave as sh does (b runs).
  */
-static void run_conditional_list(char *segment)
+static void run_conditional_list(char *segment, int background)
 {
-    enum {
-        CONN_ALWAYS,
-        CONN_AND,
-        CONN_OR
-    };
     char *cmds[MAX_CMDS];
     int conn[MAX_CMDS];
     int n = 0;
@@ -490,8 +524,10 @@ static void run_conditional_list(char *segment)
         } else if (*p == '"' && !in_single) {
             in_double = !in_double;
         } else if (!in_single && !in_double && (*p == '&' || *p == '|') && p[1] == *p) {
-            if (n >= MAX_CMDS) {
-                break;
+            if (n == MAX_CMDS) {
+                fprintf(stderr, "sh: more than %d commands joined by && and ||\n", MAX_CMDS);
+                g_last_status = 2;
+                return;
             }
             conn[n] = (*p == '&') ? CONN_AND : CONN_OR;
             *p = '\0';
@@ -501,41 +537,56 @@ static void run_conditional_list(char *segment)
         }
     }
 
-    for (int i = 0; i < n; i++) {
-        int run;
-        if (conn[i] == CONN_AND) {
-            run = (g_last_status == 0);
-        } else if (conn[i] == CONN_OR) {
-            run = (g_last_status != 0);
-        } else {
-            run = 1;
+    // A backgrounded && / || list runs in a subshell, so its links still wait on each other.
+    if (background && n > 1) {
+        fflush(stdout);
+        int pid = fork();
+        if (pid < 0) {
+            fprintf(stderr, "sh: fork: %s\n", strerror(errno));
+            g_last_status = 1;
+            return;
         }
-
-        if (run) {
-            run_pipeline_segment(cmds[i]);
+        if (pid == 0) {
+            if (g_job_control) {
+                setpgid(0, 0);
+            }
+            g_job_control = false;
+            run_links(cmds, conn, n, 0);
+            fflush(stdout);
+            _exit(g_last_status);
         }
+        if (g_job_control) {
+            setpgid(pid, pid);
+        }
+        g_last_status = 0;
+        return;
     }
+    run_links(cmds, conn, n, background);
 }
+
+#define MAX_LISTS 16
 
 void execute_line(char *line)
 {
-    char *work = malloc(CMD_MAX_LEN);
+    // A copy, since splitting writes into it, as long as the line itself.
+    char *work = sh_strdup(line);
     if (!work) {
-        printf("sh: memory allocation failed\n");
+        fprintf(stderr, "sh: memory allocation failed\n");
+        g_last_status = 1;
         return;
     }
 
     /* Comments are stripped once, up front. Operator splitting (below) and
      * $-expansion (per command, deeper down) run on the raw text so that
      * expansion cannot inject or hide control operators. */
-    strncpy(work, line, CMD_MAX_LEN - 1);
-    work[CMD_MAX_LEN - 1] = '\0';
     strip_comment(work);
 
-    // Split by ';' (quote-aware) into sequential lists.
-    char *seq_commands[16];
-    int num_seq = 0;
-    seq_commands[num_seq++] = work;
+    // Split on ';' and a lone '&' (quote-aware); '&' runs the list before it in the background.
+    char *lists[MAX_LISTS];
+    int background[MAX_LISTS];
+    int num_lists = 0;
+    lists[num_lists] = work;
+    background[num_lists++] = 0;
 
     int in_single = 0, in_double = 0;
     for (char *p = work; *p; p++) {
@@ -543,16 +594,30 @@ void execute_line(char *line)
             in_single = !in_single;
         } else if (*p == '"' && !in_single) {
             in_double = !in_double;
-        } else if (*p == ';' && !in_single && !in_double) {
-            *p = '\0';
-            if (num_seq < 16) {
-                seq_commands[num_seq++] = p + 1;
+        } else if (!in_single && !in_double && (*p == ';' || *p == '&')) {
+            if (*p == '&' && p[1] == '&') {
+                p++;
+                continue;
             }
+            // The & of >&N names a descriptor.
+            if (*p == '&' && p > work && (p[-1] == '>' || p[-1] == '<')) {
+                continue;
+            }
+            if (num_lists == MAX_LISTS) {
+                fprintf(stderr, "sh: more than %d commands separated by ; and &\n", MAX_LISTS);
+                g_last_status = 2;
+                free(work);
+                return;
+            }
+            background[num_lists - 1] = *p == '&';
+            *p = '\0';
+            lists[num_lists] = p + 1;
+            background[num_lists++] = 0;
         }
     }
 
-    for (int i = 0; i < num_seq; i++) {
-        run_conditional_list(seq_commands[i]);
+    for (int i = 0; i < num_lists; i++) {
+        run_conditional_list(lists[i], background[i]);
     }
 
     free(work);

@@ -101,8 +101,7 @@ static void print_entry(const char *name, struct stat *st, int long_format)
     }
 }
 
-#define LS_TERM_W      80
-#define LS_MAX_ENTRIES 512
+#define LS_TERM_W 80
 
 // tcgetpgrp succeeds only on a terminal, distinguishing it from a pipe or file.
 static int stdout_is_tty(void)
@@ -174,10 +173,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
     /* Plain listing collects names so it can lay them out in columns (at a
      * terminal) or one per line (when piped, keeping `ls | wc -l` correct). */
     char **names = NULL;
-    int count = 0;
-    if (!long_format) {
-        names = malloc(sizeof(char *) * LS_MAX_ENTRIES);
-    }
+    int count = 0, cap = 0;
 
     struct dirent *ent;
     char full_path[512];
@@ -209,14 +205,30 @@ static int list_path_with_options(const char *path, int long_format, int show_al
             } else {
                 print_entry(ent->d_name, &entry_st, long_format);
             }
-        } else if (names && count < LS_MAX_ENTRIES) {
-            names[count++] = strdup(ent->d_name);
+        } else {
+            if (count == cap) {
+                int bigger_cap = cap ? cap * 2 : 64;
+                char **bigger = realloc(names, sizeof(char *) * (size_t)bigger_cap);
+                if (!bigger) {
+                    fprintf(stderr, "ls: out of memory listing '%s'\n", path);
+                    rc = 1;
+                    break;
+                }
+                names = bigger;
+                cap = bigger_cap;
+            }
+            if (!(names[count] = strdup(ent->d_name))) {
+                fprintf(stderr, "ls: out of memory listing '%s'\n", path);
+                rc = 1;
+                break;
+            }
+            count++;
         }
     }
 
     closedir(dirp);
 
-    if (!long_format && names) {
+    if (!long_format) {
         if (stdout_is_tty()) {
             print_columnar(names, count);
         } else {

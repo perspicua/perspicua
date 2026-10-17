@@ -97,12 +97,12 @@ LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
 # command's first word names the suite: it must print "<name>: all N tests passed" and exit 0.
 USER_SUITES=(
     "test_restart:20"
-    "test_tools:106"
-    "test_libc:377"
+    "test_tools:109"
+    "test_libc:426"
     "test_syscall:187"
     "test_fcntl:8"
     "test_stop_cont:39"
-    "test_sh:17"
+    "test_sh:37"
     "stress -s 1:1290"
 )
 
@@ -235,6 +235,11 @@ if [ "$suites_finished" -eq 1 ]; then
     # A terminal's size report that lands at the prompt is read whole and dropped, not typed.
     printf '\033[24;80Recho LE-CPR\n' >&3
     wait_briefly '^LE-CPR$' 10 || job_control_failures+=("a size report at the prompt became typed text")
+    # Delete's sequence leaves nothing behind, and a key right after a lone Esc is still typed.
+    printf 'echo LE-DEL-a\033[3~b\n' >&3
+    wait_briefly '^LE-DEL-ab$' 10 || job_control_failures+=("Delete at the prompt typed its sequence")
+    printf '\033echo LE-ESC\n' >&3
+    wait_briefly '^LE-ESC$' 10 || job_control_failures+=("the key after a lone Esc was lost")
 
     printf 'sh &\n' >&3
     printf 'echo JC-BGSH\n' >&3

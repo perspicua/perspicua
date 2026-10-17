@@ -2,6 +2,7 @@
  * exit.c - Process exit and the handlers registered to run at it.
  */
 
+#include "signal.h"
 #include "stdio.h"
 #include "stdlib.h"
 
@@ -30,4 +31,15 @@ void exit(int status)
     }
     fflush(stdout);
     _exit(status);
+}
+
+void abort(void)
+{
+    // A handler may run and return; the program ends all the same, as if SIGABRT killed it.
+    sigset_t abrt = 1u << (SIGABRT - 1);
+    sigprocmask(SIG_UNBLOCK, &abrt, NULL);
+    kill(getpid(), SIGABRT);
+    signal(SIGABRT, SIG_DFL);
+    kill(getpid(), SIGABRT);
+    _exit(128 + SIGABRT);
 }
