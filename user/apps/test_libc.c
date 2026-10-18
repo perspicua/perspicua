@@ -455,7 +455,10 @@ static void test_snprintf_precision(void)
     CHECK(formats(b, "0f    |"));
     // GCC rejects this pairing in a literal, so it goes in through a runtime format.
     char zero_and_precision[] = "%08.3d";
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-nonliteral"
     snprintf(b, sizeof(b), zero_and_precision, 5);
+#pragma GCC diagnostic pop
     CHECK(formats(b, "     005"));
     snprintf(b, sizeof(b), "%+.2d", 3);
     CHECK(formats(b, "+03"));

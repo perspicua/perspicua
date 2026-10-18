@@ -51,8 +51,8 @@ int main(int argc, char *argv[], char *envp[])
         if (shell_pid == 0) {
             // The login session owns the console; the shell's own jobs never start one.
             setsid();
-            char *argv[] = {"/bin/sh.elf", NULL};
-            execve("/bin/sh.elf", argv, current_env);
+            char *sh_argv[] = {"/bin/sh.elf", NULL};
+            execve("/bin/sh.elf", sh_argv, current_env);
             print_string("[ INIT ] Error: failed to exec /bin/sh.elf\n");
             _exit(127);
         }

@@ -8,6 +8,8 @@
 #include "stdlib.h"
 #include "string.h"
 
+#include "libc/internal.h"
+
 char **environ = NULL;
 static int environ_is_malloced = 0;
 

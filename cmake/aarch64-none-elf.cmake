@@ -48,7 +48,7 @@ set(INCLUDE_FLAGS "-nostdinc -isystem ${GCC_INCLUDE}")
 # tables such as syscall_table in writable .data and links in relocations
 # nothing applies. -Wdate-time: the build date comes from build_info.h, which
 # every build refreshes, never from __DATE__ in whichever file last recompiled.
-set(COMMON_FLAGS "${ARCH_FLAGS} ${INCLUDE_FLAGS} -Wall -Wextra -Werror -Wdate-time -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics -fno-pie")
+set(COMMON_FLAGS "${ARCH_FLAGS} ${INCLUDE_FLAGS} -Wall -Wextra -Werror -Wdate-time -Wstrict-prototypes -Wold-style-definition -Wmissing-prototypes -Wshadow -Wundef -Wvla -Wformat=2 -ffreestanding -nostdlib -std=gnu11 -fno-stack-protector -fno-unwind-tables -fno-asynchronous-unwind-tables -mno-outline-atomics -fno-pie")
 
 # FORCE on every flag variable here, for the reason given at the build-type flags below.
 set(CMAKE_C_FLAGS "${COMMON_FLAGS}" CACHE STRING "Common C flags" FORCE)

@@ -95,6 +95,9 @@ static void smp_init(void)
     }
 }
 
+// Entered from boot.S on each secondary core.
+void secondary_main(void);
+
 __attribute__((used)) void secondary_main(void)
 {
     mmu_secondary_init();

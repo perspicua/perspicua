@@ -11,6 +11,8 @@
 
 #include "uapi/types.h"
 
+#include "libc/internal.h"
+
 #ifdef __KERNEL__
     #include "arch/cpu.h"
     #include "arch/irq.h"
@@ -57,8 +59,6 @@ static void printf_lock_drop(int taken)
     }
 }
 #endif
-
-extern void __libc_write(const char *buf, size_t len);
 
 #define PRINTF_BUF_SIZE 256
 

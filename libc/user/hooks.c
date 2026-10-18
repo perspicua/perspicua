@@ -2,7 +2,10 @@
  * hooks.c - Userspace libc glue logic.
  */
 
+#include "libc/internal.h"
+
 #include <stddef.h>
+
 #include "stdio.h"
 
 // Routes printf's output into stdout, which buffers it when stdout is not a terminal.
