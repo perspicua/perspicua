@@ -17,7 +17,7 @@
 #include "fs/vfs.h"
 #include "sched/sched.h"
 
-// Kept at 128: at 256, stress.c's fork storm gave children corrupted stacks, still unexplained.
+// A free slot costs a pointer; a live process adds its PCB, a 64 KB kernel stack and its pages.
 #ifdef CONFIG_MAX_PROCESSES
     #define PROCESS_TABLE_SIZE CONFIG_MAX_PROCESSES
 #else
