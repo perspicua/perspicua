@@ -32,7 +32,6 @@ int main(int argc, char *argv[], char *envp[])
     }
     print_string("[ INIT ] Userspace started\n");
 
-    // Default environment if none provided
     char *default_env[] = {"PATH=/bin:/", "USER=root", "HOME=/", "SHELL=/bin/sh.elf", NULL};
     char **current_env = (envp && envp[0]) ? envp : default_env;
 
@@ -45,7 +44,7 @@ int main(int argc, char *argv[], char *envp[])
 
         if (shell_pid < 0) {
             print_string("[ INIT ] Error: fork failed\n");
-            usleep((1000) * 1000);
+            usleep(1000 * 1000);
             continue;
         }
 

@@ -1,12 +1,5 @@
 /*
- * test_libc.c - User-space libc integrity test suite.
- *
- * Covers: string functions, malloc/free/realloc, printf/snprintf, ctype
- * classification/case-conversion, errno, and when stdout holds output back.
- * Each test group prints a PASS/FAIL summary line. Individual check failures
- * print the source location so regressions are easy to pinpoint.
- *
- * Exit status: 0 if all checks pass, 1 if any fail.
+ * test_libc.c - libc from userspace; a failed check prints its line, and any failure exits 1.
  */
 
 #include <limits.h>
@@ -318,9 +311,7 @@ static void test_malloc_multiple(void)
 
 static void test_malloc_coalesce(void)
 {
-    /* Free several adjacent blocks then allocate a larger one. The allocator
-     * must coalesce freed blocks to satisfy the larger request from the same
-     * chunk rather than always growing the heap. */
+    // Adjacent freed blocks coalesce, so a larger request reuses them instead of growing the heap.
     void *a = malloc(256);
     void *b = malloc(256);
     void *c = malloc(256);
@@ -655,8 +646,7 @@ static void test_ctype_bounds(void)
     CHECK(!isupper(200) && !islower(200));
     CHECK(!isgraph(200) && !isprint(200));
 
-    /* toupper/tolower must return the argument unchanged, not crash or
-     * table-index out of bounds. */
+    // Outside ASCII the argument comes back unchanged, with no table read out of bounds.
     CHECK(toupper(EOF) == EOF);
     CHECK(tolower(EOF) == EOF);
     CHECK(toupper(200) == 200);
@@ -693,8 +683,7 @@ static void test_longjmp_value(void)
 
 static void test_longjmp_zero(void)
 {
-    /* longjmp(buf, 0) must surface as 1 so it is never mistaken for the
-     * first-time return. The guard stops a runaway loop if that rule breaks. */
+    // longjmp(buf, 0) surfaces as 1; the guard stops a runaway loop if it does not.
     static volatile int attempts = 0;
 
     int rc = setjmp(g_zero_jb);
@@ -767,25 +756,20 @@ static void test_setjmp_independent(void)
 
 static void test_strerror_keying(void)
 {
-    /* Guards the numbering collision: the internal EIO is 9 and
-     * so is EBADF, so a table keyed on the internal codes would return the
-     * I/O-error text for value 9. These must stay distinct and correct. */
+    // The table is keyed on uapi/errno.h's numbers, the ones the kernel returns.
     CHECK(EBADF == 9);
     CHECK(strcmp(strerror(9), "Bad file descriptor") == 0);
     CHECK(strcmp(strerror(EIO), "I/O error") == 0);
     CHECK(strcmp(strerror(EIO), strerror(EBADF)) != 0);
 
-    /* ENOENT is 1 while ENOENT is 2 — an off-by-one keying would
-     * report "Operation not permitted" for a missing file. */
+    // An off-by-one keying would call a missing file "Operation not permitted".
     CHECK(strcmp(strerror(1), "Operation not permitted") == 0);
     CHECK(strcmp(strerror(2), "No such file or directory") == 0);
 }
 
 static void test_strerror_end_to_end(void)
 {
-    /* The real path: a failed syscall sets errno, and strerror must describe
-     * it. This is what proves the table is keyed on the same numbering that
-     * __pers_to_errno() produces. */
+    // A failed syscall's errno has the right text, so the table and the kernel agree.
     errno = 0;
     int fd = open("/no/such/file", O_RDONLY);
     CHECK(fd == -1);
@@ -849,9 +833,7 @@ static void test_strerror_known(void)
 
 static void test_strerror_aliases(void)
 {
-    /* EWOULDBLOCK and EOPNOTSUPP are #defined to EAGAIN/ENOTSUP, so they
-     * must resolve to the exact same message rather than a separate,
-     * possibly-diverging table entry. */
+    // EWOULDBLOCK and EOPNOTSUPP are aliases, so they read exactly as EAGAIN and ENOTSUP.
     CHECK(strcmp(strerror(EAGAIN), strerror(EWOULDBLOCK)) == 0);
     CHECK(strcmp(strerror(ENOTSUP), strerror(EOPNOTSUPP)) == 0);
     CHECK(strcmp(strerror(EWOULDBLOCK), "Resource temporarily unavailable") == 0);
@@ -860,9 +842,7 @@ static void test_strerror_aliases(void)
 
 static void test_strerror_gaps(void)
 {
-    /* Numbers with no #define on this platform (holes in the errno
-     * numbering) must fall back to "Unknown error <n>", not crash or
-     * return a stale/garbage string. */
+    // A number with no name falls back to "Unknown error <n>".
     char expected[32];
     int gaps[] = {15, 26, 31, 33, 37};
 
@@ -888,9 +868,7 @@ static void test_strerror_out_of_range(void)
     snprintf(expected, sizeof(expected), "Unknown error %d", 999999);
     CHECK(strcmp(strerror(999999), expected) == 0);
 
-    /* INT_MIN produces the longest possible text (25 chars). The comparison
-     * buffer is deliberately wider than strerror's own, so a too-small buffer
-     * there fails here instead of matching an equally-truncated expectation. */
+    // INT_MIN gives the longest text; this buffer is wider than strerror's, so truncation shows.
     const int int_min = -2147483647 - 1;
     char wide[64];
     snprintf(wide, sizeof(wide), "Unknown error %d", int_min);
@@ -900,8 +878,7 @@ static void test_strerror_out_of_range(void)
 
 static void test_strerror_nonnull(void)
 {
-    /* strerror() must never return NULL, even for nonsense input, since
-     * callers commonly pass the result straight to printf("%s", ...). */
+    // Never NULL, since callers pass the result straight to printf("%s").
     CHECK(strerror(EINVAL) != NULL);
     CHECK(strerror(-12345) != NULL);
     CHECK(strerror(0) != NULL);
@@ -1139,10 +1116,7 @@ static void test_fclose_flushes_stdout(void)
     CHECK(prints("fclose", out, sizeof(out)) == 1 && strcmp(out, "x") == 0);
 }
 
-/*
- * A signal that interrupts a flush to a full pipe must not cost any output: POSIX
- * sigaction defaults to no SA_RESTART, so the blocked write comes back with EINTR.
- */
+// A signal interrupting a flush to a full pipe (EINTR, no SA_RESTART) costs no output.
 static void test_stdout_survives_eintr(void)
 {
     int fds[2];

@@ -9,8 +9,6 @@ void fb_console_init(void);
 
 void fb_console_putc(char c);
 
-void fb_console_puts(const char *s);
-
 // Keeps console text off the screen while a program draws there; the serial side is unaffected.
 void fb_console_hide(int hidden);
 

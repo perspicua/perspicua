@@ -1,5 +1,5 @@
 /*
- * tail - print the last lines of each file.
+ * tail.c - Prints the last lines of each file.
  */
 
 #include <errno.h>

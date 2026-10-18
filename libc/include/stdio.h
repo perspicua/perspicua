@@ -56,7 +56,7 @@ int fflush(FILE *stream);
 int fprintf(FILE *stream, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int vfprintf(FILE *stream, const char *fmt, va_list args);
 
-// Formatted output to the console (UART).
+// Formatted output to stdout; the kernel's goes to the UART.
 int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 #ifdef __KERNEL__
@@ -79,13 +79,11 @@ int printk(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
     #endif
 #endif
 
-// va_list variant of printf.
 int vprintf(const char *fmt, va_list args);
 
-// Formatted output into a size-bounded buffer, NUL-terminated when size > 0; returns the full length.
+// Writes at most size bytes, terminated when size > 0; returns the length it wanted.
 int snprintf(char *buf, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 
-// va_list variant of snprintf.
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args);
 
 #endif // PERSPICUA_LIBC_STDIO_H

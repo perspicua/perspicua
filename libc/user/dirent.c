@@ -3,12 +3,14 @@
  */
 
 #include "dirent.h"
-#include "errno.h"
-#include "stdlib.h"
-#include "syscall.h"
-#include "uapi/stat.h"
 
 #include <stddef.h>
+
+#include "errno.h"
+#include "fcntl.h"
+#include "stdlib.h"
+#include "sys/stat.h"
+#include "unistd.h"
 
 DIR *opendir(const char *name)
 {

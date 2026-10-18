@@ -30,11 +30,7 @@ static char *history[MAX_HISTORY];
 static int history_count = 0;
 static int history_index = -1;
 
-/*
- * What the last tab press put on screen, so a second press can erase it before
- * drawing something else. Grouped because the three move together: displaying
- * matches sets all of them and clearing them resets all of them.
- */
+// What the last tab press drew, so the next can erase it; set and cleared together.
 static struct {
     char buffer[CMD_MAX_LEN];
     int displayed;
@@ -141,7 +137,7 @@ int read_key(void)
     return (unsigned char)c;
 }
 
-// returns start of last word
+// The start of the last word in buf
 static int find_token_start(const char *buf, int cursor_pos)
 {
     if (cursor_pos == 0) {
@@ -160,7 +156,6 @@ static int find_token_start(const char *buf, int cursor_pos)
     return 0;
 }
 
-// simple bubble sort for small arrays
 static void sort_matches(char **matches, int count)
 {
     for (int i = 0; i < count - 1; i++) {
@@ -191,7 +186,7 @@ static int find_common_prefix_len(char **matches, int count)
     return common_len;
 }
 
-// true if cmd; false if file/arg
+// True when the word being completed is a command, not a file argument
 static int is_cmd_position(const char *buf, int token_start)
 {
     if (token_start == 0) {
@@ -228,7 +223,6 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
     path_cpy[sizeof(path_cpy) - 1] = 0;
     char *path_part = strtok(path_cpy, ":");
 
-    // 2^vibe
     int capacity = 32;
     int matches_count = 0;
     char **matches = malloc(capacity * sizeof(char *));
@@ -247,12 +241,10 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
         while ((entry = readdir(dir)) != NULL) {
             char *entry_name = entry->d_name;
 
-            // skips "." and ".."
             if (entry_name[0] == '.') {
                 continue;
             }
 
-            // if potential match not cmd skip
             int name_len = strlen(entry_name);
             if (name_len < 4 || strcmp(entry_name + name_len - 4, ".elf") != 0) {
                 continue;
@@ -266,7 +258,6 @@ static char **find_cmd_matches(const char *prefix, int *count_out)
             strncpy(cmd_name, entry_name, cmd_len);
             cmd_name[cmd_len] = 0;
 
-            // if prefix of cmd matches prefix, add to match list (if not duplicate)
             if (prefix_len == 0 || !strncmp(cmd_name, prefix, prefix_len)) {
                 int dup = 0;
                 for (int i = 0; i < matches_count; i++) {
@@ -367,12 +358,10 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
     while ((entry = readdir(d))) {
         char *entry_name = entry->d_name;
 
-        // skip special entries
         if (!strcmp(entry_name, ".") || !strcmp(entry_name, "..")) {
             continue;
         }
 
-        // handle hidden files
         if (entry_name[0] == '.' && !prefix_is_hidden) {
             continue;
         }
@@ -387,7 +376,6 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
             continue;
         }
 
-        // Add path separator if search_dir doesn't end with one
         size_t dir_len_tmp = strlen(search_dir);
         if (dir_len_tmp > 0 && search_dir[dir_len_tmp - 1] == '/') {
             snprintf(full_path, full_path_len, "%s%s", search_dir, entry_name);
@@ -402,12 +390,10 @@ static char **find_file_matches(const char *dir, const char *prefix, int *count_
         }
         free(full_path);
 
-        // Build match string with directory prefix if needed
         char *match_str;
         size_t match_len;
         if (include_dir_prefix) {
-            // Include the directory prefix (e.g., "../foo" -> "../foobar/")
-            // Check if dir already ends with '/' to avoid double slashes
+            // "../foo" completes to "../foobar/", with one slash however dir ends
             size_t dir_len = strlen(dir);
             int dir_ends_slash = (dir_len > 0 && dir[dir_len - 1] == '/');
 
@@ -523,18 +509,16 @@ int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
     int new_cursor = cursor_pos;
 
     if (match_count == 1) {
-        // Single match - complete it fully
         char *completion = matches[0];
         int completion_len = strlen(completion);
 
         int is_directory = (completion_len > 0 && completion[completion_len - 1] == '/');
 
-        // Don't add space after directories (allows continuing to type)
+        // No space after a directory, so the path can go on
         int add_space = is_directory ? 0 : 1;
         int insert_len = completion_len - prefix_len + add_space;
         int tail_len = *cmd_len - cursor_pos;
 
-        // Ensure we have space for the insertion + null terminator
         if (*cmd_len + insert_len >= CMD_MAX_LEN - 1) {
             goto cleanup;
         }
@@ -552,11 +536,9 @@ int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
 
         new_cursor = token_start + completion_len + add_space;
 
-        // Reset since we modified the buffer
         last_completion.displayed = 0;
         last_completion.lines = 0;
     } else {
-        // Multiple matches - try to complete common prefix first
         int common_len = find_common_prefix_len(matches, match_count);
 
         if (common_len > prefix_len) {
@@ -572,12 +554,10 @@ int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
 
                 new_cursor = token_start + common_len;
 
-                // Reset completion display state since buffer changed
                 last_completion.displayed = 0;
                 last_completion.lines = 0;
             }
         } else {
-            // No additional common prefix - show all matches
             int already_displayed =
                 (last_completion.displayed && strcmp(cmd_buffer, last_completion.buffer) == 0);
 
@@ -588,13 +568,11 @@ int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos)
                 }
                 fflush(stdout);
 
-                // Remember we displayed matches for this buffer
                 strncpy(last_completion.buffer, cmd_buffer, CMD_MAX_LEN - 1);
                 last_completion.buffer[CMD_MAX_LEN - 1] = '\0';
                 last_completion.displayed = 1;
                 last_completion.lines = match_count;
 
-                // Print prompt and buffer after showing matches
                 print_prompt();
                 printf("%s", cmd_buffer);
                 fflush(stdout);
@@ -622,13 +600,7 @@ void print_prompt(void)
     }
 }
 
-/*
- * sh_read_line - Reads one edited line, returning its length.
- *
- * Owns everything between a keystroke and a finished line: history recall,
- * backspace, tab completion and echo. Returns when Enter is pressed, so the
- * caller only sees whole lines.
- */
+// One whole edited line, with history, backspace, completion and echo; returns its length.
 int sh_read_line(char *buf, size_t size)
 {
     int len = 0;
@@ -705,7 +677,6 @@ int sh_read_line(char *buf, size_t size)
         } else if (key == KEY_TAB) {
             buf[len] = '\0'; // Ensure null-terminated before completion
             do_completions(buf, &len, len);
-            // Redraw to show the updated buffer (important for single-match auto-complete)
             redraw_line(buf);
         } else if (key >= 32 && key <= 126) {
             if ((size_t)len < size - 1) {

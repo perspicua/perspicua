@@ -1,5 +1,5 @@
 /*
- * ctype.c - Implementations for ctype.h functions.
+ * ctype.c - ctype.h from three 128-entry lookup tables.
  */
 
 #include "ctype.h"
@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #define CTYPE_UPPER   0x1
-#define CTYPE_LOWER   0X2
+#define CTYPE_LOWER   0x2
 #define CTYPE_DIGIT   0x4
 #define CTYPE_SPACE   0x8
 #define CTYPE_PUNCT   0x10
@@ -15,7 +15,7 @@
 #define CTYPE_XDIGIT  0x40
 #define CTYPE_BLANK   0x80
 
-static uint8_t lookup_table[] = {
+static const uint8_t lookup_table[128] = {
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // 0-  7: NUL SOH STX ETX EOT ENQ ACK BEL
     0x20, 0xa8, 0x28, 0x28, 0x28, 0x28, 0x20, 0x20, // 8- 15: BS TAB LF VT FF CR SO SI
     0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, // 16- 23: DLE DC1 DC2 DC3 DC4 NAK SYN ETB
@@ -103,7 +103,7 @@ int isblank(int c)
     return ctype_check(c, CTYPE_BLANK);
 }
 
-static uint8_t upper_table[128] = {
+static const uint8_t upper_table[128] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // 0-  7: NUL SOH STX ETX EOT ENQ ACK BEL
     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, // 8- 15: BS TAB LF VT FF CR SO SI
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 16- 23: DLE DC1 DC2 DC3 DC4 NAK SYN ETB
@@ -130,7 +130,7 @@ int toupper(int c)
     return upper_table[c];
 }
 
-static uint8_t lower_table[128] = {
+static const uint8_t lower_table[128] = {
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, // 0-  7: NUL SOH STX ETX EOT ENQ ACK BEL
     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, // 8- 15: BS TAB LF VT FF CR SO SI
     0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, // 16- 23: DLE DC1 DC2 DC3 DC4 NAK SYN ETB

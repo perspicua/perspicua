@@ -2,16 +2,18 @@
  * file.c - Standard I/O FILE streams implementation.
  */
 
+#include "stdio.h"
+
 #include <stddef.h>
 
-#include "uapi/types.h"
-
 #include "errno.h"
-#include "stdio.h"
+#include "fcntl.h"
 #include "stdlib.h"
 #include "string.h"
 #include "sys/stat.h"
-#include "syscall.h"
+#include "unistd.h"
+
+#include "uapi/types.h"
 
 // stdout holds data back when it is a pipe or a file; a terminal gets every write at once.
 #define STDOUT_BUF 4096

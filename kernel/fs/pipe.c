@@ -8,22 +8,19 @@
 
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
 #include "uapi/errno.h"
 
 #include "core/lock.h"
 #include "core/signals.h"
-#include "mm/slab.h"
-#include "mm/heap.h"
 #include "fs/vfs.h"
-#include "sched/sched.h"
+#include "mm/heap.h"
+#include "mm/slab.h"
+#include "panic.h"
 #include "sched/process.h"
+#include "sched/sched.h"
 #include "sched/wait.h"
 
-/*
- * struct pipe - Shared IPC buffer and synchronization state.
- */
 struct pipe {
     char buffer[PIPE_BUF_SIZE];
     size_t head;
@@ -69,8 +66,7 @@ static int pipe_read(struct vfs_file *file, void *buffer, size_t count, vfs_off_
                 }
                 break;
             }
-            /* A partial read is a result the caller must see; only an empty
-             * one can be restarted. */
+            // A partial read is a result the caller must see; only an empty one restarts.
             int r = wq_wait_event_interruptible_locked(
                 &pipe->read_wq, pipe->count > 0 || pipe->writers == 0, &pipe->lock);
             if (r != 0) {
@@ -175,13 +171,7 @@ static int pipe_close(struct vfs_file *file)
 
     int destroy = (pipe->readers == 0 && pipe->writers == 0);
 
-    /*
-     * A waiter always holds its own endpoint open — readers block only while
-     * writers != 0 and vice versa, and the vfs_file reference held across the
-     * call keeps its own side from closing — so the last close cannot race one.
-     * Checked before the wakes below empty the queues, because if this ever
-     * stops holding, those wakes hand a freed pipe to a running task.
-     */
+    // A waiter holds its own end open, so the last close never finds one queued.
     if (destroy && (pipe->read_wq.head || pipe->write_wq.head)) {
         PANIC("pipe: last close with waiters still queued");
     }
@@ -289,8 +279,7 @@ int pipe_create(int pipefd[2])
     spin_unlock_irqrestore(&p->fd_lock, fdflags);
 
     if (fd_r == -1 || fd_w == -1) {
-        /* Both ends are attached now, so releasing them runs pipe_close and
-         * drops the last vnode reference, taking the pipe and node with it. */
+        // Both ends are attached, so releasing them runs pipe_close and frees the pipe and node.
         vfs_file_put(f_read);
         vfs_file_put(f_write);
         return -ENFILE;

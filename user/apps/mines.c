@@ -1,8 +1,5 @@
 /*
- * mines.c - Minesweeper: open every safe cell without touching a mine.
- *
- * `mines 1|2|3` picks the board size; `mines --selftest` checks the rules
- * without touching the terminal.
+ * mines.c - Minesweeper: open every safe cell; mines 1|2|3 sizes it, --selftest checks rules.
  */
 
 #include <stddef.h>
@@ -439,7 +436,7 @@ int main(int argc, char **argv)
     if (argc > 1) {
         level = atoi(argv[1]);
         if (level < 1 || level > 3) {
-            printf("usage: mines [1|2|3]   (9x9, 16x16 or 30x16)\n");
+            fprintf(stderr, "usage: mines [1|2|3]   (9x9, 16x16 or 30x16)\n");
             return 1;
         }
     }

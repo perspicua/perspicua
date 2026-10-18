@@ -1,8 +1,5 @@
 /*
- * test_restart.c - What a signal does to a blocking call.
- *
- * Lives in userspace because a handler only runs on the way back to EL0,
- * which a boot-phase kernel test task never reaches.
+ * test_restart.c - What a signal does to a blocking call; handlers run only on return to EL0.
  */
 
 #include <stdint.h>
@@ -59,8 +56,7 @@ static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
     _exit(CHILD_OTHER);
 }
 
-// The sleeps are what guarantee the read is already blocked when the signal
-// lands, and still blocked when the byte arrives.
+// The sleeps keep the read blocked from before the signal lands until the byte arrives.
 static int run_case(int flags)
 {
     int fds[2];
@@ -353,11 +349,7 @@ static int run_unhandled_segv_case(void)
     return status & 0xFF;
 }
 
-/*
- * A fault signal the process ignores or blocks must still kill it: the
- * faulting instruction re-runs on return, so honouring either would spin at
- * EL0 forever and this case would time out rather than fail.
- */
+// An ignored or blocked fault signal still kills, since the fault re-runs on return.
 static int run_forced_fault_case(int block_it)
 {
     int pid = fork();
@@ -411,11 +403,7 @@ static long elapsed_ms(const struct timespec *since)
     return (now.tv_sec - since->tv_sec) * 1000 + (now.tv_nsec - since->tv_nsec) / 1000000;
 }
 
-/*
- * A sleep the child is stopped in, or sent a signal with no handler, runs to
- * its deadline: neither is an interruption POSIX lets it report.
- * 0 = slept the whole second, 1 = cut short with EINTR, 3 = anything else.
- */
+// A stop or a handlerless signal does not cut a sleep: 0 slept it all, 1 EINTR, 3 other.
 static int run_sleep_through_case(int stop_it)
 {
     int pid = fork();
@@ -485,11 +473,7 @@ static void on_chld(int sig)
     chld_runs++;
 }
 
-/*
- * signal() installs with SA_RESTART, so a waitpid the handler interrupts
- * resumes. A shell waiting on its foreground job relies on this whenever a
- * background job ends. 0 = resumed and reaped, 1 = failed with EINTR.
- */
+// signal() sets SA_RESTART, so an interrupted waitpid resumes: 0 reaped, 1 EINTR.
 static int run_signal_restarts_wait_case(void)
 {
     int pid = fork();
@@ -529,10 +513,7 @@ static int run_signal_restarts_wait_case(void)
     return status & 0xFF;
 }
 
-/*
- * sigsuspend returns only for a signal that runs a handler, so a stop and
- * continue on the way must not end it.
- */
+// sigsuspend returns only for a handled signal, so a stop and continue do not end it.
 static int run_suspend_through_stop_case(void)
 {
     int pid = fork();
@@ -572,10 +553,7 @@ static int run_suspend_through_stop_case(void)
     return status & 0xFF;
 }
 
-/*
- * Writing to a pipe with no reader raises SIGPIPE, whose default kills; with
- * it ignored the write fails with EPIPE instead. Returns what the child saw.
- */
+// A write with no reader raises SIGPIPE, which kills, or with it ignored fails with EPIPE.
 static int run_sigpipe_case(int ignore)
 {
     int pid = fork();
@@ -604,8 +582,7 @@ static int run_sigpipe_case(int ignore)
     return status & 0xFF;
 }
 
-// Ignoring a signal discards an instance already pending; sigpending lists
-// only what is blocked. Returns the count of properties that did not hold.
+// Ignoring discards a pending instance; sigpending lists only blocked ones. Returns failures.
 static int run_ignore_discards_case(void)
 {
     int bad = 0;

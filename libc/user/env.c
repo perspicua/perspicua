@@ -164,7 +164,7 @@ int putenv(char *string)
     return place(find(string, (size_t)(equals - string)), string);
 }
 
-void _libc_init(int argc, char *argv[], char *envp[])
+void __libc_init(int argc, char *argv[], char *envp[])
 {
     (void)argc;
     (void)argv;

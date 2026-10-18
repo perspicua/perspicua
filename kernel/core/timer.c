@@ -9,15 +9,15 @@
 
 #include "stdio.h"
 
-#include "build_info.h"
-
 #include "arch/cpu.h"
 #include "arch/irq.h"
+
+#include "build_info.h"
 #include "core/lock.h"
-#include "panic.h"
 #include "devicetree/fdt.h"
 #include "driver/device.h"
 #include "driver/gic.h"
+#include "panic.h"
 
 static inline unsigned int read_cntfrq(void)
 {
@@ -76,10 +76,7 @@ void timer_sleep_ms(unsigned long ms)
     }
 }
 
-/*
- * Offset of the "Core n timers interrupt control" registers within the QA7
- * block, one 32-bit register per core.
- */
+// The QA7 block's per-core timer interrupt control registers, 32 bits each.
 #define QA7_CORE_TIMER_IRQCNTL 0x40
 
 // Resolved once by the boot core; the secondaries only index into it.
@@ -106,6 +103,12 @@ static void qa7_timer_routing_init(void)
     qa7_timer_irq_ctrl = (volatile unsigned int *)(vbase + QA7_CORE_TIMER_IRQCNTL);
 }
 
+static void timer_interrupt_reset(void)
+{
+    unsigned int freq = read_cntfrq();
+    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
+}
+
 static irq_result_t timer_irq_handler(void *ctx)
 {
     (void)ctx;
@@ -122,12 +125,10 @@ void timer_interrupt_init(void)
         qa7_timer_routing_init();
     }
 
-    // Route physical timer interrupts to this core
     qa7_timer_irq_ctrl[core] = (1 << 1);
 
     unsigned int freq = read_cntfrq();
 
-    // Set TVAL to fire in 1/100th of a second (10ms)
     asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
     asm volatile("msr cntp_ctl_el0, %0" : : "r"(1));
 
@@ -155,23 +156,7 @@ time_t timer_civil_to_epoch(int year, int month, int day, int hour, int min, int
     return (time_t)(days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec);
 }
 
-/*
- * timer_get_wall_time - Seconds since the Unix epoch, approximately.
- *
- * A Pi 4 has no battery-backed clock, so there is nothing to read the real
- * date from. This is the start of the day the kernel was built, in UTC, plus
- * how long it has been running: wrong by however long the image sat before
- * booting, but in the right year, which is what a file timestamp needs. The
- * base comes from build_info.h, so every build carries its own day. When an
- * RTC or a network time source exists, only this base changes.
- */
 time_t timer_get_wall_time(void)
 {
     return (time_t)(PERSPICUA_BUILD_EPOCH + (int64_t)(timer_get_system_time() / 1000));
-}
-
-void timer_interrupt_reset(void)
-{
-    unsigned int freq = read_cntfrq();
-    asm volatile("msr cntp_tval_el0, %0" : : "r"(freq / 100));
 }

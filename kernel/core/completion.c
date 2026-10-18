@@ -5,8 +5,8 @@
 #include "core/completion.h"
 
 #include "core/lockdep.h"
-#include "sched/wait.h"
 #include "panic.h"
+#include "sched/wait.h"
 
 // Never use on a completion that has waiters.
 void completion_init(struct completion *c)

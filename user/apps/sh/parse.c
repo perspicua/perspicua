@@ -33,11 +33,7 @@ void strip_comment(char *line)
     }
 }
 
-/*
- * Characters a $-expansion produced travel as stand-ins until parse_command,
- * so the pipe splitter, the operator padding and the quote scanners after
- * expansion never read them as syntax. POSIX never re-parses expanded text.
- */
+// Expanded characters travel as stand-ins until parse_command, so nothing reads them as syntax.
 static const char lit_syntax[] = "|<>&\"'";
 
 static char lit_encode(char c)
@@ -57,15 +53,7 @@ static char *lit_decode(char *word)
     return word;
 }
 
-/*
- * expand_variables - Substitutes $?, $$, $NAME and ${NAME} into dst.
- *
- * Expansion is suppressed inside 'single quotes' and honored inside "double
- * quotes" (POSIX). Quote characters are copied through so the later tokenizer
- * can still group words; parse_command strips them. Unknown names expand empty.
- * Note: expanded text is not re-scanned for operators, but IS subject to normal
- * word-splitting when unquoted, which is the usual shell behavior.
- */
+// $?, $$, $NAME, ${NAME}: not in '', yes in ""; quotes pass through, unset names expand empty.
 int expand_variables(const char *src, char *dst, size_t dst_size)
 {
     size_t j = 0;
@@ -163,14 +151,7 @@ int expand_variables(const char *src, char *dst, size_t dst_size)
     return 0;
 }
 
-/*
- * expand_operators - Pads redirection and pipe operators with spaces.
- *
- * Lets the tokenizer split on whitespace without breaking quotes. Control
- * operators (; & && ||) are handled earlier, so only redirection and pipes
- * reach here. A digit starting a word stays on the operator it precedes, as
- * in 2> and 2>&1, and so does &N after < or >.
- */
+// Pads | and redirections with spaces outside quotes, keeping 2> and >&N on their operator.
 int expand_operators(const char *line, char *expanded, size_t size)
 {
     size_t i = 0, j = 0;
@@ -215,12 +196,7 @@ int expand_operators(const char *line, char *expanded, size_t size)
     return 0;
 }
 
-/*
- * parse_redir - Reads [N]<, [N]>, [N]>> or [N]>&M (and [N]<&M) from a whole word.
- *
- * Returns 1 for a file redirection, whose path is the next word, 2 for a copy
- * of another descriptor, and 0 if the word is no redirection at all.
- */
+// [N]<, [N]>, [N]>>, [N]>&M or [N]<&M: 1 for a file (path next), 2 for a dup, 0 for neither.
 static int parse_redir(const char *word, struct redir *r)
 {
     const char *p = word;
@@ -275,10 +251,7 @@ int parse_command(char *str, Command *cmd)
             return -1;
         }
 
-        /* Compact one word in place, stripping quotes wherever they appear and
-         * keeping quoted whitespace intact (so a"b c"d becomes ab cd, and
-         * D='$FOO' becomes D=$FOO). Quotes are only ever removed, so the write
-         * cursor never overtakes the read cursor. */
+        // Strips quotes in place, a"b c"d to ab cd; removal only, so w never passes p.
         char *word = p;
         char *w = p;
         while (*p && *p != ' ' && *p != '\t') {
@@ -294,9 +267,7 @@ int parse_command(char *str, Command *cmd)
                 *w++ = *p++;
             }
         }
-        /* Consume the delimiter BEFORE terminating the word: when no quotes were
-         * removed w == p, so writing '\0' here would otherwise clobber the space
-         * and truncate the rest of the line. */
+        // Past the delimiter first: with no quotes removed w == p, and the '\0' would hit it.
         if (*p) {
             p++;
         }

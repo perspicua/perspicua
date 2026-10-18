@@ -1,8 +1,5 @@
 /*
- * bench.c - Microbenchmarks for the kernel's hot paths.
- *
- * `bench` runs every test, `bench <name>...` only those named. Each test
- * doubles its run count until one run takes BUDGET_MS, and reports that run.
+ * bench.c - Kernel hot-path microbenchmarks; each doubles its runs until one takes BUDGET_MS.
  */
 
 #include <stddef.h>
@@ -336,8 +333,7 @@ static void measure(const struct bench *b)
     printf("  %-8s %9ld %11s %12s   %s\n", b->name, n, per, rate, b->what);
 }
 
-// Each test runs in its own process: fork costs grow with the memory a parent has mapped.
-// Returns 0 if the test ran to the end.
+// In its own process, since fork costs grow with the parent's mappings; 0 if it ran to the end.
 static int measure_isolated(const struct bench *b)
 {
     int pid = fork();
@@ -458,11 +454,11 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++) {
         if (!find(argv[i])) {
-            printf("bench: no test named '%s'; tests are:", argv[i]);
+            fprintf(stderr, "bench: no test named '%s'; tests are:", argv[i]);
             for (size_t k = 0; k < NBENCH; k++) {
-                printf(" %s", benches[k].name);
+                fprintf(stderr, " %s", benches[k].name);
             }
-            printf("\n");
+            fprintf(stderr, "\n");
             return 1;
         }
     }

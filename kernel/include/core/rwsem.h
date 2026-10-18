@@ -1,8 +1,5 @@
 /*
- * rwsem.h - Reader/writer sleeping lock.
- *
- * Writer-preferring: once a writer is waiting, new readers queue behind it,
- * even though only readers hold the lock.
+ * rwsem.h - Writer-preferring reader/writer sleeping lock: new readers queue behind a writer.
  */
 
 #ifndef PERSPICUA_CORE_RWSEM_H

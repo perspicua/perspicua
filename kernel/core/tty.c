@@ -13,10 +13,10 @@
 #include "uapi/errno.h"
 
 #include "core/signals.h"
-#include "sched/process.h"
-#include "driver/uart.h"
 #include "driver/fb_console.h"
+#include "driver/uart.h"
 #include "io.h"
+#include "sched/process.h"
 
 struct tty console_tty;
 
@@ -24,6 +24,8 @@ static void console_rx_adapter(char c)
 {
     tty_handle_rx(&console_tty, c);
 }
+
+static void tty_handle_tx(struct tty *tty);
 
 static void console_tx_adapter(void)
 {
@@ -144,11 +146,7 @@ void tty_init(struct tty *tty)
     pr_info("tty: console tty initialized\n");
 }
 
-/*
- * tty_session_exit - Dispatches SIGHUP and detaches terminal when session leader exits.
- *
- * Stopped groups the exit orphans get their SIGHUP and SIGCONT from process_exit.
- */
+// On the leader's exit; stopped groups it orphans get SIGHUP and SIGCONT from process_exit.
 void tty_session_exit(uint32_t sid)
 {
     unsigned long flags = spin_lock_irqsave(&console_tty.lock);
@@ -191,13 +189,8 @@ int tty_access_check(struct tty *tty, int sig)
     return TTY_ACCESS_STOPPED;
 }
 
-/*
- * tty_handle_tx - Called from the UART TX interrupt to drain the TX ring buffer.
- *
- * Pumps as many bytes as the FIFO will accept, then wakes blocked writers and
- * re-arms (or disarms) the TX interrupt based on buffer fullness.
- */
-void tty_handle_tx(struct tty *tty)
+// From the TX interrupt: fills the FIFO, wakes writers, keeps the interrupt on while data waits.
+static void tty_handle_tx(struct tty *tty)
 {
     unsigned long flags = spin_lock_irqsave(&tty->lock);
     tty_pump_tx(tty);

@@ -4,9 +4,10 @@
 
 #include "driver/fb.h"
 
-#include "stdio.h"
 #include <stddef.h>
 #include <stdint.h>
+
+#include "stdio.h"
 
 #include "uapi/errno.h"
 #include "uapi/mman.h"
@@ -16,8 +17,8 @@
 #include "driver/mailbox.h"
 #include "fs/devfs.h"
 #include "mm/addr.h"
-#include "mm/pmm.h"
 #include "mm/mmu.h"
+#include "mm/pmm.h"
 #include "panic.h"
 #include "sched/process.h"
 
@@ -70,8 +71,7 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
         return -ENODEV;
     }
 
-    // Past the framebuffer is ordinary physical memory, so an unclamped length
-    // hands the caller the kernel's own pages.
+    // Past the framebuffer is ordinary RAM: unclamped, the length hands out the kernel's pages.
     if (length > fb_info.size) {
         return -EINVAL;
     }
@@ -85,8 +85,7 @@ static int fb_mmap(struct vfs_file *file, uintptr_t vaddr, size_t length, int pr
     }
     unsigned long *pgd = p->user_pgd;
 
-    // NG, or the entry outlives the address space: asid_free's tlbi aside1is
-    // leaves global entries alone.
+    // Non-global, or the entry outlives the address space: asid_free's TLBI skips global entries.
     unsigned long attrs = MMU_FLAGS_FRAMEBUFFER | MMU_AP_USER | MMU_PTE_NG;
     if (!(prot & PROT_WRITE)) {
         attrs |= MMU_AP_RO;
@@ -152,7 +151,7 @@ void fb_init(void)
         fb_info.pitch = mbox[28];
         fb_info.ptr = (unsigned char *)P2V(phys_addr);
 
-        // Ensure memory manager knows this region is hardware-owned
+        // The firmware's buffer: the pmm must never hand it out.
         pmm_reserve_range((unsigned long)phys_addr, fb_info.size, "framebuffer");
 
         pr_info("fb: %dx%d @ %p (%lu MB, pitch %d)\n", fb_info.width, fb_info.height, fb_info.ptr,

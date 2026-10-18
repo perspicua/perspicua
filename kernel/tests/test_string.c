@@ -1,7 +1,13 @@
+/*
+ * test_string.c - The kernel string and memory routines, snprintf included.
+ */
+
 #include "test.h"
-#include "string.h"
+
 #include <stddef.h>
 #include <stdint.h>
+
+#include "string.h"
 
 void test_string(void)
 {

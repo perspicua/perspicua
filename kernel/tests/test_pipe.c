@@ -1,9 +1,5 @@
 /*
- * test_pipe.c - Tests for anonymous pipe creation and byte transfer.
- *
- * Only non-blocking traffic is exercised: a read on an empty pipe with a
- * live writer parks the caller, which cannot be satisfied from a single
- * boot-phase task, so every read here is preceded by a matching write.
+ * test_pipe.c - Pipes from the boot task, so every read follows a write that satisfies it.
  */
 
 #include "test.h"
@@ -177,8 +173,7 @@ void test_pipe(void)
         vfs_close(fds[1]);
     }
 
-    // a non-blocking write that fits the pipe goes in whole or not at all; a larger one may be
-    // partial
+    // a non-blocking write that fits goes in whole or not at all; a larger one may be partial
     {
         int fds[2];
         TEST_ASSERT_EQ("create for non-blocking writes", pipe_create(fds), 0);

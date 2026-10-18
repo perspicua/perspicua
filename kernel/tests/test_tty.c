@@ -2,10 +2,10 @@
  * test_tty.c - Console input control characters, RX ring overflow and an interrupted write.
  */
 
+#include "test.h"
+
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 
@@ -145,7 +145,7 @@ void test_tty_scheduler(void)
         TEST_ASSERT("write: a signal ends the wait", writer_done);
         TEST_ASSERT_EQ("write: what was queued counts as written", writer_ret, TTY_BUFFER_SIZE - 1);
 
-        // Spaces, not sent: a writer the signal did not release fills the ring again and is drained.
+        // Spaces, not sent: a writer the signal did not release refills the ring and is drained.
         tx_discard();
         tty_test_stall_tx(0);
         while (!writer_done) {

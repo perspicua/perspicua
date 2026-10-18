@@ -3,19 +3,18 @@
  */
 
 #include "core/lockdep.h"
-#include "arch/irq.h"
-#include "core/lock.h"
-#include "panic.h"
-#include "sched/sched.h"
-#include "stdio.h"
 
 #include <stdint.h>
 
-/*
- * When CONFIG_LOCKDEP is disabled, lockdep.h supplies inline no-op stubs and
- * this translation unit compiles to nothing, so a release build carries no
- * lock-tracking overhead (and no global lockdep lock on every spin_lock).
- */
+#include "stdio.h"
+
+#include "arch/irq.h"
+
+#include "core/lock.h"
+#include "panic.h"
+#include "sched/sched.h"
+
+// With CONFIG_LOCKDEP off, lockdep.h has inline stubs and this file compiles to nothing.
 #ifdef CONFIG_LOCKDEP
 
     #define MAX_HELD_LOCKS 16
@@ -104,7 +103,7 @@ static int get_or_create_node(uintptr_t lock)
     return idx;
 }
 
-// Raw spinlock implementation to avoid recursion
+// Not spin_lock, which would recurse into lockdep.
 static void raw_spin_lock(spinlock_t *lock)
 {
     unsigned int tmp;
@@ -142,7 +141,7 @@ static int lockdep_order(int held_node, int new_node)
     if (!get_edge(held_node, new_node)) {
         set_edge(held_node, new_node);
 
-        // Update transitive closure
+        // graph_edges stays transitively closed, so a cycle check is one lookup.
         for (int x = 0; x < num_lock_nodes; x++) {
             if (get_edge(x, held_node)) {
                 set_edge(x, new_node);
@@ -249,7 +248,6 @@ void lockdep_release(spinlock_t *lock)
     int count = held_count[core];
     uintptr_t addr = (uintptr_t)lock;
 
-    // Find and remove the lock from the held list (usually the last one)
     int found = -1;
     for (int i = count - 1; i >= 0; i--) {
         if (held_locks[core][i] == addr) {
@@ -259,15 +257,12 @@ void lockdep_release(spinlock_t *lock)
     }
 
     if (found >= 0) {
-        // Shift remaining locks down
         for (int i = found; i < count - 1; i++) {
             held_locks[core][i] = held_locks[core][i + 1];
         }
         held_count[core] = count - 1;
     } else {
-        // Logged rather than fatal: an unbalanced release is a bug, but not one
-        // worth halting the system for. Unlocks and returns on this path; the
-        // common exit below does its own unlock.
+        // Logged, not fatal: an unbalanced release is a bug, not a reason to halt.
         raw_spin_unlock(&lockdep_lock);
         lockdep_disabled[core] = 0;
         pr_err("lockdep: attempting to release unheld lock at %p\n", (void *)addr);

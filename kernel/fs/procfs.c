@@ -4,34 +4,33 @@
 
 #include "fs/procfs.h"
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#include "uapi/types.h"
-
-#include <stdarg.h>
 
 #include "stdio.h"
 #include "string.h"
 
 #include "uapi/errno.h"
+#include "uapi/types.h"
 
+#include "arch/exception.h"
+#include "arch/irq.h"
+
+#include "build_info.h"
 #include "core/lock.h"
 #include "core/timer.h"
 #include "core/tty.h"
-#include "mm/pmm.h"
-#include "mm/slab.h"
-#include "mm/heap.h"
-#include "fs/vfs.h"
-#include "sched/process.h"
-#include "sched/sched.h"
-#include "arch/exception.h"
-#include "arch/irq.h"
-#include "build_info.h"
 #include "devicetree/fdt.h"
 #include "driver/fb.h"
 #include "driver/mailbox.h"
 #include "driver/uart.h"
+#include "fs/vfs.h"
+#include "mm/heap.h"
+#include "mm/pmm.h"
+#include "mm/slab.h"
+#include "sched/process.h"
+#include "sched/sched.h"
 
 static struct vfs_vnode root_vnode_struct;
 static struct vfs_vnode *procfs_root_vnode = &root_vnode_struct;
@@ -76,12 +75,7 @@ static size_t procfs_get_vnode_path(struct vfs_vnode *node, char *buf, size_t si
     return len;
 }
 
-/*
- * procfs_append - Bounded snprintf accumulator.
- *
- * vsnprintf returns the would-be length; *pos advances only by what landed, so
- * it never passes size - 1 and a generator can return it as the length to copy.
- */
+// *pos advances only by what landed, so it stays below size and a generator can return it.
 static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
 {
     if (*pos < 0 || *pos >= size) {
@@ -98,12 +92,7 @@ static void procfs_append(char *buf, int *pos, int size, const char *fmt, ...)
 
 #define PROCFS_CONTENT_MAX 4096
 
-/*
- * procfs_copy_out - The tail every procfs read shares.
- *
- * A reader renders its file whole, then hands the result here to serve the
- * window the caller's offset and size ask for.
- */
+// Serves the window the caller's offset and size ask for out of a file rendered whole.
 static int procfs_copy_out(vfs_off_t *offset, void *buffer, size_t size, const char *content,
                            size_t len)
 {
@@ -120,13 +109,7 @@ static int procfs_copy_out(vfs_off_t *offset, void *buffer, size_t size, const c
     return (int)to_copy;
 }
 
-/*
- * Renders a whole /proc file into buf, returning its length.
- *
- * Each of these files is small and is regenerated on every read, so the content
- * a reader sees is one consistent sample rather than pieces taken at different
- * offsets as it seeks through.
- */
+// Renders a whole /proc file into buf and returns its length; one consistent sample per read.
 typedef int (*procfs_generate_fn)(char *buf, int size);
 
 static int procfs_gen_version(char *buf, int size)
@@ -216,7 +199,7 @@ static int procfs_gen_cpuinfo(char *buf, int size)
                       "processor\t: %d\nmodel name\t: ARM Cortex-A72 (BCM2711)\n\n", i);
     }
 
-    // The board, as Linux reports it on a Pi: the firmware's revision code and the devicetree's name.
+    // The board as Linux reports it on a Pi: the firmware's revision code and the DTB's name.
     procfs_append(buf, &pos, size, "Hardware\t: BCM2711\n");
     uint32_t rev[2] = {0, 0};
     if (mbox_query(MBOX_TAG_BOARD_REVISION, rev) == 0) {
@@ -313,12 +296,6 @@ static int procfs_gen_stat(char *buf, int size)
     return pos;
 }
 
-/*
- * procfs_generated_read - The read operation every generated file shares.
- *
- * The generator the vnode names renders the file into scratch space, and the
- * window the caller asked for is copied out of that.
- */
 static int procfs_generated_read(struct vfs_file *file, void *buffer, size_t size,
                                  vfs_off_t *offset)
 {
@@ -448,10 +425,7 @@ static int procfs_pid_cmdline_read(struct vfs_file *file, void *buffer, size_t s
     return procfs_copy_out(offset, buffer, size, buf, len);
 }
 
-/*
- * Locks pid's cwd and descriptor table, or returns NULL holding nothing. Holding
- * process_table_lock as well keeps a reaper from freeing the PCB underneath.
- */
+// Locks pid's cwd and fd table under process_table_lock too, so no reaper frees the PCB; else NULL.
 static struct process *pid_lock_fds(uint32_t pid, unsigned long *flags, unsigned long *fdflags)
 {
     *flags = spin_lock_irqsave(&process_table_lock);
@@ -544,10 +518,7 @@ static int procfs_pid_fd_entry_read(struct vfs_file *file, void *buffer, size_t 
 
 static struct vfs_vnode_ops procfs_generated_ops = {.read = procfs_generated_read};
 
-/*
- * The files directly under /proc. Each is backed by a generator and a vnode at
- * the matching index, so adding one means adding a row here and nothing else.
- */
+// The files directly under /proc: adding one is adding a row, generator and vnode share its index.
 static const struct procfs_static_file {
     const char *name;
     procfs_generate_fn generate;

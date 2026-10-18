@@ -1,10 +1,17 @@
+/*
+ * test_slab.c - The slab classes: reuse, isolation, ownership and growth past one page.
+ */
+
 #include "test.h"
-#include "mm/slab.h"
-#include "mm/heap.h"
-#include "mm/pmm.h"
-#include "string.h"
+
 #include <stddef.h>
 #include <stdint.h>
+
+#include "string.h"
+
+#include "mm/heap.h"
+#include "mm/pmm.h"
+#include "mm/slab.h"
 
 void test_slab(void)
 {
@@ -76,7 +83,7 @@ void test_slab(void)
     // slab_owns correctly identifies slab pointers
     {
         void *slab_ptr = heap_malloc(64);
-        void *heap_ptr = heap_malloc(4096); // > 1024, goes to first-fit
+        void *heap_ptr = heap_malloc(4096); // above the largest class, so first fit serves it
         TEST_ASSERT("slab_owns slab ptr", slab_owns(slab_ptr) == 1);
         TEST_ASSERT("slab_owns heap ptr", slab_owns(heap_ptr) == 0);
         TEST_ASSERT("slab_owns null", slab_owns(NULL) == 0);
@@ -84,9 +91,7 @@ void test_slab(void)
         heap_free(heap_ptr);
     }
 
-    /* A page the slab allocator never carved, holding the slab header magic
-     * in its first word. Ownership comes from the page's metadata, so the
-     * contents must not sway it. */
+    // Ownership comes from page metadata, so an uncarved page holding SLAB_MAGIC is not a slab.
     {
         unsigned int *raw = (unsigned int *)pmm_alloc_page();
         TEST_ASSERT("raw page allocated", raw != NULL);
@@ -162,8 +167,7 @@ void test_slab(void)
         heap_free(p1024);
     }
 
-    // slab grows automatically when a page fills up
-    // 16-byte class: ~254 slots per page (4096 - header) / 16
+    // a class grows a page at a time: 300 sixteen-byte objects need more than one
     {
         void *ptrs[300];
         int count = 0;
@@ -201,7 +205,6 @@ void test_slab(void)
             heap_free(ptrs[i]);
         }
 
-        // After draining, allocator should still work
         void *p = heap_malloc(64);
         TEST_ASSERT("slab post-drain alloc", p != NULL);
         heap_free(p);
@@ -276,12 +279,7 @@ void test_slab(void)
         }
     }
 
-    /*
-     * The bytes of a live object belong to its owner, so no value stored in
-     * them may be mistaken for allocator state -- in particular the free marker
-     * at offset 8, which userspace can plant with write(fd, buf, 16) and the
-     * right eight bytes, since small syscall bounce buffers come from here.
-     */
+    // A live object's bytes are its owner's, so even the free marker at offset 8 is no signal.
     {
         const uint64_t poison = 0xDEADBEEFDEADBEEFULL;
         unsigned long sizes[] = {16, 32, 64, 128, 256, 512, 1024};

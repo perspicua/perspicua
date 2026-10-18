@@ -1,3 +1,7 @@
+/*
+ * pinf.c - Prints one process's status, command line, cwd and memory map from /proc.
+ */
+
 #include "syscall.h"
 #include "stdio.h"
 #include "string.h"
@@ -23,7 +27,7 @@ static int read_proc_file(const char *path, char *buf, size_t bufsz)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        printf("usage: pinf <pid>\n");
+        fprintf(stderr, "usage: pinf <pid>\n");
         return 1;
     }
 
@@ -31,7 +35,7 @@ int main(int argc, char **argv)
     char path[128];
     char *buf = malloc(2048);
     if (!buf) {
-        printf("pinf: memory allocation failed\n");
+        fprintf(stderr, "pinf: memory allocation failed\n");
         return 1;
     }
 
@@ -43,7 +47,7 @@ int main(int argc, char **argv)
     if (read_proc_file(path, buf, 2048) > 0) {
         printf("%s", buf);
     } else {
-        printf(" Error: Could not read status for PID %s\n", pid_str);
+        fprintf(stderr, "pinf: cannot read the status of PID %s\n", pid_str);
         free(buf);
         return 1;
     }

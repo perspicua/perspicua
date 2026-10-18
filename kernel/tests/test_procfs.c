@@ -2,9 +2,9 @@
  * test_procfs.c - Every generated /proc file stays inside the buffer it is rendered into.
  */
 
-#include <stddef.h>
-
 #include "test.h"
+
+#include <stddef.h>
 
 #include "string.h"
 

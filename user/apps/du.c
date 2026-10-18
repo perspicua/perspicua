@@ -1,7 +1,5 @@
 /*
- * du - space used under each directory, in kB (file sizes, rounded up).
- *
- * -s prints one total per argument instead of a line per directory.
+ * du.c - Space used under each directory in kB, file sizes rounded up; -s gives one total.
  */
 
 #include <dirent.h>

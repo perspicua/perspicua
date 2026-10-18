@@ -1,14 +1,5 @@
 /*
- * mandel.c - The Mandelbrot set on /dev/fb0, drawn by forked workers.
- *
- * `mandel` times a full render with 1 to 4 workers. `mandel -e` explores:
- * arrows pan, + and - zoom, 1-4 pick the worker count, r resets, q quits.
- * `mandel --check` renders one view with 1 worker and with 4 and fails unless
- * the screen comes out identical.
- *
- * Worker k draws rows k, k+N, k+2N... straight into the framebuffer mapping it
- * shares with the others. The math is Q4.28 fixed point: floating point traps
- * in userspace.
+ * mandel.c - The Mandelbrot set on /dev/fb0 in Q4.28, drawn by forked workers; -e explores.
  */
 
 #include <stddef.h>
@@ -229,13 +220,13 @@ static int check(void)
     clear_screen();
     uint32_t blank = screen_hash();
     if (render(&v, 1) < 0) {
-        printf("mandel: a worker failed\n");
+        fprintf(stderr, "mandel: a worker failed\n");
         return 1;
     }
     uint32_t alone = screen_hash();
     clear_screen();
     if (render(&v, MAX_WORKERS) < 0) {
-        printf("mandel: a worker failed\n");
+        fprintf(stderr, "mandel: a worker failed\n");
         return 1;
     }
     uint32_t shared = screen_hash();

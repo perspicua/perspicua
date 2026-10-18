@@ -10,18 +10,11 @@
 #define SPINLOCK_INIT  {0}
 #define ATOMIC_INIT(i) {(i)}
 
-/*
- * struct spinlock_t - Simple busy-wait lock for short critical sections.
- *
- * Uses AArch64 exclusive monitors to provide mutual exclusion.
- */
+// Busy-wait lock for short critical sections; holding one disables preemption.
 typedef struct {
     volatile unsigned int locked;
 } spinlock_t;
 
-/*
- * struct atomic_t - Thread-safe integer counter.
- */
 typedef struct {
     volatile int counter;
 } atomic_t;
@@ -34,14 +27,8 @@ int spin_trylock(spinlock_t *lock);
 unsigned long spin_lock_irqsave(spinlock_t *lock);
 void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags);
 
-/*
- * preempt_active - True while the current task holds at least one spinlock.
- *
- * Nothing may switch it out, or a core spinning on its lock waits on a task that isn't running.
- */
+// True while the task holds a spinlock: switched out, it would leave its lock's waiters spinning.
 int preempt_active(void);
-void preempt_disable(void);
-void preempt_enable(void);
 
 void atomic_set(atomic_t *a, int value);
 void atomic_inc(atomic_t *a);

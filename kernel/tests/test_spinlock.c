@@ -1,10 +1,17 @@
+/*
+ * test_spinlock.c - Spinlocks: IRQ masking, nesting, and mutual exclusion across cores.
+ */
+
 #include "test.h"
-#include "core/lock.h"
+
+#include "string.h"
+
 #include "arch/cpu.h"
 #include "arch/irq.h"
+
+#include "core/lock.h"
 #include "core/timer.h"
 #include "sched/sched.h"
-#include "string.h"
 
 void test_spinlock(void)
 {
@@ -16,7 +23,7 @@ void test_spinlock(void)
         TEST_ASSERT_EQ("init unlocked", lock.locked, 0);
     }
 
-    // spinlock_init zeroes the struct
+    // SPINLOCK_INIT is a single zeroed word
     {
         spinlock_t lock = SPINLOCK_INIT;
         TEST_ASSERT_EQ("init struct size", sizeof(lock.locked), sizeof(unsigned int));
@@ -73,7 +80,6 @@ void test_spinlock(void)
     {
         spinlock_t lock = SPINLOCK_INIT;
 
-        // disable IRQs first, then take the lock
         unsigned long outer = irq_save();
 
         unsigned long daif_disabled;
@@ -83,7 +89,7 @@ void test_spinlock(void)
         unsigned long inner = spin_lock_irqsave(&lock);
         spin_unlock_irqrestore(&lock, inner);
 
-        // IRQs should still be disabled (outer save hasn't been restored)
+        // the inner restore returns to the outer save's masked state
         unsigned long daif_after;
         asm volatile("mrs %0, daif" : "=r"(daif_after));
         TEST_ASSERT("irqs still disabled after inner", (daif_after & (1 << 7)) != 0);
@@ -193,7 +199,6 @@ void test_spinlock(void)
         unsigned long fa = spin_lock_irqsave(&la);
         unsigned long fb = spin_lock_irqsave(&lb);
 
-        // both must be held
         TEST_ASSERT_EQ("nested irq a held", la.locked, 1);
         TEST_ASSERT_EQ("nested irq b held", lb.locked, 1);
 
@@ -214,7 +219,6 @@ void test_spinlock(void)
         shared = 0xDEADBEEFCAFEBABEUL;
         spin_unlock(&lock);
 
-        // after release, the value should be globally visible
         spin_lock(&lock);
         TEST_ASSERT("barrier: data visible", shared == 0xDEADBEEFCAFEBABEUL);
         spin_unlock(&lock);
@@ -270,7 +274,6 @@ void test_spinlock(void)
 
         unsigned long t2 = timer_get_system_time();
         unsigned long elapsed = t2 - t1;
-        // 5000 uncontended lock/unlock cycles should complete in <1s
         TEST_ASSERT("timing: not hung", elapsed < 1000);
     }
 
@@ -285,8 +288,7 @@ static unsigned long spin_stress_count;
 static int spin_stress_done;
 static unsigned int spin_stress_cores;
 
-// A plain read-modify-write under the lock, so only mutual exclusion keeps the count whole;
-// the sleeps let other cores' ticks pick the workers up.
+// A plain read-modify-write, so only the lock keeps the count whole; sleeps spread the workers.
 static void spin_stress_worker(void)
 {
     for (int i = 0; i < SPIN_STRESS_ROUNDS; i++) {

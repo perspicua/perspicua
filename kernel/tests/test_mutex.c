@@ -1,13 +1,10 @@
 /*
- * test_mutex.c - Tests for the recursive sleeping mutex (kmutex).
- *
- * Only the uncontended and recursive paths are covered here; the blocking
- * path needs live tasks and is in test_wait.c.
+ * test_mutex.c - kmutex uncontended and recursive; test_wait.c has the blocking path.
  */
 
-#include <stddef.h>
-
 #include "test.h"
+
+#include <stddef.h>
 
 #include "core/mutex.h"
 #include "sched/sched.h"
@@ -51,11 +48,7 @@ void test_mutex(void)
         TEST_ASSERT_EQ("unlock clears depth", (long)m.depth, 0);
     }
 
-    /*
-     * Recursion is the whole point of kmutex over a plain sleeping lock: the
-     * owner must be able to re-enter without deadlocking, and ownership must
-     * survive until the final matching unlock.
-     */
+    // The owner re-enters without deadlock, and keeps ownership until the final unlock.
     {
         struct kmutex m;
         kmutex_init(&m);

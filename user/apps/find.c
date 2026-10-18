@@ -1,7 +1,5 @@
 /*
- * find - walk directory trees and print the paths that match.
- *
- * find [path...] [-name glob] [-type f|d]; the glob understands * and ?.
+ * find.c - Prints the paths under each tree that match -name glob (* and ?) and -type f|d.
  */
 
 #include <dirent.h>

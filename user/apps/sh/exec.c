@@ -17,10 +17,7 @@
 #include "syscall.h"
 #include "wait.h"
 
-/*
- * Exit status of the last foreground command, exposed to scripts as $? and used
- * to short-circuit && / || lists. Signals report as 128 + signo, matching sh.
- */
+// $?, which && and || test; a signal death is 128 + signo, as sh reports it.
 int g_last_status = 0;
 
 // Off for sh -c: jobs then stay in the shell's group and the terminal is never handed over.
@@ -54,7 +51,6 @@ static void remember_stopped(int pgid, const int *pids, int count)
 void handle_sigchld(int sig)
 {
     (void)sig;
-    // Reap any finished background children
     while (waitpid(-1, NULL, WNOHANG) > 0)
         ;
 }
@@ -66,21 +62,13 @@ static int is_parent_builtin(const char *name)
             || strcmp(name, "false") == 0 || strcmp(name, ":") == 0);
 }
 
-/*
- * wait_foreground - Waits on a foreground job, holding the terminal.
- *
- * Returns after the job exits or stops. A stop leaves the job parked and
- * recorded rather than reaped, so the prompt comes back with it still alive.
- * Background children that finish meanwhile are reaped here: SIGCHLD is
- * blocked for the whole wait, so handle_sigchld cannot.
- */
+// Until the job exits or stops, a stopped one parked as a job; reaps background children too.
 static int wait_foreground(int pgid, const int *pids, int count)
 {
     int shell_pgid = getpgid(0);
     int last_status = 0;
 
-    // handle_sigchld reaps with waitpid(-1), which would take a job member's
-    // status before the wait below sees it.
+    // handle_sigchld's waitpid(-1) would take a job member's status before the wait below.
     sigset_t chld = 1u << (SIGCHLD - 1);
     sigset_t old_mask;
     sigprocmask(SIG_BLOCK, &chld, &old_mask);
@@ -201,10 +189,7 @@ static int is_output_builtin(const char *name)
 static void run_output_builtin(Command *cmd)
 {
     if (strcmp(cmd->argv[0], "clear") == 0) {
-        /* \033[H  - Move cursor to home (1,1)
-         * \033[2J - Clear entire screen
-         * \033[3J - Clear scrollback buffer
-         */
+        // Home, clear the screen, clear the scrollback
         printf("\033[H\033[2J\033[3J");
     } else if (strcmp(cmd->argv[0], "echo") == 0) {
         for (int i = 1; i < cmd->argc; i++) {
@@ -332,8 +317,7 @@ static void execute_pipeline(char *pipe_string, int background)
         return;
     }
 
-    // From the first fork to the wait: otherwise handle_sigchld can reap a
-    // stage that exits early, and wait_foreground loses its status.
+    // From the first fork to the wait, or handle_sigchld reaps a stage that exits early.
     sigset_t chld = 1u << (SIGCHLD - 1);
     sigset_t old_mask;
     sigprocmask(SIG_BLOCK, &chld, &old_mask);
@@ -368,7 +352,7 @@ static void execute_pipeline(char *pipe_string, int background)
 
         if (pid == 0) {
             sigprocmask(SIG_SETMASK, &old_mask, NULL);
-            // The child takes the terminal itself, so it cannot read before the parent hands it over.
+            // The child takes the terminal itself, so it never reads before the hand-over.
             if (g_job_control) {
                 setpgid(0, pgid);
                 if (!background) {
@@ -443,12 +427,7 @@ static void execute_pipeline(char *pipe_string, int background)
     sigprocmask(SIG_SETMASK, &old_mask, NULL);
 }
 
-/* Run one leaf command (already free of ; & && ||) through $-expansion, operator
- * spacing, and the pipeline executor. Whitespace-only segments are no-ops.
- *
- * Variable expansion happens HERE, per command, rather than once for the whole
- * line, so that $? and $VAR reflect commands run earlier in the same line
- * (e.g. `false; echo $?` and `export X=1; echo $X`). */
+// Expands per command, so $? and $VAR see earlier commands on the line: `false; echo $?`.
 static void run_pipeline_segment(char *cmd, int background)
 {
     char *s = cmd;
@@ -499,14 +478,7 @@ static void run_links(char **cmds, const int *conn, int n, int background)
     }
 }
 
-/*
- * run_conditional_list - Executes a ';'-free segment whose commands may be joined
- * by && and ||, with short-circuit evaluation driven by $?.
- *
- * Left-associative: each link runs based only on the immediately preceding
- * connector and the running status. Skipping leaves the status untouched, which
- * makes mixed chains like `false && a || b` behave as sh does (b runs).
- */
+// && and || left to right on $?; a skipped link keeps the status, so `false && a || b` runs b.
 static void run_conditional_list(char *segment, int background)
 {
     char *cmds[MAX_CMDS];
@@ -576,9 +548,7 @@ void execute_line(char *line)
         return;
     }
 
-    /* Comments are stripped once, up front. Operator splitting (below) and
-     * $-expansion (per command, deeper down) run on the raw text so that
-     * expansion cannot inject or hide control operators. */
+    // Splitting happens before expansion, so expanded text can neither add nor hide an operator.
     strip_comment(work);
 
     // Split on ';' and a lone '&' (quote-aware); '&' runs the list before it in the background.

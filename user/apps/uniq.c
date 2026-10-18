@@ -1,7 +1,5 @@
 /*
- * uniq - collapse runs of identical adjacent lines.
- *
- * -c prefixes each line with how many times it repeated.
+ * uniq.c - Collapses runs of identical adjacent lines; -c counts each run.
  */
 
 #include <errno.h>

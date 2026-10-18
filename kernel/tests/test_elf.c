@@ -2,10 +2,10 @@
  * test_elf.c - The ELF loader maps a well-formed image and refuses malformed ones whole.
  */
 
+#include "test.h"
+
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 

@@ -1,12 +1,14 @@
+/*
+ * hd.c - Hex dump in the hexdump -C layout, repeated lines collapsed to a *.
+ */
+
 #include <stddef.h>
 
 #include "syscall.h"
 #include "string.h"
 #include "stdio.h"
 
-/* Classic `hexdump -C` layout: 8-digit offset, 16 hex bytes split into two
- * groups of eight, and the printable-ASCII rendering between | bars. Runs of
- * identical 16-byte lines collapse to a single '*', as hexdump does. */
+// Offset, 16 bytes in two groups of eight, then the printable ones between | bars.
 static void print_line(unsigned long offset, const unsigned char *buf, int n)
 {
     printf("%08lx  ", offset);
@@ -30,13 +32,13 @@ static void print_line(unsigned long offset, const unsigned char *buf, int n)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        printf("usage: hd <file>\n");
+        fprintf(stderr, "usage: hd <file>\n");
         return 1;
     }
 
     int fd = open(argv[1], O_RDONLY);
     if (fd < 0) {
-        printf("hd: cannot open %s\n", argv[1]);
+        fprintf(stderr, "hd: cannot open %s\n", argv[1]);
         return 1;
     }
 
@@ -45,8 +47,7 @@ int main(int argc, char **argv)
     unsigned long offset = 0;
 
     while ((n = read(fd, buf, sizeof(buf))) > 0) {
-        /* Only full 16-byte lines participate in collapsing, so a partial final
-         * line is always shown. */
+        // Only full lines collapse, so a partial last line always shows.
         if (n == 16 && have_prev && memcmp(buf, prev, 16) == 0) {
             if (!squelched) {
                 printf("*\n");

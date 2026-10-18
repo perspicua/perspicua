@@ -1,3 +1,7 @@
+/*
+ * lockdep.h - Lock-order validator; inline no-op stubs when CONFIG_LOCKDEP is off.
+ */
+
 #ifndef PERSPICUA_CORE_LOCKDEP_H
 #define PERSPICUA_CORE_LOCKDEP_H
 
@@ -7,16 +11,10 @@
 
 void lockdep_init(void);
 
-/*
- * lockdep_acquire - Called BEFORE a thread attempts to acquire a lock.
- * Records the dependency and panics if a cycle is detected.
- */
+// Before taking lock: records the dependency and panics on a cycle.
 void lockdep_acquire(spinlock_t *lock);
 
-/*
- * lockdep_release - Called AFTER a thread releases a lock.
- * Removes the lock from the thread's held locks tracking.
- */
+// After releasing lock.
 void lockdep_release(spinlock_t *lock);
 
 void lockdep_might_sleep(void);

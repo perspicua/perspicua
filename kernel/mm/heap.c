@@ -7,25 +7,18 @@
 #include <stddef.h>
 
 #include "stdio.h"
-#include "panic.h"
 
 #include "core/lock.h"
 #include "mm/failinject.h"
-#include "mm/slab.h"
 #include "mm/pmm.h"
+#include "mm/slab.h"
+#include "panic.h"
 
 #define HEAP_SLAB_MAX  1024
 #define HEAP_MAX_ALLOC (8 * 1024 * 1024)
 #define HEAP_ALIGN(x)  (((x) + 15) & ~15UL)
 
-/*
- * struct heap_block_header - Prefix for first-fit pool allocations.
- *
- * `magic` identifies the header as ours before anything trusts `size`. Without
- * it, freeing a pointer this allocator never returned reads a length from
- * whatever precedes it and locates the footer from there, anywhere in memory.
- * It fits in existing padding, so the header stays 32 bytes.
- */
+// magic is checked before size is trusted, so a pointer this heap never returned cannot steer it.
 struct heap_block_header {
     unsigned long size;
     struct heap_block_header *next;
@@ -50,21 +43,14 @@ struct heap_block_footer {
 static struct heap_block_header *heap_free_list = NULL;
 static spinlock_t heap_lock = SPINLOCK_INIT;
 static unsigned long heap_total_size = 0;
-static unsigned long heap_used_size = 0;
 
-/*
- * heap_expand - Requests contiguous pages from PMM to grow the pool.
- */
 static struct heap_block_header *heap_expand(unsigned long min_size)
 {
-    /* Must also cover the redzone footer, or the block it returns cannot
-     * satisfy the request that asked for it and heap_malloc spins. */
+    // The footer too, or the block cannot satisfy the request and heap_malloc spins.
     unsigned long total = min_size + HEAP_HEADER_SIZE + HEAP_FOOTER_SIZE;
     unsigned long pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    /* pmm_alloc_pages hands back a power-of-two block and charges the heap for
-     * all of it. Rounding here too keeps the tail inside the block the heap
-     * hands out, instead of stranding it between the two allocators. */
+    // Rounded as pmm rounds, so the block's tail stays the heap's and is not stranded.
     unsigned long rounded = 1;
     while (rounded < pages) {
         rounded <<= 1;
@@ -91,12 +77,7 @@ static struct heap_block_header *heap_expand(unsigned long min_size)
     return block;
 }
 
-/*
- * heap_insert_free - Inserts a block into the address-ordered free list.
- *
- * Address ordering allows for O(n) coalescing by checking only the
- * immediate predecessor and successor in the list.
- */
+// Address order, so coalescing only has to look at the neighbours.
 static void heap_insert_free(struct heap_block_header *block)
 {
     block->is_free = 1;
@@ -116,7 +97,6 @@ static void heap_insert_free(struct heap_block_header *block)
         heap_free_list = block;
     }
 
-    // Coalesce with successor
     if (next && next->is_free) {
         unsigned char *block_end = (unsigned char *)block + HEAP_HEADER_SIZE + block->size;
         if (block_end == (unsigned char *)next) {
@@ -125,7 +105,6 @@ static void heap_insert_free(struct heap_block_header *block)
         }
     }
 
-    // Coalesce with predecessor
     if (prev && prev->is_free) {
         unsigned char *prev_end = (unsigned char *)prev + HEAP_HEADER_SIZE + prev->size;
         if (prev_end == (unsigned char *)block) {
@@ -156,9 +135,6 @@ unsigned long heap_test_fail_nth(unsigned long n)
 }
 #endif
 
-/*
- * heap_malloc - Dispatches to slab for small objects or uses first-fit search.
- */
 void *heap_malloc(unsigned long size)
 {
     if (size == 0 || size > HEAP_MAX_ALLOC) {
@@ -177,8 +153,7 @@ void *heap_malloc(unsigned long size)
 
     size = HEAP_ALIGN(size);
 
-    /* The redzone footer is carved from the block, so a fit must cover both it
-     * and the caller's region. */
+    // The redzone footer is carved from the block, so a fit covers it too.
     unsigned long need = size + HEAP_FOOTER_SIZE;
 
     while (1) {
@@ -194,7 +169,6 @@ void *heap_malloc(unsigned long size)
                     heap_free_list = curr->next;
                 }
 
-                // Split if remainder is large enough for a header and usable space
                 if (curr->size >= need + HEAP_HEADER_SIZE + 16) {
                     struct heap_block_header *split =
                         (struct heap_block_header *)((unsigned char *)curr + HEAP_HEADER_SIZE
@@ -216,7 +190,6 @@ void *heap_malloc(unsigned long size)
                 curr->is_free = 0;
                 curr->magic = HEAP_MAGIC_ALLOC;
                 curr->next = NULL;
-                heap_used_size += curr->size + HEAP_HEADER_SIZE;
 
                 spin_unlock_irqrestore(&heap_lock, flags);
                 return (void *)((unsigned char *)curr + HEAP_HEADER_SIZE);
@@ -275,16 +248,10 @@ void heap_free(void *ptr)
         PANIC("heap: buffer overflow detected (redzone corrupted)");
     }
 
-    heap_used_size -= block->size + HEAP_HEADER_SIZE;
     block->size += HEAP_FOOTER_SIZE;
     heap_insert_free(block);
 
     spin_unlock_irqrestore(&heap_lock, flags);
-}
-
-unsigned long heap_get_used(void)
-{
-    return heap_used_size + slab_get_used();
 }
 
 unsigned long heap_get_total(void)
@@ -325,8 +292,7 @@ int heap_test_redzone_ok(const void *ptr)
         return 0;
     }
 
-    // Slab objects carry no footer; their counterpart is the free canary,
-    // which slab_alloc checks when the object is handed out again.
+    // Slab objects have no footer: their free canary is checked when slab_alloc hands them out.
     if (slab_owns((void *)ptr)) {
         return 1;
     }

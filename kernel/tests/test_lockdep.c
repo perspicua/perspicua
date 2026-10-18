@@ -52,8 +52,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // Case b: Normal nesting: A then B, released B then A, gives 0 violations.
-    // Then A then B, released A then B, gives 0 violations and the depth stays correct.
+    // Case b: A then B, released in either order: no violations, and the depth stays right.
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -95,7 +94,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // Case c: Reverse order: B then A gives 1 violation, because case b already recorded A before B.
+    // Case c: B then A gives 1 violation, because case b already recorded A before B.
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -116,8 +115,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // Case d: Transitive: take B then C, so B is before C.
-    // Then C then A gives 1 violation, because A is before B and B is before C.
+    // Case d: B then C, then C then A: 1 violation, since A is before B and B before C.
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -167,8 +165,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // Case f: might_sleep under a spinlock: take a real stack spinlock,
-    // call lockdep_might_sleep(), release spinlock, gives 1 violation.
+    // Case f: lockdep_might_sleep under a spinlock gives 1 violation.
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -210,7 +207,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // Real primitive tests (Step 3b):
+    // The real primitives:
 
     // 1. Recursion is invisible to lockdep for kmutex
     {
@@ -287,9 +284,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // 4. Fast path is checked too:
-    // - ksem_down under a spinlock with a unit free gives 1 violation
-    // - completion_wait under a spinlock on an already done completion gives 1 violation
+    // 4. The fast paths are checked too: ksem_down and completion_wait under a spinlock, 1 each
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -334,8 +329,7 @@ void test_lockdep_scheduler(void)
         lockdep_test_quiet(0);
     }
 
-    // 6. lockdep_assert_preemptible checks:
-    // (1) Under one spinlock: 1 violation
+    // 6. lockdep_assert_preemptible: (1) under one spinlock, 1 violation
     {
         lockdep_test_quiet(1);
         int v0 = lockdep_test_violations();
@@ -434,8 +428,7 @@ void test_lockdep_spin(void)
                        1);
     }
 
-    // Taking a held lock again is reported; the second acquire is only told to lockdep, so
-    // nothing spins
+    // Taking a held lock again is reported; lockdep alone sees the second acquire, so nothing spins
     {
         int v0 = lockdep_test_violations();
         spin_lock(&sl_a);

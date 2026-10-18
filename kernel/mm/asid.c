@@ -1,24 +1,31 @@
+/*
+ * asid.c - The pool of 16-bit address-space IDs, recycled a generation at a time.
+ */
+
 #include "mm/asid.h"
+
+#include <stdint.h>
+
 #include "core/lock.h"
 
-static struct asid_pool_t asid_pool;
+#define ASID_BITMAP_WORDS 4
+
+struct asid_pool {
+    uint64_t bitmap[ASID_BITMAP_WORDS];
+    uint64_t generation;
+};
+
+static struct asid_pool asid_pool;
 static spinlock_t asid_lock = SPINLOCK_INIT;
 
-/*
- * Last ASID generation each core has synchronized with. A core whose value is
- * behind asid_pool.generation may hold TLB entries for ASIDs that have since
- * been recycled into a new generation, so it must flush its local TLB once
- * before using any ASID of the current generation. This closes the aliasing
- * window that a broadcast rollover flush alone leaves open for a process that
- * keeps running (and refilling its TLB) on another core across the rollover.
- */
+// The generation each core last flushed at; a core behind the pool's may cache recycled ASIDs.
 static unsigned long cpu_asid_gen[CPU_MAX_CORES];
 
 void asid_init(void)
 {
     // Boot-time and single-threaded; no interrupt can contend for this yet.
     spin_lock(&asid_lock);
-    for (int i = 0; i < BITMAP_SIZE; i++) {
+    for (int i = 0; i < ASID_BITMAP_WORDS; i++) {
         asid_pool.bitmap[i] = 0;
     }
     asid_pool.generation = 1;
@@ -30,8 +37,7 @@ void asid_init(void)
 
 static int get_free_asid(void)
 {
-    for (int i = 0; i < BITMAP_SIZE; i++) {
-        // If the bitmap is not full, find the first free ASID
+    for (int i = 0; i < ASID_BITMAP_WORDS; i++) {
         if (asid_pool.bitmap[i] != ~0ULL) {
             for (int bit = 0; bit < 64; bit++) {
                 if ((asid_pool.bitmap[i] & (1ULL << bit)) == 0) {
@@ -48,9 +54,7 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
 {
     unsigned long flags = spin_lock_irqsave(&asid_lock);
 
-    /* If this core has not yet caught up to the current generation, its local
-     * TLB may hold stale entries for recycled ASIDs. Flush once (local only)
-     * before using any ASID of this generation. */
+    // Behind the pool's generation, this core's TLB may cache recycled ASIDs: flush it once.
     int cpu = cpu_id();
     if (cpu_asid_gen[cpu] != asid_pool.generation) {
         asm volatile("tlbi vmalle1\n"
@@ -69,20 +73,16 @@ void asid_get_active(unsigned long *asid_out, unsigned long *gen_out)
     if (new_asid == -1) {
         asid_pool.generation++;
 
-        // Clear the bitmap for the new generation except for ASID 0
         asid_pool.bitmap[0] &= 1ULL;
-        for (int i = 1; i < BITMAP_SIZE; i++) {
+        for (int i = 1; i < ASID_BITMAP_WORDS; i++) {
             asid_pool.bitmap[i] = 0;
         }
 
-        // Flush all cores' TLBs (broadcast) for the rollover.
         asm volatile("tlbi vmalle1is\n"
                      "dsb ish\n"
                      "isb");
 
-        /* This core just flushed and is switching to the newly allocated ASID,
-         * so it is caught up. Other cores stay behind and will flush locally on
-         * their next asid_get_active(). */
+        // This core just flushed; the others flush on their next asid_get_active().
         cpu_asid_gen[cpu] = asid_pool.generation;
 
         new_asid = get_free_asid();

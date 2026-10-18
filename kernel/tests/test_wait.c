@@ -2,11 +2,16 @@
  * test_wait.c - Tests for the generic wait queue implementation.
  */
 
-#include "sched/wait.h"
+#include "test.h"
 
 #include <stddef.h>
 
+#include "string.h"
+
+#include "uapi/errno.h"
+
 #include "arch/irq.h"
+
 #include "core/lock.h"
 #include "core/mutex.h"
 #include "core/signals.h"
@@ -18,9 +23,7 @@
 #include "fs/vfs.h"
 #include "sched/process.h"
 #include "sched/sched.h"
-#include "string.h"
-#include "test.h"
-#include "uapi/errno.h"
+#include "sched/wait.h"
 
 // Simulates a scheduler transition; a failed CAS reports instead of overwriting a READY.
 static void test_move_state(struct task *t, enum sched_task_state from, enum sched_task_state to)
@@ -274,9 +277,7 @@ void test_wait(void)
     TEST_SUITE_END("WaitQueue");
 }
 
-/*
- * Multi-task tests running after sched_init and enable_interrupts.
- */
+// Multi-task tests, run once the scheduler is up.
 
 static struct wait_queue sched_test_wq = WAIT_QUEUE_INIT;
 static volatile int sched_test_cond = 0;
@@ -918,7 +919,7 @@ void test_wait_scheduler(void)
         vfs_close(pipe_test_fds[0]);
     }
 
-    // 11b. A writer blocks on a full pipe, a read lets it finish, and the bytes wrap the ring intact
+    // 11b. A writer blocks on a full pipe, a read lets it finish, and the bytes wrap the ring whole
     {
         TEST_ASSERT_EQ("create pipe for blocked writer", pipe_create(pipe_test_fds), 0);
         for (size_t i = 0; i < sizeof(pipe_big); i++) {

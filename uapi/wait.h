@@ -1,13 +1,14 @@
+/*
+ * wait.h - waitpid options and the status word it fills in.
+ */
+
 #ifndef PERSPICUA_UAPI_WAIT_H
 #define PERSPICUA_UAPI_WAIT_H
 
 #define WNOHANG   1
 #define WUNTRACED 2
 
-/*
- * An exit status is 8 bits: the code a process exited with, or 128 + signal for
- * one a signal killed, as sh reports it. A bit above that range marks a stop.
- */
+// The low 8 bits are the exit code, or 128 + signal; a bit above them marks a stop.
 #define __W_STOPPED 0x10000
 
 #define WIFSTOPPED(s)  (((s) & __W_STOPPED) != 0)

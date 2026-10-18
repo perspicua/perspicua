@@ -29,8 +29,7 @@ int main(int argc, char **argv)
     const char *src = argv[1];
     const char *dst = argv[2];
 
-    // mv SRC DIR moves into DIR under SRC's basename.
-    // A truncated target would rename the file to a name nobody asked for.
+    // Into DIR under SRC's basename; a truncated target would be a name nobody asked for.
     char target[512];
     if (is_dir(dst)) {
         size_t n = strlen(dst);

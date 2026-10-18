@@ -21,8 +21,7 @@ static inline unsigned long fail_arm(struct fail_arming *a, unsigned long n)
     return __atomic_exchange_n(&a->countdown, n, __ATOMIC_ACQ_REL);
 }
 
-// Only the arming task's requests count, so another core can neither spend
-// the refusal nor be handed it.
+// Only the arming task's requests count, so no other core can spend or receive the refusal.
 static inline int fail_fire(struct fail_arming *a)
 {
     unsigned long n = __atomic_load_n(&a->countdown, __ATOMIC_ACQUIRE);

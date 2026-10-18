@@ -1,8 +1,5 @@
 /*
- * errno.h - POSIX error reporting for userspace.
- *
- * The numbers live in uapi/errno.h because the kernel returns them; this adds
- * the variable a program reads after a failed call.
+ * errno.h - errno over uapi/errno.h's numbers, which the kernel returns negated.
  */
 
 #ifndef PERSPICUA_LIBC_ERRNO_H

@@ -2,24 +2,20 @@
  * addr.h - Macros for address space conversions and memory constants.
  */
 
-#ifndef PERSPICUA_KERNEL_ADDR_H
-#define PERSPICUA_KERNEL_ADDR_H
-#include <stdint.h>
+#ifndef PERSPICUA_MM_ADDR_H
+#define PERSPICUA_MM_ADDR_H
 
-/*
- * KERNEL_VMA - The base virtual address where the kernel is mapped.
- * This offset is used to separate kernel space from user space.
- */
-#define KERNEL_VMA 0xFFFFFF8000000000ULL
+// The BCM2711 peripheral window's base; device memory up to the 4 GB the kernel maps.
+#define BCM2711_PERIPH_BASE 0xFC000000
 
-/*
- * V2P - Converts a kernel virtual address to a physical address.
- */
-#define V2P(v) ((uint64_t)(uintptr_t)(v) - KERNEL_VMA)
+#ifndef __ASSEMBLER__
+    #include <stdint.h>
 
-/*
- * P2V - Converts a physical address to a kernel virtual address.
- */
-#define P2V(p) (KERNEL_VMA + (uint64_t)(uintptr_t)(p))
+    #define KERNEL_VMA 0xFFFFFF8000000000ULL
 
-#endif // PERSPICUA_KERNEL_ADDR_H
+    #define V2P(v) ((uint64_t)(uintptr_t)(v) - KERNEL_VMA)
+
+    #define P2V(p) (KERNEL_VMA + (uint64_t)(uintptr_t)(p))
+#endif
+
+#endif // PERSPICUA_MM_ADDR_H

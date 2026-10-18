@@ -10,21 +10,10 @@
 
 #include "arch/cpu.h"
 
-/*
- * Entries in the handler table. The GIC addresses up to 1020 interrupt IDs,
- * but the BCM2711 uses far fewer - the SD controller, the highest line in use,
- * sits at 158.
- */
+// Handler-table size: the BCM2711's highest line in use, the SD controller's, is 158.
 #define IRQ_MAX 256
 
-/*
- * What a handler reports back to the dispatcher.
- *
- * A handler must never call sched_schedule() itself: the dispatcher still owes the
- * GIC its end-of-interrupt write, and sched_schedule() does not return. Returning
- * IRQ_HANDLED_RESCHED asks for that reschedule once the line is closed: the
- * reschedule waits while the interrupted task holds a spinlock.
- */
+// A handler never calls sched_schedule(): RESCHED asks the dispatcher to, after the GIC's EOI.
 typedef enum {
     IRQ_HANDLED = 0,
     IRQ_HANDLED_RESCHED,
@@ -32,12 +21,7 @@ typedef enum {
 
 typedef irq_result_t (*irq_handler_t)(void *ctx);
 
-/*
- * struct irq_desc - One interrupt line: who owns it, and how often it fired.
- *
- * count is kept per core so the dispatcher needs no atomic on the hottest path
- * in the kernel; a core only ever writes its own slot.
- */
+// count is per core, so the hottest path in the kernel needs no atomic.
 struct irq_desc {
     irq_handler_t handler;
     void *ctx;
@@ -53,9 +37,7 @@ unsigned long irq_save(void);
 
 void irq_restore(unsigned long flags);
 
-/*
- * irqs_enabled - True if the I (IRQ) mask bit in DAIF is clear.
- */
+// True if DAIF's I bit is clear.
 static inline int irqs_enabled(void)
 {
     unsigned long daif;
@@ -63,42 +45,19 @@ static inline int irqs_enabled(void)
     return (daif & (1 << 7)) == 0;
 }
 
-/*
- * request_irq - Claims an interrupt line for a driver.
- *
- * ctx is handed back to the handler untouched, and name is what
- * /proc/interrupts shows. Returns 0, or a negative error if the number is out
- * of range or the line already has an owner.
- */
+// ctx is passed back to the handler, name shows in /proc/interrupts; -errno if taken or invalid.
 int request_irq(unsigned int irq, irq_handler_t handler, void *ctx, const char *name);
 
-/*
- * free_irq - Releases a previously claimed interrupt line.
- *
- * Clears the handler table entry so the line can be claimed again by another
- * driver. The caller is responsible for masking the IRQ in the GIC first so
- * no stray interrupt fires against a NULL handler after the table is cleared.
- * Returns 0 on success, or a negative error if the IRQ is out of range or was
- * not claimed.
- */
+// The caller masks the line at the GIC first, so nothing fires against a cleared entry.
 int free_irq(unsigned int irq);
 
-/*
- * irq_dispatch - Runs the handler that claimed irq, counting the hit.
- *
- * Reports IRQ_HANDLED for a line nobody claimed, so an unexpected interrupt is
- * still closed at the GIC rather than left pending.
- */
+// An unclaimed line still reports IRQ_HANDLED, so the GIC closes it rather than leave it pending.
 irq_result_t irq_dispatch(unsigned int irq);
 
-/*
- * irq_get_desc - Returns NULL if irq is out of range.
- */
+// NULL if irq is out of range.
 const struct irq_desc *irq_get_desc(unsigned int irq);
 
-/*
- * irq_in_handler - Returns non-zero if the current core is handling an IRQ.
- */
+// Non-zero while this core is in an IRQ handler.
 int irq_in_handler(void);
 
 #endif // PERSPICUA_ARCH_IRQ_H

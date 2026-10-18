@@ -1,7 +1,5 @@
 /*
- * tetris.c - Falling-block puzzle on the terminal helper.
- *
- * `tetris --selftest` checks the game rules without touching the terminal.
+ * tetris.c - Falling-block puzzle on the terminal helper; --selftest checks the rules.
  */
 
 #include <stddef.h>

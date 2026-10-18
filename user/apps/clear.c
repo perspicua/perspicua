@@ -1,5 +1,5 @@
 /*
- * clear - clear the terminal screen.
+ * clear.c - Clears the terminal screen.
  */
 
 #include <unistd.h>

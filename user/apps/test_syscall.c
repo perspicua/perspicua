@@ -18,7 +18,7 @@
 
 #include "utest.h"
 
-void test_pread_pwrite(void)
+static void test_pread_pwrite(void)
 {
     printf("[ TEST ] Running pread/pwrite cursor tests...\n");
 
@@ -33,13 +33,11 @@ void test_pread_pwrite(void)
     res = pwrite(fd, "abcde", 5, 2);
     CHECK(res == 5);
 
-    /* 3. Normal write. Because pwrite didn't move the cursor,
-          this should write starting at offset 10. */
+    // 3. pwrite left the cursor at 10, so this write lands there.
     res = write(fd, "XYZ", 3);
     CHECK(res == 3);
 
-    /* 4. pread from offset 2. Should read "abcde".
-          This must NOT move the cursor from 13. */
+    // 4. pread from offset 2 reads "abcde" and leaves the cursor at 13.
     char buf[16] = {0};
     res = pread(fd, buf, 5, 2);
     CHECK(res == 5);
@@ -47,8 +45,7 @@ void test_pread_pwrite(void)
     // pread must not have moved the cursor: it is still at 13 from step 3.
     CHECK(lseek(fd, 0, SEEK_CUR) == 13);
 
-    /* 5. Verify the entire file.
-          Expected content: "01" + "abcde" + "789" + "XYZ" = "01abcde789XYZ" */
+    // 5. The whole file: "01" + "abcde" + "789" + "XYZ".
     lseek(fd, 0, SEEK_SET);
     memset(buf, 0, sizeof(buf));
     res = read(fd, buf, 13);
@@ -59,7 +56,7 @@ void test_pread_pwrite(void)
     unlink("test_pw.txt");
 }
 
-void test_getppid(void)
+static void test_getppid(void)
 {
     printf("[ TEST ] Running getppid/fork tests...\n");
 
@@ -85,7 +82,7 @@ void test_getppid(void)
     }
 }
 
-void test_time_syscalls(void)
+static void test_time_syscalls(void)
 {
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
 
@@ -117,7 +114,7 @@ void test_time_syscalls(void)
     CHECK(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
 }
 
-void test_nanosleep(void)
+static void test_nanosleep(void)
 {
     printf("[ TEST ] Running nanosleep tests...\n");
 
@@ -171,7 +168,7 @@ void test_nanosleep(void)
     CHECK(waitpid(pid, &status, 0) == pid);
 }
 
-void test_fstat(void)
+static void test_fstat(void)
 {
     printf("[ TEST ] Running fstat tests...\n");
 
@@ -214,7 +211,7 @@ void test_fstat(void)
     unlink(test_path);
 }
 
-void test_truncate(void)
+static void test_truncate(void)
 {
     printf("[ TEST ] Running truncate / ftruncate & O_TRUNC tests...\n");
 
@@ -277,14 +274,12 @@ void test_truncate(void)
 
     int err_fd = open(test_path, O_RDWR);
     CHECK(err_fd >= 0);
-    // Grow attempt returns error in first-cut implementation
+    // Growing a file through ftruncate is refused.
     CHECK(ftruncate(err_fd, 999999) < 0);
     close(err_fd);
     unlink(test_path);
 
-    /* 7. Multiple empty files regression test:
-       Create a.txt (empty), create b.txt with data, ftruncate b.txt to 0.
-       Verify a.txt size is untouched and b.txt reads back correctly. */
+    // 7. Truncating b.txt to 0 leaves the empty a.txt alone, and b.txt reads back right.
     const char *path_a = "trun_a.txt";
     const char *path_b = "trun_b.txt";
     int fd_a = open(path_a, O_CREAT | O_RDWR);
@@ -314,7 +309,7 @@ void test_truncate(void)
     unlink(path_b);
 }
 
-void test_procfs(void)
+static void test_procfs(void)
 {
     printf("[ TEST ] Running procfs completeness tests...\n");
 
@@ -355,8 +350,7 @@ void test_procfs(void)
     CHECK(strstr(buf, "Pid:") != NULL);
     close(fd);
 
-    // 5. /proc/self/maps lists every region, even with the region table full. Nothing unmaps,
-    // so a child fills its own table and exits 0 only if the listing has a line per region.
+    // 5. /proc/self/maps has a line per region with the table full; a child fills its own.
     {
         int pid = fork();
         CHECK(pid >= 0);
@@ -437,12 +431,11 @@ static long raw_syscall(long nr, long arg0)
     return res;
 }
 
-void test_review_bugfixes(void)
+static void test_dispatch_and_reaping(void)
 {
-    printf("[ TEST ] Running review bug-fix regressions...\n");
+    printf("[ TEST ] Running dispatch, open and reaping checks...\n");
 
-    // An unassigned syscall number must report ENOSYS rather than handing back
-    // whatever the caller happened to leave in x0.
+    // An unassigned number is ENOSYS, never whatever the caller left in x0.
     {
         long res = raw_syscall(999, 0x1234);
         CHECK(res != 0x1234);
@@ -492,8 +485,7 @@ void test_review_bugfixes(void)
         CHECK(total == (int)sizeof(big) - 1);
     }
 
-    // A process killed by a bad sigreturn frame must still become a zombie its
-    // parent can reap, rather than leaking its slot.
+    // A process killed by a bad sigreturn frame is still a zombie its parent reaps.
     {
         int pid = fork();
         CHECK(pid >= 0);
@@ -532,12 +524,11 @@ static int exec_sh_status(char *const argv[], char *const envp[])
 static char e2big_arg[1000];
 
 // Regressions from the pre-merge audit.
-void test_audit_fixes(void)
+static void test_exec_limits_and_fds(void)
 {
-    printf("[ TEST ] Running audit regressions...\n");
+    printf("[ TEST ] Running exec limit and descriptor checks...\n");
 
-    // An argument vector too large for the new stack is refused while the
-    // caller still exists to hear about it.
+    // An argument vector too big for the new stack is refused while the caller can hear it.
     {
         static char *argv[101];
         memset(e2big_arg, 'x', sizeof(e2big_arg) - 1);
@@ -782,8 +773,7 @@ static void test_wait_and_kill(void)
     close(fds[0]);
     close(fds[1]);
 
-    // A group outlives its leader, so the leader's pid is not handed out while it has members.
-    // The leader waits to be told to go, so the member can join a group that exists.
+    // The leader's pid stays taken while its group has members; it waits for the member to join.
     int go[2];
     CHECK(pipe(go) == 0);
     int leader = fork();
@@ -899,8 +889,7 @@ static void __attribute__((noreturn)) forged_resume(void)
     _exit((forged_seen_spsr & ~SPSR_FLAGS) == 0 ? 42 : 1);
 }
 
-// A frame asking sigreturn for EL1h, masked interrupts, single-step and an illegal state
-// must come back as plain EL0.
+// A sigreturn frame asking for EL1h, masked IRQs, single-step or an illegal state gets plain EL0.
 static void test_forged_sigreturn(void)
 {
     printf("[ TEST ] Running forged sigreturn frame...\n");
@@ -935,8 +924,8 @@ int main(void)
     test_fstat();
     test_truncate();
     test_procfs();
-    test_review_bugfixes();
-    test_audit_fixes();
+    test_dispatch_and_reaping();
+    test_exec_limits_and_fds();
     test_bad_arguments();
     test_procfs_pid_files();
     test_wait_and_kill();

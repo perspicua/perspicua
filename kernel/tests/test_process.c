@@ -1,20 +1,15 @@
 /*
- * test_process.c - Tests for process table bookkeeping.
- *
- * These drive the slot allocator directly rather than through fork(), which
- * needs a live user process to copy. TEST_ASSERT returns on failure, so each
- * block releases the slots it claimed *before* asserting: a leaked claim would
- * take PID 1 and stop init from loading later in the boot.
+ * test_process.c - Process slots and the user VA allocator; a leaked slot would take init's PID 1.
  */
+
+#include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "test.h"
-#include "uapi/errno.h"
-
 #include "string.h"
 
+#include "uapi/errno.h"
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
 
@@ -46,11 +41,7 @@ void test_process(void)
 {
     TEST_SUITE_BEGIN("Process");
 
-    /*
-     * A free slot is a null pointer, so a claim is only visible once the PCB
-     * behind it is fully built: there is no window in which the slot is
-     * published but still carries another process's state.
-     */
+    // A free slot is NULL, so a claimed slot is published only once its PCB is fully built.
     {
         int slot = process_test_claim_slot();
         int published = 0, carries_pid = 0, is_running = 0, same_slot = 0;
@@ -61,8 +52,7 @@ void test_process(void)
             carries_pid = process_table[slot]->pid == (uint32_t)slot;
             is_running = process_table[slot]->state == PROCESS_STATE_RUNNING;
 
-            // dirty it, release it, and take it again: the scan starts at 1, so
-            // the same slot comes back and must be a clean PCB
+            // The scan starts at 1, so a dirtied and released slot comes back and must be clean.
             process_table[slot]->parent_pid = 0x5A5A;
             process_table[slot]->pending_signals = 0xFFFF;
             process_table[slot]->va.count = 7;
@@ -105,11 +95,7 @@ void test_process(void)
         TEST_ASSERT("claims are distinct", a != b);
     }
 
-    /*
-     * process_exit clears user_pgd while its task is still runnable, so the
-     * scheduler can reach a slot with no address space. It must fall back to
-     * the kernel's TTBR0 rather than install one built from V2P(NULL).
-     */
+    // A runnable task with no user_pgd, as after process_exit, gets the kernel TTBR0.
     {
         int slot = process_test_claim_slot();
         unsigned long *pgd = mmu_create_user_pgd();
@@ -144,15 +130,7 @@ void test_process(void)
         TEST_ASSERT_EQ("dead falls back to kernel ttbr0", dead, mmu_kernel_ttbr0());
     }
 
-    /*
-     * mmap must never hand back a region with nothing behind it. Only the
-     * framebuffer implements the vnode mmap operation, so a mapping of an
-     * ordinary file has no pages to supply and must be refused rather than
-     * returning an address that faults on first touch.
-     *
-     * Driving this needs an address space, and the test task is pid 0, which
-     * has none: lend it one for the duration and take it back before asserting.
-     */
+    // mmap never returns a region with nothing behind it: a file with no mmap op is refused.
     {
         unsigned long *pgd = test_borrow_user_pgd();
         int fd = vfs_open(MMAP_FILE, O_RDWR | O_CREAT);
@@ -184,11 +162,7 @@ void test_process(void)
         TEST_ASSERT("anonymous mapping succeeds", anon > 0);
     }
 
-    /*
-     * Address space released by one mapping must be available to the next. A
-     * bump pointer never reclaims it, so a process that maps and unmaps walks
-     * its address space away even though nothing is using it.
-     */
+    // Address space a mapping releases is available to the next, so map-unmap loops do not leak it.
     {
         static struct va_allocator va;
         memset(&va, 0, sizeof(va));

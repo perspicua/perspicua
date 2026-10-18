@@ -1,48 +1,44 @@
 /*
- * kernel/init/main.c - Kernel entry point and system initialization sequence.
+ * main.c - Kernel entry point and system initialization sequence.
  */
 
-#include "build_info.h"
-#include "mm/asid.h"
-#include "uapi/errno.h"
-
 #include <stdint.h>
+
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
-#include "mm/addr.h"
-#include "mm/pmm.h"
-#include "mm/mmu.h"
-#include "mm/heap.h"
-#include "mm/slab.h"
+#include "uapi/errno.h"
 
+#include "arch/irq.h"
+
+#include "build_info.h"
 #include "core/lock.h"
 #include "core/lockdep.h"
-#include "arch/irq.h"
 #include "core/timer.h"
 #include "core/tty.h"
-
-#include "sched/sched.h"
-#include "sched/process.h"
-
-#include "fs/vfs.h"
-#include "fs/devfs.h"
-#include "fs/procfs.h"
-#include "fs/fat32.h"
-#include "fs/pagecache.h"
-
-#include "driver/gpio.h"
+#include "devicetree/fdt.h"
+#include "driver/block.h"
 #include "driver/device.h"
-#include "driver/uart.h"
-#include "driver/gic.h"
-#include "driver/mailbox.h"
 #include "driver/fb.h"
 #include "driver/fb_console.h"
+#include "driver/gic.h"
+#include "driver/gpio.h"
+#include "driver/mailbox.h"
 #include "driver/sd.h"
-#include "driver/block.h"
-
-#include "devicetree/fdt.h"
+#include "driver/uart.h"
+#include "fs/devfs.h"
+#include "fs/fat32.h"
+#include "fs/pagecache.h"
+#include "fs/procfs.h"
+#include "fs/vfs.h"
+#include "mm/addr.h"
+#include "mm/heap.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "mm/slab.h"
+#include "panic.h"
+#include "sched/process.h"
+#include "sched/sched.h"
 
 #ifdef CONFIG_TESTS
     #include "test.h"
@@ -53,14 +49,9 @@ extern void _entry(void);
 
 #ifdef CONFIG_SMP
 
-volatile int cores_online_count = 1;
+static volatile int cores_online_count = 1;
 
-/*
- * smp_init - Brings up secondary CPU cores.
- *
- * Reads CPU release addresses from FDT spin tables and signals
- * an event to wake parked cores.
- */
+// Releases the parked secondary cores through the FDT spin-table addresses.
 static void smp_init(void)
 {
     pr_info("smp: Bringing up secondary cores...\n");
@@ -117,7 +108,6 @@ __attribute__((used)) void secondary_main(void)
 
     sched_secondary_init();
 
-    // Secondary cores enter the scheduler or wait for events
     for (;;) {
         asm volatile("wfe");
     }
@@ -158,7 +148,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     pmm_init();
     mmu_init();
-    asid_init();
 
     pagecache_init();
 
@@ -185,14 +174,12 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     driver_probe_devices();
 
-    // Root filesystem initialization (FAT32)
     if (fat32_init("sd0") == 0) {
         vfs_mount("/", fat32_get_root_node());
     } else {
         PANIC("fat32: failed to mount root filesystem from sd0 — cannot continue");
     }
 
-    // Mount auxiliary filesystems
     vfs_mount("/dev", devfs_get_root());
     procfs_init();
 
@@ -202,7 +189,6 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     run_scheduler_tests();
 #endif
 
-    // Launch primary user-space application
     if (process_create_from_file("/bin/init.elf", 1) != 0) {
         pr_err("init: Failed to load init\n");
     }

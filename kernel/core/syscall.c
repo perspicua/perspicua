@@ -7,35 +7,34 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "uapi/types.h"
-
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
+#include "uapi/errno.h"
 #include "uapi/mman.h"
 #include "uapi/syscalls.h"
-#include "uapi/errno.h"
 #include "uapi/time.h"
+#include "uapi/types.h"
 
+#include "arch/irq.h"
 #include "arch/uaccess.h"
 
 #include "core/signals.h"
-#include "core/tty.h"
-#include "arch/irq.h"
 #include "core/timer.h"
-#include "fs/vfs.h"
+#include "core/tty.h"
+#include "driver/block.h"
+#include "driver/uart.h"
 #include "fs/devfs.h"
+#include "fs/pagecache.h"
 #include "fs/pipe.h"
-#include "mm/pmm.h"
-#include "mm/mmu.h"
+#include "fs/vfs.h"
 #include "mm/addr.h"
 #include "mm/heap.h"
-#include "sched/sched.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "panic.h"
 #include "sched/process.h"
-#include "driver/uart.h"
-#include "driver/block.h"
-#include "fs/pagecache.h"
+#include "sched/sched.h"
 
 int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
 {
@@ -51,12 +50,7 @@ int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
         return 0;
     }
 
-    /*
-     * These are the calling process's own tables, and it cannot be exiting
-     * while it is here, so the lock is only needed to read the pointer -- not
-     * for the walk. Holding it across a megabyte-scale range stalls every other
-     * core, including any that needs it to schedule.
-     */
+    // The caller's own tables, which cannot go while it is here: the lock covers the pointer read.
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     struct process *p = process_current();
     unsigned long *pgd = p ? p->user_pgd : NULL;
@@ -69,13 +63,7 @@ int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
     return mmu_user_range_ok(pgd, start, end, writable);
 }
 
-/*
- * pgid_session_locked - The session a process group belongs to, or 0 if the
- * group has no members. A group is only a number its members share, so an empty
- * one means "no such group" rather than "session 0".
- *
- * Precondition: process_table_lock MUST be held by the caller.
- */
+// The session of a group, or 0 if it has no members. Caller holds process_table_lock.
 static uint32_t pgid_session_locked(uint32_t pgid)
 {
     if (pgid == 0) {
@@ -91,13 +79,7 @@ static uint32_t pgid_session_locked(uint32_t pgid)
     return 0;
 }
 
-/*
- * copy_path_from_user - Copies a user path into a fresh kernel buffer.
- *
- * On success the caller owns *out and must heap_free it. Every path-taking
- * syscall goes through here so the allocation and truncation checks cannot be
- * forgotten at one call site.
- */
+// The caller owns *out on success; every path-taking syscall copies through here.
 static int copy_path_from_user(const char *upath, char **out)
 {
     *out = NULL;
@@ -121,12 +103,7 @@ static int copy_path_from_user(const char *upath, char **out)
     return 0;
 }
 
-/*
- * copy_buf_from_user - Copies a user buffer into a fresh kernel buffer.
- *
- * Validates that the user range is readable and within size bounds.
- * On success the caller owns *out and must heap_free it.
- */
+// Checks the range is readable and in bounds; the caller owns *out on success.
 static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
 {
     *out = NULL;
@@ -153,12 +130,7 @@ static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
     return 0;
 }
 
-/*
- * alloc_user_out_buf - Prepares a kernel bounce buffer for writing to user memory.
- *
- * Validates that the destination user range is writable and within size bounds.
- * On success the caller owns *out and must heap_free it.
- */
+// Checks the range is writable and in bounds; the caller owns *out on success.
 static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
 {
     *out = NULL;
@@ -180,11 +152,7 @@ static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
     return 0;
 }
 
-/*
- * copy_buf_to_user - Validates and copies a kernel buffer to a user buffer.
- *
- * Used when the output length is only known after the kernel operation finishes.
- */
+// For output whose length is known only once the operation finishes.
 static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
 {
     if (len == 0) {
@@ -202,26 +170,7 @@ static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
     return 0;
 }
 
-/*
- * Sentinel returned by syscall handlers that configure or overwrite the trap
- * frame themselves, signaling syscall_handle() not to write a return value
- * into tf->x[0].
- *
- * Used by:
- *   - exec_handler: process_exec() builds the new frame and sets argc in
- *     tf->x[0]; storing a return value would destroy the argument count.
- *   - sigreturn_handler: restores the user trap frame verbatim from the
- *     stack; storing a return value would corrupt the restored register state.
- *
- * Why INT64_MAX is collision-free across all other syscalls:
- *   - mmap returns user virtual addresses below USER_VA_LIMIT (0x8000000000)
- *     or a negative errno.
- *   - lseek returns file offsets (vfs_off_t, positive values up to file size).
- *   - All other handlers return small non-negative integers (byte counts, PIDs,
- *     file descriptors, 0 for success) or negative error codes (-ENOENT and friends).
- * None can legitimately return INT64_MAX. Note: any future syscall returning an
- * unconstrained 64-bit value must take care not to collide with this sentinel.
- */
+// From a handler that built tf itself (exec, sigreturn); no syscall can return INT64_MAX.
 #define SYSCALL_RETAIN_FRAME ((int64_t)0x7FFFFFFFFFFFFFFFLL)
 
 typedef int64_t (*syscall_fn)(struct exception_trap_frame *tf);
@@ -279,28 +228,25 @@ static int64_t setpgid_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    // Restrict setpgid to self or direct child
+    // Only the caller itself or a direct child.
     if (target_pid != curr_pid && (int)target_proc->parent_pid != curr_pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
         return -ESRCH;
     }
 
-    /* A parent may only place a child before it execs; the new image
-     * owns its own membership afterwards. Moving yourself stays legal. */
+    // Only before the child execs; moving yourself stays legal.
     if (target_pid != curr_pid && target_proc->has_execed) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
         return -EACCES;
     }
 
-    /* A session leader's pid names its session, so it cannot also name a
-     * group elsewhere. */
+    // A session leader's pid names its session, so it cannot name a group elsewhere.
     if (target_proc->sid == target_proc->pid) {
         spin_unlock_irqrestore(&process_table_lock, irqf);
         return -EPERM;
     }
 
-    /* Groups do not span sessions; an empty group is only legal when the
-     * target is creating its own. */
+    // Groups never span sessions; an empty one is legal only for a target creating its own.
     uint32_t group_sid = pgid_session_locked((uint32_t)new_pgid);
     if (group_sid == 0) {
         if (new_pgid != target_pid) {
@@ -528,7 +474,7 @@ static int64_t clock_gettime_handler(struct exception_trap_frame *tf)
         return -EINVAL;
     }
 
-    // TODO: no RTC — REALTIME is boot-relative, identical to MONOTONIC for now
+    // Boot-relative like MONOTONIC until there is a real clock (order.txt Phase 3 item 3).
     unsigned long ms = timer_get_system_time();
     struct timespec ktp;
     ktp.tv_sec = (time_t)(ms / 1000);
@@ -574,8 +520,7 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
         return -EINVAL;
     }
 
-    /* Overflow guard: cap tv_sec to prevent (tv_sec * 1000) from overflowing unsigned long.
-     */
+    // Caps tv_sec so tv_sec * 1000 cannot overflow.
     if (kreq.tv_sec > (time_t)(0x7FFFFFFFFFFFFFFFLL / 1000)) {
         return -EINVAL;
     }
@@ -602,8 +547,7 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
         return 0;
     }
 
-    // A stop or a handlerless signal re-issues the call, which resumes this
-    // deadline rather than sleeping req again.
+    // A stop or a handlerless signal re-issues the call, which resumes this deadline.
     curr->sleep_resume_at = deadline;
     return -ERESTARTNOHAND;
 }
@@ -683,13 +627,7 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    /*
-     * POSIX kill() pid rules:
-     * target_pid > 0:  send to process target_pid.
-     * target_pid == 0: send to caller's process group (proc->pgid).
-     * target_pid == -1: reserved for broadcast; not supported yet, return
-     * -ESRCH. target_pid < -1: send to process group (-target_pid).
-     */
+    // pid > 0 one process, 0 the caller's group, -1 broadcast (unsupported), < -1 group -pid.
     if (target_pid == -1) {
         return -ESRCH;
     }
@@ -713,8 +651,7 @@ static int64_t kill_handler(struct exception_trap_frame *tf)
 
         uint32_t target_pgid = (uint32_t)abs_pgid;
 
-        /* Group permission check: member of group, group matches caller pid, or parent of a
-         * member */
+        // Allowed for a member, a group the caller's pid names, or a member's parent.
         int allowed = 0;
         if (proc->pgid == target_pgid || proc->pid == target_pgid) {
             allowed = 1;
@@ -782,8 +719,7 @@ static int64_t sigaction_handler(struct exception_trap_frame *tf)
         }
         kact.sa_mask &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
 
-        // Under the lock signal_send reads the disposition with. Ignoring a
-        // signal also discards an instance already pending.
+        // Under signal_send's lock; ignoring a signal also discards a pending instance.
         unsigned long flags = spin_lock_irqsave(&process_table_lock);
         proc->signal_handlers[sig - 1] = kact;
         if (kact.sa_handler == SIG_IGN) {
@@ -949,19 +885,14 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
     proc->blocked_signals = kmask;
     proc->blocked_signals &= ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
 
-    /* Block until a signal is pending. BLOCKED is published BEFORE the check,
-     * with a fence between: the sender sets the pending bit and then reads this
-     * state, so ordering both stores ahead of both loads means at most one side
-     * can miss the other. Masking IRQs alone only closes the same-core window;
-     * a sender on another core would see RUNNING and skip the wakeup. */
+    // BLOCKED is published and fenced before the check, so a sender on any core sees it or is seen.
     for (;;) {
         unsigned long irqf = irq_save();
         sched_task_set_blocked(curr);
         __atomic_thread_fence(__ATOMIC_SEQ_CST);
 
         if (signal_pending(proc)) {
-            /* A CAS, not a store: losing it means a waker already moved us to
-             * READY and queued us, and READY must stand. */
+            // A CAS: losing it means a waker already made us READY, which must stand.
             enum sched_task_state expected = SCHED_TASK_BLOCKED;
             __atomic_compare_exchange_n(&curr->state, &expected, SCHED_TASK_RUNNING, 0,
                                         __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
@@ -973,8 +904,7 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
         irq_restore(irqf);
     }
 
-    // The handler runs after this returns, so restoring the mask here would
-    // re-block the signal that woke us and the handler would never run.
+    // The handler runs after this returns; restoring the mask now would re-block the waking signal.
     proc->saved_sigmask = saved_mask;
     proc->has_saved_sigmask = 1;
 
@@ -1010,8 +940,7 @@ static int64_t sigreturn_handler(struct exception_trap_frame *tf)
     memcpy(tf, &frame.saved_tf, sizeof(struct exception_trap_frame));
 
     if (proc) {
-        // The mask comes off the user stack, so it gets the same scrubbing as
-        // one passed to sigprocmask.
+        // From the user stack, so scrubbed as sigprocmask's argument is.
         proc->blocked_signals = frame.saved_mask & ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     }
     tf->spsr_el1 &= 0xF0000000ULL;
@@ -1435,8 +1364,7 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
         return err;
     }
 
-    // Whole struct dirents go back to the caller, but a filesystem only writes
-    // d_name up to its terminator; the tail would be recycled heap.
+    // Filesystems write d_name only to its NUL; the rest of each dirent would be recycled heap.
     memset(kbuf, 0, count);
 
     int res = vfs_readdir(fd, kbuf, count);
@@ -1498,19 +1426,13 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
         return -ESRCH;
     }
 
-    /*
-     * Every mapping must have something behind it. An anonymous request
-     * takes no descriptor; a file-backed one needs a vnode that can
-     * actually supply pages. With neither, the address handed back is
-     * one the caller can only discover is empty by faulting on it.
-     */
+    // Every mapping has something behind it: anonymous, or a vnode that can supply pages.
     int anonymous = (flags & MAP_ANONYMOUS) != 0;
     if (anonymous ? (fd != -1) : (fd < 0 || fd >= VFS_MAX_FDS)) {
         return -EBADF;
     }
 
-    /* Hold a reference so a concurrent close cannot free the file out
-     * from under its own mmap operation. */
+    // A reference, so a concurrent close cannot free the file during its own mmap.
     struct vfs_file *file = NULL;
     if (!anonymous) {
         unsigned long fdflags = spin_lock_irqsave(&proc->fd_lock);
@@ -1570,8 +1492,7 @@ static int64_t mmap_handler(struct exception_trap_frame *tf)
     return (int64_t)new_region;
 
 mmap_fail:
-    /* Unmap anything mapped so far (frees those pages) and release the
-     * reserved VA region so a failed mmap leaks neither. */
+    // Unmapped and the region released, so a failed mmap leaks neither pages nor address space.
     for (size_t j = 0; j < pages_needed; j++) {
         (void)mmu_user_unmap_page(proc->user_pgd, new_region + j * PAGE_SIZE);
     }
@@ -1634,8 +1555,7 @@ void syscall_handle(struct exception_trap_frame *tf)
     uint64_t syscall_nr = tf->x[8];
     struct task *curr = sched_current_task();
 
-    /* A task running a syscall always has a live slot; refuse rather than
-     * fault at EL1 if that ever stops holding. */
+    // A syscall always runs with a live slot; refused rather than faulting at EL1 if not.
     if (!process_slot(curr->pid)) {
         tf->x[0] = (uint64_t)-ESRCH;
         return;

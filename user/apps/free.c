@@ -1,5 +1,5 @@
 /*
- * free - show how much memory is in use, from /proc/meminfo.
+ * free.c - Shows how much memory is in use, from /proc/meminfo.
  */
 
 #include <fcntl.h>

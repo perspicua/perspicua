@@ -1,7 +1,10 @@
+/*
+ * switch.S - Context switch between kernel tasks, and the first-run trampoline.
+ */
+
 .section ".text"
 
-// void switch_context(struct cpu_context *prev, struct cpu_context *next)
-// x0 = prev, x1 = next
+// switch_context(prev = x0, next = x1): saves the callee-saved state in prev, then loads next's.
 .global switch_context
 switch_context:
     // save callee-saved registers into prev context

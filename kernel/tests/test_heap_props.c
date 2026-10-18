@@ -1,14 +1,10 @@
 /*
- * test_heap_props.c - Allocator properties held across a sweep of sizes.
- *
- * Where test_heap.c asks for sizes chosen by hand, every assertion here runs
- * against every size in the sweep, so a property that only breaks at one
- * boundary still fails.
+ * test_heap_props.c - Heap properties checked at every size in a sweep, so one bad boundary fails.
  */
 
-#include <stddef.h>
-
 #include "test.h"
+
+#include <stddef.h>
 
 #include "string.h"
 
@@ -83,8 +79,7 @@ static void sweep_build(void)
     sweep_add(8192);
 }
 
-// Depends on the request as well as the offset, so a byte written by one
-// allocation cannot pass for the right byte of another.
+// Depends on the request as well as the offset, so one allocation's byte cannot pass for another's.
 static unsigned char fill_byte(unsigned long n, unsigned long i)
 {
     return (unsigned char)(0xC0 ^ (n * 31 + i));
@@ -97,8 +92,7 @@ void test_heap_props(void)
     sweep_build();
     TEST_ASSERT("sweep fits its table", sweep_count > 0 && !sweep_dropped);
 
-    // routing: the slab path has no footer and the first-fit path does, so
-    // every assertion below reads differently on the wrong side of 1024
+    // routing: only first fit has a footer, so each assertion below reads differently past 1024
     {
         int routing_ok = 1;
 
@@ -179,8 +173,7 @@ void test_heap_props(void)
         TEST_ASSERT("exactly the requested bytes survive a write", exact_write_ok);
     }
 
-    // the usable region is writable to its last byte: one further and the
-    // heap_free below would panic rather than return
+    // the usable region is writable to its last byte, and heap_free panics on one more
     {
         int usable_write_ok = 1;
         int redzone_ok = 1;
@@ -248,8 +241,7 @@ void test_heap_props(void)
         TEST_ASSERT("a one-byte overrun breaks the redzone", caught);
     }
 
-    // a full allocation does not reach its neighbours. Three at a time,
-    // because an overrun lands on whichever of them follows it in memory
+    // a full allocation does not reach its neighbours, three at a time, as an overrun hits the next
     {
         int isolation_ok = 1;
 
@@ -301,10 +293,7 @@ void test_heap_props(void)
         TEST_ASSERT("a full allocation does not reach its neighbours", isolation_ok);
     }
 
-    // A block freed between two live ones cannot coalesce, and nothing below it
-    // fits its size, so it is first fit for a request of that size or a little
-    // less. Walking the request down crosses the point where the remainder is
-    // big enough to split off.
+    // A hole between live blocks is first fit for its size; smaller requests cross the split point.
     {
         const unsigned long base = 4000;
         const unsigned long stride = TEST_HEADER_SIZE + base + TEST_FOOTER_SIZE;
@@ -378,8 +367,7 @@ void test_heap_props(void)
         }
     }
 
-    // the same sweep held live all at once: splitting and coalescing need a
-    // populated pool, which an alloc/free pair on its own never builds
+    // the sweep held live at once, since splitting and coalescing need a populated pool
     {
         static void *live[MAX_SWEEP];
         int concurrent_ok = 1;

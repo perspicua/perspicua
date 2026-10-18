@@ -42,12 +42,7 @@ static void print_mode(uint32_t mode)
     printf("%c", (mode & S_IXOTH) ? 'x' : '-');
 }
 
-/*
- * format_time - "Mmm dd hh:mm", the column ls has always shown.
- *
- * Done here rather than with localtime/strftime because the libc has neither
- * yet. Everything is UTC: nothing records a zone, on disk or anywhere else.
- */
+// "Mmm dd hh:mm" in UTC, since nothing records a zone; libc has no strftime.
 static void format_time(uint32_t secs, char *out, size_t n)
 {
     static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -170,8 +165,7 @@ static int list_path_with_options(const char *path, int long_format, int show_al
         print_header();
     }
 
-    /* Plain listing collects names so it can lay them out in columns (at a
-     * terminal) or one per line (when piped, keeping `ls | wc -l` correct). */
+    // Columns at a terminal, one per line when piped, so `ls | wc -l` counts entries.
     char **names = NULL;
     int count = 0, cap = 0;
 

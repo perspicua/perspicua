@@ -7,34 +7,14 @@
 
 #define GIC_TIMER_IRQ 30
 
-extern volatile unsigned int *gic_d_ctlr;
-extern volatile unsigned int *gic_d_isenablern;
-extern volatile unsigned int *gic_d_icenablern;
-extern volatile unsigned char *gic_d_ipriorityr;
-extern volatile unsigned char *gic_d_itargetsr;
-extern volatile unsigned int *gic_d_sgir;
-
-extern volatile unsigned int *gic_c_ctlr;
-extern volatile unsigned int *gic_c_pmr;
+// The exception path acknowledges and ends interrupts through these two.
 extern volatile unsigned int *gic_c_iar;
 extern volatile unsigned int *gic_c_eoir;
 
-/*
- * gic_enable_irq - Enables an SPI in the GIC distributor and routes it to CPU0.
- *
- * Called by device drivers from their probe functions after obtaining an IRQ
- * number via devm_get_irq(). Must be called after gic_probe() completes.
- */
+// Enables an SPI and routes it to CPU0; drivers call it from probe, after gic_probe().
 void gic_enable_irq(unsigned int irq);
 
-/*
- * gic_disable_irq - Masks an SPI in the GIC distributor.
- *
- * Writes to the ICENABLER register (write-1-to-clear semantics) to stop the
- * distributor from forwarding the interrupt to any CPU interface. Call this
- * before free_irq() to ensure no stray interrupt fires against a cleared
- * handler table entry.
- */
+// Masks an SPI at the distributor; called before free_irq(), so nothing fires at a cleared entry.
 void gic_disable_irq(unsigned int irq);
 
 void gic_secondary_init(void);

@@ -1,5 +1,11 @@
+/*
+ * test_timer.c - The system timer, busy-wait sleeps, and the build-day wall clock.
+ */
+
 #include "test.h"
+
 #include "arch/irq.h"
+
 #include "core/timer.h"
 
 void test_timer(void)

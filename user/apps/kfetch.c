@@ -1,9 +1,5 @@
 /*
- * kfetch.c - A system summary beside the Perspicua logo, in the style of neofetch.
- *
- * On a terminal the logo and labels are coloured and a row of colour swatches
- * closes the list. Piped, only the lines print, as plain "Label: value" text
- * for scripts. A line whose source the system does not report is left out.
+ * kfetch.c - A neofetch-style summary beside the logo; piped, plain "Label: value" lines.
  */
 
 #include <stdarg.h>

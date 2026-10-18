@@ -4,9 +4,10 @@
 
 #include "test.h"
 
+#include "string.h"
+
 #include "debug/ksym.h"
 #include "panic.h"
-#include "string.h"
 
 __attribute__((noinline)) static int ksym_probe(int x)
 {

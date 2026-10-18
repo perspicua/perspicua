@@ -1,22 +1,18 @@
 /*
- * test_uaccess.c - Tests for user-pointer validation and the fault-fixup path.
- *
- * These run in the boot phase with the kernel address space active, so they
- * cover the rejection and fault-recovery paths rather than a successful copy.
- * The point is that a bad user pointer must return an error: if the fixup path
- * were broken these would fault inside the kernel instead of failing cleanly.
+ * test_uaccess.c - A bad user pointer is an error return, never a kernel fault.
  */
 
-#include <stddef.h>
-
 #include "test.h"
+
+#include <stddef.h>
 
 #include "string.h"
 
 #include "uapi/errno.h"
 
-#include "arch/uaccess.h"
 #include "arch/irq.h"
+#include "arch/uaccess.h"
+
 #include "mm/addr.h"
 #include "mm/mmu.h"
 #include "mm/pmm.h"
@@ -50,11 +46,7 @@ void test_uaccess(void)
                        syscall_validate_user_buffer((void *)KERNEL_VMA, 8, 0), 0);
     }
 
-    /*
-     * A length that wraps past the top of the address space must be caught by
-     * the explicit end < start check, not silently truncated into a range that
-     * looks valid.
-     */
+    // A length that wraps past the top of the address space is refused, not truncated.
     {
         TEST_ASSERT_EQ("wrap-around rejected",
                        syscall_validate_user_buffer((void *)0xFFFFFFFFFFFFFFF0UL, 64, 0), 0);
@@ -68,11 +60,7 @@ void test_uaccess(void)
                        syscall_validate_user_buffer((void *)UNMAPPED_USER_VA, 64, 0), 0);
     }
 
-    /*
-     * The copy helpers must survive a bad pointer via the exception fixup
-     * table. Reaching the assertion at all proves the fault was recovered
-     * rather than escalating to a kernel panic.
-     */
+    // The copy helpers recover from a fault through the fixup table; reaching these proves it.
     {
         memset(kbuf, 0xA5, sizeof(kbuf));
 
@@ -92,12 +80,7 @@ void test_uaccess(void)
         TEST_ASSERT("strncpy_from_user terminates on fault", kbuf[0] == '\0');
     }
 
-    /*
-     * The truncation contract needs a source EL0 can actually read, so map one
-     * page into a scratch address space and run TTBR0 on it. A caller must never
-     * be handed a buffer without a terminator: strlen() on one walks off the
-     * allocation.
-     */
+    // strncpy_from_user always terminates what it returns, checked against a page EL0 can read.
     {
         unsigned long *pgd = mmu_create_user_pgd();
         void *page = pmm_alloc_page();
@@ -106,8 +89,7 @@ void test_uaccess(void)
         mmu_user_map_page(pgd, MAPPED_USER_VA, V2P(page), MMU_PAGE_USER_DATA);
         strcpy((char *)page, "abcdefghij"); // 10 chars
 
-        /* sched_schedule() reinstalls the running task's TTBR0, so a timer tick here
-         * would swap the scratch space out mid-test. Keep IRQs masked. */
+        // A tick would reinstall the task's own TTBR0 and swap the scratch space out.
         unsigned long irqf = irq_save();
 
         unsigned long saved_ttbr0;

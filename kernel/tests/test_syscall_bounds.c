@@ -1,17 +1,11 @@
 /*
- * test_syscall_bounds.c - Syscall dispatch driven with arguments no caller sends.
- *
- * A bad pointer is refused twice over, by the range checks and by the
- * unprivileged loads and stores the copy helpers use, so one layer regressing
- * alone does not fail a probe. What does is the kernel acting on a pointer it
- * should have refused, which the kernel-address probe makes visible by
- * pointing at the path of a file that exists.
+ * test_syscall_bounds.c - Every syscall driven with arguments no well-behaved caller sends.
  */
+
+#include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 
@@ -49,8 +43,7 @@ struct ptr_probe {
     uint64_t args[6];
 };
 
-// Paths and out-parameters only: nothing here is gated behind an fd lookup,
-// so the pointer is what decides the result.
+// Paths and out-parameters behind no fd lookup, so the pointer alone decides the result.
 static const struct ptr_probe ptr_probes[] = {
     {"open", SYS_OPEN, 0, 0, {0, O_RDONLY, 0, 0, 0, 0}},
     {"chdir", SYS_CHDIR, 0, 0, {0, 0, 0, 0, 0, 0}},
@@ -70,8 +63,7 @@ static const struct ptr_probe ptr_probes[] = {
     {"sigaltstack", SYS_SIGALTSTACK, 0, 1, {0, 0, 0, 0, 0, 0}},
 };
 
-// The subset above that the kernel writes through, so a read-only mapping has
-// to be refused as well as an absent one.
+// The subset above the kernel writes through, so a read-only mapping is refused as well.
 static const struct ptr_probe write_probes[] = {
     {"getcwd", SYS_GETCWD, 0, 0, {0, 64, 0, 0, 0, 0}},
     {"gettimeofday", SYS_GETTIMEOFDAY, 0, 0, {0, 0, 0, 0, 0, 0}},
@@ -79,8 +71,7 @@ static const struct ptr_probe write_probes[] = {
     {"sigpending", SYS_SIGPENDING, 0, 0, {0, 0, 0, 0, 0, 0}},
 };
 
-// Numbers the suite must not drive, and why. This list is the one place a
-// syscall is excused from the sweep, so a reason belongs with every entry.
+// The only syscalls excused from the sweep, each with its reason.
 struct skipped_syscall {
     uint64_t nr;
     const char *reason;
@@ -296,8 +287,7 @@ void test_syscall_bounds(void)
         TEST_ASSERT("a read-only mapping is refused for output", rodata_ok);
     }
 
-    // the same calls with a writable pointer succeed, so the refusals above
-    // were about the pointer and not the call
+    // the same calls succeed with a writable pointer, so the pointer was what they refused
     {
         int rw_ok = 1;
 
@@ -450,8 +440,7 @@ void test_syscall_bounds(void)
         TEST_ASSERT("a kernel address is refused and left untouched", kaddr_ok);
     }
 
-    // everything the table does not name, driven once with zeroed arguments:
-    // a number that faults never reaches the assertion
+    // each number the table does not name, once with zeroed arguments: a fault never returns
     {
         int swept = 0;
 

@@ -2,22 +2,24 @@
  * syscall.c - POSIX entry points, each one trap into the kernel.
  */
 
-#include "syscall.h"
+#include <stddef.h>
+
+#include "dirent.h"
 #include "errno.h"
+#include "fcntl.h"
+#include "sched.h"
+#include "signal.h"
 #include "stdio.h"
+#include "sys/mman.h"
+#include "sys/stat.h"
+#include "sys/time.h"
+#include "sys/wait.h"
+#include "time.h"
+#include "unistd.h"
 
 #include "uapi/syscalls.h"
-#include "uapi/mman.h"
 
-/*
- * The syscall ABI: arguments in x0-x5, number in x8, result in x0. Naming the
- * registers with register-asm variables lets the compiler place the arguments
- * itself, so each wrapper below is a call rather than a copy of the same
- * hand-written "mov x0, ...; svc #0" block.
- *
- * Six arguments is the ceiling because x5 is the last argument register; only
- * mmap reaches it.
- */
+// Arguments in x0-x5, number in x8, result in x0; register variables let the compiler place them.
 #define SVC_CLOBBERS "memory", "cc"
 
 static inline long __syscall0(long n)
@@ -97,11 +99,7 @@ static inline long __syscall6(long n, long a, long b, long c, long d, long e, lo
     return x0;
 }
 
-/*
- * The kernel returns -errno, so recovering the number is a negation. Nothing
- * translates between two vocabularies any more: both sides name the same
- * values out of uapi/errno.h.
- */
+// The kernel returns -errno in uapi/errno.h's numbering, so errno is a negation.
 static inline int __set_errno_ret(long res)
 {
     errno = (int)-res;
@@ -261,10 +259,7 @@ int chdir(const char *path)
     return __syscall_ret(__syscall1(SYS_CHDIR, (long)path));
 }
 
-/*
- * POSIX reports success by handing back the buffer, not by returning 0, so a
- * caller can write `if (getcwd(...))`.
- */
+// Success hands back buf, as POSIX has it, so `if (getcwd(...))` works.
 char *getcwd(char *buf, size_t size)
 {
     long res = __syscall2(SYS_GETCWD, (long)buf, (long)size);
@@ -360,11 +355,7 @@ void __sigreturn(void)
 
 extern void __sigrestorer(void);
 
-/*
- * The kernel needs a return trampoline to resume through, and a caller that
- * built its own sigaction by hand will not have supplied one; fill it in here
- * rather than rejecting the call.
- */
+// A hand-built sigaction has no return trampoline, so one is filled in rather than refused.
 int sigaction(int sig, const struct sigaction *act, struct sigaction *oact)
 {
     struct sigaction kact;

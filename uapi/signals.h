@@ -73,9 +73,6 @@ typedef void (*sighandler_t)(int);
 
 // Data Structures
 
-/*
- * struct sigaction - Defines the action to be taken upon signal delivery.
- */
 struct sigaction {
     sighandler_t sa_handler;
     sigset_t sa_mask;

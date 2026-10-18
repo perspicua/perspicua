@@ -1,5 +1,5 @@
 /*
- * uptime - how long since boot, and how many processes are alive.
+ * uptime.c - How long since boot, and how many processes are alive.
  */
 
 #include <dirent.h>

@@ -1,3 +1,12 @@
+/*
+ * boot.S - Kernel entry: drop to EL1, park extra cores, build the boot page tables, enable the MMU.
+ */
+
+#include "mm/addr.h"
+
+#define TCR_EL1_VALUE ((25 << 0) | (25 << 16) | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 24) | \
+                       (1 << 26) | (3 << 28) | (2UL << 30) | (1UL << 36))
+
 .section ".text.boot"
 
 .global _entry
@@ -45,20 +54,11 @@ real_entry:
 el1_entry:
     // Clear TPIDR_EL1 so sched_current_task() returns NULL until a task is scheduled.
     msr tpidr_el1, xzr
-    // Leave CPACR_EL1.FPEN clear, so FP and SIMD trap at both EL0 and EL1.
-    // The trap frame holds general-purpose registers only; an FP instruction
-    // running here would use registers nothing saves or restores, and would
-    // corrupt whichever task ran next rather than failing. Nothing emits one
-    // today -- every target is built -mgeneral-regs-only -- so this costs
-    // nothing and turns a future silent corruption into a fault at the
-    // instruction that caused it.
+    // CPACR_EL1.FPEN stays clear: nothing saves FP state, so FP faults instead of corrupting.
     msr cpacr_el1, xzr
     isb
 
-    // The BCM2711 always has four cores; #3 extracts the id of whichever one
-    // this is. CONFIG_NR_CPUS says how many of them the kernel actually uses,
-    // so anything above it parks here rather than running on a stack slot and
-    // per-core arrays that were never sized for it.
+    // Cores past CONFIG_NR_CPUS park here: no stack slot or per-core array was sized for them.
     mrs x0, mpidr_el1
     and x0, x0, #3
     cmp x0, #CONFIG_NR_CPUS
@@ -75,7 +75,7 @@ build_page_tables:
 
     // pgd[0] maps 0 to 1gb
     orr x2, x1, #3      // pte_valid | pte_table
-    str x2, [x0]        
+    str x2, [x0]
 
     // pgd[1] and pgd[2] map 1gb to 3gb as RAM: mmu_init allocates from the top of RAM
     ldr x5, =0x701      // pte_valid | pte_block | pte_af | Inner-Shareable
@@ -109,8 +109,8 @@ map_ram_loop:
     mov x3, #512
     mov x4, x7
     ldr x5, =0x701      // RAM below the peripheral window
-    ldr x8, =0x705      // pte_valid | pte_block | pte_af | Inner-Shareable | AttrIndx=1 (Device memory)
-    mov x9, #0xFC000000 // BCM2711 peripheral window start
+    ldr x8, =0x705      // valid | block | AF | inner-shareable | AttrIndx 1 (device)
+    mov x9, #BCM2711_PERIPH_BASE
 
 map_periph_loop:
     cmp x2, x9
@@ -122,29 +122,20 @@ map_periph_loop:
     b.ne map_periph_loop
 
 enable_mmu:
-    // Attr0 = 0xFF (Normal, Write-Back, Read/Write-Allocate)
-    // Attr1 = 0x04 (Device-nGnRE — non-Gathering, non-Reordering, Early-ack)
-    // Attr2 = 0x44 (Normal, Non-Cacheable -> Write-Combining)
+    // MAIR_EL1: Attr0 normal write-back, Attr1 device nGnRE, Attr2 normal non-cacheable.
     ldr x0, =0x4404FF
     msr mair_el1, x0
-    
-    // tcr: 39-bit va for ttbr0 and ttbr1
-    // TG0=4KB(0<<14) | TG1=4KB(2<<30) | T0SZ=25 | T1SZ=25
-    // IRGN0/ORGN0 = WB-WA (1<<8, 1<<10) | IRGN1/ORGN1 = WB-WA (1<<24, 1<<26)
-    // SH0 = Inner Shareable (3<<12) | SH1 = Inner Shareable (3<<28)
-    // AS = 16-bit ASID (1<<36)
-    ldr x0, =(25 << 0) | (25 << 16) | (1 << 8) | (1 << 10) | (3 << 12) | (1 << 24) | (1 << 26) | (3 << 28) | (2UL << 30) | (1UL << 36)
+
+    // TCR_EL1: 39-bit VAs both halves, 4 KB granules, WB inner-shareable walks, 16-bit ASIDs.
+    ldr x0, =TCR_EL1_VALUE
     msr tcr_el1, x0
-    
+
     adrp x0, boot_pgd
     msr ttbr0_el1, x0
-    msr ttbr1_el1, x0   
+    msr ttbr1_el1, x0
     isb
 
-    // invalidate stale TLB entries and drain the write buffer so the
-    // page table walker sees the entries we just wrote to memory.
-    // Without this, real hardware may fault immediately on MMU enable
-    // because writes can still be sitting in the CPU's write buffer.
+    // The walker must see the tables just written, or real hardware faults as the MMU comes on.
     dsb sy
     tlbi vmalle1
     dsb sy
@@ -155,14 +146,7 @@ enable_mmu:
     dsb sy
     isb
 
-    // Build SCTLR_EL1 from scratch instead of read-modify-write.
-    // The firmware may leave bits set (e.g. WXN) that silently break
-    // EL0 execution on real hardware.
-    //   bit  0  M    = 1  MMU enable
-    //   bit  2  C    = 1  D-cache enable
-    //   bit 12  I    = 1  I-cache enable
-    //   bits 11,20,22,23,28,29 = RES1 on Cortex-A72
-    //   WXN(19)=0, A(1)=0, E0E(24)=0, EE(25)=0
+    // SCTLR_EL1 from scratch, as firmware may leave WXN set: M, C, I and the RES1 bits.
     ldr x0, =0x30D01805
     orr x0, x0, #(1 << 3)  // Enable SA (SP Alignment Check for EL1)
     orr x0, x0, #(1 << 4)  // Enable SA0 (SP Alignment Check for EL0)
@@ -176,7 +160,7 @@ setup_stack:
     ldr x1, =_stack_top
     mrs x2, mpidr_el1
     and x2, x2, #3      // x2 = core id (0, 1, 2, or 3)
-    
+
     mov x3, #0x10000    // x3 = 64KB
     mul x2, x2, x3      // core_offset = core_id * 64KB
     sub sp, x1, x2      // sp = _stack_top - core_offset

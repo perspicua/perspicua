@@ -1,7 +1,5 @@
 /*
- * sort - sort lines of text.
- *
- * -r reverses the order, -n compares the leading number of each line.
+ * sort.c - Sorts lines of text; -r reverses, -n compares each line's leading number.
  */
 
 #include <errno.h>

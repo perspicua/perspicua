@@ -3,17 +3,17 @@
  */
 
 #include "driver/mailbox.h"
-#include "driver/device.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include "stdio.h"
-#include "panic.h"
 
 #include "core/lock.h"
-#include "mm/addr.h"
 #include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "mm/addr.h"
+#include "panic.h"
 
 #define MBOX_STATUS_FULL  0x80000000
 #define MBOX_STATUS_EMPTY 0x40000000
@@ -78,9 +78,7 @@ static void mbox_exchange(unsigned int *buffer)
         unsigned int response = *mbox_read;
 
         if ((response & 0xF) == 8) {
-            /* Clean+invalidate to read the GPU's response from RAM without
-             * discarding dirty data in cache lines shared with adjacent
-             * stack variables. */
+            // Clean and invalidate: dirty stack data may share the reply's cache lines.
             for (unsigned long i = 0; i < size; i += 64) {
                 asm volatile("dc civac, %0" : : "r"(addr + i));
             }

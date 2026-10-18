@@ -62,8 +62,6 @@ extern void __libc_write(const char *buf, size_t len);
 
 #define PRINTF_BUF_SIZE 256
 
-// Internal Data Structures
-
 // Output sink abstraction used by fmt_core.
 struct fmt_buf {
     char *buf;    // Destination buffer (NULL = write each character out directly)
@@ -86,8 +84,6 @@ enum fmt_len {
     LEN_MAX,
     LEN_PTRDIFF,
 };
-
-// Private Helper Functions
 
 // Writes out whatever a sink buffer currently holds and empties it.
 static inline void fb_flush(struct fmt_buf *fb)
@@ -501,8 +497,6 @@ emit_number: {
     return (int)fb->total;
 }
 
-// Public API Implementations
-
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
     // Nothing to write into: count what would have been written, as the C99 sizing idiom needs.
@@ -542,12 +536,7 @@ int vprintf(const char *fmt, va_list args)
         .size = sizeof(stack_buf),
         .pos = 0,
         .sink = 1,
-/*
- * The kernel writes straight to the UART and must inject CR itself. Userspace
- * output flows through the tty, which already translates \n to \r\n (ONLCR), so
- * it emits plain \n: translating here too would double the CR at the terminal
- * and write \r\n into redirected files and pipes.
- */
+// Only the kernel adds CR: userspace output passes the tty's ONLCR, and may go to a file or pipe.
 #ifdef __KERNEL__
         .crlf = 1,
 #else

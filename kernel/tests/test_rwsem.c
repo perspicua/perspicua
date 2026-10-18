@@ -2,13 +2,13 @@
  * test_rwsem.c - Tests for reader/writer sleeping semaphore (struct rwsem).
  */
 
-#include "core/rwsem.h"
+#include "test.h"
 
 #include <stddef.h>
 
 #include "core/lockdep.h"
+#include "core/rwsem.h"
 #include "sched/sched.h"
-#include "test.h"
 
 #ifdef CONFIG_LOCKDEP
     #define EXPECT_LOCKDEP_DEPTH(name, n)                   \

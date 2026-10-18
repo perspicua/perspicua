@@ -12,58 +12,29 @@
 
 #include "arch/exception.h"
 
-#include "core/signals.h"
 #include "core/lock.h"
+#include "core/signals.h"
 #include "fs/vfs.h"
 #include "sched/sched.h"
 
-/*
- * Process slots. PCBs are allocated on demand, so a slot costs one pointer
- * until it is used and this does not multiply the per-process limits below.
- *
- * This is *not* sized by memory or by the ASID pool, both of which would allow
- * far more. It is the backpressure that keeps fork() inside the range the
- * address-space copy is known to survive: user/apps/stress.c forks 900 children
- * and, once enough are live at once, children come back from fork() seeing a
- * corrupted stack -- they read a nonzero return, take the parent branch, and
- * fault writing near NULL. Measured over three runs of that test: 128 slots is
- * clean, 256 faults in one run of three, 65536 is badly unstable.
- *
- * Raising this is blocked on fixing that, not on the table.
- */
+// Kept at 128: at 256, stress.c's fork storm gave children corrupted stacks, still unexplained.
 #ifdef CONFIG_MAX_PROCESSES
     #define PROCESS_TABLE_SIZE CONFIG_MAX_PROCESSES
 #else
     #define PROCESS_TABLE_SIZE 128
 #endif
 
-/*
- * Range the per-process allocator hands out. It starts well above the address
- * user programs link at (0x100000), so ELF segments -- which elf_load maps
- * directly at their p_vaddr, without going through this allocator -- can never
- * collide with an allocated region.
- */
+// The allocator's range, above where programs link, so elf_load's segments never collide with it.
 #define USER_VA_BASE        0x40000000ULL
 #define USER_VA_LIMIT       0x8000000000ULL
 #define USER_VA_MAX_REGIONS 64
 
-/*
- * User stacks are populated eagerly -- every page is allocated and mapped at
- * process creation, touched or not -- so this is real memory per process, not
- * reserved address space. Keep it modest until stacks grow on demand.
- */
+// Allocated and mapped up front, touched or not, so this is real memory per process.
 #define PROCESS_USER_STACK_PAGES 32
 
-#define SPSR_EL0_USER      0x00000000ULL
-#define SPSR_EL1_KERN      0x000003C5ULL
-#define STACK_CANARY_VALUE 0xDEADC0DEDEADC0DEULL
+#define SPSR_EL0_USER 0x00000000ULL
 
-/*
- * A free slot is a null pointer in process_table, not a state, so there is no
- * "empty" enumerator: nothing holds a PCB that describes no process. Numbering
- * starts at 1 so a zeroed allocation reads as an invalid state rather than a
- * running one.
- */
+// From 1, so a zeroed PCB reads as invalid; a free slot is a NULL entry, never a state.
 typedef enum {
     PROCESS_STATE_RUNNING = 1,
     PROCESS_STATE_ZOMBIE,
@@ -75,20 +46,12 @@ struct va_region {
     size_t pages;
 };
 
-/*
- * struct va_allocator - Allocated address ranges of one process.
- *
- * regions[] is kept sorted by base so a single pass finds the lowest gap that
- * fits a request.
- */
+// regions[] is sorted by base, so one pass finds the lowest gap that fits.
 struct va_allocator {
     struct va_region regions[USER_VA_MAX_REGIONS];
     size_t count;
 };
 
-/*
- * struct process - The central Process Control Block (PCB).
- */
 struct process {
     uint32_t pid;
     uint32_t pgid;
@@ -135,23 +98,14 @@ struct process {
     stack_t sigaltstack;
 };
 
-/*
- * Slots are pointers to PCBs allocated on demand. A null entry is a free slot,
- * so a slot costs one pointer until it is used rather than a whole PCB.
- *
- * Entries are published and cleared under process_table_lock.
- */
+// A NULL entry is a free slot; entries are published and cleared under process_table_lock.
 extern struct process *process_table[PROCESS_TABLE_SIZE];
 extern spinlock_t process_table_lock;
 
 // Successful forks since boot, as /proc/stat's "processes" reports them.
 extern unsigned long process_forks;
 
-/*
- * process_slot - The PCB for a pid, or NULL if the slot is free.
- *
- * Bounds-checks the pid, so it is safe on anything a caller might pass.
- */
+// NULL for a free slot or a pid out of range.
 static inline struct process *process_slot(uint32_t pid)
 {
     return pid < PROCESS_TABLE_SIZE ? process_table[pid] : NULL;
@@ -171,12 +125,7 @@ int process_waitpid(int pid, int *status, int options);
 // Context and identity
 int process_current_pid(void);
 
-/*
- * process_current - PCB of the calling task's process, or NULL if it has none.
- *
- * Resolves the pid and the slot together: a caller cannot end up holding a pid
- * whose slot has already been freed.
- */
+// Resolves the pid and its slot together, so a caller never holds a pid whose slot is gone.
 struct process *process_current(void);
 
 unsigned long process_get_ttbr0(uint32_t pid);

@@ -1,5 +1,5 @@
 /*
- * watch - rerun a command every few seconds on a cleared screen; Ctrl-C stops it.
+ * watch.c - Reruns a command every few seconds on a cleared screen; Ctrl-C stops it.
  */
 
 #include <stdio.h>

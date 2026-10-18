@@ -1,13 +1,20 @@
-#include <stddef.h>
+/*
+ * test_mmu_user.c - Per-process page tables: mapping, isolation, range checks and copy-on-write.
+ */
 
 #include "test.h"
-#include "arch/irq.h"
-#include "mm/mmu.h"
-#include "mm/pmm.h"
-#include "mm/addr.h"
+
+#include <stddef.h>
+
 #include "string.h"
 
-// user VA range for tests — low addresses (TTBR0 space, below kernel VMA)
+#include "arch/irq.h"
+
+#include "mm/addr.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+
+// A TTBR0 address, far below the kernel VMA
 #define USER_VA_BASE 0x200000000ULL
 
 void test_mmu_user(void)
@@ -19,7 +26,6 @@ void test_mmu_user(void)
         unsigned long *pgd = mmu_create_user_pgd();
         TEST_ASSERT("create_pgd: non-null", pgd != 0);
 
-        // fresh PGD should have no mappings
         int mapped = mmu_user_query(pgd, USER_VA_BASE, 0, 0);
         TEST_ASSERT("empty pgd: not mapped", mapped == 0);
 
@@ -120,7 +126,6 @@ void test_mmu_user(void)
             mmu_user_unmap_page(pgd, vas[i]);
         }
 
-        // confirm all unmapped
         ok = 1;
         for (int i = 0; i < MP_COUNT; i++) {
             if (mmu_user_query(pgd, vas[i], 0, 0)) {
@@ -260,7 +265,6 @@ void test_mmu_user(void)
         mmu_switch_user(pgd, 42);
         asm volatile("mrs %0, ttbr0_el1" : "=r"(ttbr0));
 
-        // restore kernel TTBR0
         asm volatile("msr ttbr0_el1, %0\n isb" : : "r"(mmu_kernel_ttbr0()));
 
         irq_restore(irqf);
@@ -386,7 +390,7 @@ void test_mmu_user(void)
         void *shared_page = pmm_alloc_page();
         unsigned long vaddr = USER_VA_BASE + 0x7000;
 
-        pmm_hold_page(shared_page); // Hold because we map it twice and mmu_user_unmap_page frees
+        pmm_hold_page(shared_page); // one reference per mapping, since an unmap frees one
         mmu_user_map_page(pgd_a, vaddr, V2P(shared_page), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd_b, vaddr, V2P(shared_page), MMU_PAGE_USER_DATA);
 
@@ -410,7 +414,7 @@ void test_mmu_user(void)
         unsigned long va1 = USER_VA_BASE + 0x8000;
         unsigned long va2 = USER_VA_BASE + 0x9000;
 
-        pmm_hold_page(shared_page); // Hold due to multi-map
+        pmm_hold_page(shared_page); // one reference per mapping
         mmu_user_map_page(pgd, va1, V2P(shared_page), MMU_PAGE_USER_DATA);
         mmu_user_map_page(pgd, va2, V2P(shared_page), MMU_PAGE_USER_DATA);
 
@@ -425,8 +429,7 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
 
-    // mapping over an existing mapping must replace it, and the VA must still
-    // query cleanly afterwards
+    // mapping over an existing mapping replaces it, and the VA still queries cleanly
     {
         unsigned long *pgd = mmu_create_user_pgd();
         void *p1 = pmm_alloc_page();
@@ -464,7 +467,6 @@ void test_mmu_user(void)
         }
         TEST_ASSERT("fill16: all correct", ok);
 
-        // unmap all
         for (int i = 0; i < FILL_COUNT; i++) {
             mmu_user_unmap_page(pgd, vas[i]);
         }
@@ -486,12 +488,9 @@ void test_mmu_user(void)
         unsigned long *pgd = mmu_create_user_pgd();
         void *p = pmm_alloc_page();
 
-        // map in user PGD
         mmu_user_map_page(pgd, USER_VA_BASE + 0x8000, V2P(p), MMU_PAGE_USER_DATA);
 
-        // kernel query for the same VA (in kernel PGD / TTBR1) should not find it,
-        // because USER_VA_BASE is a low address (TTBR0 space), not in TTBR1 range
-        // We can verify by checking that the kernel's identity-mapped RAM region is unchanged
+        // The kernel's linear map lives behind TTBR1, so a user mapping leaves it alone.
         unsigned long kernel_pa;
         int kernel_mapped = mmu_query(KERNEL_VMA + 0x200000, &kernel_pa, 0);
         TEST_ASSERT("kernel unaffected: still mapped", kernel_mapped == 1);
@@ -501,11 +500,7 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
 
-    /*
-     * process_exit relies on this to stop TTBR0 naming tables it is about to
-     * hand back to the allocator: after leaving, the base must be the empty
-     * table, not the pgd that was active.
-     */
+    // After mmu_leave_user TTBR0 names the empty table, so process_exit can free the old pgd.
     {
         unsigned long *pgd = mmu_create_user_pgd();
         void *page = pmm_alloc_page();
@@ -536,11 +531,7 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
 
-    /*
-     * Range validation for user buffers. This is what stands between a syscall
-     * and a pointer into unmapped or kernel-only memory, and it has to hold
-     * across a whole range rather than the first page of one.
-     */
+    // User buffer validation holds across the whole range, not just its first page.
     {
         unsigned long *pgd = mmu_create_user_pgd();
         const unsigned long base = USER_VA_BASE + 0x400000;
@@ -555,17 +546,7 @@ void test_mmu_user(void)
         }
         TEST_ASSERT("range-check setup allocated", pgd != NULL && allocated);
 
-        /*
-         * Layout, one page each. Every page gets its own VA: remapping over a
-         * live entry releases the physical page it displaced, so reusing one
-         * address for several permission cases would free it repeatedly.
-         *
-         *   +0 +1 +2  read/write
-         *   +3         unmapped hole
-         *   +4         read-only
-         *   +5         read-only + copy-on-write
-         *   +6         kernel-only
-         */
+        // +0..+2 rw, +3 hole, +4 ro, +5 ro CoW, +6 kernel: one VA each, as a remap frees its page.
         for (int i = 0; i < 3; i++) {
             mmu_user_map_page(pgd, base + (unsigned long)i * PAGE_SIZE, V2P(pages[i]),
                               MMU_PAGE_USER_DATA);
@@ -611,12 +592,7 @@ void test_mmu_user(void)
         mmu_destroy_user_pgd(pgd);
     }
 
-    /*
-     * Copy-on-write resolution. Copying is only correct when someone else still
-     * holds the page; when this mapping is the last one the entry can just be
-     * made writable, which is what a parent hits on every write after its child
-     * has exited.
-     */
+    // A copy-on-write page with no other holder is made writable in place, not copied.
     {
         unsigned long *pgd = mmu_create_user_pgd();
         void *sole = pmm_alloc_page();
@@ -681,8 +657,7 @@ void test_mmu_user(void)
         pmm_free_page(shared); // the stand-in holder
     }
 
-    // fork's copy shares every page: a writable one turns copy-on-write on both sides, a
-    // read-only one is shared as it is
+    // fork shares every page: a writable one becomes copy-on-write on both sides, read-only stays
     {
         unsigned long before = pmm_get_free_pages();
         unsigned long *parent = mmu_create_user_pgd();

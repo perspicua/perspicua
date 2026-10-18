@@ -1,10 +1,5 @@
 /*
- * mutex.c - Recursive sleeping mutex built on the generic wait queue (sched/wait.h).
- *
- * A task blocks (sched_schedule()) rather than spins when the lock is contended, so a
- * kmutex may be held across blocking operations such as SD card I/O. The short
- * internal `guard` spinlock is never held across sched_schedule(), keeping lockdep's
- * per-core tracking clean.
+ * mutex.c - Recursive sleeping mutex on a wait queue; its guard spinlock is never held asleep.
  */
 
 #include "core/mutex.h"
@@ -63,11 +58,7 @@ void kmutex_unlock(struct kmutex *m)
 {
     unsigned long flags = spin_lock_irqsave(&m->guard);
 
-    /*
-     * Releasing a mutex held by someone else hands the lock away and leaves the
-     * real owner running unprotected inside its critical section. Nothing else
-     * would notice until the corruption surfaced somewhere unrelated.
-     */
+    // Releasing someone else's mutex would leave its owner running unprotected.
     if (m->depth == 0) {
         spin_unlock_irqrestore(&m->guard, flags);
         PANIC("kmutex: unlock of a mutex that is not held");

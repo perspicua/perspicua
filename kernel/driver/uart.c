@@ -3,35 +3,36 @@
  */
 
 #include "driver/uart.h"
-#include "driver/device.h"
 
-#include "io.h"
-#include "stdio.h"
 #include <stddef.h>
 #include <stdint.h>
 
+#include "stdio.h"
+
+#include "uapi/errno.h"
+
 #include "arch/irq.h"
+
 #include "core/lock.h"
 #include "core/timer.h"
-#include "panic.h"
-#include "mm/addr.h"
 #include "devicetree/fdt.h"
+#include "driver/device.h"
 #include "driver/gic.h"
 #include "driver/gpio.h"
-#include "uapi/errno.h"
+#include "io.h"
+#include "mm/addr.h"
+#include "panic.h"
 
 spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
 
-// Public Register Pointers
-volatile uint32_t *uart_dr = NULL;
+static volatile uint32_t *uart_dr = NULL;
 volatile uint32_t *uart_fr = NULL;
-volatile uint32_t *uart_mis = NULL;
-volatile uint32_t *uart_imsc = NULL;
+static volatile uint32_t *uart_mis = NULL;
+static volatile uint32_t *uart_imsc = NULL;
 
 static unsigned int cached_uart_irq = 0;
 
-// Private Register Pointers
 static volatile uint32_t *uart_ibrd = NULL;
 static volatile uint32_t *uart_fbrd = NULL;
 static volatile uint32_t *uart_lcrh = NULL;
@@ -49,6 +50,8 @@ static int uart_tx_writers;
 
 // Indexed by the DR error bit less 8: framing, parity, break, overrun.
 static unsigned long uart_rx_error_counts[4];
+
+static void uart_handle_irq(void);
 
 static irq_result_t uart_irq_handler(void *ctx)
 {
@@ -68,7 +71,6 @@ static int pl011_uart_probe(struct device *dev)
         PANIC("UART: missing or invalid 'reg' property");
     }
 
-    // Map register offsets
     uart_dr = (uint32_t *)(vbase + 0x00);
     uart_fr = (uint32_t *)(vbase + 0x18);
     uart_ibrd = (uint32_t *)(vbase + 0x24);
@@ -80,7 +82,7 @@ static int pl011_uart_probe(struct device *dev)
     uart_mis = (uint32_t *)(vbase + 0x40);
     uart_icr = (uint32_t *)(vbase + 0x44);
 
-    // Disable UART before programming
+    // The PL011 stays disabled while it is programmed.
     mmio_write(uart_cr, 0);
 
     // Configure GPIO 14 & 15 for UART Alt0
@@ -128,16 +130,14 @@ void uart_send_raw(char c)
     mmio_write(uart_dr, (unsigned int)c);
 }
 
-void uart_write_raw(const char *buf, size_t len)
+static void uart_write_raw(const char *buf, size_t len)
 {
     for (size_t i = 0; i < len; i++) {
         uart_send_raw(buf[i]);
     }
 }
 
-/*
- * A panicking core must not take uart_tx_lock.
- */
+// A panicking core must not take uart_tx_lock.
 static inline int uart_tx_unserialized(void)
 {
     return kernel_panicked;
@@ -205,11 +205,6 @@ char uart_getc(void)
     return (char)(mmio_read(uart_dr) & 0xFF);
 }
 
-int uart_data_ready(void)
-{
-    return !(mmio_read(uart_fr) & UART_FR_RXFE);
-}
-
 void uart_enable_interrupts(void)
 {
     unsigned long flags = spin_lock_irqsave(&uart_tx_lock);
@@ -248,14 +243,9 @@ void uart_get_rx_errors(struct uart_rx_errors *out)
     out->overrun = __atomic_load_n(&uart_rx_error_counts[3], __ATOMIC_RELAXED);
 }
 
-void uart_clear_interrupt(uint32_t mask)
+static void uart_clear_interrupt(uint32_t mask)
 {
     mmio_write(uart_icr, mask);
-}
-
-unsigned int uart_get_irq(void)
-{
-    return cached_uart_irq;
 }
 
 void uart_reg_rx_callback(uart_rx_cb_t f)
@@ -273,13 +263,11 @@ void uart_reg_flush_callback(uart_flush_cb_t f)
     uart_flush_callback = f;
 }
 
-void uart_handle_irq(void)
+static void uart_handle_irq(void)
 {
     uint32_t mis = mmio_read(uart_mis);
 
-    /* Acknowledge before draining: a byte landing between the drain loop
-     * seeing RXFE and this write has already raised its own interrupt, and
-     * clearing afterwards strands it in the FIFO with nothing to read it. */
+    // Acknowledged before draining: a byte after the final RXFE check raises its own interrupt.
     uart_clear_interrupt(mis);
 
     if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {

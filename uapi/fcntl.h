@@ -1,8 +1,5 @@
 /*
- * fcntl.h - File open flags, fcntl commands, and seek origins.
- *
- * Shared by the kernel and userspace: these values cross the syscall boundary,
- * so both sides must agree on them and there is only one place to change them.
+ * fcntl.h - Open flags, fcntl commands and seek origins, shared across the syscall boundary.
  */
 
 #ifndef PERSPICUA_UAPI_FCNTL_H

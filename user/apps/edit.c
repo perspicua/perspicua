@@ -1,10 +1,5 @@
 /*
- * edit.c - A small text editor: move, insert and delete, search, save.
- *
- * The file is held as an array of lines, each its own growable buffer, and
- * long lines scroll sideways rather than wrap. Ctrl-S saves, Ctrl-Q quits,
- * Ctrl-F searches and Ctrl-G goes to a line. A save writes FILE.tmp and
- * renames it over FILE, so a crash leaves either the old file or the new one.
+ * edit.c - A full-screen text editor: Ctrl-S saves through FILE.tmp, Ctrl-Q quits, Ctrl-F finds.
  */
 
 #include <stdarg.h>

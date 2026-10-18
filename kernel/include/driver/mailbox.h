@@ -17,7 +17,7 @@
 
 void mbox_call(unsigned int *buffer);
 
-// Sends one property tag carrying two words; 0 with the firmware's two words back, -1 if unanswered.
+// One property tag carrying two words; 0 with the firmware's two words back, -1 if unanswered.
 int mbox_query(uint32_t tag, uint32_t value[2]);
 
 #endif // PERSPICUA_DRIVER_MAILBOX_H

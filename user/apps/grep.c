@@ -31,10 +31,7 @@ static int reader_getc(Reader *r)
     return (unsigned char)r->buf[r->pos++];
 }
 
-/*
- * Reads one line, without its newline, into *line, growing it to fit. Returns 1
- * for a line, 0 at end of input, and -1 when the line cannot be held.
- */
+// One line without its newline into *line, grown to fit: 1, 0 at end of input, -1 if too long.
 static int read_line(Reader *r, char **line, size_t *cap)
 {
     size_t n = 0;

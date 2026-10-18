@@ -1,12 +1,5 @@
 /*
- * errno.h - Error numbers, shared by the kernel and userspace.
- *
- * The values are Linux/AArch64's, so a program built elsewhere against those
- * headers sees the numbers it expects. The kernel returns them negated
- * (-ENOENT); libc negates them back into errno, which is why there is no
- * translation table between the two sides.
- *
- * Userspace includes <errno.h>, which adds errno itself on top of this.
+ * errno.h - Linux AArch64 error numbers, which the kernel returns negated and libc negates back.
  */
 
 #ifndef PERSPICUA_UAPI_ERRNO_H

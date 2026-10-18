@@ -1,30 +1,20 @@
 /*
- * kdb.c - UART-based Kernel Debugger (KDB).
- *
- * All I/O goes directly to the PL011 UART so the debugger works even when the
- * TTY subsystem is broken.
- *
- * Entry points:
- *   kdb_enter(reason)       -- from arbitrary kernel code
- *   kdb_enter_tf(reason,tf) -- from exception / panic handler
- *
- * Both mask interrupts, and the UART's receive interrupt, until the user types
- * 'continue', then restore them.
+ * kdb.c - Kernel debugger. All I/O goes straight to the PL011, so it works with the tty broken.
  */
 
 #include "debug/kdb.h"
 
-#include <stddef.h>
-
 #include <stdarg.h>
+#include <stddef.h>
 
 #include "stdio.h"
 #include "string.h"
 
 #include "arch/exception.h"
 #include "arch/irq.h"
-#include "core/timer.h"
+
 #include "core/lock.h"
+#include "core/timer.h"
 #include "driver/uart.h"
 #include "mm/pmm.h"
 #include "panic.h"
@@ -68,8 +58,6 @@ asm(".pushsection .text\n"
     ".popsection\n"
     ".popsection\n");
 
-// Low-level I/O – bypass the TTY layer so KDB works in broken states
-
 static void kdb_putc(char c)
 {
     if (c == '\n') {
@@ -85,15 +73,7 @@ static void kdb_puts(const char *s)
     }
 }
 
-/*
- * kdb_printf - Formatted output for the debugger.
- *
- * Not printk: these lines are a register dump or a backtrace, not log records,
- * and a timestamp on every one of them only gets in the way. Not printf
- * either, which takes printf_lock -- kdb runs with the other cores halted, and
- * one of them holding that lock would wedge the debugger just when it is
- * needed. vprintf does the formatting without either.
- */
+// Not printk (no timestamps on a dump) nor printf (a halted core may hold printf_lock).
 __attribute__((format(printf, 1, 2))) static void kdb_printf(const char *fmt, ...)
 {
     va_list args;
@@ -102,12 +82,7 @@ __attribute__((format(printf, 1, 2))) static void kdb_printf(const char *fmt, ..
     va_end(args);
 }
 
-/*
- * kdb_readline - Read a line from UART with minimal line editing.
- *
- * Handles Enter (submit), Backspace / DEL (erase last character).
- * Returns the number of characters stored (excluding the NUL terminator).
- */
+// Enter submits, Backspace or DEL erases; returns the characters stored, NUL excluded.
 static int kdb_readline(char *buf, int maxlen)
 {
     int pos = 0;
@@ -121,14 +96,12 @@ static int kdb_readline(char *buf, int maxlen)
             return pos;
         }
 
-        // Backspace (^H) or DEL
         if ((c == '\b' || c == 0x7f) && pos > 0) {
             pos--;
             kdb_puts("\b \b");
             continue;
         }
 
-        // Ignore control characters and overflow
         if (c < 0x20 || pos >= maxlen - 1) {
             continue;
         }
@@ -138,10 +111,7 @@ static int kdb_readline(char *buf, int maxlen)
     }
 }
 
-/*
- * kdb_tokenize - Split a mutable string into argv-style tokens.
- * Returns the number of tokens found.
- */
+// Splits buf in place into at most maxargs words; returns how many.
 static int kdb_tokenize(char *buf, char **argv, int maxargs)
 {
     int argc = 0;
@@ -339,7 +309,6 @@ static void cmd_tasks(void)
         kdb_puts("  (no user processes)\n");
     }
 
-    // Current kernel task
     struct task *cur = sched_current_task();
     kdb_puts("\n  --- Current Kernel Task ---\n");
     if (cur) {
@@ -349,7 +318,6 @@ static void cmd_tasks(void)
         kdb_puts("  (none)\n");
     }
 
-    // Per-core scheduler statistics
     kdb_puts("\n  --- Scheduler Statistics ---\n");
     for (int c = 0; c < CPU_MAX_CORES; c++) {
         kdb_printf("  core%d: ctx_switches=%llu  idle_ticks=%llu\n", c,
@@ -370,13 +338,7 @@ static void cmd_mem(void)
     kdb_printf("  Free   : %6lu pages  (%4lu MiB)\n", free_pages, (free_pages * 4UL) >> 10);
 }
 
-/*
- * cmd_bt - Walk the AArch64 frame pointer chain.
- *
- * If entered from an exception frame, starts at x29 in the frame.
- * Otherwise uses the live x29 (which points into KDB's own call chain,
- * letting you see what called kdb_enter).
- */
+// From the exception frame's x29 when there is one, else from kdb's own caller.
 static void cmd_bt(void)
 {
     unsigned long fp;
@@ -462,8 +424,6 @@ static void cmd_wr(int argc, char **argv)
     asm volatile("dsb sy" ::: "memory");
     kdb_printf("  [0x%016lx] <- 0x%016lx\n", addr, val);
 }
-
-// Main REPL
 
 static void kdb_repl(void)
 {

@@ -1,3 +1,7 @@
+/*
+ * font8x8.h - The 8x8 bitmap font for ASCII 0-127, one byte per row, LSB leftmost.
+ */
+
 #ifndef PERSPICUA_DRIVER_FONT8X8_H
 #define PERSPICUA_DRIVER_FONT8X8_H
 

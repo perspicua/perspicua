@@ -1,31 +1,34 @@
 /*
- * process.c - Process management and lifecycle operations.
- *
- * Lock Ordering: 1. process_table_lock (global) -> 2. process.fd_lock (per-process)
+ * process.c - Process management and lifecycle. Lock order: process_table_lock, then fd_lock.
  */
+
 #include "sched/process.h"
 
-#include "mm/asid.h"
-#include "uapi/wait.h"
-#include "uapi/errno.h"
-#include "arch/exception.h"
-#include "mm/addr.h"
-#include "core/elf.h"
-#include "mm/mmu.h"
-#include "mm/heap.h"
-#include "panic.h"
-#include "mm/pmm.h"
-#include "sched/sched.h"
-#include "mm/slab.h"
-#include "stdio.h"
-#include "string.h"
-#include "arch/irq.h"
 #include <stddef.h>
 #include <stdint.h>
+
+#include "stdio.h"
+#include "string.h"
+
+#include "uapi/errno.h"
+#include "uapi/wait.h"
+
+#include "arch/exception.h"
+#include "arch/irq.h"
+#include "arch/uaccess.h"
+
+#include "core/elf.h"
 #include "core/timer.h"
 #include "core/tty.h"
 #include "fs/vfs.h"
-#include "arch/uaccess.h"
+#include "mm/addr.h"
+#include "mm/asid.h"
+#include "mm/heap.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
+#include "mm/slab.h"
+#include "panic.h"
+#include "sched/sched.h"
 
 spinlock_t process_table_lock = SPINLOCK_INIT;
 struct process *process_table[PROCESS_TABLE_SIZE];
@@ -69,11 +72,7 @@ static void process_init_signals(struct process *p)
     }
 }
 
-/*
- * process_clone_fds - Gives a child its own reference to each of the parent's
- * open files. Runs under the parent's fd_lock so a concurrent close cannot free
- * a file between the read and the reference being taken.
- */
+// Under the parent's fd_lock, so a concurrent close cannot free a file before it is referenced.
 static void process_clone_fds(struct process *child, struct process *parent)
 {
     unsigned long fdflags = spin_lock_irqsave(&parent->fd_lock);
@@ -107,22 +106,13 @@ static void close_all_fds(struct process *p)
     }
 }
 
-/*
- * kstack_trap_frame - Where a task's trap frame sits on its kernel stack.
- *
- * ret_to_user pops the frame from the top of the stack, so both the freshly
- * built frame and the one fork copies from its parent have to land on the same
- * address.
- */
+// ret_to_user pops the frame at the stack top: a built frame and a forked copy land at one address.
 static struct exception_trap_frame *kstack_trap_frame(uintptr_t kstack_base)
 {
     uintptr_t top = kstack_top((const void *)kstack_base);
     return (struct exception_trap_frame *)((top - sizeof(struct exception_trap_frame)) & ~15UL);
 }
 
-/*
- * build_trap_frame - Sets initial register state for a return to user-space.
- */
 static struct exception_trap_frame *build_trap_frame(uintptr_t kstack_base, uint64_t entry_pc,
                                                      uintptr_t user_sp_top)
 {
@@ -158,13 +148,7 @@ static uintptr_t setup_user_stack(struct va_allocator *va, unsigned long *pgd, s
     return vbase;
 }
 
-/*
- * stack_copy_in - Copies kernel data into a not-yet-active user address space.
- *
- * The freshly-allocated destination pages are not physically contiguous, so a
- * single memcpy that crosses a page boundary would run off one frame into an
- * unrelated one. Resolve and copy one page at a time via the target pgd.
- */
+// Page by page through the target pgd: the new stack's pages are not physically contiguous.
 static void stack_copy_in(unsigned long *pgd, uintptr_t user_dst, const void *src, size_t len)
 {
     const uint8_t *s = (const uint8_t *)src;
@@ -216,11 +200,7 @@ uintptr_t process_va_alloc(struct va_allocator *va, size_t pages)
         return 0;
     }
 
-    /*
-     * Take the lowest gap the request fits in. A bump pointer would be simpler,
-     * but the space a released region occupied would then be gone for the life
-     * of the process -- even the range a failed mmap briefly reserved.
-     */
+    // The lowest gap that fits, so a released region's range is reused, a failed mmap's included.
     uintptr_t candidate = USER_VA_BASE;
     size_t slot = va->count;
 
@@ -293,9 +273,7 @@ unsigned long process_get_ttbr0(uint32_t pid)
     return ttbr0;
 }
 
-/*
- * process_alloc_pcb - Allocates an initialised, unpublished PCB.
- */
+// Initialised but unpublished: no other core can reach it until it is stored in the table.
 static struct process *process_alloc_pcb(uint32_t pid)
 {
     struct process *p = heap_malloc(sizeof(struct process));
@@ -448,13 +426,7 @@ static void free_vector(char **vec, int count)
     }
 }
 
-/*
- * copy_user_vector - Copies a NULL-terminated user argv/envp into kernel memory.
- *
- * Stops at the first NULL entry. *out_count excludes the terminator, and out[]
- * is left NULL-terminated so it can be walked directly. A vector or an entry
- * past the limits is -E2BIG.
- */
+// Up to the first NULL, which out[] keeps and *out_count excludes; past the limits is -E2BIG.
 static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
 {
     int count = 0;
@@ -509,11 +481,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return -ESRCH;
     }
 
-    /*
-     * Copy the vectors in before switching address space. A NULL entry ends the
-     * vector, but an oversized or unreadable string is a hard failure: silently
-     * truncating would hand the new image a different argv than it asked for.
-     */
+    // Copied before the old image goes; a bad or overlong string fails exec, never truncates.
     char *kargv[EXEC_MAX_VECTOR];
     char *kenvp[EXEC_MAX_VECTOR];
     int argc = 0;
@@ -532,8 +500,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return copy_err;
     }
 
-    // Both vectors go on the new stack after the old image is gone, so they
-    // are sized now; they may take half of it, and the program keeps the rest.
+    // Sized now, while exec can still fail: the vectors may take half the new stack.
     size_t need = (size_t)(argc + envc + 2) * sizeof(uintptr_t) + 32;
     for (int i = 0; i < argc; i++) {
         need += strlen(kargv[i]) + 1 + 7;
@@ -573,10 +540,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         return -ENOMEM;
     }
 
-    /*
-     * Past the last failure point, so the caller of a failed exec keeps the
-     * descriptors it opened. POSIX requires a failed exec to change nothing.
-     */
+    // Past the last failure point: a failed exec changes nothing. Only FD_CLOEXEC fds close.
     int fds_to_close[VFS_MAX_FDS];
     int close_count = 0;
 
@@ -592,7 +556,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
         vfs_close(fds_to_close[i]);
     }
 
-    // Set up user stack with argc/argv (top-down)
     uintptr_t user_sp = new_stack_base + PROCESS_USER_STACK_PAGES * PAGE_SIZE;
     uintptr_t karg_user_vaddrs[EXEC_MAX_VECTOR];
 
@@ -619,7 +582,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     free_vector(kargv, argc);
 
-    // Set up user stack with envp (top-down)
     uintptr_t kenv_user_vaddrs[EXEC_MAX_VECTOR];
 
     for (int i = 0; i < envc; i++) {
@@ -644,13 +606,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     }
 
     free_vector(kenvp, envc);
-    /*
-     * Do NOT reset the fd table here: POSIX requires open descriptors to survive
-     * exec (only those marked FD_CLOEXEC are closed, handled above), which is
-     * what carries a shell's redirections and pipes into the new image.
-     * Inherited std fds come from the parent via fork, or from open_std_fds at
-     * initial creation.
-     */
 
     for (int i = 0; i < NSIG; i++) {
         if (p->signal_handlers[i].sa_handler != SIG_IGN) {
@@ -658,8 +613,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
             p->signal_handlers[i].sa_handler = SIG_DFL;
         }
     }
-    // pending_signals deliberately survives: POSIX keeps the pending set across
-    // exec, and clearing it here loses a SIGKILL sent while exec was running.
+    // POSIX keeps the pending set across exec, so a SIGKILL sent during exec still lands.
 
     // The new image does not own the old one's alt stack address.
     memset(&p->sigaltstack, 0, sizeof(p->sigaltstack));
@@ -670,8 +624,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     p->vaddr_user_stack = new_stack_base;
     p->va = new_va;
 
-    // p->asid alone may be from a retired generation, which after a rollover
-    // puts two live address spaces on one ASID.
+    // p->asid alone may be from a retired generation, sharing an ASID with another live space.
     asid_get_active(&p->asid, &p->asid_generation);
     p->ttbr0 = V2P(new_pgd) | asid_ttbr_field(p->asid);
 
@@ -697,9 +650,6 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
 
     struct task *curr = sched_current_task();
     if (curr) {
-        curr->context.sp = (unsigned long)tf;
-        curr->context.lr = (unsigned long)ret_to_user;
-        curr->ttbr0 = p->ttbr0;
         curr->skip_signals = 1;
     }
 
@@ -708,12 +658,7 @@ int process_exec(const char *path, char *const argv[], char *const envp[])
     return 0;
 }
 
-/*
- * pgid_orphaned_stopped_locked - Whether a group has a stopped member and no member
- * whose parent sits in another group of the same session, so nothing can resume it.
- *
- * Precondition: process_table_lock MUST be held by the caller.
- */
+// A stopped member and none whose parent can resume it; caller holds process_table_lock.
 static int pgid_orphaned_stopped_locked(uint32_t pgid)
 {
     int stopped = 0;
@@ -761,7 +706,6 @@ void process_exit(uint32_t pid, int exit_status)
 
     pr_debug("proc: PID %u exiting with status %d\n", pid, exit_status);
 
-    // Reparent orphaned processes to init (PID 1)
     unsigned long flags = spin_lock_irqsave(&process_table_lock);
     int orphaned_zombie = 0;
     uint32_t groups[ORPHAN_GROUPS_MAX];
@@ -816,13 +760,7 @@ void process_exit(uint32_t pid, int exit_status)
     unsigned long *pgd = p->user_pgd;
     p->user_pgd = NULL;
     if (pgd) {
-        /*
-         * Order matters here. Leave the address space first: TTBR0 still names
-         * this pgd, and mmu_destroy_user_pgd hands every one of its pages back
-         * to the allocator, where another core can immediately reuse them.
-         * Release the ASID next -- it also broadcasts the TLB invalidate -- so
-         * it cannot be recycled to a new process while a stale base is loaded.
-         */
+        // Off TTBR0 before the pages are freed, then the ASID, whose release broadcasts the TLBI.
         mmu_leave_user();
         asid_free(&p->asid, &p->asid_generation);
         mmu_destroy_user_pgd(pgd);
@@ -836,9 +774,7 @@ void process_exit(uint32_t pid, int exit_status)
     p->state = PROCESS_STATE_ZOMBIE;
     p->cpu_ticks = sched_task_cpu_ticks(sched_current_task());
 
-    /* cleanup_dead_task frees this task shortly, but the slot lives on until a
-     * parent reaps it. Drop the pointer with the same store that publishes the
-     * zombie state, so nothing can find it in between. */
+    // Cleared as the zombie is published: the task goes soon, the slot only when reaped.
     p->main_task = NULL;
 
     // The slot can be reaped and its pid reused while this task still runs.
@@ -851,9 +787,7 @@ void process_exit(uint32_t pid, int exit_status)
     int notify_parent = (ppid != 0 && parent && parent->state == PROCESS_STATE_RUNNING);
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    /* Notify the parent outside the lock (signal_send now takes it itself), and
-     * wake a parent blocked in waitpid() even if it ignores SIGCHLD. Re-validate
-     * under the lock before touching main_task in case the slot was reused. */
+    // Outside the lock, waking a waitpid parent even if it ignores SIGCHLD; the slot may be reused.
     if (notify_parent) {
         signal_send(ppid, SIGCHLD);
 
@@ -865,8 +799,7 @@ void process_exit(uint32_t pid, int exit_status)
         spin_unlock_irqrestore(&process_table_lock, flags);
     }
 
-    // Init was never told about these deaths, and they are past announcing
-    // themselves, so it would sleep in waitpid holding their slots.
+    // Init was never told of these deaths, so it would wait in waitpid holding their slots.
     if (orphaned_zombie && pid != 1) {
         signal_send(1, SIGCHLD);
 
@@ -895,11 +828,7 @@ static int id_in_use_locked(uint32_t id)
 
 static int process_claim_slot(void)
 {
-    /*
-     * Build the PCB before publishing it. A half-initialised slot can no longer
-     * be observed at all, rather than being merely brief: until the pointer is
-     * stored, no other core can reach it.
-     */
+    // Built whole before the pointer is stored, so no core can see a half-initialised slot.
     struct process *p = process_alloc_pcb(0);
     if (!p) {
         return -ENOMEM;
@@ -1066,8 +995,7 @@ int process_waitpid(int pid, int *status, int options)
                 return found_pid;
             }
 
-            /* Reported once per stop, so a caller that waits again blocks
-             * instead of spinning on a child that is still stopped. */
+            // Once per stop, so waiting again blocks instead of spinning on a still-stopped child.
             if ((options & WUNTRACED) && !candidate->stop_reported && candidate->main_task
                 && candidate->main_task->state == SCHED_TASK_STOPPED) {
                 int found_pid = (int)candidate->pid;
@@ -1093,8 +1021,7 @@ int process_waitpid(int pid, int *status, int options)
             return 0;
         }
 
-        // Under the table lock the sender also holds, so nothing slips in
-        // between this and the transition below.
+        // Under the table lock the sender holds too, so no signal slips in before the transition.
         if (signal_pending(process_slot((uint32_t)parent_pid))) {
             spin_unlock(&process_table_lock);
             irq_restore(irqf);

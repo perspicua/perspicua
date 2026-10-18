@@ -11,16 +11,6 @@
 #include "driver/fb.h"
 #include "driver/font8x8.h"
 
-void graphics_put_pixel(unsigned int x, unsigned int y, uint32_t color)
-{
-    if (x >= fb_info.width || y >= fb_info.height) {
-        return;
-    }
-
-    uint32_t *fb = (uint32_t *)fb_info.ptr;
-    fb[y * (fb_info.pitch >> 2) + x] = color;
-}
-
 void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned int h,
                         uint32_t color, int fill)
 {
@@ -28,7 +18,6 @@ void graphics_draw_rect(unsigned int x, unsigned int y, unsigned int w, unsigned
         return;
     }
 
-    // Clip dimensions to prevent screen overflow
     if (w > fb_info.width - x) {
         w = fb_info.width - x;
     }
@@ -111,7 +100,6 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
             dest[6] = (row_data & 0x40) ? fg : bg;
             dest[7] = (row_data & 0x80) ? fg : bg;
         } else {
-            // Optimized transparency path
             for (int col = 0; col < 8; col++) {
                 if ((row_data >> col) & 1) {
                     dest[col] = fg;
@@ -119,15 +107,6 @@ void graphics_draw_char(unsigned int x, unsigned int y, char c, uint32_t fg, uin
             }
         }
         dest += stride;
-    }
-}
-
-void graphics_draw_string(unsigned int x, unsigned int y, const char *s, uint32_t fg, uint32_t bg)
-{
-    while (*s) {
-        graphics_draw_char(x, y, *s, fg, bg);
-        x += 8;
-        s++;
     }
 }
 

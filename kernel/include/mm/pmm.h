@@ -18,13 +18,7 @@ struct pmm_range {
     unsigned long end;
 };
 
-/*
- * pmm_parse_ram_ranges - Reads a devicetree /memory reg property into ranges.
- *
- * Keeps what lies below limit, page-aligned and sorted by start; the bytes cut
- * off at limit are added to *ignored. Returns the number of ranges, or a
- * negative errno for a property that does not describe disjoint RAM.
- */
+// Ranges below limit, page-aligned and sorted, or -errno if they overlap; the cut adds to *ignored.
 int pmm_parse_ram_ranges(const uint32_t *cells, unsigned long bytes, uint32_t addr_cells,
                          uint32_t size_cells, unsigned long limit, struct pmm_range *out, int max,
                          unsigned long *ignored);
@@ -36,23 +30,13 @@ int pmm_get_ram_ranges(const struct pmm_range **ranges);
 
 void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 
-/*
- * pmm_alloc_page - Allocates and zeroes a single 4 KB page.
- */
+// A zeroed 4 KB page.
 void *pmm_alloc_page(void);
 
-/*
- * pmm_alloc_pages - Allocates a power-of-two block of pages, zeroing them.
- */
+// A zeroed power-of-two block of pages.
 void *pmm_alloc_pages(unsigned long count);
 
-/*
- * pmm_alloc_pages_nozero - Allocates a power-of-two block of pages, as they
- * came back from their last owner.
- *
- * The caller must overwrite every byte before the memory becomes reachable
- * from userspace; whatever it leaves untouched is the previous owner's data.
- */
+// Not zeroed: the caller overwrites every byte before userspace can reach any of it.
 void *pmm_alloc_pages_nozero(unsigned long count);
 
 void pmm_free_page(void *ptr);
@@ -60,8 +44,6 @@ void pmm_free_page(void *ptr);
 void pmm_free_pages(void *ptr);
 
 void pmm_hold_page(void *ptr);
-
-void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char *tag);
 
 int pmm_is_managed(void *ptr);
 
@@ -76,12 +58,7 @@ unsigned long pmm_get_free_pages(void);
 unsigned long pmm_get_total_pages(void);
 
 #ifdef CONFIG_TESTS
-/*
- * Arms a one-shot refusal: the calling task's nth page allocation from now
- * returns NULL as though the machine were out of memory. n == 0 disarms.
- * Orders the allocator would have refused anyway are not counted. Returns what
- * was left of the previous arming, so 0 means it fired.
- */
+// Fails the caller's nth page allocation from now (0 disarms); returns what was left, 0 if fired.
 unsigned long pmm_test_fail_nth(unsigned long n);
 
 // The order of the free block that starts at ptr, or -1 if none does.

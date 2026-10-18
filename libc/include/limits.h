@@ -1,8 +1,5 @@
 /*
- * limits.h - Integer limits, from the compiler's predefined macros.
- *
- * The build passes -nostdinc, so this is the only limits.h: no host C
- * library's copy is ever reached in its place.
+ * limits.h - Integer limits from the compiler's macros; under -nostdinc no host copy is reached.
  */
 
 #ifndef PERSPICUA_LIBC_LIMITS_H

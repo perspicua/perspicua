@@ -11,9 +11,7 @@
     #define CPU_MAX_CORES 4
 #endif
 
-/*
- * cpu_id - Index of the calling core, always within 0..CPU_MAX_CORES-1.
- */
+// The calling core's index, always below CPU_MAX_CORES.
 static inline int cpu_id(void)
 {
     unsigned long mpidr;

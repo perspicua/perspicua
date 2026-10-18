@@ -1,13 +1,26 @@
+/*
+ * device.c - Driver registry and devicetree probing, with MMIO and IRQ lookups per device.
+ */
+
 #include "driver/device.h"
-#include "stdio.h"
-#include "string.h"
-#include "mm/heap.h"
-#include "mm/addr.h"
-#include "panic.h"
-#include "uapi/errno.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "stdio.h"
+#include "string.h"
+
+#include "uapi/errno.h"
+
+#include "mm/addr.h"
+#include "mm/heap.h"
+#include "panic.h"
+
+// Bus addresses the DTB uses: the ARM-local block at 0x40000000, and the VideoCore's 0x7E window.
+#define ARM_LOCAL_BUS_BASE  0x40000000UL
+#define ARM_LOCAL_BUS_END   0x41000000UL
+#define ARM_LOCAL_PHYS_BASE 0xFF800000UL
+#define VC_PERIPH_PHYS_BASE 0xFE000000UL
 
 extern struct device_driver __drivers_core_start[];
 extern struct device_driver __drivers_core_end[];
@@ -25,20 +38,14 @@ static void probe_driver_list(struct device_driver *start, struct device_driver 
             continue;
         }
 
-        /*
-         * Search the FDT for a node matching this driver's compatible string.
-         * For simplicity in this initial implementation, we only probe the first matching node.
-         * A complete implementation would iterate through all matching nodes.
-         */
+        // Only the first matching node is probed, with a device that lives for the probe call only.
         const uint32_t *node = fdt_find_node_by_compatible(drv->compatible);
         if (node) {
-            // Create a dummy device instance for now
             struct device dev;
             dev.name = drv->name;
             dev.fdt_node = node;
             dev.priv = NULL;
 
-            // Probe the driver
             int ret = drv->probe(&dev);
             if (ret != 0) {
                 // ENOENT: not my hardware. EEXIST: another driver already took it.
@@ -70,10 +77,7 @@ void driver_probe_devices(void)
     probe_driver_list(__drivers_device_start, __drivers_device_end);
 }
 
-/*
- * devm_get_io_base - Retrieves and maps the MMIO base address for a device.
- * index specifies which 'reg' entry to retrieve (usually 0).
- */
+// The mapped MMIO base of the index-th reg entry, or 0.
 uintptr_t devm_get_io_base(struct device *dev, int index)
 {
     if (!dev || !dev->fdt_node) {
@@ -87,15 +91,14 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
 
     const uint32_t *reg_data = (const uint32_t *)reg_prop.value;
 
-    // Find parent node to get #address-cells and #size-cells
-    uint32_t address_cells = 1; // Default if not found
-    uint32_t size_cells = 1;    // Default if not found
+    // The parent's #address-cells and #size-cells size each reg entry; 1 each when absent.
+    uint32_t address_cells = 1;
+    uint32_t size_cells = 1;
 
     const uint32_t *parent = fdt_get_parent_node(dev->fdt_node);
     if (parent) {
         struct fdt_property ac_prop;
         if (fdt_get_property(parent, "#address-cells", &ac_prop) == 0) {
-            // For the memory mapped registers, #address-cells is usually 1 or 2
             address_cells = fdt32_to_cpu(*(const uint32_t *)ac_prop.value);
         }
 
@@ -105,11 +108,9 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
         }
     }
 
-    // Each 'reg' entry takes (address_cells + size_cells) * 4 bytes
     uint32_t entry_cells = address_cells + size_cells;
     uint32_t offset = index * entry_cells;
 
-    // Ensure we don't read past the property size
     if ((offset + address_cells) * 4 > reg_prop.size) {
         return 0;
     }
@@ -124,20 +125,16 @@ uintptr_t devm_get_io_base(struct device *dev, int index)
         return 0; // Unsupported #address-cells size
     }
 
-    // Handle legacy BCM address translation if needed
-    if (phys_base >= 0x40000000 && phys_base < 0x41000000) {
-        phys_base = (phys_base & 0x00FFFFFF) | 0xFF800000;
-    } else if (phys_base < 0xFC000000) {
-        phys_base = (phys_base & 0x01FFFFFF) | 0xFE000000;
+    if (phys_base >= ARM_LOCAL_BUS_BASE && phys_base < ARM_LOCAL_BUS_END) {
+        phys_base = (phys_base & 0x00FFFFFF) | ARM_LOCAL_PHYS_BASE;
+    } else if (phys_base < BCM2711_PERIPH_BASE) {
+        phys_base = (phys_base & 0x01FFFFFF) | VC_PERIPH_PHYS_BASE;
     }
 
     return P2V((uintptr_t)phys_base);
 }
 
-/*
- * devm_get_irq - Retrieves the IRQ number for a device.
- * index specifies which 'interrupts' entry to retrieve (usually 0).
- */
+// The index-th interrupt's GIC ID, or 0.
 unsigned int devm_get_irq(struct device *dev, int index)
 {
     if (!dev || !dev->fdt_node) {

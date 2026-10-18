@@ -1,15 +1,11 @@
 /*
- * test_faultinject.c - The out-of-memory paths, reached on purpose.
- *
- * A branch that handles a refused allocation never runs on a healthy machine,
- * so a leak or a half-built object on one goes unseen. Arming a one-shot
- * refusal walks them.
+ * test_faultinject.c - One-shot allocation refusals walk the out-of-memory paths boot never takes.
  */
+
+#include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 
@@ -133,8 +129,7 @@ void test_faultinject(void)
         TEST_ASSERT_EQ("the pool is whole again", pmm_get_free_pages(), before);
     }
 
-    // an address space is many pages, and refusing one partway through has to
-    // unwind the rest: the free count is the assertion
+    // refusing one page of an address space partway through unwinds the rest
     {
         unsigned long before = pmm_get_free_pages();
 
@@ -154,8 +149,7 @@ void test_faultinject(void)
                        before);
     }
 
-    // each allocation open makes, refused in turn, surfaces as -ENOMEM and
-    // leaves no descriptor behind
+    // each allocation open makes, refused in turn, is -ENOMEM and leaves no descriptor behind
     {
         unsigned long *pgd = test_borrow_user_pgd();
         char *path = pgd ? test_map_user_page(pgd, OOM_USER_VA, MMU_PAGE_USER_DATA) : NULL;
@@ -209,8 +203,7 @@ void test_faultinject(void)
         }
     }
 
-    // loading an image out of memory fails the load, never the kernel: each
-    // page allocation it makes, the page cache's included, is refused in turn
+    // each page an image load takes, the page cache's included, refused in turn fails only the load
     {
         int ok = 1;
         int loaded = 0;
@@ -486,8 +479,7 @@ void test_faultinject(void)
                                 (uint64_t)-1,
                                 0};
 
-            // Mapped and taken down once first, so the page tables exist and a refusal's
-            // count is data pages alone.
+            // Mapped and unmapped once first, so the tables exist and refusals count data pages.
             int64_t region = test_syscall(SYS_MMAP, args);
             if (region > 0) {
                 unmap_region(pgd, (uint64_t)region, OOM_MMAP_PAGES);

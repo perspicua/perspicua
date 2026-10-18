@@ -1,3 +1,7 @@
+/*
+ * env.c - Prints the environment, one NAME=value per line.
+ */
+
 #include "stdio.h"
 #include "stdlib.h"
 

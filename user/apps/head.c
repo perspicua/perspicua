@@ -1,5 +1,5 @@
 /*
- * head - print the first lines of each file.
+ * head.c - Prints the first lines of each file.
  */
 
 #include <errno.h>

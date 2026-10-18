@@ -1,7 +1,5 @@
 /*
- * snake.c - Steer a growing snake to the food without hitting anything.
- *
- * `snake --selftest` checks the game rules without touching the terminal.
+ * snake.c - Steer a growing snake to the food without hitting anything; --selftest checks rules.
  */
 
 #include <stddef.h>

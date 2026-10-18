@@ -9,13 +9,14 @@
 
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
-#include "mm/addr.h"
+#include "uapi/errno.h"
+
 #include "core/lock.h"
 #include "devicetree/fdt.h"
+#include "mm/addr.h"
 #include "mm/failinject.h"
-#include "uapi/errno.h"
+#include "panic.h"
 
 #define PMM_MAX_RESERVED_RANGES 64
 
@@ -26,11 +27,6 @@
 
 #define PMM_PAGE_SLAB 0x01U
 
-/*
- * struct pmm_page - Metadata for a single physical 4 KB page.
- *
- * Each page in RAM is represented by one of these in a global array.
- */
 struct pmm_page {
     uint32_t next;
     uint32_t prev;
@@ -208,7 +204,6 @@ void pmm_reserve_range(unsigned long phys_start, unsigned long size, const char 
     unsigned long start = phys_start;
     unsigned long end = phys_start + size;
 
-    // Coalesce with existing ranges
     int merged;
     do {
         merged = 0;
@@ -375,7 +370,6 @@ void pmm_init(void)
 
     pr_info("pmm: metadata: %lu KB at %p\n", array_bytes / 1024, pmm_page_array);
 
-    // Self-reserve: mark kernel and metadata as occupied
     unsigned long usable_start_phys = V2P(usable_start_va);
     if (usable_start_phys >= pmm_ram[0].end) {
         PANIC("pmm: kernel and metadata overrun the first RAM range");
@@ -395,15 +389,12 @@ void pmm_init(void)
 
     memset(pmm_page_array, 0, array_bytes);
 
-    /* Zeroed links would read as pfn 0, a real page, so a stray unlink would
-     * silently corrupt the head of a list instead of tripping the check in
-     * pmm_list_del. */
+    // Not zero: a zero link names pfn 0, a real page, and hides a stray unlink from pmm_list_del.
     for (unsigned long i = 0; i < pmm_num_pages; i++) {
         pmm_page_array[i].next = PMM_PFN_NULL;
         pmm_page_array[i].prev = PMM_PFN_NULL;
     }
 
-    // Distribute non-reserved physical pages into the buddy lists
     unsigned long pfn = 0;
     while (pfn < pmm_num_pages) {
         if (pfn_is_reserved(pfn)) {
@@ -491,7 +482,6 @@ void *pmm_alloc_pages_nozero(unsigned long count)
     p->is_free = 0;
     pmm_free_pages_count -= (1UL << current_order);
 
-    // Split larger blocks into buddies down to the target order
     while (current_order > target_order) {
         current_order--;
         unsigned long buddy_pfn = pfn + (1UL << current_order);
@@ -507,8 +497,7 @@ void *pmm_alloc_pages_nozero(unsigned long count)
     p->order = (uint8_t)target_order;
     p->refcount = 1;
 
-    // Every page, not just the head: slab_owns answers from whichever page
-    // holds the pointer, and heap_free asks about pointers inside the block.
+    // Every page, not just the head: slab_owns and heap_free ask about pointers inside the block.
     for (unsigned long i = 0; i < (1UL << target_order); i++) {
         pfn_to_page(pfn + i)->flags = 0;
     }
@@ -626,13 +615,7 @@ int pmm_is_managed(void *ptr)
     return pfn < pmm_num_pages && !pfn_is_reserved(pfn);
 }
 
-/*
- * pmm_is_slab - True if ptr falls in a page the slab allocator owns.
- *
- * Answers from the page's metadata, never from its contents: the bytes of a
- * page belong to whoever allocated it and may hold any value, including one
- * that looks like a header.
- */
+// From the page's metadata, never its contents, which belong to whoever allocated it.
 int pmm_is_slab(void *ptr)
 {
     if (!pmm_is_managed(ptr)) {

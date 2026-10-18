@@ -10,8 +10,8 @@
 #include "string.h"
 
 #include "core/lock.h"
-#include "driver/graphics.h"
 #include "driver/fb.h"
+#include "driver/graphics.h"
 
 #define CONSOLE_Y_OFFSET 20
 #define CHAR_WIDTH       8
@@ -195,15 +195,6 @@ void fb_console_putc(char c)
 {
     spin_lock(&fb_console_lock);
     fb_console_putc_unlocked(c);
-    spin_unlock(&fb_console_lock);
-}
-
-void fb_console_puts(const char *s)
-{
-    spin_lock(&fb_console_lock);
-    while (*s) {
-        fb_console_putc_unlocked(*s++);
-    }
     spin_unlock(&fb_console_lock);
 }
 

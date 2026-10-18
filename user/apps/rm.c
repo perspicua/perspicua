@@ -21,7 +21,7 @@ static int remove_dir(const char *path)
     DIR *dirp = opendir(path);
     if (!dirp) {
         if (!g_force) {
-            printf("rm: cannot open directory '%s'\n", path);
+            fprintf(stderr, "rm: cannot open directory '%s'\n", path);
         }
         return 1;
     }
@@ -48,7 +48,7 @@ static int remove_dir(const char *path)
 
     if (rmdir(path) < 0) {
         if (!g_force) {
-            printf("rm: cannot remove directory '%s'\n", path);
+            fprintf(stderr, "rm: cannot remove directory '%s'\n", path);
         }
         rc = 1;
     }
@@ -79,14 +79,14 @@ static int remove_path(const char *path)
     struct stat st;
     if (stat(path, &st) < 0) {
         if (!g_force) {
-            printf("rm: cannot remove '%s': no such file\n", path);
+            fprintf(stderr, "rm: cannot remove '%s': no such file\n", path);
         }
         return g_force ? 0 : 1;
     }
 
     if (S_ISDIR(st.st_mode)) {
         if (!g_recursive) {
-            printf("rm: cannot remove '%s': is a directory\n", path);
+            fprintf(stderr, "rm: cannot remove '%s': is a directory\n", path);
             return 1;
         }
         return remove_dir(path);
@@ -94,7 +94,7 @@ static int remove_path(const char *path)
 
     if (unlink(path) < 0) {
         if (!g_force) {
-            printf("rm: cannot remove '%s'\n", path);
+            fprintf(stderr, "rm: cannot remove '%s'\n", path);
         }
         return 1;
     }
@@ -123,7 +123,7 @@ int main(int argc, char **argv)
         if (g_force) {
             return 0;
         }
-        printf("usage: rm [-rf] FILE...\n");
+        fprintf(stderr, "usage: rm [-rf] FILE...\n");
         return 1;
     }
 

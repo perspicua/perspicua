@@ -6,17 +6,16 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "stdlib.h"
+
 #include "errno.h"
 #include "stdio.h"
+#include "stdlib.h"
 
 #ifdef __KERNEL__
     #include "core/lock.h"
 // Global synchronization for thread-unsafe string tokenization.
 static spinlock_t strtok_lock = SPINLOCK_INIT;
 #endif
-
-// Public API Implementations
 
 size_t strlen(const char *str)
 {
@@ -44,8 +43,9 @@ size_t strnlen(const char *str, size_t size)
 char *strcpy(char *dest, const char *src)
 {
     char *start = dest;
-    while ((*dest++ = *src++) != '\0') {
-        asm volatile("nop");
+    while ((*dest = *src) != '\0') {
+        dest++;
+        src++;
     }
     return start;
 }
@@ -72,8 +72,9 @@ char *strcat(char *dest, const char *src)
     while (*dest != '\0') {
         dest++;
     }
-    while ((*dest++ = *src++) != '\0') {
-        asm volatile("nop");
+    while ((*dest = *src) != '\0') {
+        dest++;
+        src++;
     }
     return start;
 }
@@ -356,6 +357,7 @@ char *strndup(const char *str, size_t size)
     dup[len] = '\0';
     return memcpy(dup, str, len);
 }
+
 static const char *const error_table[] = {
     [0] = "Success",
     [EPERM] = "Operation not permitted",
@@ -402,8 +404,7 @@ static const char *const error_table[] = {
 
 char *strerror(int errnum)
 {
-    /* Shared buffer, so strerror is not reentrant. string.c is linked into
-     * libk too: a kernel caller would race here across cores. */
+    // Shared, so strerror is not reentrant; a kernel caller would race on it across cores.
     static char unknown_buf[32];
 
     if (errnum >= 0 && (size_t)errnum < ERROR_TABLE_SIZE && error_table[errnum] != NULL) {

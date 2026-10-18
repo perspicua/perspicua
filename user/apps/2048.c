@@ -1,7 +1,5 @@
 /*
- * 2048.c - Slide numbered tiles together until one reaches 2048.
- *
- * `2048 --selftest` checks the merge rules without touching the terminal.
+ * 2048.c - Slide numbered tiles together until one reaches 2048; --selftest checks the merges.
  */
 
 #include <stddef.h>

@@ -26,11 +26,7 @@ static int digit_value(char c)
     return 99;
 }
 
-/*
- * Parses [space][+|-][0x]digits in base (0 picks 8, 10 or 16 from the prefix)
- * as an unsigned magnitude, saturating at limit. *end, if given, is set past
- * the last digit used, or to s when there was none.
- */
+// [space][+|-][0x]digits, saturating at limit; *end goes past the last digit, or to s if none.
 static unsigned long parse_magnitude(const char *s, char **end, int base, unsigned long limit,
                                      int *negative, int *overflow)
 {

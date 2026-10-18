@@ -1,9 +1,5 @@
 /*
- * types.h - POSIX scalar types that cross the syscall boundary.
- *
- * The fixed-width integers come from the compiler's <stdint.h>; these are the
- * few POSIX spellings a freestanding toolchain does not supply, and both sides
- * of a syscall have to agree on their width.
+ * types.h - The POSIX scalar types a freestanding toolchain lacks, sized for the syscall ABI.
  */
 
 #ifndef PERSPICUA_UAPI_TYPES_H

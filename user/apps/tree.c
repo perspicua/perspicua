@@ -1,3 +1,7 @@
+/*
+ * tree.c - Draws a directory tree with box-drawing branches, then counts its directories and files.
+ */
+
 #include <stddef.h>
 
 #include "syscall.h"
@@ -21,12 +25,7 @@ static int is_dir(const char *path)
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-/*
- * Recursively print the contents of `path`, each line preceded by `prefix`.
- * The connector (├──/└──) marks whether an entry is the last in its directory,
- * and the child prefix extends with "│   " or "    " to keep the vertical bars
- * lined up beneath continuing branches.
- */
+// └── marks a directory's last entry; children extend prefix with "│   " or "    ".
 static void walk(const char *path, const char *prefix, int depth)
 {
     if (depth > MAX_DEPTH) {

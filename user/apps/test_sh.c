@@ -153,7 +153,7 @@ int main(void)
         EXPECT(big, want, 0);
     }
 
-    // A background job that ends while a foreground one runs is reaped then, not at the next prompt.
+    // A background job that ends while a foreground one runs is reaped then, not at the prompt.
     EXPECT("echo 'sleep 1' > " SCRATCH "; echo ps >> " SCRATCH, "", 0);
     utest_check(no_zombie("sleep 0 &; sh < " SCRATCH),
                 "background job reaped during a foreground one", __LINE__);

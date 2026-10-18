@@ -7,17 +7,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "stdio.h"
+#include "string.h"
+
 #include "uapi/errno.h"
 
-#include "mm/addr.h"
-#include "mm/pmm.h"
-#include "mm/mmu.h"
-#include "mm/heap.h"
 #include "fs/vfs.h"
-#include "sched/process.h"
-#include "string.h"
-#include "stdio.h"
+#include "mm/addr.h"
+#include "mm/heap.h"
+#include "mm/mmu.h"
+#include "mm/pmm.h"
 #include "panic.h"
+#include "sched/process.h"
 
 #define ELF_PROG_FLAG_X 0x1
 #define ELF_PROG_FLAG_W 0x2
@@ -26,12 +27,6 @@
 // Upper bound on program headers we will load, to cap the header allocation.
 #define ELF_MAX_PHDRS 64
 
-/*
- * elf_check_header - Validates the ELF file identity and machine type.
- *
- * Checks magic numbers, architecture class (64-bit), endianness (LSB),
- * and target machine (AArch64).
- */
 static int elf_check_header(struct elf64_header *hdr)
 {
     if (hdr->identity[ELF_IDENT_MAG0] != ELF_MAG0 || hdr->identity[ELF_IDENT_MAG1] != ELF_MAG1
@@ -88,20 +83,14 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         return -ENOEXEC;
     }
 
-    /* The table is read with this struct's stride; a file claiming another one
-     * describes different headers than the ones that would be parsed. */
+    // Parsed with this struct's stride, so a file claiming another size describes other headers.
     if (ehdr.ph_entry_size != sizeof(struct elf64_program_header)) {
         pr_err("elf: unexpected program header size (%u)\n", ehdr.ph_entry_size);
         vfs_close(fd);
         return -ENOEXEC;
     }
 
-    /*
-     * Segments are mapped at their own p_vaddr and are never registered with
-     * the per-process VA allocator, so they must stay clear of the range it
-     * hands out -- otherwise the stack this process is about to be given lands
-     * on top of the image, and mmap could later do the same.
-     */
+    // Segments bypass the VA allocator: the image stays below its range, or the stack lands on it.
     if (ehdr.entry == 0 || ehdr.entry >= USER_VA_BASE) {
         pr_err("elf: entry point 0x%lx outside the image region\n", (unsigned long)ehdr.entry);
         vfs_close(fd);
@@ -152,11 +141,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         if (memsz == 0) {
             continue;
         }
-        /*
-         * Reject overflow, and keep the image below the VA allocator's range:
-         * a segment placed there would be silently replaced by the stack, since
-         * mmu_user_map_page releases whatever page it displaces.
-         */
+        // No wrap, and below the VA allocator's range, where the stack would replace a segment.
         if (vaddr + memsz < vaddr || vaddr + memsz > USER_VA_BASE) {
             pr_err("elf: segment [0x%lx,0x%lx) outside the image region\n", (unsigned long)vaddr,
                    (unsigned long)(vaddr + memsz));
@@ -195,8 +180,7 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                     rc = -ENOMEM;
                     goto out;
                 }
-                /* Zeroed here rather than by the allocator: the bytes past
-                 * filesz are the segment's BSS and must read as zero. */
+                // Zeroed here: the bytes past filesz are the segment's BSS.
                 memset(kernel_vaddr, 0, PAGE_SIZE);
                 if (mmu_user_map_page(pgd, page, V2P(kernel_vaddr), mmu_flags) != 0) {
                     pmm_free_page(kernel_vaddr);

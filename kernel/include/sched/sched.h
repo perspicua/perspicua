@@ -6,38 +6,28 @@
 #define PERSPICUA_SCHED_SCHED_H
 
 #include <stdint.h>
-#include "mm/pmm.h"
 
 #include "arch/cpu.h"
 
-/*
- * Kernel stack per task, including one unmapped guard page at the bottom.
- * Measured peak use is ~11 KB -- an interrupt landing inside a filesystem
- * syscall -- so 60 KB usable leaves better than 5x headroom. The total must
- * stay a power of two for the buddy allocator.
- */
+#include "mm/pmm.h"
+
+// Peak use measured ~11 KB, an IRQ inside a filesystem syscall; the total is a power of two.
 #define SCHED_STACK_CANARY       0xDEADC0DEDEADC0DEULL
 #define SCHED_STACK_GUARD_PAGES  1
 #define SCHED_STACK_USABLE_PAGES 15
-#define SCHED_STACK_PAGES        16
+#define SCHED_STACK_PAGES        (SCHED_STACK_USABLE_PAGES + SCHED_STACK_GUARD_PAGES)
 #define SCHED_TASK_STACK_SIZE    (SCHED_STACK_USABLE_PAGES * PAGE_SIZE)
 
-/*
- * Kernel stacks. A "stack base" is always the address the allocator returned,
- * with the guard page at its front; the usable region starts one page in.
- * Every holder of a stack pointer stores that base, so none of them has to
- * know where the guard page ends.
- */
+// A stack base is what the allocator returned, guard page first; every holder stores that base.
 void *kstack_alloc(void);
 void kstack_free(void *stack_base);
 
 // Highest address a task's kernel stack can grow to, given its base.
 static inline uintptr_t kstack_top(const void *stack_base)
 {
-    return (uintptr_t)stack_base + PAGE_SIZE + SCHED_TASK_STACK_SIZE;
+    return (uintptr_t)stack_base + SCHED_STACK_GUARD_PAGES * PAGE_SIZE + SCHED_TASK_STACK_SIZE;
 }
 
-// Possible execution states for a task.
 enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,
@@ -133,7 +123,6 @@ uint64_t sched_task_cpu_ticks(struct task *t);
 // Busy and idle ticks of a core since it came online; -1 if it never did.
 int sched_core_cpu_ticks(int cpu, uint64_t *busy, uint64_t *idle);
 void sched_return_to_user(void);
-int sched_get_core_pid(int cpu);
 
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
@@ -148,9 +137,6 @@ int sched_test_in_run_queue(const struct task *t);
 unsigned long sched_test_task_ttbr0_for(uint32_t pid);
 #endif
 
-/*
- * Scheduler statistics tracked per CPU core.
- */
 struct sched_stats {
     uint64_t context_switches;
     uint64_t idle_count;

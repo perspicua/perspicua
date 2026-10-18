@@ -1,30 +1,26 @@
-#include <stddef.h>
+/*
+ * test_sched.c - Scheduler tests from task 0 on core 0; spawned tasks share state under test_lock.
+ */
 
 #include "test.h"
-#include "sched/sched.h"
-#include "mm/heap.h"
-#include "core/lock.h"
-#include "arch/irq.h"
-#include "core/timer.h"
-#include "driver/gic.h"
+
+#include <stddef.h>
+
 #include "string.h"
 
-// test constraints:
-//   - tests run as the "main task" (task id 0) on core 0
-//   - created tasks run asynchronously; use sched_sleep_ms to wait
-//   - shared state needs spinlock protection
-//   - test_assert uses return, so it can only be called from test_scheduler()
+#include "arch/irq.h"
 
-// shared test state
+#include "core/lock.h"
+#include "core/timer.h"
+#include "driver/gic.h"
+#include "mm/heap.h"
+#include "sched/sched.h"
 
 static volatile int counter_a = 0;
 static volatile int counter_b = 0;
 static volatile int counter_c = 0;
 static spinlock_t test_lock = SPINLOCK_INIT;
 
-// task functions
-
-// basic: increment a counter
 static void task_inc_a(void)
 {
     unsigned long flags = spin_lock_irqsave(&test_lock);
@@ -74,11 +70,7 @@ static void task_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
-/*
- * Two blocks below assert "not yet" partway through this, so changing the
- * duration means changing both their waits. One that outlives its block leaks
- * its counter_b++ into the next.
- */
+// Two blocks assert "not yet" partway through, so changing 600 means changing both their waits.
 static void task_long_sleep_then_inc(void)
 {
     sched_sleep_ms(600);
@@ -87,8 +79,7 @@ static void task_long_sleep_then_inc(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
-// publishes itself, then sleeps far longer than the suite runs so the test
-// controls exactly when it wakes
+// Sleeps far longer than the suite runs, so only the test's early wake ends the sleep.
 static volatile int early_wake_ran = 0;
 static struct task *early_wake_task = NULL;
 
@@ -154,12 +145,10 @@ static void task_compute(void)
     compute_result = sum;
 }
 
-// stack canary task: uses some stack depth
 static volatile int stack_test_ok = 0;
 
 static void task_stack_depth(void)
 {
-    // Use some stack with local arrays
     volatile unsigned char buf[512];
     for (int i = 0; i < 512; i++) {
         buf[i] = (unsigned char)(i & 0xFF);
@@ -219,7 +208,7 @@ static void task_yield_loop(void)
     }
 }
 
-// task that simulates a waiter racing its waker: publish BLOCKED, then yield
+// A waiter racing its waker: publishes BLOCKED, then calls into the scheduler.
 static volatile int race_task_ran = 0;
 static struct task *race_wait_queue = NULL;
 
@@ -228,27 +217,21 @@ static void task_race_waiter(void)
     struct task *self = sched_current_task();
     unsigned long flags = irq_save();
 
-    // 1. Pre-mark as BLOCKED, as a wait queue does
     sched_task_set_blocked(self);
 
-    // 2. Add to a "queue" so the unblocker can find us
     unsigned long lock_flags = spin_lock_irqsave(&test_lock);
     race_wait_queue = self;
     spin_unlock_irqrestore(&test_lock, lock_flags);
 
-    /* 3. Call sched_schedule(). If an interrupt or another core unblocks us BEFORE we
-     * reach here, we enter sched_schedule() with state=READY, which must still be
-     * handled rather than losing the wake. */
+    // An unblock that lands first leaves the state READY here, and the wake must not be lost.
     sched_schedule();
 
-    // 4. If we survived, mark success
     race_task_ran = 1;
     irq_restore(flags);
 }
 
 static void task_race_unblocker(void)
 {
-    // Wait for the waiter to put itself in the queue
     while (1) {
         unsigned long flags = spin_lock_irqsave(&test_lock);
         struct task *t = race_wait_queue;
@@ -259,7 +242,6 @@ static void task_race_unblocker(void)
         sched_sleep_ms(1);
     }
 
-    // Unblock it
     unsigned long flags = spin_lock_irqsave(&test_lock);
     struct task *t = race_wait_queue;
     race_wait_queue = NULL;
@@ -679,7 +661,7 @@ void test_scheduler(void)
         sched_sleep_ms(50);
         unsigned long after = timer_get_system_time();
         unsigned long elapsed = after - before;
-        // Timer has 100Hz tick (10ms granularity), allow generous bounds
+        // 10 ms ticks, and a loaded host stretches the upper bound
         TEST_ASSERT("sleep >= 30ms", elapsed >= 30);
         TEST_ASSERT("sleep < 300ms", elapsed < 300);
     }
@@ -715,8 +697,7 @@ void test_scheduler(void)
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);
     }
 
-    // a task woken before its deadline must leave the sleep queue: otherwise
-    // cleanup_dead_task frees it while sleep_drain still walks the list
+    // a task woken early leaves the sleep queue, or cleanup_dead_task frees it under sleep_drain
     {
         early_wake_ran = 0;
         early_wake_task = NULL;
@@ -746,8 +727,7 @@ void test_scheduler(void)
 
     // task sleeps then increments
     {
-        // A sleeper wakes on the first tick at or after its deadline, so each
-        // sched_sleep_ms(n) can cost n + 10 and a loaded host adds more.
+        // A sleeper wakes on the first tick at or past its deadline: n + 10 ms, more under load.
         counter_a = 0;
         sched_create_task(task_sleep_then_inc);
         sched_sleep_ms(150);
@@ -802,7 +782,6 @@ void test_scheduler(void)
         compute_result = 0;
         sched_create_task(task_compute);
         sched_sleep_ms(100);
-        // sum of 0..9999 = 49995000
         TEST_ASSERT("compute result", compute_result == 49995000UL);
     }
 
@@ -818,8 +797,7 @@ void test_scheduler(void)
 
     // rapid task creation
 
-    // create and complete many tasks in quick succession
-    //    This stresses dead-task cleanup (task_to_free path).
+    // tasks created and finished in quick succession, which cleanup_dead_task must keep up with
     {
         counter_a = 0;
         for (int i = 0; i < 8; i++) {
@@ -894,18 +872,16 @@ void test_scheduler(void)
 
     // lifecycle: complex sequence
 
-    // create -> sleep -> create more -> wait for all
+    // tasks created while earlier ones have already finished
     {
         counter_a = 0;
         counter_b = 0;
-        // Phase 1: two tasks
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_b);
         sched_sleep_ms(50);
         TEST_ASSERT("phase1 a", counter_a == 1);
         TEST_ASSERT("phase1 b", counter_b == 1);
 
-        // Phase 2: three more tasks
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_b);

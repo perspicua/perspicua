@@ -1,5 +1,5 @@
 /*
- * seq - print a sequence of integers: seq [first [step]] last.
+ * seq.c - Prints a sequence of integers: seq [first [step]] last.
  */
 
 #include <stdio.h>

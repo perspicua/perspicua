@@ -1,5 +1,5 @@
 /*
- * sleep - pause for a number of seconds, e.g. `sleep 2` or `sleep 0.5`.
+ * sleep.c - Pauses for a number of seconds, e.g. sleep 2 or sleep 0.5.
  */
 
 #include <stdio.h>

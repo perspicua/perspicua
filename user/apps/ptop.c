@@ -1,11 +1,5 @@
 /*
- * ptop.c - A btop-style system monitor: CPU, memory, system and process panels.
- *
- * Every figure is a delta between two samples of /proc: per-core busy and idle
- * milliseconds from /proc/stat, interrupt counts from /proc/interrupts, and
- * each process's CpuTime from its status file. The panels share out whatever
- * size the terminal reports, 80x24 at the least. `ptop --once` takes two
- * samples, prints one frame as plain text and exits.
+ * ptop.c - A btop-style monitor of /proc sample deltas; --once prints one plain frame.
  */
 
 #include <stdarg.h>
@@ -385,7 +379,7 @@ static void derive_rates(void)
 
     for (int i = 0; i < cur->nprocs; i++) {
         struct proc *p = &cur->procs[i];
-        // A process missing from the last sample was born since, with all its time in this interval.
+        // A process missing from the last sample is new, so all its time is this interval's.
         unsigned long then = 0;
         for (int j = 0; j < prev->nprocs; j++) {
             if (prev->procs[j].pid == p->pid) {
@@ -874,7 +868,7 @@ static void draw(int once)
         return;
     }
 
-    // The CPU panel takes about a third of the height, memory and system a fifth, processes the rest.
+    // The CPU panel takes a third of the height, memory and system a fifth, processes the rest.
     int cores = cur->ncores > 0 ? cur->ncores : 1;
     int cpu_h = rows * 30 / 100 < cores + 4 ? cores + 4 : rows * 30 / 100;
     int mid_h = rows * 20 / 100 < 4 ? 4 : rows * 20 / 100;
@@ -1024,7 +1018,7 @@ int main(int argc, char **argv)
 {
     int once = argc == 2 && strcmp(argv[1], "--once") == 0;
     if (argc > 1 && !once) {
-        printf("usage: ptop [--once]\n");
+        fprintf(stderr, "usage: ptop [--once]\n");
         return 1;
     }
 

@@ -1,11 +1,13 @@
 /*
  * completion.h - One-shot or counted event that tasks wait for, built on the wait queue.
  */
+
 #ifndef PERSPICUA_CORE_COMPLETION_H
 #define PERSPICUA_CORE_COMPLETION_H
 
-#include "sched/wait.h"
 #include <limits.h>
+
+#include "sched/wait.h"
 
 #define COMPLETION_ALL UINT_MAX
 

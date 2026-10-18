@@ -1,11 +1,11 @@
 /*
- * dirent.h - POSIX-like directory reading API
+ * dirent.h - Directory streams over getdents.
  */
 
 #ifndef PERSPICUA_LIBC_DIRENT_H
 #define PERSPICUA_LIBC_DIRENT_H
 
-#include "syscall.h"
+#include "uapi/dirent.h"
 
 typedef struct {
     int fd;

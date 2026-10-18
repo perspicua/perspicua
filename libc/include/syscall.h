@@ -1,20 +1,11 @@
 /*
- * syscall.h - Umbrella over the POSIX headers.
- *
- * Every declaration here lives in the header POSIX puts it in; this exists so
- * a program that wants the whole set does not have to name all of them. New
- * code should include what it uses.
+ * syscall.h - Umbrella over the POSIX headers; new code includes what it uses instead.
  */
 
 #ifndef PERSPICUA_LIBC_SYSCALL_H
 #define PERSPICUA_LIBC_SYSCALL_H
 
-/*
- * Guard the userspace/kernel boundary at compile time. Without this, a
- * syscall-dependent source added to LIBC_SRC_COMMON still compiles into libk
- * and only fails at the unrelated, much later link that first references it.
- * Kernel code dispatches syscalls through core/syscall.h instead.
- */
+// A syscall-dependent source added to libk fails here, not at a much later link.
 #ifdef __KERNEL__
     #error "syscall.h is userspace-only; kernel code uses core/syscall.h"
 #endif

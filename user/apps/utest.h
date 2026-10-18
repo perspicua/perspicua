@@ -1,8 +1,5 @@
 /*
- * utest.h - Pass/fail counting for the userspace test programs.
- *
- * A failed CHECK names its line and the run carries on; utest_summary prints the
- * line scripts/run_tests.sh gates on.
+ * utest.h - CHECK counts and carries on; utest_summary prints the line run_tests.sh gates on.
  */
 
 #ifndef PERSPICUA_UTEST_H

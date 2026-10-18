@@ -1,23 +1,10 @@
 /*
- * setjmp.S - AArch64 implementation of setjmp and longjmp.
- *
- * Saves the AAPCS64 integer callee-saved set (x19-x28), the frame pointer,
- * the link register and the stack pointer. x0-x18 are caller-saved, so the
- * compiler already treats them as clobbered across the call to setjmp and
- * they need no preserving. The callee-saved FP registers d8-d15 are not
- * saved; see libc/include/setjmp.h.
- *
- * Slot offsets must match _JMP_BUF_WORDS and the layout comment in setjmp.h.
+ * setjmp.S - setjmp and longjmp; d8-d15 are not saved: everything is built -mgeneral-regs-only.
  */
 
 .section ".text"
 
-/*
- * int setjmp(jmp_buf env)
- *   x0 = env
- *
- * Returns 0 here; returns again from longjmp with that call's value.
- */
+// int setjmp(jmp_buf env): x0 = env
 .global setjmp
 .type setjmp, %function
 setjmp:
@@ -34,14 +21,7 @@ setjmp:
     ret
 .size setjmp, . - setjmp
 
-/*
- * void longjmp(jmp_buf env, int val)
- *   x0 = env, w1 = val
- *
- * Restoring x30 makes the ret below land at the instruction after the
- * original `bl setjmp`, with the return value in w0. Restoring sp abandons
- * every frame entered since setjmp, which is the intended behaviour.
- */
+// void longjmp(jmp_buf env, int val): x0 = env, w1 = val; ret lands after the bl setjmp
 .global longjmp
 .type longjmp, %function
 longjmp:

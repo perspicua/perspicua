@@ -1,9 +1,12 @@
+/*
+ * uaccess.S - User-memory copies through ldtr/sttr, each access covered by the fault-fixup table.
+ */
+
 #include "uapi/errno.h"
 
 .section ".text"
 
-// int copy_from_user(void *dest, const void *src, size_t n)
-// x0 = dest, x1 = src, x2 = n
+// copy_from_user(dest = x0, src = x1, n = x2)
 .global copy_from_user
 copy_from_user:
     cbz x2, .Ldone_from
@@ -22,8 +25,7 @@ copy_from_user:
     mov x0, x2  // Return the number of bytes not copied
     ret
 
-// int copy_to_user(void *dest, const void *src, size_t n)
-// x0 = dest, x1 = src, x2 = n
+// copy_to_user(dest = x0, src = x1, n = x2)
 .global copy_to_user
 copy_to_user:
     cbz x2, .Ldone_to
@@ -42,12 +44,7 @@ copy_to_user:
     mov x0, x2
     ret
 
-// long strncpy_from_user(char *dest, const char *src, long count)
-// x0 = dest, x1 = src, x2 = count
-//
-// Copies at most count-1 bytes and always terminates dest when count >= 1, so
-// a caller can never be handed an unterminated string to strlen(). Returns the
-// length excluding the terminator, or a negative error on fault or truncation.
+// strncpy_from_user(dest = x0, src = x1, count = x2)
 .global strncpy_from_user
 strncpy_from_user:
     cmp x2, #1

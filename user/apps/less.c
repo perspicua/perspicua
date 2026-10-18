@@ -1,8 +1,5 @@
 /*
- * less - page through a file or piped text.
- *
- * Long lines wrap. Keys: arrows/j/k scroll, space/b or PgDn/PgUp page,
- * g/G top and bottom, / searches, n/N next and previous match, q quits.
+ * less.c - Pages through a file or piped text: arrows, j/k, space/b, g/G, / with n/N, q.
  */
 
 #include <stddef.h>

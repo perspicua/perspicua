@@ -12,12 +12,7 @@ struct vfs_vnode;
 // Capacity, and the largest write that is never interleaved with another: POSIX's PIPE_BUF.
 #define PIPE_BUF_SIZE PIPE_BUF
 
-/*
- * pipe_create - Internal implementation of the pipe() system call.
- *
- * Allocates a shared buffer and two file descriptors (read/write) for
- * the current process. Returns 0 or a negative error.
- */
+// pipe(): a shared buffer and a read and a write descriptor for the current process.
 int pipe_create(int pipefd[2]);
 
 // 1 if node is a pipe end, which has no position to seek.

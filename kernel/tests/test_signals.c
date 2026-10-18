@@ -1,16 +1,11 @@
 /*
- * test_signals.c - Post-init tests for signal delivery bookkeeping.
- *
- * Unlike the boot-phase suites these need a live process to target, so they
- * run after init has been created and address it by PID. Only the kernel-side
- * bookkeeping is checked here; running a handler requires returning to user
- * mode, which the test task never does.
+ * test_signals.c - Signal bookkeeping against live PIDs; running a handler needs EL0, so not here.
  */
+
+#include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 
@@ -57,12 +52,7 @@ void test_signals(void)
         TEST_ASSERT("empty slot rejected", sent < 0);
     }
 
-    /*
-     * A zombie's task is freed as soon as it stops running, but its slot lives
-     * on until a parent reaps it. Signalling one must be refused before
-     * main_task is read: SIGKILL and SIGCONT dereference it first thing. The
-     * poison pointer faults if that check is ever lost.
-     */
+    // A zombie's main_task is freed, so a signal to it is refused before the pointer is read.
     {
         int slot = process_test_claim_slot();
         int sent = 0;
@@ -82,11 +72,7 @@ void test_signals(void)
         TEST_ASSERT("zombie slot rejected", sent < 0);
     }
 
-    /*
-     * kill() takes a signed pid straight from the user. Everything outside
-     * 1..PROCESS_TABLE_SIZE-1 must be refused before it indexes the table:
-     * -1 clears an upper-bound check on its own and reads process_table[-1].
-     */
+    // kill() refuses a pid outside 1..PROCESS_TABLE_SIZE-1 before indexing; -1 passes a max alone.
     {
         TEST_ASSERT_EQ("kill(-1) refused", call_kill(-1, SIGTERM), -ESRCH);
         TEST_ASSERT_EQ("kill(-1000) refused", call_kill(-1000, SIGTERM), -ESRCH);
@@ -100,13 +86,7 @@ void test_signals(void)
         TEST_ASSERT_EQ("kill(0) refused", call_kill(0, SIGTERM), -EPERM);
     }
 
-    /*
-     * Pending-signal bookkeeping runs against a claimed slot, not init: init is
-     * scheduled while this suite runs and would drain its own pending bits
-     * between any two reads here. A claimed slot has no task, so nothing ever
-     * consumes what this queues. signal_send only reaches main_task behind a
-     * NULL check, so an empty slot is a valid target.
-     */
+    // A claimed slot, unlike init, has no task to drain its pending bits, so it keeps them.
     {
         int slot = process_test_claim_slot();
         TEST_ASSERT("pending-signal test slot claimed", slot > 0);
@@ -131,8 +111,7 @@ void test_signals(void)
             uint32_t after = process_table[target]->pending_signals;
             TEST_ASSERT("resend leaves mask unchanged", before == after);
 
-            // POSIX mutual discard: a stop signal clears pending SIGCONT, and
-            // SIGCONT clears pending stop signals
+            // a stop signal clears pending SIGCONT, and SIGCONT clears pending stop signals
             TEST_ASSERT_EQ("send SIGCONT", signal_send(target, SIGCONT), 0);
             pending = process_table[target]->pending_signals;
             TEST_ASSERT("SIGCONT pending", (pending & (1u << (SIGCONT - 1))) != 0);

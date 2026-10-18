@@ -5,33 +5,25 @@
 #ifndef PERSPICUA_CORE_SIGNALS_H
 #define PERSPICUA_CORE_SIGNALS_H
 
-#include "uapi/signals.h"
-
 #include <stdint.h>
+
+#include "uapi/signals.h"
 
 #include "arch/exception.h"
 
-/*
- * struct signal_frame - State saved on the user stack during signal delivery.
- *
- * This allows the kernel to restore the process state (including the
- * register set and signal mask) once the signal handler returns.
- */
+// Saved on the user stack at delivery; sigreturn restores registers and mask from it.
 struct signal_frame {
     struct exception_trap_frame saved_tf;
     sigset_t saved_mask;
 };
 
-// Re-issued after a signal: ERESTARTSYS only under SA_RESTART, ERESTARTNOHAND
-// only when no handler ran. Neither reaches userspace.
+// Re-issued after a signal: ERESTARTSYS under SA_RESTART, ERESTARTNOHAND when no handler ran.
 #define ERESTARTSYS    512
 #define ERESTARTNOHAND 514
 
 struct process;
 
-/*
- * signal_pending - True when p has an undelivered signal it is not blocking.
- */
+// p has an undelivered signal it does not block.
 int signal_pending(const struct process *p);
 
 // True when sp is inside p's alternate signal stack.
@@ -39,17 +31,10 @@ int signal_on_altstack(const struct process *p, uintptr_t sp);
 
 void signal_handle_pending(struct exception_trap_frame *tf);
 
-/*
- * Posts a synchronous fault signal to the current process, overriding an
- * ignore or a block. Returns 1 if it will terminate the process.
- */
+// A fault signal to the current process, overriding ignore and block; 1 if it will kill.
 int signal_raise_fault(int sig);
 
-/*
- * kill() for one process: checks that sender may signal target and sends, under one
- * hold of process_table_lock so a recycled pid is never hit. Signal 0 only checks.
- * init gets only the signals it has a handler for, as nothing restarts it.
- */
+// kill() for one process, checked and sent under one lock hold; init takes only handled signals.
 int signal_kill(uint32_t sender_pid, uint32_t target_pid, int sig);
 
 int signal_send(uint32_t target_pid, int sig);

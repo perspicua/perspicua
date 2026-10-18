@@ -45,12 +45,6 @@ typedef int32_t elf64_sword;
 typedef uint64_t elf64_xword;
 typedef int64_t elf64_sxword;
 
-/*
- * struct elf64_header - The main ELF file header.
- *
- * This structure contains the file identity and offsets to the program and
- * section header tables.
- */
 struct elf64_header {
     unsigned char identity[ELF_IDENT_NIDENT];
     elf64_half type;
@@ -68,12 +62,6 @@ struct elf64_header {
     elf64_half sh_str_ndx;
 };
 
-/*
- * struct elf64_program_header - Represents a segment in the ELF file.
- *
- * Each header describes a continuous region of the file that should be mapped
- * into the process's virtual memory space.
- */
 struct elf64_program_header {
     elf64_word type;
     elf64_word flags;
@@ -85,13 +73,7 @@ struct elf64_program_header {
     elf64_xword align;
 };
 
-/*
- * elf_load - Parses and loads an ELF executable from the filesystem.
- *
- * This function handles the full lifecycle of loading a user binary: validating
- * the header, allocating physical pages, and mapping segments into the provided
- * page directory (PGD).
- */
+// Maps path's segments into pgd; -ENOEXEC for a malformed image.
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point);
 
 #endif // PERSPICUA_CORE_ELF_H

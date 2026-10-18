@@ -3,17 +3,16 @@
  */
 
 #include "core/lock.h"
-#include "core/lockdep.h"
-
-#include "panic.h"
 
 #include "arch/exception.h"
-
 #include "arch/irq.h"
+
+#include "core/lockdep.h"
+#include "panic.h"
 #include "sched/sched.h"
 
 // The count lives in the task, so it follows the task if it moves to another core.
-void preempt_disable(void)
+static void preempt_disable(void)
 {
     struct task *t = sched_current_task();
 
@@ -26,7 +25,7 @@ void preempt_disable(void)
     asm volatile("" ::: "memory");
 }
 
-void preempt_enable(void)
+static void preempt_enable(void)
 {
     asm volatile("" ::: "memory");
 
@@ -57,8 +56,7 @@ int preempt_active(void)
 
 void spin_lock(spinlock_t *lock)
 {
-    /* Before lockdep, not after: preemption inside lockdep's lock leaves other cores spinning on
-     * it. */
+    // Before lockdep, not after: preempted inside lockdep's lock, other cores would spin on it.
     preempt_disable();
     lockdep_acquire(lock);
 
@@ -135,27 +133,17 @@ void spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
     preempt_enable();
 }
 
-/*
- * atomic_set - Stores an initial value into an atomic.
- */
 void atomic_set(atomic_t *a, int value)
 {
     __atomic_store_n(&a->counter, value, __ATOMIC_RELAXED);
 }
 
-/*
- * atomic_inc - Atomically adds 1 to an atomic variable.
- */
 void atomic_inc(atomic_t *a)
 {
     __atomic_fetch_add(&a->counter, 1, __ATOMIC_RELAXED);
 }
 
-/*
- * atomic_dec_and_test - Atomically subtracts 1 and returns 1 if result is zero.
- *
- * Enforces acquire-release ordering so prior stores are visible before destruction.
- */
+// Acquire-release, so stores made before the last reference drops reach its destructor.
 int atomic_dec_and_test(atomic_t *a)
 {
     int now = __atomic_sub_fetch(&a->counter, 1, __ATOMIC_ACQ_REL);

@@ -3,28 +3,29 @@
  */
 
 #include "driver/gic.h"
-#include "driver/device.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-#include "io.h"
 #include "stdio.h"
-#include "panic.h"
 
 #include "arch/irq.h"
-#include "mm/addr.h"
+
 #include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "io.h"
+#include "mm/addr.h"
+#include "panic.h"
 
-volatile unsigned int *gic_d_ctlr = NULL;
-volatile unsigned int *gic_d_isenablern = NULL;
-volatile unsigned int *gic_d_icenablern = NULL;
-volatile unsigned char *gic_d_ipriorityr = NULL;
-volatile unsigned char *gic_d_itargetsr = NULL;
-volatile unsigned int *gic_d_sgir = NULL;
+static volatile unsigned int *gic_d_ctlr = NULL;
+static volatile unsigned int *gic_d_isenablern = NULL;
+static volatile unsigned int *gic_d_icenablern = NULL;
+static volatile unsigned char *gic_d_ipriorityr = NULL;
+static volatile unsigned char *gic_d_itargetsr = NULL;
+static volatile unsigned int *gic_d_sgir = NULL;
 
-volatile unsigned int *gic_c_ctlr = NULL;
-volatile unsigned int *gic_c_pmr = NULL;
+static volatile unsigned int *gic_c_ctlr = NULL;
+static volatile unsigned int *gic_c_pmr = NULL;
 volatile unsigned int *gic_c_iar = NULL;
 volatile unsigned int *gic_c_eoir = NULL;
 
@@ -61,14 +62,13 @@ static int gic_probe(struct device *dev)
     gic_c_iar = (volatile unsigned int *)(gicc_vbase + 0x00C);
     gic_c_eoir = (volatile unsigned int *)(gicc_vbase + 0x010);
 
-    // Distributor: enable all IRQ forwarding
     mmio_write(gic_d_ctlr, 1);
 
-    // Enable Physical Timer (PPI)
+    // The physical timer's PPI, at top priority.
     mmio_write(&gic_d_isenablern[GIC_TIMER_IRQ / 32], (1 << (GIC_TIMER_IRQ % 32)));
     mmio_write8(&gic_d_ipriorityr[GIC_TIMER_IRQ], 0);
 
-    // CPU Interface: enable and allow all priority levels
+    // The CPU interface forwards every priority level.
     mmio_write(gic_c_ctlr, 1);
     mmio_write(gic_c_pmr, 0xFF);
 

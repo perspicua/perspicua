@@ -175,10 +175,7 @@ static void test_session_daemon(void)
     close(ready[1]);
 }
 
-/*
- * A background group must not steal terminal input: a reader that can be stopped is,
- * and one that ignores SIGTTIN gets an error instead of looping on a read nothing wakes.
- */
+// A background reader is stopped, or with SIGTTIN ignored gets an error, never the input.
 static void test_background_read(void)
 {
     int ign_pid = fork();

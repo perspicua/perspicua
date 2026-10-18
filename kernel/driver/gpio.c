@@ -3,16 +3,16 @@
  */
 
 #include "driver/gpio.h"
-#include "driver/device.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
 #include "stdio.h"
-#include "panic.h"
 
-#include "mm/addr.h"
 #include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "mm/addr.h"
+#include "panic.h"
 
 static volatile unsigned int *gpio_gpfsel0 = NULL;
 static volatile unsigned int *gpio_gppupdn0 = NULL;

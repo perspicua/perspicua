@@ -1,11 +1,13 @@
+/*
+ * test.c - The self-test runners: boot-task suites, multi-task suites, then post-init suites.
+ */
+
 #include "test.h"
 
 int tests_passed = 0;
 int tests_failed = 0;
-int _suite_failed = 0;
-int _suite_passed = 0;
-
-// run all pre-interrupt tests
+int test_suite_failed = 0;
+int test_suite_passed = 0;
 
 void run_all_tests(void)
 {
@@ -90,12 +92,7 @@ void run_scheduler_tests(void)
     printk("\n");
 }
 
-/*
- * run_post_init_tests - Suites that need a live user process to exist.
- *
- * Called after init has been created, so these can target a real PID rather
- * than the boot task's placeholder pid 0.
- */
+// Suites that target a live user process, so they run once init exists.
 void run_post_init_tests(void)
 {
     int pre_passed = tests_passed;

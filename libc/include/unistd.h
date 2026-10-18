@@ -18,8 +18,7 @@
 __attribute__((noreturn)) void _exit(int status);
 int fork(void);
 int execve(const char *path, char *const argv[], char *const envp[]);
-// Runs file from PATH (default /bin:/), name.elf before name; a name with '/' is used as it is.
-// The first file found that will not run ends the search, and its errno is the result.
+// PATH (default /bin:/), name.elf first, unless file has a '/'; the first that fails ends it.
 int execvp(const char *file, char *const argv[]);
 int getpid(void);
 int getppid(void);

@@ -1,14 +1,11 @@
 /*
- * test_user.c - The boot task driven as though it were a user process.
- *
- * Slot 0 is the kernel PCB and has no address space, so a syscall issued from
- * it refuses every pointer for want of a pgd, whatever the pointer's merits.
+ * test_user.c - Lends the boot task an address space, so its syscalls judge pointers on merit.
  */
+
+#include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
-
-#include "test.h"
 
 #include "string.h"
 
@@ -52,8 +49,7 @@ unsigned long *test_borrow_user_pgd(void)
 
     asid_get_active(&kernel->asid, &kernel->asid_generation);
 
-    // The scheduler reinstalls a pid 0 task's own ttbr0 on every switch, so
-    // this survives preemption and migration.
+    // The scheduler reinstalls this ttbr0 on every switch, so it survives preemption and migration.
     flags = irq_save();
     sched_current_task()->ttbr0 = V2P(pgd) | asid_ttbr_field(kernel->asid);
     mmu_switch_user(pgd, kernel->asid);

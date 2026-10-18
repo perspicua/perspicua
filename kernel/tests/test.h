@@ -1,3 +1,7 @@
+/*
+ * test.h - Assertion macros, suite bookkeeping and the helpers the self-test suites share.
+ */
+
 #ifndef PERSPICUA_TESTS_TEST_H
 #define PERSPICUA_TESTS_TEST_H
 
@@ -8,10 +12,8 @@
 
 extern int tests_passed;
 extern int tests_failed;
-extern int _suite_failed;
-extern int _suite_passed;
-
-// test assertion macros
+extern int test_suite_failed;
+extern int test_suite_passed;
 
 // Atomic so an assert from a spawned task on another core is never lost.
 #define TEST_COUNT(counter) __atomic_fetch_add(&(counter), 1, __ATOMIC_RELAXED)
@@ -38,31 +40,19 @@ extern int _suite_passed;
         }                                                                       \
     } while (0)
 
-#define TEST_ASSERT_NEQ(name, actual, unexpected)                          \
-    do {                                                                   \
-        long _a = (long)(actual);                                          \
-        long _u = (long)(unexpected);                                      \
-        if (_a == _u) {                                                    \
-            pr_err("test: %s: unexpected value %ld [FAILED]\n", name, _u); \
-            TEST_COUNT(tests_failed);                                      \
-        } else {                                                           \
-            TEST_COUNT(tests_passed);                                      \
-        }                                                                  \
-    } while (0)
-
-#define TEST_SUITE_BEGIN(name)        \
-    do {                              \
-        _suite_failed = tests_failed; \
-        _suite_passed = tests_passed; \
+#define TEST_SUITE_BEGIN(name)            \
+    do {                                  \
+        test_suite_failed = tests_failed; \
+        test_suite_passed = tests_passed; \
     } while (0)
 
 // The count lets run_tests.sh notice a suite that quietly stopped running some of its tests.
-#define TEST_SUITE_END(name)                                                                \
-    do {                                                                                    \
-        if (tests_failed == _suite_failed)                                                  \
-            pr_info("test: %s: %d tests [OK]\n", name, tests_passed - _suite_passed);       \
-        else                                                                                \
-            pr_err("test: %s: %d failures [FAILED]\n", name, tests_failed - _suite_failed); \
+#define TEST_SUITE_END(name)                                                                    \
+    do {                                                                                        \
+        if (tests_failed == test_suite_failed)                                                  \
+            pr_info("test: %s: %d tests [OK]\n", name, tests_passed - test_suite_passed);       \
+        else                                                                                    \
+            pr_err("test: %s: %d failures [FAILED]\n", name, tests_failed - test_suite_failed); \
     } while (0)
 
 // Polls for up to about two seconds; the asserts that follow report what was reached.
@@ -84,11 +74,7 @@ void run_all_tests(void);
 // Issues a syscall from the running task, as though trapped from EL0.
 int64_t test_syscall(uint64_t nr, const uint64_t *args);
 
-/*
- * Lends slot 0 an empty address space and installs it as the running task's
- * TTBR0. test_release_user_pgd takes it back, along with every page mapped
- * into it.
- */
+// Lends slot 0 an empty address space as TTBR0; test_release_user_pgd frees it and its pages.
 unsigned long *test_borrow_user_pgd(void);
 void test_release_user_pgd(unsigned long *pgd);
 

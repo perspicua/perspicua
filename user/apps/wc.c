@@ -1,9 +1,5 @@
 /*
- * wc - print newline, word, and byte counts for each file.
- *
- * Written against POSIX only: the includes below are angle-bracketed and
- * nothing here knows it is running on this kernel. It is the portability
- * check for the libc -- if a stock program stops building, this does too.
+ * wc.c - Newline, word and byte counts, against POSIX alone as the libc portability check.
  */
 
 #include <errno.h>

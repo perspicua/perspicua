@@ -5,9 +5,6 @@
 #ifndef PERSPICUA_DRIVER_FB_H
 #define PERSPICUA_DRIVER_FB_H
 
-/*
- * struct fb_info_struct - Hardware framebuffer state.
- */
 struct fb_info_struct {
     unsigned int width;
     unsigned int height;

@@ -2,17 +2,18 @@
  * test_semaphore.c - Tests for counting semaphores (ksem).
  */
 
-#include "core/semaphore.h"
+#include "test.h"
 
 #include <stddef.h>
 
+#include "uapi/errno.h"
+
+#include "core/semaphore.h"
 #include "core/signals.h"
 #include "core/timer.h"
 #include "sched/process.h"
 #include "sched/sched.h"
 #include "sched/wait.h"
-#include "test.h"
-#include "uapi/errno.h"
 
 static struct ksem sem_test = KSEM_INIT(0);
 
@@ -95,9 +96,7 @@ void test_semaphore(void)
     TEST_SUITE_END("Semaphore");
 }
 
-/*
- * Multi-task scheduler tests.
- */
+// Multi-task tests, run once the scheduler is up.
 
 static struct task *one_waiter_task = NULL;
 static volatile int one_waiter_done = 0;

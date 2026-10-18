@@ -9,19 +9,16 @@
 
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
 #include "uapi/errno.h"
 
-#include "core/tty.h"
 #include "core/lock.h"
-#include "mm/slab.h"
-#include "mm/heap.h"
+#include "core/tty.h"
 #include "fs/vfs.h"
+#include "mm/heap.h"
+#include "mm/slab.h"
+#include "panic.h"
 
-/*
- * struct devfs_node - Internal entry in the devfs directory linked-list.
- */
 struct devfs_node {
     char name[32];
     struct vfs_vnode *vnode;
@@ -34,9 +31,6 @@ static spinlock_t devfs_lock = SPINLOCK_INIT;
 
 extern struct tty console_tty;
 
-/*
- * devfs_root_lookup - Scans the device list for a matching name.
- */
 static struct vfs_vnode *devfs_root_lookup(struct vfs_vnode *dir, const char *filename)
 {
     if (dir != devfs_root_vnode) {
@@ -69,7 +63,6 @@ static int devfs_root_readdir(struct vfs_file *file, void *buffer, size_t count)
     unsigned long fdflags = spin_lock_irqsave(&devfs_lock);
     struct devfs_node *curr = devfs_devices;
 
-    // Skip entries already read
     while (curr && current_idx < (uint32_t)file->offset) {
         curr = curr->next;
         current_idx++;
@@ -106,7 +99,6 @@ static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t siz
     return tty_write(tty, (const char *)buffer, size);
 }
 
-// Operation tables
 static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
                                               .readdir = devfs_root_readdir};
 

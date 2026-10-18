@@ -1,3 +1,7 @@
+/*
+ * gfx_demo.c - Floods /dev/fb0 with a cycling colour, 200 frames.
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -41,7 +45,7 @@ int main(void)
             fb[i] = color;
         }
 
-        usleep((10) * 1000); // Wait 10ms
+        usleep(10 * 1000);
     }
 
     char done[] = "GFX Demo finished.\n";

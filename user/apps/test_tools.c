@@ -1,10 +1,5 @@
 /*
- * test_tools.c - Runs the command-line tools on known input and checks their output.
- *
- * Each tool is found through execvp, fed stdin through a pipe, and its stdout
- * compared byte for byte. find and du get a small tree under /tt_tmp, and edit
- * is typed at through stdin and judged by the file it saves under /tt_edit;
- * both are removed at the end.
+ * test_tools.c - Runs each tool through execvp on piped input and compares its output exactly.
  */
 
 #include <stddef.h>
@@ -415,7 +410,7 @@ static void test_less(void)
 {
     char out[OUT_MAX];
 
-    // A line 30 rows down wraps inside "needle"; only a found match scrolls up, lit across the wrap.
+    // A line 30 rows down wraps inside "needle"; only a found match scrolls up, lit past the wrap.
     static char text[512];
     text[0] = '\0';
     for (int i = 0; i < 30; i++) {

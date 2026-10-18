@@ -1,23 +1,5 @@
 /*
- * stress.c - Kernel stress and invariant checker.
- *
- * Every test here verifies something the kernel could get wrong and reports a
- * verdict, so a clean run means "no defect found" rather than "nothing
- * crashed". Three properties make that worth something:
- *
- *   - Content is checked with a key-derived pattern, not a constant fill. A
- *     memset cannot tell a page the kernel never wrote from one another
- *     process wrote, and both are bugs.
- *   - The PRNG is seeded and the seed is printed, so a failing run replays
- *     exactly with -s.
- *   - Resource tests run several waves and compare high-water marks. A leak
- *     shows up as a later wave reaching fewer than the first.
- *
- * Children never print: concurrent writes to one UART interleave into garbage
- * and the output stops being evidence. They report through their exit status
- * instead, which is why the verdict codes below exist.
- *
- * Each test prints its name before it runs, so a hang names the test that hung.
+ * stress.c - Kernel invariant checker: keyed patterns, a seed -s replays, waves that expose leaks.
  */
 
 #include <stddef.h>
@@ -39,8 +21,7 @@
 // Bounds a wave of children so a run cannot wedge the system it is testing.
 #define DEFAULT_MAX_KIDS 96
 
-// Verdicts
-
+// Children never print, since their writes would interleave; they exit with one of these.
 enum kid_verdict {
     KID_OK = 0,
     KID_SETUP,       // could not set itself up; inconclusive, not a pass
@@ -124,11 +105,7 @@ static uint32_t rnd(void)
     return (uint32_t)((g_rng * 2685821657736338717ULL) >> 32);
 }
 
-/*
- * Word i of a pattern depends on both the key and the offset, so a check
- * catches a page swapped for another key's page and a page shifted against
- * itself, not just a page of zeroes.
- */
+// Keyed by offset too, so a swapped or shifted page fails as surely as a zeroed one.
 static uint32_t pattern_word(uint32_t key, size_t index)
 {
     uint32_t x = key + (uint32_t)index * 2654435761u;
@@ -213,14 +190,7 @@ static int read_full(int fd, unsigned char *buf, size_t len)
 // Generous: a wave member competing with 96 others still finishes far inside.
 #define REAP_DEADLINE_MS 8000
 
-/*
- * waitpid with a deadline. A defect in a blocking kernel path shows up as a
- * child that never exits, and a stress tool that blocks on it forever reports
- * nothing at all -- the run just stops, which is the least useful outcome. Give
- * up instead, kill the child, and call it a failure.
- *
- * Returns the reaped pid, or -1 once the deadline has passed and been reported.
- */
+// waitpid that kills and reports a child past the deadline, so a hung path fails, not stalls.
 static int wait_deadline(int pid, int *status, const char *what)
 {
     for (int waited = 0; waited <= REAP_DEADLINE_MS; waited += 10) {
@@ -229,7 +199,7 @@ static int wait_deadline(int pid, int *status, const char *what)
         if (got != 0) {
             return got; // reaped, or no such child
         }
-        usleep((10) * 1000);
+        usleep(10 * 1000);
     }
 
     report_fail("%s: pid %d never exited (blocked); killing it", what, pid);
@@ -238,11 +208,7 @@ static int wait_deadline(int pid, int *status, const char *what)
     return -1;
 }
 
-/*
- * Collect a wave of children and fold their verdicts into one. Reaping by
- * explicit pid also checks that waitpid returns the child that was asked for
- * rather than whichever one happened to be ready.
- */
+// Folds a wave's verdicts into one, reaping by pid so waitpid must return the child asked for.
 static int reap_wave(const int *pids, int n, const char *what)
 {
     int worst = KID_OK;
@@ -276,15 +242,7 @@ static int reap_wave(const int *pids, int n, const char *what)
 
 // cow - copy-on-write isolation under a fork storm
 
-/*
- * The invariant is symmetric, and both halves are checked: a child must see the
- * parent's memory exactly as it stood at fork and never a later write, and each
- * side's own stores must read back. The failure this is built
- * to catch is a fault resolved for the wrong address, which leaves the page
- * read-only so the store is silently dropped -- registers advance, memory does
- * not. Yielding between write and re-read puts a context switch inside the
- * window where that happens.
- */
+// A child sees memory as it stood at fork, and each side's stores read back, across a yield.
 static void test_cow(int max_kids)
 {
     const size_t pages = 16;
@@ -339,11 +297,7 @@ static void test_cow(int max_kids)
 
     CHECK(n > 0, "cow: could not fork any children");
 
-    /*
-     * Rewrite while the children run. Every child snapshotted the old key at
-     * fork, so these writes must stay invisible to all of them -- and each one
-     * faults the parent's side of the same shared pages at the same time.
-     */
+    // Every child holds the old key, so these writes, faulting the shared pages, stay unseen.
     for (int round = 0; round < 4; round++) {
         uint32_t key = snapshot_key ^ (0xA5A5A5A5u * (uint32_t)(round + 1));
         pattern_fill(region, len, key);
@@ -363,12 +317,7 @@ static void test_cow(int max_kids)
 
 // zero - fresh anonymous memory must be zero-filled
 
-/*
- * A page handed out still carrying its last owner's data is both a leak and a
- * corruption source, and it only shows after enough churn for the allocator to
- * hand back a dirty page. Dirty a batch, let those processes exit, then map
- * again in a fresh child and insist on zeroes.
- */
+// Pages dirtied by processes that then exit must come back zeroed to the next one.
 static void test_zero(int max_kids)
 {
     const size_t len = 8 * PAGE_SIZE;
@@ -410,12 +359,7 @@ static void test_zero(int max_kids)
 
 // fork - lifecycle accounting and slot reuse
 
-/*
- * Each child exits with a value derived from its index, so a status delivered
- * for the wrong child is visible rather than merely suspicious. Running three
- * waves and comparing high-water marks turns any per-process leak -- PCB,
- * page, descriptor -- into a falling number.
- */
+// Each child exits with its index, so a misdelivered status shows; a leak lowers later waves.
 static int fork_wave(int cap, int *hit_limit)
 {
     int *pids = malloc(sizeof(int) * (size_t)cap);
@@ -480,12 +424,7 @@ static void test_fork(int max_kids)
 
 // reap - orphans, reparenting and zombie cleanup
 
-/*
- * A child that exits before its parent waits, and a grandchild whose parent
- * dies first, are the two teardown orders that leak slots. The grandchild
- * checks its own reparenting; the wave-over-wave fork count checks that the
- * orphans were actually collected rather than parked as permanent zombies.
- */
+// Exit before the wait, and an orphaned grandchild: both teardown orders must free their slots.
 static void test_reap(int max_kids)
 {
     int kids = max_kids < 16 ? max_kids : 16;
@@ -504,7 +443,7 @@ static void test_reap(int max_kids)
             }
             if (grand == 0) {
                 // Outlive the parent, then confirm init adopted us.
-                usleep((40) * 1000);
+                usleep(40 * 1000);
                 _exit(getppid() == 1 ? KID_OK : KID_PPID);
             }
             _exit(KID_OK); // orphan the grandchild deliberately
@@ -516,7 +455,7 @@ static void test_reap(int max_kids)
     reap_wave(pids, n, "reap");
 
     // The grandchildren belong to init now; give them time to finish.
-    usleep((200) * 1000);
+    usleep(200 * 1000);
 
     int limited = 0;
     int after = fork_wave(kids, &limited);
@@ -526,11 +465,7 @@ static void test_reap(int max_kids)
 
 // pipe - byte-exact transfer, blocking, and EOF
 
-/*
- * The payload is larger than any plausible pipe buffer, so the writer blocks
- * and the reader drains concurrently. Checking content and not just the total
- * catches bytes delivered out of order or a buffer wrapped one element short.
- */
+// A payload bigger than the pipe, checked by content, so reordering or a short wrap shows.
 static void test_pipe(void)
 {
     const size_t total = 96 * 1024;
@@ -611,15 +546,7 @@ static void test_pipe(void)
     note("%zu bytes verified through a pipe", total);
 }
 
-/*
- * A single write larger than the pipe buffer has to make progress against a
- * reader that is already waiting. Nothing forces the writer to hand off what it
- * has buffered partway through, so it can fill the pipe, block for space, and
- * leave the reader asleep on bytes that already arrived -- both sides stuck.
- *
- * The reader is given time to reach its blocking read before the first byte
- * exists, which is what makes the deadlock reproducible rather than occasional.
- */
+// One write bigger than the pipe must wake a reader already asleep, or both sides stick.
 static int pipe_big_write(uint32_t key)
 {
     const size_t len = 32768; // several buffers' worth, in one write call
@@ -653,7 +580,7 @@ static int pipe_big_write(uint32_t key)
 
     close(fds[0]);
     byte_pattern_fill(buf, len, key);
-    usleep((80) * 1000); // the reader is blocked on an empty pipe by now
+    usleep(80 * 1000); // the reader is blocked on an empty pipe by now
 
     int n = write_full(fds[1], buf, len);
     close(fds[1]);
@@ -677,10 +604,7 @@ static void test_pipe_big(void)
         _exit(pipe_big_write(key));
     }
 
-    /*
-     * Run behind the deadline: this deadlocks outright when the hand-off is
-     * missing, and a hang here would take the rest of the suite with it.
-     */
+    // Behind the deadline, since a missing hand-off deadlocks and would stop the suite.
     int status = -1;
     int got = wait_deadline(pid, &status, "pipe-big");
 
@@ -693,12 +617,7 @@ static void test_pipe_big(void)
     // A deadline miss reported itself; killing the writer frees its reader.
 }
 
-/*
- * Reading a pipe whose write end is closed must report EOF instead of blocking
- * forever, including when the closing happens after the reader is already
- * waiting. That second case is a lost-wakeup bug, and it hangs rather than
- * failing, so it runs last.
- */
+// A closed write end is EOF, even to a reader already waiting; a lost wakeup hangs, so last.
 static void test_pipe_eof(void)
 {
     int fds[2];
@@ -735,7 +654,7 @@ static void test_pipe_eof(void)
     }
 
     close(fds[0]);
-    usleep((60) * 1000); // let the child reach its blocking read
+    usleep(60 * 1000); // let the child reach its blocking read
     close(fds[1]);
 
     int status = -1;
@@ -759,12 +678,7 @@ static void count_handler(int sig)
     g_sig_hits++;
 }
 
-/*
- * Pending signals coalesce, so the caught count is only bounded, not exact:
- * anything from one to the number sent is correct and zero is not. What must
- * be exact is the masking -- a blocked signal has to be pending and undelivered
- * until it is unblocked.
- */
+// Signals coalesce, so 1..sent catches pass; a blocked signal stays pending until unblocked.
 static void test_signal(void)
 {
     const int sends = 120;
@@ -825,10 +739,7 @@ static void test_signal(void)
     signal(SIGUSR2, SIG_DFL);
 }
 
-/*
- * A signal aimed at a process blocked in waitpid has to break the sleep. If it
- * does not, the handler never runs and this hangs -- which is the finding.
- */
+// A signal breaks a waitpid sleep; if it does not, this hangs, which is the finding.
 static void test_signal_wake(void)
 {
     signal(SIGUSR1, count_handler);
@@ -841,11 +752,11 @@ static void test_signal_wake(void)
     }
     if (pid == 0) {
         // Sleep long enough that a delivered signal is the only fast way out.
-        usleep((400) * 1000);
+        usleep(400 * 1000);
         _exit(g_sig_hits > 0 ? KID_OK : KID_SIGNAL);
     }
 
-    usleep((60) * 1000);
+    usleep(60 * 1000);
     CHECK(kill(pid, SIGUSR1) == 0, "signal-wake: kill rejected");
 
     int status = -1;
@@ -866,11 +777,7 @@ static void fd_probe_path(char *out, size_t len, int i)
     snprintf(out, len, "/fd%d.tmp", i);
 }
 
-/*
- * Exhaustion has to fail cleanly and then recover completely. Two rounds with
- * the same high-water mark is the recovery evidence; a descriptor leaked on
- * the failing path makes the second round come up short.
- */
+// Exhaustion fails cleanly and recovers: a leak on the failing path shortens round two.
 static void test_fd(void)
 {
     int cap = FD_PROBE_FILES;
@@ -963,12 +870,7 @@ static void test_fd(void)
 
 #define FILE_PATH "/sfile.tmp"
 
-/*
- * Sizes that straddle block boundaries are where short writes and off-by-one
- * block maps show up, so the round trip runs at several awkward lengths. The
- * create/unlink rounds afterwards look for inode or block leaks the same way
- * the fork test looks for slot leaks.
- */
+// Round trips at sizes that straddle blocks, then create/unlink rounds that expose leaks.
 static void test_file(void)
 {
     static const size_t sizes[] = {1, 511, 512, 513, 4095, 4096, 4097, 12000};
@@ -1040,12 +942,7 @@ static void test_file(void)
     unlink(FILE_PATH);
     CHECK(open(FILE_PATH, O_RDONLY) < 0, "file: unlinked file still opens");
 
-    /*
-     * A name the filesystem shortens must still be findable under the name it
-     * was created with. When create and lookup disagree about how to shorten
-     * it, the file is created and immediately lost, and every retry appends
-     * another directory entry for it.
-     */
+    // A name the filesystem shortens is still found under the name it was created with.
     {
         static const char *longname = "/stress_longname.tmp";
         int fd = open(longname, O_RDWR | O_CREAT | O_TRUNC);
@@ -1101,11 +998,7 @@ static void test_file(void)
 
 // exec - argv delivery and address-space replacement
 
-/*
- * The child re-executes this same binary and checks a relation between two
- * argv strings that it can verify without knowing anything else, so a byte
- * lost anywhere in the vector is caught rather than just a missing pointer.
- */
+// The child re-runs this binary and checks a relation between two argv strings, byte for byte.
 static void test_exec(char **envp, int max_kids)
 {
     int kids = max_kids < 8 ? max_kids : 8;
@@ -1164,7 +1057,7 @@ static int mix_fork(uint32_t key)
         int pid = fork();
         if (pid < 0) {
             // The table being full is expected here, not a defect.
-            usleep((10) * 1000);
+            usleep(10 * 1000);
             continue;
         }
         if (pid == 0) {
@@ -1319,10 +1212,7 @@ static int recurse(int depth, uint32_t key)
     return 0;
 }
 
-/*
- * Runs in a child: overrunning the stack should kill that process and nothing
- * else, so the parent survives to report it either way.
- */
+// In a child: a stack overrun kills that process alone, so the parent can report it.
 static void test_stack(void)
 {
     uint32_t key = rnd();
@@ -1465,11 +1355,7 @@ static void list_tests(void)
     }
 }
 
-/*
- * Re-executed by test_exec. argv[2] and argv[3] must still satisfy the
- * relation the parent built into them, which fails if any byte of the vector
- * was lost or if the strings were truncated.
- */
+// Run by test_exec: argv[2] and argv[3] still satisfy the relation the parent built in.
 static int exec_child_main(int argc, char **argv)
 {
     if (argc != 4) {
@@ -1512,7 +1398,7 @@ int main(int argc, char **argv, char **envp)
         } else if (strcmp(argv[i], "-k") == 0 && i + 1 < argc) {
             max_kids = atoi(argv[++i]);
         } else if (argv[i][0] == '-') {
-            printf("stress: unknown option %s\n", argv[i]);
+            fprintf(stderr, "stress: unknown option %s\n", argv[i]);
             usage();
             return 2;
         } else {
@@ -1524,7 +1410,7 @@ int main(int argc, char **argv, char **envp)
                 }
             }
             if (found < 0) {
-                printf("stress: no test named %s\n", argv[i]);
+                fprintf(stderr, "stress: no test named %s\n", argv[i]);
                 list_tests();
                 return 2;
             }
@@ -1567,11 +1453,7 @@ int main(int argc, char **argv, char **envp)
             int before_checks = g_checks;
             int before_failures = g_failures;
 
-            /*
-             * Announced before it runs, so a hang names the test that hung.
-             * The verdict repeats the name because the kernel logs a line per
-             * fork and per exit, and those land in between.
-             */
+            // Named before it runs, so a hang names it; the verdict repeats it past kernel logs.
             printf("  %-9s %s ...\n", t->name, t->desc);
 
             // Each test starts from a seed derived only from the run seed.

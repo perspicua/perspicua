@@ -1,11 +1,19 @@
-#include "test.h"
-#include "mm/heap.h"
-#include "string.h"
-#include <stddef.h>
-#include <stdbool.h>
+/*
+ * test_heap.c - The heap: alignment, first-fit reuse, splitting, coalescing and redzones.
+ */
 
-#define TEST_HEADER_SIZE 32   // sizeof(block_header)
-#define LARGE            2048 // > SLAB_MAX (1024), forces first-fit path
+#include "test.h"
+
+#include <stdbool.h>
+#include <stddef.h>
+
+#include "string.h"
+
+#include "mm/heap.h"
+
+#define TEST_HEADER_SIZE 32   // sizeof(struct heap_block_header)
+#define TEST_FOOTER_SIZE 16   // sizeof(struct heap_block_footer)
+#define LARGE            2048 // Above HEAP_SLAB_MAX (1024), so first fit serves it
 
 void test_heap(void)
 {
@@ -21,10 +29,8 @@ void test_heap(void)
         heap_free(p);
     }
 
-    // zero-size returns null
     TEST_ASSERT("zero alloc returns null", heap_malloc(0) == NULL);
 
-    // excessively large alloc should return null
     TEST_ASSERT("huge alloc returns null", heap_malloc(0xFFFFFFFFFFFFFFFFULL) == NULL);
 
     // heap_free(null) is safe
@@ -141,17 +147,16 @@ void test_heap(void)
         heap_free(p2);
     }
 
-    // freed block reused for smaller alloc (first-fit path, sizes > SLAB_MAX)
+    // freed block reused for smaller alloc
     {
         void *p1 = heap_malloc(4096);
         heap_free(p1);
         void *p2 = heap_malloc(LARGE);
-        // should reuse same address (first-fit), possibly splitting
         TEST_ASSERT("reuses for smaller", p2 == p1);
         heap_free(p2);
     }
 
-    // first-fit: earlier free block chosen over later (sizes > SLAB_MAX)
+    // first fit: the earlier free block wins over a later one
     {
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
@@ -159,20 +164,12 @@ void test_heap(void)
         heap_free(a);
         heap_free(c);
         void *d = heap_malloc(LARGE);
-        // first-fit should pick 'a' position
         TEST_ASSERT("first-fit picks earlier", d == a);
         heap_free(d);
         heap_free(b);
     }
 
-    /*
-     * The tests from here to the end of the coalescing group assert *where* a
-     * block lands, which only holds if no earlier hole can serve the request.
-     * Consume every hole big enough to interfere and hold them for the whole
-     * group; the heap having to grow is the signal that none is left. Draining
-     * a fixed number of bytes instead would depend on how much heap the kernel
-     * happened to use before the tests ran.
-     */
+    // Placement asserts from here need every earlier hole filled: fill until the heap grows.
     void *layout_fill[64];
     int layout_nfill = 0;
     {
@@ -186,32 +183,24 @@ void test_heap(void)
         }
     }
 
-    // block splitting (sizes > SLAB_MAX to exercise first-fit path)
+    // block splitting
 
-    // split occurs when remainder >= header_size + 16 (48)
-    //    Allocate a big block, free it, then allocate much smaller.
-    //    The remainder should be split into a second usable block.
+    // a split needs 48 bytes past the request and its footer: a header and 16 usable
     {
         void *big = heap_malloc(8192);
         heap_free(big);
-        // Freed block has size >= 8192.
-        // Allocate LARGE from it. Remainder = 8192-2048-32 = 6112 >= 48 -> splits.
         void *small = heap_malloc(LARGE);
         TEST_ASSERT("split: first part", small == big);
-        // Second allocation should come from the split remainder
         void *next = heap_malloc(LARGE);
         TEST_ASSERT("split: second from remainder", next != NULL);
-        // next should be right after small's block: small + LARGE + HEADER_SIZE + FOOTER_SIZE (16)
-        unsigned long expected = (unsigned long)small + LARGE + TEST_HEADER_SIZE + 16;
+        unsigned long expected = (unsigned long)small + LARGE + TEST_HEADER_SIZE + TEST_FOOTER_SIZE;
         TEST_ASSERT("split: contiguous layout", (unsigned long)next == expected);
         heap_free(small);
         heap_free(next);
     }
 
-    // no split when remainder < header_size + 16 (48)
-    //    If the remaining space after alloc is < 48 bytes, no split occurs.
+    // no split when the remainder is under 48 bytes
     {
-        // Allocate then free a block. Re-alloc the same size -> no split expected.
         void *p = heap_malloc(LARGE);
         heap_free(p);
         void *q = heap_malloc(LARGE);
@@ -219,13 +208,12 @@ void test_heap(void)
         heap_free(q);
     }
 
-    // split creates usable blocks (write to both halves, sizes > SLAB_MAX)
+    // both halves of a split are usable to their last byte
     {
         void *big = heap_malloc(8192);
         heap_free(big);
         unsigned char *a = (unsigned char *)heap_malloc(LARGE);
         unsigned char *b = (unsigned char *)heap_malloc(LARGE);
-        // Write full patterns to both split parts
         memset(a, 0x11, LARGE);
         memset(b, 0x22, LARGE);
         int a_ok = 1, b_ok = 1;
@@ -243,13 +231,11 @@ void test_heap(void)
         heap_free(b);
     }
 
-    // repeated splitting exhausts a block correctly (sizes > SLAB_MAX)
+    // repeated splitting carves several blocks out of one
     {
         void *big = heap_malloc(8192);
         heap_free(big);
-        // Each LARGE (2048) alloc uses 2048 + 32 = 2080 bytes.
-        // From 8192 bytes, we can fit floor(8192 / 2080) = 3 splits.
-        // (3 * 2080 = 6240, remainder 1952 < 2080+32 so 4th needs expansion)
+        // Each LARGE takes LARGE + 48 with its header and footer, so 8192 holds three.
         void *ptrs[3];
         int count = 0;
         for (int i = 0; i < 3; i++) {
@@ -264,16 +250,16 @@ void test_heap(void)
         }
     }
 
-    // coalescing (sizes > SLAB_MAX)
+    // coalescing
 
     // two adjacent free blocks coalesce
     {
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
-        void *guard = heap_malloc(LARGE); // prevent merging beyond b
+        void *guard = heap_malloc(LARGE); // keeps the merge from reaching past b
         heap_free(a);
         heap_free(b);
-        // a+b should coalesce: 2048 + 32(header) + 2048 = 4128 usable
+        // The merged block is 2 * (LARGE + 16) + 32 bytes: room for 4128 and its footer.
         void *merged = heap_malloc(4128);
         TEST_ASSERT("coalesce: merged alloc succeeds", merged != NULL);
         TEST_ASSERT("coalesce: merged at a's position", merged == a);
@@ -290,7 +276,7 @@ void test_heap(void)
         heap_free(a);
         heap_free(b);
         heap_free(c);
-        // Total coalesced usable = 2048 + 32 + 2048 + 32 + 2048 = 6208
+        // Three merge into 3 * (LARGE + 16) + 2 * 32 bytes: room for 6208 and its footer.
         void *merged = heap_malloc(6208);
         TEST_ASSERT("3-coalesce succeeds", merged != NULL);
         TEST_ASSERT("3-coalesce at a's position", merged == a);
@@ -301,12 +287,11 @@ void test_heap(void)
     // non-adjacent free blocks do not coalesce
     {
         void *a = heap_malloc(LARGE);
-        void *b = heap_malloc(LARGE); // stays allocated
+        void *b = heap_malloc(LARGE);
         void *c = heap_malloc(LARGE);
         heap_free(a);
         heap_free(c);
-        // a and c are free but b separates them: should NOT coalesce
-        // Trying to alloc 4128 should NOT reuse a (a is only 2048)
+        // b keeps a and c apart, so a cannot hold 4128.
         void *big = heap_malloc(4128);
         TEST_ASSERT("no false coalesce", big != a);
         heap_free(big);
@@ -320,7 +305,6 @@ void test_heap(void)
         void *guard = heap_malloc(LARGE);
         heap_free(a);
         heap_free(b);
-        // Coalesced block = 4128, alloc LARGE from it -> split (4128-2048-32=2048 >= 48)
         void *small = heap_malloc(LARGE);
         TEST_ASSERT("coalesce+split: first part", small == a);
         void *next = heap_malloc(LARGE);
@@ -335,7 +319,6 @@ void test_heap(void)
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *guard = heap_malloc(LARGE);
-        // Free in forward order vs reverse - coalescing walks the list
         heap_free(b);
         heap_free(a);
         void *merged = heap_malloc(4128);
@@ -352,10 +335,9 @@ void test_heap(void)
 
     // allocation larger than initial page triggers expansion
     {
-        void *big = heap_malloc(8192); // 2 pages
+        void *big = heap_malloc(8192);
         TEST_ASSERT("expand: large alloc ok", big != NULL);
         TEST_ASSERT("expand: aligned", ((unsigned long)big & 0xF) == 0);
-        // Write boundaries
         *(volatile unsigned char *)big = 0xDE;
         *((volatile unsigned char *)big + 8191) = 0xAD;
         TEST_ASSERT("expand: first byte", *(volatile unsigned char *)big == 0xDE);
@@ -368,7 +350,6 @@ void test_heap(void)
         void *big = heap_malloc(1024 * 1024);
         TEST_ASSERT("1MB alloc non-null", big != NULL);
         TEST_ASSERT("1MB aligned", ((unsigned long)big & 0xF) == 0);
-        // Touch first, middle, last
         *(volatile unsigned char *)big = 0xAB;
         *((volatile unsigned char *)big + 512 * 1024) = 0xCD;
         *((volatile unsigned char *)big + 1024 * 1024 - 1) = 0xEF;
@@ -393,7 +374,6 @@ void test_heap(void)
 
     // page-aligned allocation sizes
     {
-        // Allocate exactly 4096 (PAGE_SIZE) bytes
         void *page = heap_malloc(4096);
         TEST_ASSERT("page-size alloc ok", page != NULL);
         memset(page, 0xFF, 4096);
@@ -429,16 +409,13 @@ void test_heap(void)
         heap_free(mem);
     }
 
-    // boundary writes to exact allocation size
-    //    Write every byte up to the requested size, making sure we don't
-    //    corrupt the header of the next block.
+    // every byte up to the requested size is writable
     {
         unsigned long sizes[] = {1, 15, 16, 17, 31, 32, 33, 47, 48, 49, 63, 64};
         int nsizes = sizeof(sizes) / sizeof(sizes[0]);
         for (int s = 0; s < nsizes; s++) {
             unsigned char *p = (unsigned char *)heap_malloc(sizes[s]);
             TEST_ASSERT("boundary alloc", p != NULL);
-            // Fill entire requested region
             for (unsigned long i = 0; i < sizes[s]; i++) {
                 p[i] = (unsigned char)(i ^ 0xAA);
             }
@@ -462,7 +439,6 @@ void test_heap(void)
         memset(a, 0x11, 128);
         memset(b, 0x22, 128);
         memset(c, 0x33, 128);
-        // Verify none corrupted each other
         int ok = 1;
         for (int i = 0; i < 128; i++) {
             if (a[i] != 0x11) {
@@ -732,15 +708,11 @@ void test_heap(void)
 
     // header integrity after operations
 
-    // write full requested size, then free and re-alloc
-    //    If writing up to the boundary corrupted the next header, the
-    //    subsequent alloc/free would crash or return bad data.
+    // filling a block to its last byte leaves the next block's header intact
     {
         unsigned char *a = (unsigned char *)heap_malloc(48);
         unsigned char *b = (unsigned char *)heap_malloc(48);
-        // Write exactly 48 bytes to a (should not clobber b's header)
         memset(a, 0xFF, 48);
-        // Verify b is still usable
         memset(b, 0xEE, 48);
         int ok = 1;
         for (int i = 0; i < 48; i++) {
@@ -752,7 +724,6 @@ void test_heap(void)
         TEST_ASSERT("header survived boundary write", ok);
         heap_free(a);
         heap_free(b);
-        // And allocator still works
         void *p = heap_malloc(48);
         TEST_ASSERT("post-boundary alloc ok", p != NULL);
         heap_free(p);
@@ -764,10 +735,8 @@ void test_heap(void)
         unsigned char *b = (unsigned char *)heap_malloc(64);
         memset(b, 0xBB, 64);
         heap_free(a);
-        // Re-alloc same size at a's location, write it
         unsigned char *a2 = (unsigned char *)heap_malloc(64);
         memset(a2, 0xAA, 64);
-        // b should be unchanged
         int ok = 1;
         for (int i = 0; i < 64; i++) {
             if (b[i] != 0xBB) {
@@ -782,11 +751,10 @@ void test_heap(void)
 
     // edge cases
 
-    // minimum allocation (align(1) = 16 bytes)
+    // minimum allocation
     {
         void *p = heap_malloc(1);
         TEST_ASSERT("min alloc ok", p != NULL);
-        // Should be able to write at least 1 byte
         *(unsigned char *)p = 0x42;
         TEST_ASSERT("min alloc write", *(unsigned char *)p == 0x42);
         heap_free(p);
@@ -797,11 +765,9 @@ void test_heap(void)
         unsigned char *p15 = (unsigned char *)heap_malloc(15);
         unsigned char *p16 = (unsigned char *)heap_malloc(16);
         unsigned char *p17 = (unsigned char *)heap_malloc(17);
-        // All internally become ALIGN(n) = 16, 16, 32 bytes
         TEST_ASSERT("15-byte alloc", p15 != NULL);
         TEST_ASSERT("16-byte alloc", p16 != NULL);
         TEST_ASSERT("17-byte alloc", p17 != NULL);
-        // Write exact requested sizes
         memset(p15, 0x0F, 15);
         memset(p16, 0x10, 16);
         memset(p17, 0x11, 17);
@@ -827,24 +793,20 @@ void test_heap(void)
         heap_free(p17);
     }
 
-    // alloc sizes near split threshold (sizes > SLAB_MAX)
-    //    Split happens when remaining >= HEADER_SIZE(32) + 16 = 48.
+    // LARGE from a freed 4096 block leaves a remainder big enough for another LARGE
     {
-        // Make a free block of usable space via alloc+free
         void *blk = heap_malloc(4096);
         heap_free(blk);
 
-        // Alloc LARGE: remaining = 4096-2048 = 2048 >= 48 -> SHOULD split
         void *a = heap_malloc(LARGE);
-        void *split_part = heap_malloc(LARGE); // should come from split remainder
+        void *split_part = heap_malloc(LARGE);
         TEST_ASSERT("threshold: split exists", split_part != NULL);
         heap_free(a);
         heap_free(split_part);
     }
 
-    // exact size alloc (no waste)
+    // exact size alloc
     {
-        // ALIGN(16) = 16, allocate exactly what a free block might have
         void *p = heap_malloc(16);
         heap_free(p);
         void *q = heap_malloc(16);
@@ -852,9 +814,7 @@ void test_heap(void)
         heap_free(q);
     }
 
-    // a request matching a free block's capacity must still get every byte it
-    // asked for, with the redzone footer carved from the block rather than from
-    // the caller's region
+    // a request that fills a free block still gets every byte: the footer comes out of the block
     {
         for (unsigned long n = LARGE; n <= LARGE + 512; n += 16) {
             void *lo = heap_malloc(n);
@@ -877,12 +837,7 @@ void test_heap(void)
         }
     }
 
-    /*
-     * heap_free must reject a pointer this allocator never returned. Blocks
-     * carry a tag recording whether they are ours and whether they are live,
-     * so the size is never read out of whatever happened to precede the
-     * pointer.
-     */
+    // A block's tag says whether it is ours and live, so heap_free refuses pointers it never gave.
     {
         void *p = heap_malloc(LARGE);
         TEST_ASSERT("alloc for tag test", p != NULL);
@@ -892,7 +847,7 @@ void test_heap(void)
         TEST_ASSERT("released block is no longer tagged allocated",
                     !heap_test_is_tagged_allocated(p));
 
-        // a stack address was never ours, so it must not look allocated
+        // a static buffer was never ours, so it must not look allocated
         static unsigned char not_heap[64];
         memset(not_heap, 0, sizeof(not_heap));
         TEST_ASSERT("foreign memory is not tagged",
@@ -901,7 +856,7 @@ void test_heap(void)
 
     // full lifecycle
 
-    // alloc -> write -> free -> re-alloc -> verify clean
+    // alloc, write, free, then alloc again at the same address
     {
         unsigned char *p = (unsigned char *)heap_malloc(256);
         for (int i = 0; i < 256; i++) {
@@ -909,10 +864,7 @@ void test_heap(void)
         }
         heap_free(p);
         unsigned char *q = (unsigned char *)heap_malloc(256);
-        // q should be at same address
         TEST_ASSERT("lifecycle: reuse addr", q == p);
-        // After free, data may or may not be zeroed, but alloc should work
-        // Write new pattern
         for (int i = 0; i < 256; i++) {
             q[i] = (unsigned char)(i ^ 0xAA);
         }
@@ -927,30 +879,25 @@ void test_heap(void)
         heap_free(q);
     }
 
-    // complex multi-size lifecycle (sizes > SLAB_MAX)
+    // multi-size lifecycle
     {
-        // Phase 1: allocate various sizes
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(4096);
         void *c = heap_malloc(LARGE);
         void *d = heap_malloc(8192);
 
-        // Phase 2: free middle ones, creating holes
         heap_free(b);
         heap_free(c);
 
-        /* Phase 3: first fit takes the lower freed slot. Which one that is
-         * depends on the holes boot left behind, which move with image size. */
+        // First fit takes the lower freed slot, which depends on the holes boot left.
         void *e = heap_malloc(LARGE);
         void *lowest = ((unsigned long)b < (unsigned long)c) ? b : c;
         TEST_ASSERT("lifecycle2: reuse the lowest freed slot", e == lowest);
 
-        // Phase 4: free everything
         heap_free(a);
         heap_free(e);
         heap_free(d);
 
-        // Phase 5: large alloc should succeed (coalesced space)
         void *f = heap_malloc(8192);
         TEST_ASSERT("lifecycle2: post-coalesce", f != NULL);
         heap_free(f);

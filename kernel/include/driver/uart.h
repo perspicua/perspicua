@@ -34,10 +34,7 @@
 #define UART_MIS_TXMIS (1 << 5)
 #define UART_MIS_RTMIS (1 << 6)
 
-extern volatile uint32_t *uart_dr;
 extern volatile uint32_t *uart_fr;
-extern volatile uint32_t *uart_mis;
-extern volatile uint32_t *uart_imsc;
 extern spinlock_t uart_tx_lock;
 
 // Set once the UART is programmed and safe to write to.
@@ -75,15 +72,7 @@ void uart_get_rx_errors(struct uart_rx_errors *out);
 uint32_t uart_rx_irq_save(void);
 void uart_rx_irq_restore(uint32_t saved);
 
-void uart_write_raw(const char *buf, size_t len);
-
-int uart_data_ready(void);
-
 void uart_enable_interrupts(void);
-
-void uart_clear_interrupt(uint32_t mask);
-
-unsigned int uart_get_irq(void);
 
 void uart_reg_rx_callback(uart_rx_cb_t f);
 
@@ -91,7 +80,5 @@ void uart_reg_tx_callback(uart_tx_cb_t f);
 
 // Under uart_tx_lock: sends queued output until the FIFO fills; nonzero while some is left.
 void uart_reg_flush_callback(uart_flush_cb_t f);
-
-void uart_handle_irq(void);
 
 #endif // PERSPICUA_DRIVER_UART_H

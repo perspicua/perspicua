@@ -1,9 +1,5 @@
 /*
- * malloc.c - Kernel-mode libc allocator glue.
- *
- * The common libc sources allocate through the standard malloc/free API.
- * In kernel mode those calls are routed to the kernel heap instead of the
- * userspace mmap allocator in libc/src/malloc.c.
+ * malloc.c - malloc and free for libk, on the kernel heap rather than libc/user/malloc.c's mmap.
  */
 
 #include <stddef.h>

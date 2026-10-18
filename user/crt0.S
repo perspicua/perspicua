@@ -1,3 +1,7 @@
+/*
+ * crt0.S - _start runs __libc_init then main; __sigrestorer is the return path from handlers.
+ */
+
 #include "uapi/syscalls.h"
 
 .section ".text"
@@ -15,11 +19,11 @@ _start:
     mov x20, x1
     mov x21, x2
 
-    // Restore argc/argv/envp for _libc_init
+    // Restore argc/argv/envp for __libc_init
     mov x0, x19
     mov x1, x20
     mov x2, x21
-    bl _libc_init
+    bl __libc_init
 
     // Restore argc/argv/envp for main
     mov x0, x19

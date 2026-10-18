@@ -1,8 +1,5 @@
 /*
- * dirent.h - Directory entry as getdents returns it.
- *
- * Shared by the kernel and userspace: the kernel fills these in and copies
- * them out, so the layout is part of the syscall ABI.
+ * dirent.h - The directory entry getdents copies out, so its layout is syscall ABI.
  */
 
 #ifndef PERSPICUA_UAPI_DIRENT_H

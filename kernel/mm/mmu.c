@@ -7,15 +7,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "mm/asid.h"
-#include "uapi/errno.h"
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
-#include "mm/pmm.h"
-#include "mm/addr.h"
+#include "uapi/errno.h"
+
 #include "core/lock.h"
+#include "mm/addr.h"
+#include "mm/asid.h"
+#include "mm/pmm.h"
+#include "panic.h"
 
 #define PTE_VALID    MMU_PTE_VALID
 #define PTE_TABLE    MMU_PTE_TABLE
@@ -102,8 +103,7 @@ static unsigned long linear_attr(unsigned long pa)
 {
     unsigned long attr = PTE_VALID | PTE_AF | PTE_PXN | PTE_UXN | PTE_AP_RW;
 
-    // The BCM2711 legacy peripheral window is generally from 0xFC000000 to 0xFFFFFFFF
-    if (pa >= 0xFC000000UL && pa < 0x100000000UL) {
+    if (pa >= BCM2711_PERIPH_BASE && pa < 0x100000000UL) {
         return attr | PTE_ATTR_D;
     }
     return attr | PTE_ATTR_N | PTE_SH_INNER;
@@ -129,11 +129,7 @@ static void map_linear_gb(unsigned long *l2t, unsigned long gb_base, const struc
     }
 }
 
-/*
- * split_block_to_pages - Converts a 2 MB block entry into a 4 KB page table.
- *
- * Every core touching the block faults during the break, so it must have no RAM behind it.
- */
+// Every core touching the block faults during the break, so it must have no RAM behind it.
 static unsigned long *split_block_to_pages(unsigned long *l2_table, unsigned long l2_idx,
                                            unsigned long vaddr_base)
 {
@@ -198,7 +194,6 @@ void mmu_init(void)
     kernel_pgd_virt = pgd;
     kernel_pgd_phys = V2P((uintptr_t)pgd);
 
-    // Enforce strict segment permissions
     unsigned long ks = (unsigned long)__text_start;
     unsigned long ke = (unsigned long)pmm_metadata_end;
 
@@ -399,18 +394,7 @@ unsigned long *mmu_create_user_pgd(void)
     return alloc_table_page();
 }
 
-/*
- * mmu_destroy_user_pgd - Frees an address space and every page it maps.
- *
- * Deliberately runs without mmu_lock. The walk releases up to a quarter of a
- * million pages, each taking pmm_lock, and holding an irqsave lock across that
- * would mask interrupts for milliseconds. Safety comes from the table being
- * private by this point, not from mutual exclusion: the caller must already
- * have cleared it from the process table and switched TTBR0 away.
- *
- * The one precondition worth enforcing is the one that is easy to get wrong and
- * silent when violated -- freeing tables the MMU is still walking.
- */
+// No mmu_lock: the table must already be private, out of the process table and off TTBR0.
 void mmu_destroy_user_pgd(unsigned long *pgd)
 {
     if (!pgd) {
@@ -707,12 +691,7 @@ void mmu_switch_user(unsigned long *pgd, unsigned long asid)
     asm volatile("isb" : : : "memory");
 }
 
-/*
- * pte_user_ok - Whether a leaf entry permits the requested user access.
- *
- * A copy-on-write page reads as read-only but is writable: the fault handler
- * makes it so on first store.
- */
+// A copy-on-write page reads as read-only but counts as writable: its first store makes it so.
 static int pte_user_ok(unsigned long pte, int writable)
 {
     if (!(pte & MMU_AP_USER)) {
@@ -724,13 +703,7 @@ static int pte_user_ok(unsigned long pte, int writable)
     return 1;
 }
 
-/*
- * mmu_user_range_ok - Checks a whole range is mapped and user-accessible.
- *
- * Descends once per table rather than once per page, and takes mmu_lock once
- * for the range: a megabyte-scale buffer otherwise means hundreds of lock
- * round-trips while the caller has interrupts masked.
- */
+// One descent per table and one mmu_lock hold for the whole range, not one per page.
 int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end, int writable)
 {
     if (!pgd || end <= start) {
@@ -779,13 +752,7 @@ int mmu_user_range_ok(unsigned long *pgd, unsigned long start, unsigned long end
     return ok;
 }
 
-/*
- * mmu_leave_user - Points TTBR0 at the empty table.
- *
- * Must be called before an address space's tables are freed: the walker may
- * prefetch from TTBR0 even when no TLB entries are cached, so a base left
- * naming pages that have gone back to the allocator is a live hazard.
- */
+// Before a pgd is freed: the table walker may prefetch through TTBR0 even with nothing in the TLB.
 void mmu_leave_user(void)
 {
     asm volatile("msr ttbr0_el1, %0" : : "r"(empty_pgd_phys) : "memory");
@@ -849,12 +816,7 @@ out:
     return found;
 }
 
-/*
- * user_leaf_pte - Address of the 4 KB leaf entry for a user VA, or NULL.
- *
- * Caller holds mmu_lock. Returns NULL for an absent level or a 2 MB block,
- * neither of which a copy-on-write page can be.
- */
+// Caller holds mmu_lock. NULL for an absent level or a 2 MB block, neither of which can be CoW.
 static unsigned long *user_leaf_pte(unsigned long *pgd, unsigned long vaddr)
 {
     if (!pgd || !(pgd[L1_IDX(vaddr)] & PTE_VALID)) {
@@ -871,18 +833,7 @@ static unsigned long *user_leaf_pte(unsigned long *pgd, unsigned long vaddr)
     return &l3t[L3_IDX(vaddr)];
 }
 
-/*
- * mmu_handle_cow - Resolves a write fault on a copy-on-write page.
- *
- * The page is only copied when someone else still references it. Once the other
- * holder is gone the entry can simply be made writable again, which is the
- * common case after a forked child exits: without it a parent pays a full page
- * copy on every first write, forever.
- *
- * The copy runs outside mmu_lock, so the entry is re-read afterwards and the
- * copy discarded if anything moved. A reference on the source keeps it alive
- * for the duration.
- */
+// Copies only a page still shared; the copy runs unlocked and is discarded if the entry moved.
 int mmu_handle_cow(unsigned long *pgd, unsigned long vaddr)
 {
     vaddr &= ~0xFFFUL;

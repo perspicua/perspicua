@@ -9,9 +9,9 @@
 
 #include "stdio.h"
 #include "string.h"
-#include "panic.h"
 
 #include "mm/addr.h"
+#include "panic.h"
 
 static const uint32_t *fdt_struct_block;
 static const char *fdt_strings_block;
@@ -24,11 +24,7 @@ static inline uint32_t fdt_next_tag(const uint32_t **p)
     return tag;
 }
 
-/*
- * fdt_update_pointers - Internal routine to update block pointers.
- *
- * Used during initialization and rebasing when the DTB mapping changes.
- */
+// Rebases the block pointers, at init and when the DTB mapping moves.
 static void fdt_update_pointers(uintptr_t base)
 {
     struct fdt_header *fdt = (struct fdt_header *)base;
@@ -69,10 +65,7 @@ void fdt_parse_memory_reservations(void)
         (const struct fdt_reserve_entry *)(fdt_base_address + rsv_offset);
     int count = 0;
 
-    /* Bounded by the blob, not by the terminator: an entry with a nonzero
-     * address and a zero size satisfies the loop condition without being
-     * reserved, so a truncated or malformed map would otherwise walk off the
-     * end of the DTB. */
+    // Bounded by the blob, not the terminator, which a malformed map may never reach.
     uint32_t max_entries = (totalsize - rsv_offset) / sizeof(*rsvmap);
     if (max_entries > 64) {
         max_entries = 64;
@@ -285,8 +278,7 @@ const uint32_t *fdt_get_parent_node(const uint32_t *target_node)
         if (tag == FDT_BEGIN_NODE) {
             const uint32_t *current_node = p - 1;
 
-            // Nesting past the stack stops being recorded, so past it the
-            // answer is unknown rather than parent_stack[depth - 1].
+            // Past the recorded nesting the parent is unknown, not parent_stack[depth - 1].
             if (current_node == target_node) {
                 if (depth > 0 && depth <= 32) {
                     return parent_stack[depth - 1];

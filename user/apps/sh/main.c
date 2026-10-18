@@ -63,7 +63,7 @@ static int read_script_line(char *buf, size_t size)
     return got;
 }
 
-// Runs lines without job control, as sh -c and a script on a pipe do, and exits with the last status.
+// Runs lines without job control, as sh -c and a piped script do; exits with the last status.
 static int run_noninteractive(char *line)
 {
     g_job_control = false;
@@ -90,10 +90,7 @@ static int run_noninteractive(char *line)
     return g_last_status;
 }
 
-/*
- * Takes the terminal for an interactive shell. The job-control signals are for its
- * jobs: a shell stopped or killed by one leaves nothing reading the console.
- */
+// Job-control signals are for the shell's jobs: a stopped shell leaves nobody reading the console.
 static void take_terminal(void)
 {
     signal(SIGINT, SIG_IGN);

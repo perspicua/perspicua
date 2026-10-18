@@ -1,13 +1,9 @@
 /*
- * sh.h - What the shell's three halves share.
- *
- * The shell is split by what a line goes through: edit.c turns keystrokes into
- * a line, parse.c turns that line into commands, exec.c runs them. Only the
- * handful of names below cross those boundaries.
+ * sh.h - What edit.c (keys to a line), parse.c (line to commands) and exec.c share.
  */
 
-#ifndef PERSPICUA_SH_H
-#define PERSPICUA_SH_H
+#ifndef PERSPICUA_SH_SH_H
+#define PERSPICUA_SH_SH_H
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -48,8 +44,7 @@ void print_prompt(void);
 int do_completions(char *cmd_buffer, int *cmd_len, int cursor_pos);
 void clear_completion_matches(void);
 
-// parse.c
-// Each returns -1, having said why on stderr, when the line cannot run as written.
+// parse.c; each returns -1, having said why on stderr, when the line cannot run as written
 void strip_comment(char *line);
 int expand_variables(const char *src, char *dst, size_t dst_size);
 int expand_operators(const char *line, char *expanded, size_t size);
@@ -61,4 +56,4 @@ extern bool g_job_control;
 void execute_line(char *line);
 void handle_sigchld(int sig);
 
-#endif // PERSPICUA_SH_H
+#endif // PERSPICUA_SH_SH_H

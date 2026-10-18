@@ -1,3 +1,7 @@
+/*
+ * ps.c - Lists processes from /proc: pid, parent, state, memory and command.
+ */
+
 #include <stddef.h>
 
 #include "syscall.h"
@@ -28,7 +32,7 @@ int main(void)
 {
     DIR *d = opendir("/proc");
     if (!d) {
-        printf("ps: cannot open /proc\n");
+        fprintf(stderr, "ps: cannot open /proc\n");
         return 1;
     }
 

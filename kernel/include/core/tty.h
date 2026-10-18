@@ -16,12 +16,6 @@
 
 struct vfs_file;
 
-/*
- * struct tty - Represents a terminal device with its buffers and state.
- *
- * Manages separate RX/TX circular buffers and wait queues for processes
- * performing blocking I/O.
- */
 struct tty {
     char rx_buffer[TTY_BUFFER_SIZE];
     size_t rx_head;
@@ -54,22 +48,14 @@ void tty_session_exit(uint32_t sid);
 #define TTY_ACCESS_BLOCKED 1 // background, but the signal cannot stop the caller
 #define TTY_ACCESS_STOPPED 2 // background: signal sent, abandon the operation
 
-/*
- * tty_access_check - Whether a background caller may touch its controlling
- * terminal, signalling its group with sig if not. A caller that blocks or
- * ignores sig cannot be stopped by it, so that case is reported separately
- * rather than looping forever.
- */
+// OK, or signals the caller's group with sig: STOPPED if that stops it, BLOCKED if it cannot.
 int tty_access_check(struct tty *tty, int sig);
 
 void tty_handle_rx(struct tty *tty, char c);
 
-void tty_handle_tx(struct tty *tty);
-
 int tty_read(struct tty *tty, struct vfs_file *file, char *buf, size_t count);
 
-// A signal ends the wait for ring space: what was queued by then is written, and none is
-// -ERESTARTSYS.
+// A signal ends the wait for ring space: what was queued is written; none queued is -ERESTARTSYS.
 int tty_write(struct tty *tty, const char *buf, size_t count);
 
 #ifdef CONFIG_TESTS

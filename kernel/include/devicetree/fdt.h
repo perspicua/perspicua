@@ -17,12 +17,7 @@
 
 #define FDT_ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
-/*
- * struct fdt_header - Standard FDT header as it appears in the blob.
- *
- * All fields are Big-Endian. This structure provides offsets to the
- * different blocks of the device tree.
- */
+// Big-endian, as in the blob.
 struct fdt_header {
     uint32_t magic;
     uint32_t totalsize;
@@ -36,25 +31,16 @@ struct fdt_header {
     uint32_t size_dt_struct;
 };
 
-/*
- * struct fdt_reserve_entry - A single memory reservation block.
- */
 struct fdt_reserve_entry {
     uint64_t address;
     uint64_t size;
 };
 
-/*
- * struct fdt_prop_header - Internal header for a node property.
- */
 struct fdt_prop_header {
     uint32_t len;
     uint32_t nameoff;
 };
 
-/*
- * struct fdt_property - A parsed property for public consumption.
- */
 struct fdt_property {
     const char *name;
     uint32_t size;

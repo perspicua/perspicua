@@ -1,7 +1,12 @@
+/*
+ * test_types.c - Integer and pointer widths, limits and signedness under LP64.
+ */
+
 #include "test.h"
+
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdbool.h>
 
 #include "uapi/types.h"
 

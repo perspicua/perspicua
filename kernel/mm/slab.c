@@ -8,10 +8,10 @@
 #include <stdint.h>
 
 #include "stdio.h"
-#include "panic.h"
 
 #include "core/lock.h"
 #include "mm/pmm.h"
+#include "panic.h"
 
 #define SLAB_MAGIC       0x534C4142U
 #define SLAB_FREE_POISON 0xDEADBEEFDEADBEEFULL
@@ -26,13 +26,7 @@ struct slab_obj {
     uint64_t free_canary;
 };
 
-/*
- * struct slab_page - Header of a page carved into objects of one size class.
- *
- * `used` tracks liveness out of band. An in-object marker cannot do this job:
- * the bytes of a live object belong to its owner, who may legitimately store
- * anything there, including whatever value the marker uses.
- */
+// Liveness is out of band: a live object's bytes are its owner's and may match any marker.
 struct slab_page {
     unsigned int magic;
     unsigned int class_idx;
@@ -54,8 +48,7 @@ struct slab_class {
 static const unsigned long slab_class_sizes[SLAB_NUM_CLASSES] = {16, 32, 64, 128, 256, 512, 1024};
 
 static struct slab_class slab_classes[SLAB_NUM_CLASSES];
-/* Updated outside the class locks (slab_release_page runs unlocked), so this
- * has to be atomic or the count drifts on SMP. */
+// Updated outside the class locks, by slab_release_page, so it must be atomic.
 static unsigned long slab_total_pages = 0;
 
 static inline struct slab_page *ptr_to_slab(void *ptr)
@@ -63,10 +56,7 @@ static inline struct slab_page *ptr_to_slab(void *ptr)
     return (struct slab_page *)((unsigned long)ptr & ~(PAGE_SIZE - 1UL));
 }
 
-/*
- * slab_slot_of - Index of an object in its page, or -1 if ptr is not the start
- * of a slot in it.
- */
+// Index of an object in its page, or -1 if ptr does not start a slot in it.
 static int slab_slot_of(const struct slab_page *sp, const void *ptr)
 {
     unsigned long base = (unsigned long)sp + sp->slot_start;
@@ -115,9 +105,6 @@ static inline int size_to_class_index(unsigned long size)
     return -1;
 }
 
-/*
- * slab_grow - Allocates and carves a new page for a specific size class.
- */
 static struct slab_page *slab_grow(struct slab_class *sc, unsigned int idx)
 {
     void *page = pmm_alloc_page();
@@ -219,18 +206,13 @@ void *slab_alloc(unsigned long size)
         PANIC("slab: partial page with an empty free list");
     }
 
-    // Bounds before the canary read below dereferences obj: an overflow into
-    // a free object corrupts its in-band next pointer, not its canary.
+    // Bounds before the canary read: a corrupt free-list link can point anywhere.
     int slot = slab_slot_of(sp, obj);
     if (slot < 0) {
         PANIC("slab: free list holds a misaligned object");
     }
 
-    /*
-     * Nothing may write to an object while it sits on the free list, so a
-     * disturbed marker here means a use-after-free. Checked on the way out
-     * rather than on the way in, where the bytes belong to the caller.
-     */
+    // A free object is never written, so a disturbed canary is a use-after-free.
     if (obj->free_canary != SLAB_FREE_POISON) {
         PANIC("slab: free object was written after being freed");
     }

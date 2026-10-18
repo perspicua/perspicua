@@ -38,8 +38,7 @@ int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
 int putenv(char *string);
 
-// String to number conversion. strtol and strtoul take base 0 (from the prefix) or 2-36, and
-// saturate with ERANGE; atoi and atol are strtol in base 10.
+// Base 0 (from the prefix) or 2-36, saturating with ERANGE; atoi and atol are strtol in base 10.
 long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
 int atoi(const char *nptr);

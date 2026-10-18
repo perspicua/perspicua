@@ -7,8 +7,7 @@
 #include "errno.h"
 #include "stdlib.h"
 #include "string.h"
-#include "syscall.h"
-#include "uapi/mman.h"
+#include "sys/mman.h"
 
 #define HEAP_ALIGN(x) (((x) + 15) & ~15UL)
 #define CHUNK_SIZE    (1024 * 1024)
@@ -23,7 +22,7 @@ struct block_header {
 
 static struct block_header *block_list = NULL;
 
-static void coalesce()
+static void coalesce(void)
 {
     struct block_header *curr = block_list;
     while (curr && curr->next) {
