@@ -26,6 +26,8 @@
 #include "sched/process.h"
 #include "driver/gic.h"
 
+uint8_t exception_stacks[CPU_MAX_CORES][EXCEPTION_STACK_SIZE] __attribute__((aligned(16)));
+
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 

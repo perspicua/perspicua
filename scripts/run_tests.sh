@@ -70,7 +70,7 @@ KERNEL_SUITES=(
     "Completion:39"
     "RWSEM:17"
     "WaitQueue:84"
-    "User Access:27"
+    "User Access:29"
     "Process:36"
     "ELF Loader:46"
     "Syscall Bounds:20"

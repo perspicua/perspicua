@@ -141,5 +141,33 @@ void test_uaccess(void)
         mmu_destroy_user_pgd(pgd);
     }
 
+    // an EL1 sync exception must not land its frame on the interrupted stack
+    {
+        static char test_buf[64];
+        unsigned long sp;
+        int paint_intact = 1;
+
+        unsigned long flags = irq_save();
+        asm volatile("mov %0, sp" : "=r"(sp));
+
+        volatile unsigned char *paint = (volatile unsigned char *)(sp - 1024);
+        for (int i = 0; i < 1024; i++) {
+            paint[i] = 0x5A;
+        }
+
+        int res = copy_from_user(test_buf, (const void *)UNMAPPED_USER_VA, 16);
+
+        for (int i = 0; i < 1024; i++) {
+            if (paint[i] != 0x5A) {
+                paint_intact = 0;
+                break;
+            }
+        }
+        irq_restore(flags);
+
+        TEST_ASSERT("uaccess fault left kernel stack paint intact", paint_intact);
+        TEST_ASSERT("copy_from_user on unmapped VA returned nonzero", res != 0);
+    }
+
     TEST_SUITE_END("User Access");
 }
