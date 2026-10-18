@@ -123,6 +123,8 @@ uint64_t sched_task_cpu_ticks(struct task *t);
 // Busy and idle ticks of a core since it came online; -1 if it never did.
 int sched_core_cpu_ticks(int cpu, uint64_t *busy, uint64_t *idle);
 void sched_return_to_user(void);
+// task_wrapper_asm runs this first, as a task's first run never returns into sched_schedule.
+void sched_task_start(void);
 
 extern void switch_context(struct cpu_context *prev, struct cpu_context *next);
 
@@ -135,6 +137,9 @@ int sched_test_in_run_queue(const struct task *t);
 
 // TTBR0 the scheduler would install for a process.
 unsigned long sched_test_task_ttbr0_for(uint32_t pid);
+
+// True while this core still holds the task it last switched away from off the run queues.
+int sched_test_prev_pending(void);
 #endif
 
 struct sched_stats {

@@ -54,6 +54,20 @@ static struct task *sched_prev_task[CPU_MAX_CORES];
 
 struct sched_stats core_sched_stats[CPU_MAX_CORES];
 
+// The task a core switched away from stays off every run queue until this runs; IRQs off.
+static void release_prev_task(int cpu)
+{
+    if (sched_prev_task[cpu]) {
+        sched_prev_task[cpu]->on_core = -1;
+        sched_prev_task[cpu] = NULL;
+    }
+}
+
+void sched_task_start(void)
+{
+    release_prev_task(cpu_id());
+}
+
 // Task ID allocation.
 static unsigned long sched_next_id;
 static spinlock_t sched_id_lock = SPINLOCK_INIT;
@@ -271,16 +285,8 @@ static void sleep_drain(int cpu)
     spin_unlock_irqrestore(&sched_sleep_lock, flags);
 }
 
-// Cleans up predecessor of a task that bypassed normal return path.
 static void idle_entry(void)
 {
-    int cpu = cpu_id();
-    if (sched_prev_task[cpu]) {
-        sched_prev_task[cpu]->on_core = -1;
-        sched_prev_task[cpu] = NULL;
-    }
-
-    enable_interrupts();
     for (;;) {
         asm volatile("wfe");
     }
@@ -684,6 +690,14 @@ unsigned long sched_test_task_ttbr0_for(uint32_t pid)
 {
     return task_ttbr0_for(pid);
 }
+
+int sched_test_prev_pending(void)
+{
+    unsigned long flags = irq_save();
+    int pending = sched_prev_task[cpu_id()] != NULL;
+    irq_restore(flags);
+    return pending;
+}
 #endif
 
 // Banks prev's slice or starts next's; acct_seq is odd while the pair is inconsistent.
@@ -736,10 +750,7 @@ void sched_schedule(void)
     unsigned long flags = irq_save();
     int cpu = cpu_id();
 
-    if (sched_prev_task[cpu]) {
-        sched_prev_task[cpu]->on_core = -1;
-        sched_prev_task[cpu] = NULL;
-    }
+    release_prev_task(cpu);
 
     cleanup_dead_task(cpu);
     sleep_drain(cpu);
@@ -827,11 +838,7 @@ void sched_schedule(void)
         switch_context(&prev->context, &next->context);
 
         // Resumed, possibly on another core, so the core ID is read again.
-        int new_cpu = cpu_id();
-        if (sched_prev_task[new_cpu]) {
-            sched_prev_task[new_cpu]->on_core = -1;
-            sched_prev_task[new_cpu] = NULL;
-        }
+        release_prev_task(cpu_id());
     }
 
     irq_restore(flags);
@@ -839,6 +846,9 @@ void sched_schedule(void)
 
 void sched_return_to_user(void)
 {
+    // A forked or exec'd task's first run comes here, not back through sched_schedule.
+    release_prev_task(cpu_id());
+
     struct task *t = sched_current_task();
 
     if (!t) {

@@ -43,6 +43,15 @@ static void task_inc_c(void)
 }
 
 // increment counter_a n times
+static volatile int first_run_seen = 0;
+static volatile int first_run_prev_pending = 0;
+
+static void task_first_run(void)
+{
+    first_run_prev_pending = sched_test_prev_pending();
+    __atomic_store_n(&first_run_seen, 1, __ATOMIC_RELEASE);
+}
+
 static void task_inc_a_10x(void)
 {
     for (int i = 0; i < 10; i++) {
@@ -591,6 +600,22 @@ void test_scheduler(void)
         sched_create_task(task_inc_a);
         sched_sleep_ms(50);
         TEST_ASSERT("single task ran", counter_a == 1);
+    }
+
+    // a task's first run hands back the one its core switched from, so any core may run that again
+    {
+        first_run_seen = 0;
+        first_run_prev_pending = 0;
+        for (int i = 0; i < 8; i++) {
+            __atomic_store_n(&first_run_seen, 0, __ATOMIC_RELAXED);
+            sched_create_task(task_first_run);
+            WAIT_UNTIL(__atomic_load_n(&first_run_seen, __ATOMIC_ACQUIRE));
+            if (first_run_prev_pending) {
+                break;
+            }
+        }
+        TEST_ASSERT("first run reached", first_run_seen);
+        TEST_ASSERT("first run released its predecessor", !first_run_prev_pending);
     }
 
     // task with loop (10 increments)

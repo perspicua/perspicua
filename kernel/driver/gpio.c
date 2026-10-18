@@ -48,7 +48,7 @@ void gpio_set_pin_function(unsigned int pin, unsigned int function)
     unsigned int current_val = gpio_gpfsel0[reg_index];
 
     current_val &= ~(0b111 << bit_offset);
-    current_val |= (function << bit_offset);
+    current_val |= (function & 0b111) << bit_offset;
     gpio_gpfsel0[reg_index] = current_val;
 }
 
@@ -63,7 +63,7 @@ void gpio_set_pull(unsigned int pin, unsigned int pull)
     unsigned int current_val = gpio_gppupdn0[reg_index];
 
     current_val &= ~(0b11 << bit_offset);
-    current_val |= (pull << bit_offset);
+    current_val |= (pull & 0b11) << bit_offset;
 
     gpio_gppupdn0[reg_index] = current_val;
 }

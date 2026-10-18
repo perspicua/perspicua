@@ -17,6 +17,7 @@
 
 #define MBOX_STATUS_FULL  0x80000000
 #define MBOX_STATUS_EMPTY 0x40000000
+#define MBOX_CACHE_LINE   64
 
 static volatile unsigned int *mbox_read = NULL;
 static volatile unsigned int *mbox_status = NULL;
@@ -45,6 +46,20 @@ CORE_DRIVER(bcm2835_mbox) = {
     .probe = bcm2835_mbox_probe,
 };
 
+// Every line the buffer touches, the partial ones at either end included.
+static void mbox_dcache(unsigned long addr, unsigned long size, int invalidate)
+{
+    for (unsigned long line = addr & ~(MBOX_CACHE_LINE - 1UL); line < addr + size;
+         line += MBOX_CACHE_LINE) {
+        if (invalidate) {
+            asm volatile("dc civac, %0" : : "r"(line));
+        } else {
+            asm volatile("dc cvac, %0" : : "r"(line));
+        }
+    }
+    asm volatile("dsb sy");
+}
+
 static void mbox_exchange(unsigned int *buffer)
 {
     unsigned long size = (unsigned long)buffer[0];
@@ -55,11 +70,7 @@ static void mbox_exchange(unsigned int *buffer)
         PANIC("mailbox: buffer outside the GPU's first GB");
     }
 
-    // Flush request data to RAM so the GPU sees the current buffer contents
-    for (unsigned long i = 0; i < size; i += 64) {
-        asm volatile("dc cvac, %0" : : "r"(addr + i));
-    }
-    asm volatile("dsb sy");
+    mbox_dcache(addr, size, 0);
 
     // Channel 8 is the standard property channel
     unsigned int request = (unsigned int)((V2P(buffer) | 0xC0000000) & ~0xF) | 8;
@@ -78,11 +89,8 @@ static void mbox_exchange(unsigned int *buffer)
         unsigned int response = *mbox_read;
 
         if ((response & 0xF) == 8) {
-            // Clean and invalidate: dirty stack data may share the reply's cache lines.
-            for (unsigned long i = 0; i < size; i += 64) {
-                asm volatile("dc civac, %0" : : "r"(addr + i));
-            }
-            asm volatile("dsb sy");
+            // Clean as well, as a stack buffer's lines may also hold its caller's dirty locals.
+            mbox_dcache(addr, size, 1);
             asm volatile("isb");
             return;
         }
@@ -99,10 +107,11 @@ void mbox_call(unsigned int *buffer)
 int mbox_query(uint32_t tag, uint32_t value[2])
 {
     // Static, so it lives in the kernel image inside the GPU's first GB; a task's stack may not.
-    static unsigned int __attribute__((aligned(16))) msg[8];
+    // A whole cache line, so no neighbour shares it; the message uses the first half.
+    static unsigned int __attribute__((aligned(MBOX_CACHE_LINE))) msg[MBOX_CACHE_LINE / 4];
 
     unsigned long flags = spin_lock_irqsave(&mbox_lock);
-    msg[0] = sizeof(msg);
+    msg[0] = 8 * 4;
     msg[1] = 0;
     msg[2] = tag;
     msg[3] = 8;

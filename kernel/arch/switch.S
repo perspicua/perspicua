@@ -27,17 +27,14 @@ switch_context:
     ldr x9, [x1, #96]
     mov sp, x9                 // sp
 
-    // for new tasks, x19 holds the entry point arg
-    mov x0, x19
-
     dsb ish
     ret
 
 .global task_wrapper_asm
 task_wrapper_asm:
-    mov x0, x19         // x19 holds the entry point
+    bl  sched_task_start
     bl  enable_interrupts
-    blr x0              // call entry point
+    blr x19             // the entry point, kept across the calls as x19 is callee-saved
     bl  disable_interrupts
     bl  sched_exit_current
 1:  wfe

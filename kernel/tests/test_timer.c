@@ -1,5 +1,5 @@
 /*
- * test_timer.c - The system timer, busy-wait sleeps, and the build-day wall clock.
+ * test_timer.c - The system timer, its interrupt in the devicetree, sleeps, and the wall clock.
  */
 
 #include "test.h"
@@ -7,6 +7,9 @@
 #include "arch/irq.h"
 
 #include "core/timer.h"
+#include "devicetree/fdt.h"
+#include "driver/device.h"
+#include "driver/gic.h"
 
 void test_timer(void)
 {
@@ -86,6 +89,14 @@ void test_timer(void)
         uint64_t ms = timer_ticks_to_ms(timer_ticks() - before);
         TEST_ASSERT("ticks to ms: 50ms lower bound", ms >= 40);
         TEST_ASSERT("ticks to ms: 50ms upper bound", ms < 200);
+    }
+
+    // the devicetree's timer PPIs come back as GIC IDs: the non-secure physical one is the driver's
+    {
+        struct device dev = {.name = "timer",
+                             .fdt_node = fdt_find_node_by_compatible("arm,armv8-timer")};
+        TEST_ASSERT("timer node found", dev.fdt_node != NULL);
+        TEST_ASSERT_EQ("timer PPI is its GIC ID", devm_get_irq(&dev, 1), GIC_TIMER_IRQ);
     }
 
     // irq_save / irq_restore

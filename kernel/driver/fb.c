@@ -22,8 +22,8 @@
 #include "panic.h"
 #include "sched/process.h"
 
-// Mailbox message buffer for GPU requests (must be 16-byte aligned)
-static __attribute__((aligned(16))) unsigned int mbox[36];
+// Whole cache lines, so no neighbour shares them; the message uses the first 30 words.
+static __attribute__((aligned(64))) unsigned int mbox[48];
 
 // VFS operations for the /dev/fb0 device
 static struct vfs_vnode_ops fb_vfs_ops;
