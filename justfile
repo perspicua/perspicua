@@ -7,6 +7,9 @@ build_dir := "build"
 # Test builds use a separate tree so toggling CONFIG_TESTS never forces a
 # full reconfigure and rebuild of the normal one.
 test_build_dir := "build-test"
+# Crash-test builds also use a separate tree so toggling CONFIG_CRASH_TEST
+# never touches the normal or test trees.
+crash_build_dir := "build-crash"
 # The toolchain file takes the first of aarch64-none-elf-, aarch64-elf- and
 # aarch64-linux-gnu- on PATH; name one with cmake_args="-DCROSS_COMPILE=aarch64-elf-"
 # when a tree is first configured.
@@ -14,6 +17,8 @@ toolchain := "cmake/aarch64-none-elf.cmake"
 
 # Seconds the headless test run may take before it counts as hung.
 test_timeout := "180"
+# Seconds the crash test run may take before it counts as hung.
+crash_timeout := "30"
 
 # Number of cores for parallel build
 nproc := `nproc 2>/dev/null || sysctl -n hw.ncpu || echo 1`
@@ -27,15 +32,17 @@ default: build
 # An override lasts for that one command: the next one without it is back to the defaults.
 cmake_args := ""
 
-# Configure and build into a given tree with a given CONFIG_TESTS setting. The cached
-# CONFIG_ options are dropped first, so the tree builds what this command asked for.
-@_cmake dir type tests:
+# Configure and build into a given tree with a given CONFIG_TESTS setting and any extra
+# cmake flags. The cached CONFIG_ options are dropped first, so the tree builds what this
+# command asked for.
+@_cmake dir type tests extra="":
     cmake -B {{dir}} -S . \
         -U 'CONFIG_*' \
         -DCMAKE_TOOLCHAIN_FILE={{toolchain}} \
         -DCMAKE_BUILD_TYPE={{type}} \
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
         -DCONFIG_TESTS={{tests}} \
+        {{extra}} \
         {{cmake_args}}
     cmake --build {{dir}} -j {{nproc}}
 
@@ -63,6 +70,16 @@ cmake_args := ""
 # Build and run the test kernel interactively in QEMU (drops to the shell)
 @test-shell type="RelWithDebInfo": (build-tests type)
     cmake --build {{test_build_dir}} --target run
+
+# Build and run a crash test kernel headless in QEMU
+@crash-test kind="stack" type="RelWithDebInfo": (_cmake crash_build_dir type "OFF" ("-DCONFIG_KDB_ON_PANIC=OFF -DCONFIG_CRASH_TEST=" + kind))
+    cmake --build {{crash_build_dir}} --target sdcard
+    ./scripts/run_crash_test.sh \
+        {{crash_build_dir}}/kernel/kernel8.img \
+        pi4-boot/bcm2711-rpi-4-b.dtb \
+        {{crash_build_dir}}/sdcard.img \
+        {{crash_timeout}} \
+        "KERNEL PANIC"
 
 # Show the configuration a tree was last built with
 # Usage: just config [dir]  (default: the normal build; the test tree is build-test)
@@ -103,7 +120,7 @@ cmake_args := ""
 
 # Clean build artifacts, the published kernel included
 @clean:
-    rm -rf {{build_dir}} {{test_build_dir}} compile_commands.json pi4-boot/kernel8.img
+    rm -rf {{build_dir}} {{test_build_dir}} {{crash_build_dir}} compile_commands.json pi4-boot/kernel8.img
 
 # Show kernel binary size
 @size: build

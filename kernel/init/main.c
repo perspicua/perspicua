@@ -16,6 +16,7 @@
 #include "core/lockdep.h"
 #include "core/timer.h"
 #include "core/tty.h"
+#include "debug/crash_test.h"
 #include "devicetree/fdt.h"
 #include "driver/block.h"
 #include "driver/device.h"
@@ -187,6 +188,7 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
     procfs_init();
 
     enable_interrupts();
+    crash_test_start();
 #ifdef CONFIG_TESTS
     run_all_tests();
     run_scheduler_tests();
