@@ -79,7 +79,7 @@ cmake_args := ""
         pi4-boot/bcm2711-rpi-4-b.dtb \
         {{crash_build_dir}}/sdcard.img \
         {{crash_timeout}} \
-        "KERNEL PANIC"
+        "KERNEL PANIC" {{ if kind == "stack" { "'Kernel stack overflow' '<task_wrapper_asm+'" } else { "" } }}
 
 # Show the configuration a tree was last built with
 # Usage: just config [dir]  (default: the normal build; the test tree is build-test)

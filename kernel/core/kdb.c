@@ -2,6 +2,7 @@
  * kdb.c - Kernel debugger. All I/O goes straight to the PL011, so it works with the tty broken.
  */
 
+#include "debug/backtrace.h"
 #include "debug/kdb.h"
 
 #include <stdarg.h>
@@ -350,36 +351,7 @@ static void cmd_bt(void)
     }
 
     kdb_puts("\n  --- Stack Backtrace ---\n");
-
-    if (!fp) {
-        kdb_puts("  (frame pointer is NULL)\n");
-        return;
-    }
-
-    for (int i = 0; i < KDB_BT_FRAMES; i++) {
-        if (fp & 0x7UL) {
-            kdb_printf("  #%-2d [unaligned fp 0x%016lx]\n", i, fp);
-            break;
-        }
-
-        unsigned long *frame = (unsigned long *)fp;
-        unsigned long prev_fp = frame[0];
-        unsigned long ret_addr = frame[1];
-
-        unsigned long offset = 0;
-        const char *sym = panic_resolve_symbol(ret_addr, &offset);
-
-        if (sym) {
-            kdb_printf("  #%-2d 0x%016lx  <%s+0x%lx>\n", i, ret_addr, sym, offset);
-        } else {
-            kdb_printf("  #%-2d 0x%016lx\n", i, ret_addr);
-        }
-
-        if (!prev_fp || prev_fp <= fp) {
-            break;
-        }
-        fp = prev_fp;
-    }
+    backtrace_print(fp, KDB_BT_FRAMES, kdb_printf);
 }
 
 static void cmd_rd(int argc, char **argv)

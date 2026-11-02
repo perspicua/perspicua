@@ -16,6 +16,7 @@
 
 #include "arch/irq.h"
 #include "core/timer.h"
+#include "debug/backtrace.h"
 #include "debug/kdb.h"
 #include "driver/gic.h"
 #include "sched/sched.h"
@@ -89,6 +90,9 @@ static void panic_dump_tf_registers(struct exception_trap_frame *tf)
 
     panic_printf("\n--- System Registers (from trap frame) ---\n");
     panic_printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
+    if (tf->sp_el1) {
+        panic_printf("  SP       : 0x%016lx\n", tf->sp_el1);
+    }
     panic_printf("  SP_EL0   : 0x%016lx\n", tf->sp_el0);
     panic_printf("  SPSR_EL1 : 0x%016lx\n", tf->spsr_el1);
 
@@ -125,37 +129,7 @@ static void panic_dump_live_registers(void)
 static void panic_backtrace(unsigned long fp)
 {
     panic_printf("\n--- Stack Trace ---\n");
-
-    if (!fp) {
-        panic_printf("  (frame pointer is NULL)\n");
-        return;
-    }
-
-    for (int i = 0; i < PANIC_MAX_FRAMES; i++) {
-        if (fp & 0x7UL) {
-            panic_printf("  #%-2d  [unaligned FP 0x%016lx]\n", i, fp);
-            break;
-        }
-
-        unsigned long *frame = (unsigned long *)fp;
-        unsigned long prev_fp = frame[0];
-        unsigned long ret_addr = frame[1];
-
-        unsigned long offset = 0;
-        const char *sym_name = panic_resolve_symbol(ret_addr, &offset);
-
-        if (sym_name) {
-            panic_printf("  #%-2d  0x%016lx <%s+0x%lx>\n", i, ret_addr, sym_name, offset);
-        } else {
-            panic_printf("  #%-2d  0x%016lx\n", i, ret_addr);
-        }
-
-        if (!prev_fp || prev_fp <= fp) {
-            break;
-        }
-
-        fp = prev_fp;
-    }
+    backtrace_print(fp, PANIC_MAX_FRAMES, panic_printf);
 }
 
 // Prints the scheduler's view of the currently running task.

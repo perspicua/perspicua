@@ -28,6 +28,17 @@ static inline uintptr_t kstack_top(const void *stack_base)
     return (uintptr_t)stack_base + SCHED_STACK_GUARD_PAGES * PAGE_SIZE + SCHED_TASK_STACK_SIZE;
 }
 
+// Whether addr falls inside the stack's unmapped guard page.
+static inline int kstack_guard_contains(const void *stack_base, uintptr_t addr)
+{
+    if (!stack_base) {
+        return 0;
+    }
+    uintptr_t base = (uintptr_t)stack_base;
+    uintptr_t guard_end = base + (uintptr_t)(SCHED_STACK_GUARD_PAGES * PAGE_SIZE);
+    return (addr >= base && addr < guard_end) ? 1 : 0;
+}
+
 enum sched_task_state {
     SCHED_TASK_RUNNING,
     SCHED_TASK_READY,

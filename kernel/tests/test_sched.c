@@ -8,10 +8,13 @@
 
 #include "string.h"
 
+#include "arch/cpu.h"
+#include "arch/exception.h"
 #include "arch/irq.h"
 
 #include "core/lock.h"
 #include "core/timer.h"
+#include "debug/backtrace.h"
 #include "driver/gic.h"
 #include "mm/heap.h"
 #include "sched/sched.h"
@@ -937,6 +940,49 @@ void test_scheduler(void)
                     idle_ms >= (uint64_t)cores * 50);
         TEST_ASSERT("cpu time: idle never exceeds the time that passed",
                     idle_ms <= (uint64_t)cores * 120);
+    }
+
+    // kstack_guard_contains detects addresses in the unmapped guard page
+    {
+        void *stack = kstack_alloc();
+        uintptr_t base = (uintptr_t)stack;
+
+        TEST_ASSERT("kstack_guard_contains base returns 1",
+                    kstack_guard_contains(stack, base) == 1);
+        uintptr_t guard_end = base + SCHED_STACK_GUARD_PAGES * PAGE_SIZE;
+
+        TEST_ASSERT("kstack_guard_contains guard_end-1 returns 1",
+                    kstack_guard_contains(stack, guard_end - 1) == 1);
+        TEST_ASSERT("kstack_guard_contains guard_end returns 0",
+                    kstack_guard_contains(stack, guard_end) == 0);
+        TEST_ASSERT("kstack_guard_contains base-1 returns 0",
+                    kstack_guard_contains(stack, base - 1) == 0);
+        TEST_ASSERT("kstack_guard_contains NULL base returns 0",
+                    kstack_guard_contains(NULL, base) == 0);
+
+        kstack_free(stack);
+    }
+
+    // backtrace_frame_ok validates frame addresses against known stacks
+    {
+        int cpu = cpu_id();
+        uintptr_t exc_addr = (uintptr_t)&exception_stacks[cpu][128];
+        uintptr_t exc_last8 = (uintptr_t)&exception_stacks[cpu][EXCEPTION_STACK_SIZE - 8];
+        void *stack = kstack_alloc();
+        uintptr_t guard_addr = (uintptr_t)stack;
+
+        TEST_ASSERT("backtrace_frame_ok __builtin_frame_address(0) returns 1",
+                    backtrace_frame_ok((unsigned long)__builtin_frame_address(0)) == 1);
+        TEST_ASSERT("backtrace_frame_ok inside exception stack returns 1",
+                    backtrace_frame_ok(exc_addr) == 1);
+        TEST_ASSERT("backtrace_frame_ok guard page returns 0", backtrace_frame_ok(guard_addr) == 0);
+        TEST_ASSERT("backtrace_frame_ok 0x1000 returns 0", backtrace_frame_ok(0x1000) == 0);
+        TEST_ASSERT("backtrace_frame_ok exception stack last 8 bytes returns 0",
+                    backtrace_frame_ok(exc_last8) == 0);
+        TEST_ASSERT("backtrace_frame_ok unaligned value returns 0",
+                    backtrace_frame_ok(exc_addr | 1UL) == 0);
+
+        kstack_free(stack);
     }
 
     TEST_SUITE_END("Scheduler");

@@ -102,9 +102,12 @@ fiq_discard:
     mrs x1, spsr_el1
     stp x0, x1, [sp, #16]
 
-    // Save sp_el0 (offset 0); xzr clears sp_el1 (offset 8) for EL0 frames
+    // EL1 frames record the interrupted SP; EL0 frames leave it zero.
+    tst x1, #0xf
+    add x1, sp, #EXCEPTION_TRAP_FRAME_SIZE
+    csel x1, xzr, x1, eq
     mrs x0, sp_el0
-    stp x0, xzr, [sp, #0]
+    stp x0, x1, [sp, #0]
 .endm
 
 .macro restore_all
