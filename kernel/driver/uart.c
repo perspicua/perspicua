@@ -27,7 +27,7 @@ spinlock_t uart_tx_lock = SPINLOCK_INIT;
 int uart_ready = 0;
 
 static volatile uint32_t *uart_dr = NULL;
-volatile uint32_t *uart_fr = NULL;
+static volatile uint32_t *uart_fr = NULL;
 static volatile uint32_t *uart_mis = NULL;
 static volatile uint32_t *uart_imsc = NULL;
 
@@ -124,10 +124,24 @@ CORE_DRIVER(pl011_uart) = {
 
 void uart_send_raw(char c)
 {
-    while (mmio_read(uart_fr) & UART_FR_TXFF) {
+    while (mmio_read_relaxed(uart_fr) & UART_FR_TXFF) {
         asm volatile("nop");
     }
-    mmio_write(uart_dr, (unsigned int)c);
+    mmio_write_relaxed(uart_dr, (unsigned int)c);
+}
+
+size_t uart_tx_room(void)
+{
+    uint32_t fr = mmio_read_relaxed(uart_fr);
+    if (fr & UART_FR_TXFE) {
+        return UART_TX_FIFO_DEPTH;
+    }
+    return (fr & UART_FR_TXFF) ? 0 : 1;
+}
+
+void uart_tx_put(char c)
+{
+    mmio_write_relaxed(uart_dr, (unsigned int)c);
 }
 
 static void uart_write_raw(const char *buf, size_t len)
@@ -176,15 +190,21 @@ void uart_write_locked(const char *buf, size_t len)
         if (ring_left) {
             ring_left = uart_flush_callback();
         }
-        while (!ring_left && i < len && !(mmio_read(uart_fr) & UART_FR_TXFF)) {
-            mmio_write(uart_dr, (unsigned int)buf[i++]);
+        while (!ring_left && i < len) {
+            size_t room = uart_tx_room();
+            if (room == 0) {
+                break;
+            }
+            while (room-- > 0 && i < len) {
+                uart_tx_put(buf[i++]);
+            }
         }
         if (!ring_left && i == len) {
             break;
         }
 
         spin_unlock_irqrestore(&uart_tx_lock, flags);
-        while (mmio_read(uart_fr) & UART_FR_TXFF) {
+        while (mmio_read_relaxed(uart_fr) & UART_FR_TXFF) {
             asm volatile("yield");
         }
         flags = spin_lock_irqsave(&uart_tx_lock);
@@ -199,10 +219,10 @@ void uart_write_locked(const char *buf, size_t len)
 
 char uart_getc(void)
 {
-    while (mmio_read(uart_fr) & UART_FR_RXFE) {
+    while (mmio_read_relaxed(uart_fr) & UART_FR_RXFE) {
         asm volatile("nop");
     }
-    return (char)(mmio_read(uart_dr) & 0xFF);
+    return (char)(mmio_read_relaxed(uart_dr) & 0xFF);
 }
 
 void uart_enable_interrupts(void)
@@ -271,8 +291,8 @@ static void uart_handle_irq(void)
     uart_clear_interrupt(mis);
 
     if (mis & (UART_MIS_RXMIS | UART_MIS_RTMIS)) {
-        while (!(mmio_read(uart_fr) & UART_FR_RXFE)) {
-            uint32_t dr = mmio_read(uart_dr);
+        while (!(mmio_read_relaxed(uart_fr) & UART_FR_RXFE)) {
+            uint32_t dr = mmio_read_relaxed(uart_dr);
             for (int bit = 0; bit < 4; bit++) {
                 if (dr & (1u << (8 + bit))) {
                     __atomic_fetch_add(&uart_rx_error_counts[bit], 1, __ATOMIC_RELAXED);
