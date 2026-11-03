@@ -145,6 +145,13 @@ __attribute__((used)) int main(uintptr_t global_dtb_ptr)
 
     print_banner();
 
+    int arm_mhz = mbox_arm_clock_to_max();
+    if (arm_mhz > 0) {
+        pr_info("cpu: ARM clock set to %d MHz\n", arm_mhz);
+    } else {
+        pr_warn("cpu: firmware did not raise the ARM clock\n");
+    }
+
     lockdep_init();
 
     // Stage 2: Memory management initialization

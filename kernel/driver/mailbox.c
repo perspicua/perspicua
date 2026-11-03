@@ -139,3 +139,16 @@ int mbox_query(uint32_t tag, uint32_t value[2])
 {
     return mbox_property(tag, value, 2);
 }
+
+int mbox_arm_clock_to_max(void)
+{
+    uint32_t max[2] = {MBOX_CLOCK_ARM, 0};
+    if (mbox_query(MBOX_TAG_MAX_CLOCK_RATE, max) != 0 || max[1] == 0) {
+        return -1;
+    }
+    uint32_t set[3] = {MBOX_CLOCK_ARM, max[1], 0};
+    if (mbox_property(MBOX_TAG_SET_CLOCK_RATE, set, 3) != 0) {
+        return -1;
+    }
+    return (int)(set[1] / 1000000);
+}

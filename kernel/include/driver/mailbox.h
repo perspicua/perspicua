@@ -25,4 +25,7 @@ int mbox_property(uint32_t tag, uint32_t *value, size_t words);
 // One property tag carrying two words; 0 with the firmware's two words back, -1 if unanswered.
 int mbox_query(uint32_t tag, uint32_t value[2]);
 
+// Raises the ARM clock to its maximum; MHz set, or -1. The firmware still throttles on heat.
+int mbox_arm_clock_to_max(void);
+
 #endif // PERSPICUA_DRIVER_MAILBOX_H
