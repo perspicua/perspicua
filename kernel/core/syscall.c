@@ -944,6 +944,7 @@ static int64_t sigreturn_handler(struct exception_trap_frame *tf)
         proc->blocked_signals = frame.saved_mask & ~((1u << (SIGKILL - 1)) | (1u << (SIGSTOP - 1)));
     }
     tf->spsr_el1 &= 0xF0000000ULL;
+    tf->sp_el1 = 0;
 
     return SYSCALL_RETAIN_FRAME;
 }

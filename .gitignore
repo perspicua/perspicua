@@ -1,6 +1,7 @@
 # Build artifacts
 build/
 build-test/
+build-crash/
 compile_commands.json
 *.o
 *.d

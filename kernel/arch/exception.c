@@ -26,6 +26,8 @@
 #include "sched/process.h"
 #include "driver/gic.h"
 
+uint8_t exception_stacks[CPU_MAX_CORES][EXCEPTION_STACK_SIZE] __attribute__((aligned(16)));
+
 extern unsigned long __ex_table_start[];
 extern unsigned long __ex_table_end[];
 
@@ -154,7 +156,7 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
     if (is_user_fault) {
         int pid = process_current_pid();
         if (pid < 0) {
-            pr_err("\n[FAULT] user abort with no owning process — halting\n");
+            pr_err("[FAULT] user abort with no owning process — halting\n");
             while (1) {
                 asm volatile("wfe");
             }
@@ -180,10 +182,20 @@ static void handle_abort(struct exception_trap_frame *tf, uint32_t ec, uintptr_t
             printk("  Action   : %s to PID %d\n", sig == SIGBUS ? "SIGBUS" : "SIGSEGV", pid);
         }
     } else {
+        struct task *t = sched_current_task();
+        if (t && kstack_guard_contains(t->stack, far)) {
+            uintptr_t stack_base = (uintptr_t)t->stack + SCHED_STACK_GUARD_PAGES * PAGE_SIZE;
+            uintptr_t stack_top = kstack_top(t->stack);
+            pr_err("[KERNEL FAULT] Kernel stack overflow in task id=%lu pid=%u: SP=0x%016lx, stack "
+                   "0x%016lx-0x%016lx\n",
+                   t->id, t->pid, tf->sp_el1, stack_base, stack_top);
+            PANIC_TF("Kernel stack overflow", tf);
+        }
+
         if (far < 0x1000) {
-            pr_err("\n[KERNEL FAULT] NULL pointer dereference (FAR=0x%016lx)\n", far);
+            pr_err("[KERNEL FAULT] NULL pointer dereference (FAR=0x%016lx)\n", far);
         } else {
-            pr_err("\n[KERNEL FAULT] %s at FAR=0x%016lx, FSC=%s\n",
+            pr_err("[KERNEL FAULT] %s at FAR=0x%016lx, FSC=%s\n",
                    is_inst ? "Instruction abort" : (is_write ? "Write fault" : "Read fault"), far,
                    fsc_to_string(fsc));
         }

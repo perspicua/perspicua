@@ -5,9 +5,17 @@
 #ifndef PERSPICUA_ARCH_EXCEPTION_H
 #define PERSPICUA_ARCH_EXCEPTION_H
 
-#include <stdint.h>
+#define EXCEPTION_STACK_SIZE      16384
+#define EXCEPTION_STACK_SHIFT     14
+#define EXCEPTION_TRAP_FRAME_SIZE 288
+#define EXCEPTION_NESTED_HEADROOM 4096
 
-#include "sched/sched.h"
+#ifndef __ASSEMBLER__
+
+    #include <stdint.h>
+
+    #include "arch/cpu.h"
+    #include "sched/sched.h"
 
 /*
  * struct exception_trap_frame - CPU state saved on the stack during an exception.
@@ -26,7 +34,7 @@
  */
 struct exception_trap_frame {
     uint64_t sp_el0;
-    uint64_t _pad;
+    uint64_t sp_el1; // the interrupted SP for EL1 frames, 0 for EL0 frames.
     uintptr_t elr_el1;
     uint64_t spsr_el1;
 
@@ -40,17 +48,29 @@ struct exception_trap_frame {
  * offsets and reserve its size on the stack. A field reordered or inserted here
  * would silently corrupt every exception rather than fail to build.
  */
-_Static_assert(sizeof(struct exception_trap_frame) == 288, "trap frame size — update vector.S");
+_Static_assert(sizeof(struct exception_trap_frame) == EXCEPTION_TRAP_FRAME_SIZE,
+               "trap frame size — update vector.S");
 _Static_assert(__builtin_offsetof(struct exception_trap_frame, sp_el0) == 0, "sp_el0 offset");
+_Static_assert(__builtin_offsetof(struct exception_trap_frame, sp_el1) == 8, "sp_el1 offset");
 _Static_assert(__builtin_offsetof(struct exception_trap_frame, elr_el1) == 16, "elr_el1 offset");
 _Static_assert(__builtin_offsetof(struct exception_trap_frame, spsr_el1) == 24, "spsr_el1 offset");
 _Static_assert(__builtin_offsetof(struct exception_trap_frame, x) == 32, "x[] offset");
 _Static_assert(__builtin_offsetof(struct exception_trap_frame, x30) == 272, "x30 offset");
+
+_Static_assert((EXCEPTION_STACK_SIZE & (EXCEPTION_STACK_SIZE - 1)) == 0,
+               "EXCEPTION_STACK_SIZE must be a power of two");
+_Static_assert((1ULL << EXCEPTION_STACK_SHIFT) == EXCEPTION_STACK_SIZE,
+               "EXCEPTION_STACK_SHIFT mismatch");
+_Static_assert(EXCEPTION_NESTED_HEADROOM < EXCEPTION_STACK_SIZE / 2,
+               "a nested exception needs room for at least one more level");
+
+extern uint8_t exception_stacks[CPU_MAX_CORES][EXCEPTION_STACK_SIZE];
 
 void exception_unhandled_vector(void);
 
 void exception_irq_handler(void);
 
 void exception_sync_handler(struct exception_trap_frame *tf);
+#endif // __ASSEMBLER__
 
 #endif // PERSPICUA_ARCH_EXCEPTION_H

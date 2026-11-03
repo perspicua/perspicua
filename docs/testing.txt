@@ -55,6 +55,11 @@ RUNNING THE TESTS
                          poking at the system in the same configuration the
                          tests ran under.
 
+  just crash-test [kind] Build a crash-test kernel into build-crash/ with
+                         deliberate crash injection (default kind: stack), boot
+                         headless in QEMU, and assert expected panic output via
+                         scripts/run_crash_test.sh.
+
 Override configuration the same way as a normal build, e.g.:
   just cmake_args="-DCONFIG_SMP=OFF -DCONFIG_LOCKDEP=OFF" test
 An override lasts for that one command; the next `just test` without it builds
