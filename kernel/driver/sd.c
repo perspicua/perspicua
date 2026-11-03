@@ -8,6 +8,7 @@
 
 #include "stdio.h"
 #include "string.h"
+#include "io.h"
 #include "panic.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -131,6 +132,16 @@ typedef struct {
 #define SD_MAX_BLOCKS 128
 
 static sdhci_regs_t *regs = NULL;
+
+static void sd_reg_set(volatile uint32_t *reg, uint32_t bits)
+{
+    mmio_write(reg, mmio_read(reg) | bits);
+}
+
+static void sd_reg_clear(volatile uint32_t *reg, uint32_t bits)
+{
+    mmio_write(reg, mmio_read(reg) & ~bits);
+}
 static struct block_device sd_block_dev;
 static uint32_t sd_rca = 0;
 static int sd_is_sdhc = 0;
@@ -145,7 +156,7 @@ static int sd_wait_status(uint32_t mask, uint32_t expected, int timeout_ms)
 {
     // A card at full speed answers within microseconds; one sleep costs a whole scheduler tick.
     unsigned long spin_until = timer_get_system_time() + 2;
-    while ((regs->status & mask) != expected) {
+    while ((mmio_read_relaxed(&regs->status) & mask) != expected) {
         if ((long)(timer_get_system_time() - spin_until) < 0) {
             asm volatile("yield");
             continue;
@@ -184,11 +195,11 @@ static int sd_wait_interrupt(uint32_t mask)
     if (!cur || !sd_irq_num) {
         // No IRQ or no scheduler context: poll instead of sleeping forever.
         int t = 1000;
-        while (!(regs->interrupt & (mask | INT_ERROR_MASK)) && t--) {
+        while (!(mmio_read_relaxed(&regs->interrupt) & (mask | INT_ERROR_MASK)) && t--) {
             timer_sleep_ms(1);
         }
-        uint32_t status = regs->interrupt;
-        regs->interrupt = status & (mask | INT_ERROR_MASK);
+        uint32_t status = mmio_read(&regs->interrupt);
+        mmio_write(&regs->interrupt, status & (mask | INT_ERROR_MASK));
         if (t < 0) {
             return -ETIMEDOUT;
         }
@@ -213,8 +224,8 @@ int sd_handle_irq(void)
         return 0;
     }
 
-    uint32_t bits = regs->interrupt;
-    regs->interrupt = bits; // W1C: clear in hardware.
+    uint32_t bits = mmio_read(&regs->interrupt);
+    mmio_write(&regs->interrupt, bits); // W1C: clear in hardware.
 
     unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
     sd_irq_pending |= bits;
@@ -244,12 +255,12 @@ static int sd_send_cmd(uint32_t cmd, uint32_t arg)
 
     // A late completion from an earlier, abandoned request must not satisfy this one.
     unsigned long flags = spin_lock_irqsave(&sd_irq_lock);
-    regs->interrupt = INT_STALE_MASK;
+    mmio_write(&regs->interrupt, INT_STALE_MASK);
     sd_irq_pending &= ~INT_STALE_MASK;
     spin_unlock_irqrestore(&sd_irq_lock, flags);
 
-    regs->arg1 = arg;
-    regs->xfer_mode_cmd = cmd;
+    mmio_write(&regs->arg1, arg);
+    mmio_write(&regs->xfer_mode_cmd, cmd);
 
     return sd_wait_interrupt(INT_CMD_DONE);
 }
@@ -257,24 +268,26 @@ static int sd_send_cmd(uint32_t cmd, uint32_t arg)
 // Clears a command or data error so the next request starts from a clean controller.
 static void sd_reset_lines(void)
 {
-    regs->clk_control |= CLK_RESET_CMD | CLK_RESET_DAT;
-    for (int i = 0; i < 100 && (regs->clk_control & (CLK_RESET_CMD | CLK_RESET_DAT)); i++) {
+    sd_reg_set(&regs->clk_control, CLK_RESET_CMD | CLK_RESET_DAT);
+    for (int i = 0; i < 100 && (mmio_read(&regs->clk_control) & (CLK_RESET_CMD | CLK_RESET_DAT));
+         i++) {
         timer_sleep_ms(1);
     }
 }
 
 static int sd_set_divider(uint32_t div)
 {
-    regs->clk_control &= ~CLK_SD_EN;
-    regs->clk_control = (regs->clk_control & ~CLK_DIV_MASK) | ((div & 0xFF) << 8)
-                        | (((div >> 8) & 0x3) << 6) | CLK_INTERNAL_EN;
-    for (int i = 0; !(regs->clk_control & CLK_INTERNAL_STABLE); i++) {
+    sd_reg_clear(&regs->clk_control, CLK_SD_EN);
+    mmio_write(&regs->clk_control, (mmio_read(&regs->clk_control) & ~CLK_DIV_MASK)
+                                       | ((div & 0xFF) << 8) | (((div >> 8) & 0x3) << 6)
+                                       | CLK_INTERNAL_EN);
+    for (int i = 0; !(mmio_read(&regs->clk_control) & CLK_INTERNAL_STABLE); i++) {
         if (i == 100) {
             return -ETIMEDOUT;
         }
         timer_sleep_ms(1);
     }
-    regs->clk_control |= CLK_SD_EN;
+    sd_reg_set(&regs->clk_control, CLK_SD_EN);
     timer_sleep_ms(2);
     return 0;
 }
@@ -282,59 +295,40 @@ static int sd_set_divider(uint32_t div)
 // The firmware's current rate for one of its clocks, or 0 if it does not answer.
 static uint32_t sd_get_clock(uint32_t id)
 {
-    unsigned int __attribute__((aligned(16))) mbox[8];
-    mbox[0] = 8 * 4;
-    mbox[1] = 0;
-    mbox[2] = 0x00030002; // Get clock rate tag
-    mbox[3] = 8;
-    mbox[4] = 0;
-    mbox[5] = id;
-    mbox[6] = 0;
-    mbox[7] = 0;
-
-    mbox_call(mbox);
-    return (mbox[1] == 0x80000000 && mbox[5] == id) ? mbox[6] : 0;
+    uint32_t value[2] = {id, 0};
+    if (mbox_query(MBOX_TAG_CLOCK_RATE, value) != 0 || value[0] != id) {
+        return 0;
+    }
+    return value[1];
 }
 
 static int sd_set_clock(uint32_t clock)
 {
-    unsigned int __attribute__((aligned(16))) mbox[10];
-    mbox[0] = 10 * 4;
-    mbox[1] = 0;
-    mbox[2] = 0x00038002; // Set clock rate tag
-    mbox[3] = 12;
-    mbox[4] = 8;
-    mbox[5] = 1; // EMMC clock ID
-    mbox[6] = clock;
-    mbox[7] = 0;
-    mbox[8] = 0;
-    mbox[9] = 0;
-
-    mbox_call(mbox);
-    return (mbox[1] == 0x80000000) ? 0 : -EIO;
+    uint32_t value[3] = {1, clock, 0}; // EMMC clock, rate, no turbo skip
+    return mbox_property(MBOX_TAG_SET_CLOCK_RATE, value, 3) == 0 ? 0 : -EIO;
 }
 
 static int sd_init_host(void)
 {
     // Reset the clock and wait for completion
-    regs->clk_control |= (7 << 24);
+    sd_reg_set(&regs->clk_control, 7 << 24);
     timer_sleep_ms(20);
-    while (regs->clk_control & (7 << 24))
+    while (mmio_read_relaxed(&regs->clk_control) & (7 << 24))
         ;
 
-    regs->int_en = 0xFFFFFFFF;
-    regs->int_mask = 0xFFFFFFFF;
+    mmio_write(&regs->int_en, 0xFFFFFFFF);
+    mmio_write(&regs->int_mask, 0xFFFFFFFF);
 
     // Request 3.3V power
-    regs->host_control = (regs->host_control & ~0xF00) | 0xE00;
+    mmio_write(&regs->host_control, (mmio_read(&regs->host_control) & ~0xF00) | 0xE00);
     timer_sleep_ms(100);
-    regs->host_control |= 0x100;
+    sd_reg_set(&regs->host_control, 0x100);
 
     // Enable internal clock
-    regs->clk_control = (regs->clk_control & ~0xFFFF) | (0xFA << 8) | 0x01;
-    while (!(regs->clk_control & 0x02))
+    mmio_write(&regs->clk_control, (mmio_read(&regs->clk_control) & ~0xFFFF) | (0xFA << 8) | 0x01);
+    while (!(mmio_read_relaxed(&regs->clk_control) & 0x02))
         ;
-    regs->clk_control |= 0x04;
+    sd_reg_set(&regs->clk_control, 0x04);
     timer_sleep_ms(20);
 
     return 0;
@@ -372,8 +366,9 @@ static int sd_init_card(void)
     while (timeout--) {
         sd_send_cmd(CMD55, 0);
         sd_send_cmd(ACMD41, 0x40FF8000);
-        if (regs->resp[0] & 0x80000000) {
-            sd_is_sdhc = (regs->resp[0] & 0x40000000) ? 1 : 0;
+        uint32_t ocr = mmio_read(&regs->resp[0]);
+        if (ocr & 0x80000000) {
+            sd_is_sdhc = (ocr & 0x40000000) ? 1 : 0;
             break;
         }
         timer_sleep_ms(1);
@@ -388,10 +383,11 @@ static int sd_init_card(void)
     if (sd_send_cmd(CMD3, 0) != 0) {
         return -EIO;
     }
-    sd_rca = regs->resp[0] & 0xFFFF0000;
+    sd_rca = mmio_read(&regs->resp[0]) & 0xFFFF0000;
 
     if (sd_send_cmd(CMD9, sd_rca) == 0) {
-        uint32_t csd[4] = {regs->resp[0], regs->resp[1], regs->resp[2], regs->resp[3]};
+        uint32_t csd[4] = {mmio_read(&regs->resp[0]), mmio_read(&regs->resp[1]),
+                           mmio_read(&regs->resp[2]), mmio_read(&regs->resp[3])};
 
         /*
          * The capacity fields differ between CSD versions, and a card small
@@ -437,7 +433,7 @@ static int sd_transfer(size_t block, size_t count, uint32_t *in, const uint32_t 
     uint32_t cmd = count == 1 ? (in ? CMD17 : CMD24) : (in ? CMD18 : CMD25);
     uint32_t ready = in ? STATUS_READ_READY : STATUS_WRITE_READY;
 
-    regs->blk_size_cnt = ((uint32_t)count << 16) | 512;
+    mmio_write(&regs->blk_size_cnt, ((uint32_t)count << 16) | 512);
     int res = sd_send_cmd(cmd, addr);
     for (size_t i = 0; res == 0 && i < count; i++) {
         res = sd_wait_status(ready, ready, 500);
@@ -446,9 +442,9 @@ static int sd_transfer(size_t block, size_t count, uint32_t *in, const uint32_t 
         }
         for (int j = 0; j < 128; j++) {
             if (in) {
-                in[i * 128 + j] = regs->data;
+                in[i * 128 + j] = mmio_read_relaxed(&regs->data);
             } else {
-                regs->data = out[i * 128 + j];
+                mmio_write_relaxed(&regs->data, out[i * 128 + j]);
             }
         }
     }
@@ -525,7 +521,7 @@ static void sd_enable_fast_mode(uint32_t base_hz)
         pr_warn("sd: card refused a 4-bit bus; staying at the identification clock\n");
         return;
     }
-    regs->host_control |= HOST_DATA_4BIT;
+    sd_reg_set(&regs->host_control, HOST_DATA_4BIT);
 
     if (sd_set_divider(div) == 0 && sd_read_test() == 0) {
         pr_info("sd: 4-bit bus at %u kHz\n", base_hz / (2 * div) / 1000);
@@ -534,7 +530,7 @@ static void sd_enable_fast_mode(uint32_t base_hz)
 
     sd_reset_lines();
     sd_set_divider(SD_ID_DIVIDER);
-    regs->host_control &= ~HOST_DATA_4BIT;
+    sd_reg_clear(&regs->host_control, HOST_DATA_4BIT);
     if (sd_send_cmd(CMD55, sd_rca) == 0) {
         sd_send_cmd(ACMD6, 0);
     }
@@ -673,7 +669,7 @@ static int sd_probe(struct device *dev)
     // Firmware clock 12 feeds EMMC2, clock 1 the legacy controller.
     uint32_t base_hz = sd_get_clock(strcmp(dev->name, "bcm2711-emmc2") == 0 ? 12 : 1);
     if (base_hz == 0) {
-        base_hz = ((regs->capabilities[0] >> 8) & 0xFF) * 1000000;
+        base_hz = ((mmio_read(&regs->capabilities[0]) >> 8) & 0xFF) * 1000000;
     }
     sd_enable_fast_mode(base_hz);
 

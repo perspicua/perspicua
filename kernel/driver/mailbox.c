@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "io.h"
 #include "stdio.h"
 
 #include "core/lock.h"
@@ -75,18 +76,18 @@ static void mbox_exchange(unsigned int *buffer)
     // Channel 8 is the standard property channel
     unsigned int request = (unsigned int)((V2P(buffer) | 0xC0000000) & ~0xF) | 8;
 
-    while (*mbox_status & MBOX_STATUS_FULL) {
+    while (mmio_read_relaxed(mbox_status) & MBOX_STATUS_FULL) {
         asm volatile("nop");
     }
 
-    *mbox_write = request;
+    mmio_write(mbox_write, request);
 
     while (1) {
-        while (*mbox_status & MBOX_STATUS_EMPTY) {
+        while (mmio_read_relaxed(mbox_status) & MBOX_STATUS_EMPTY) {
             asm volatile("nop");
         }
 
-        unsigned int response = *mbox_read;
+        unsigned int response = mmio_read(mbox_read);
 
         if ((response & 0xF) == 8) {
             // Clean as well, as a stack buffer's lines may also hold its caller's dirty locals.
@@ -104,26 +105,37 @@ void mbox_call(unsigned int *buffer)
     spin_unlock_irqrestore(&mbox_lock, flags);
 }
 
-int mbox_query(uint32_t tag, uint32_t value[2])
+int mbox_property(uint32_t tag, uint32_t *value, size_t words)
 {
     // Static, so it lives in the kernel image inside the GPU's first GB; a task's stack may not.
-    // A whole cache line, so no neighbour shares it; the message uses the first half.
+    // A whole cache line, so no neighbour shares it.
     static unsigned int __attribute__((aligned(MBOX_CACHE_LINE))) msg[MBOX_CACHE_LINE / 4];
 
+    if (words > MBOX_CACHE_LINE / 4 - 6) {
+        PANIC("mailbox: property value does not fit one cache line");
+    }
+
     unsigned long flags = spin_lock_irqsave(&mbox_lock);
-    msg[0] = 8 * 4;
+    msg[0] = (unsigned int)((6 + words) * 4);
     msg[1] = 0;
     msg[2] = tag;
-    msg[3] = 8;
+    msg[3] = (unsigned int)(words * 4);
     msg[4] = 0;
-    msg[5] = value[0];
-    msg[6] = value[1];
-    msg[7] = 0;
+    for (size_t i = 0; i < words; i++) {
+        msg[5 + i] = value[i];
+    }
+    msg[5 + words] = 0;
     mbox_exchange(msg);
     // The firmware sets bit 31 of a tag's length word once it has answered that tag.
     int answered = msg[1] == 0x80000000 && (msg[4] & 0x80000000);
-    value[0] = msg[5];
-    value[1] = msg[6];
+    for (size_t i = 0; i < words; i++) {
+        value[i] = msg[5 + i];
+    }
     spin_unlock_irqrestore(&mbox_lock, flags);
     return answered ? 0 : -1;
+}
+
+int mbox_query(uint32_t tag, uint32_t value[2])
+{
+    return mbox_property(tag, value, 2);
 }

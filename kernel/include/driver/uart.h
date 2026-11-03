@@ -15,6 +15,9 @@
 #define UART_FR_RXFE (1 << 4)
 #define UART_FR_TXFE (1 << 7)
 
+// The BCM2711 PL011 transmit FIFO.
+#define UART_TX_FIFO_DEPTH 16
+
 // UART Line Control Register (LCRH) bits
 #define UART_LCRH_FEN    (1 << 4)
 #define UART_LCRH_WLEN_8 (3 << 5)
@@ -34,7 +37,6 @@
 #define UART_MIS_TXMIS (1 << 5)
 #define UART_MIS_RTMIS (1 << 6)
 
-extern volatile uint32_t *uart_fr;
 extern spinlock_t uart_tx_lock;
 
 // Set once the UART is programmed and safe to write to.
@@ -55,6 +57,10 @@ struct uart_rx_errors {
 void uart_send(char c);
 
 void uart_send_raw(char c);
+
+// Bytes uart_tx_put may write without polling: a whole FIFO once it is empty.
+size_t uart_tx_room(void);
+void uart_tx_put(char c);
 
 char uart_getc(void);
 

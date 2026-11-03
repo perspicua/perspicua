@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "io.h"
 #include "stdio.h"
 
 #include "arch/cpu.h"
@@ -125,7 +126,7 @@ void timer_interrupt_init(void)
         qa7_timer_routing_init();
     }
 
-    qa7_timer_irq_ctrl[core] = (1 << 1);
+    mmio_write(&qa7_timer_irq_ctrl[core], 1 << 1);
 
     unsigned int freq = read_cntfrq();
 

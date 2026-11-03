@@ -1,5 +1,9 @@
 /*
  * io.h - Memory-Mapped I/O (MMIO) primitives.
+ *
+ * Device accesses to one peripheral stay in order without barriers. The plain
+ * accessors also order an access against normal memory, which a DMA master or
+ * another core may read; the _relaxed ones do not, for device-only sequences.
  */
 
 #ifndef PERSPICUA_IO_H
@@ -7,33 +11,41 @@
 
 #include <stdint.h>
 
-// Reads a 32-bit value from MMIO register with load barrier.
-static inline uint32_t mmio_read(volatile uint32_t *reg)
+static inline uint32_t mmio_read_relaxed(const volatile uint32_t *reg)
 {
-    uint32_t val = *reg;
-    __asm__ volatile("dmb ishld" ::: "memory");
-    return val;
+    return *reg;
 }
 
-// Writes a 32-bit value to MMIO register with store barrier.
-static inline void mmio_write(volatile uint32_t *reg, uint32_t val)
+static inline void mmio_write_relaxed(volatile uint32_t *reg, uint32_t val)
 {
-    __asm__ volatile("dsb ishst" ::: "memory");
     *reg = val;
 }
 
-// Reads an 8-bit value from MMIO register with load barrier.
-static inline uint8_t mmio_read8(volatile uint8_t *reg)
+// Later normal-memory reads cannot pass this load.
+static inline uint32_t mmio_read(const volatile uint32_t *reg)
 {
-    uint8_t val = *reg;
-    __asm__ volatile("dsb ishld" ::: "memory");
+    uint32_t val = *reg;
+    __asm__ volatile("dmb oshld" ::: "memory");
     return val;
 }
 
-// Writes an 8-bit value to MMIO register with store barrier.
+// Earlier normal-memory stores are observable before this one.
+static inline void mmio_write(volatile uint32_t *reg, uint32_t val)
+{
+    __asm__ volatile("dmb oshst" ::: "memory");
+    *reg = val;
+}
+
+static inline uint8_t mmio_read8(const volatile uint8_t *reg)
+{
+    uint8_t val = *reg;
+    __asm__ volatile("dmb oshld" ::: "memory");
+    return val;
+}
+
 static inline void mmio_write8(volatile uint8_t *reg, uint8_t val)
 {
-    __asm__ volatile("dsb ishst" ::: "memory");
+    __asm__ volatile("dmb oshst" ::: "memory");
     *reg = val;
 }
 

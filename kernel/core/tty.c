@@ -40,12 +40,15 @@ static size_t tty_tx_send_locked(struct tty *tty)
     size_t sent = 0;
 
     while (tail != head) {
-        if (mmio_read(uart_fr) & UART_FR_TXFF) {
+        size_t room = uart_tx_room();
+        if (room == 0) {
             break;
         }
-        uart_send_raw((unsigned char)tty->tx_buffer[tail]);
-        tail = (tail + 1) % TTY_BUFFER_SIZE;
-        sent++;
+        while (room-- > 0 && tail != head) {
+            uart_tx_put(tty->tx_buffer[tail]);
+            tail = (tail + 1) % TTY_BUFFER_SIZE;
+            sent++;
+        }
     }
 
     __atomic_store_n(&tty->tx_tail, tail, __ATOMIC_RELEASE);
