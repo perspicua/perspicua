@@ -8,6 +8,7 @@
 #define EXCEPTION_STACK_SIZE      16384
 #define EXCEPTION_STACK_SHIFT     14
 #define EXCEPTION_TRAP_FRAME_SIZE 288
+#define EXCEPTION_NESTED_HEADROOM 4096
 
 #ifndef __ASSEMBLER__
 
@@ -60,6 +61,8 @@ _Static_assert((EXCEPTION_STACK_SIZE & (EXCEPTION_STACK_SIZE - 1)) == 0,
                "EXCEPTION_STACK_SIZE must be a power of two");
 _Static_assert((1ULL << EXCEPTION_STACK_SHIFT) == EXCEPTION_STACK_SIZE,
                "EXCEPTION_STACK_SHIFT mismatch");
+_Static_assert(EXCEPTION_NESTED_HEADROOM < EXCEPTION_STACK_SIZE / 2,
+               "a nested exception needs room for at least one more level");
 
 extern uint8_t exception_stacks[CPU_MAX_CORES][EXCEPTION_STACK_SIZE];
 

@@ -132,31 +132,42 @@ fiq_discard:
 .global el1_sync_handler
 el1_sync_handler:
     // SP may be in the guard page: no SP-relative access until it is switched.
+    // SP_EL0 is scratch here and not restored: EL1 never reads the live register.
     msr sp_el0, x0
     msr tpidrro_el0, x1
     mov x0, sp
 
     ldr x1, =exception_stacks
     mov sp, x1
+    add x1, x1, #(CONFIG_NR_CPUS * EXCEPTION_STACK_SIZE)
+    cmp sp, x0
+    b.hi .Lfresh
+    cmp x0, x1
+    b.hs .Lfresh
+
+    // Nested: stay below the interrupted SP, within this core's slot and with headroom.
+    mrs x1, mpidr_el1
+    and x1, x1, #0x3
+    lsl x1, x1, #EXCEPTION_STACK_SHIFT
+    add x1, sp, x1
+    mov sp, x1
+    cmp sp, x0
+    b.hi .Lhalt
+    add x1, x1, #EXCEPTION_STACK_SIZE
+    cmp x0, x1
+    b.hs .Lhalt
+    sub x1, x0, #EXCEPTION_NESTED_HEADROOM
+    cmp sp, x1
+    b.hi .Lhalt
+    mov x1, x0
+    b 1f
+
+.Lfresh:
     mrs x1, mpidr_el1
     and x1, x1, #0x3
     add x1, x1, #1
     lsl x1, x1, #EXCEPTION_STACK_SHIFT
     add x1, sp, x1
-
-    // A nested EL1 exception reuses the remaining stack below the interrupted SP.
-    sub sp, x1, #EXCEPTION_STACK_SIZE
-    cmp sp, x0
-    b.hi 1f
-    cmp x0, x1
-    b.hs 1f
-
-    // Overflow halts to protect neighbouring core exception stacks.
-    mov x1, x0
-    sub x0, x1, #EXCEPTION_TRAP_FRAME_SIZE
-    cmp sp, x0
-    b.hi .Lhalt
-    mov x0, x1
 
 1:
     sub sp, x1, #EXCEPTION_TRAP_FRAME_SIZE
@@ -192,6 +203,7 @@ el1_sync_handler:
     ldr x0, [x0, #32]
     eret
 
+// Exception stack exhausted: only this core halts, with no stack left to report from.
 .Lhalt:
     wfe
     b .Lhalt

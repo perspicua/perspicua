@@ -270,7 +270,7 @@ single highest-leverage phase in the file.
         of a live PCB impossible rather than merely unlikely. Item 1's wait queue
         is what makes "unlinked from every list" checkable.
 
-  12. Per-CPU exception stacks                                         (IMP-010)
+  12. Per-CPU exception stacks [DONE]                                  (IMP-010)
       Effort: S-M | Unlocks: stack overflow becomes a diagnosable fault
       Scope: allocate a small per-core exception stack and switch SP_EL1 to it on
         entry for aborts, keeping the syscall path on the task stack so syscall
@@ -279,14 +279,15 @@ single highest-leverage phase in the file.
         faulting task, rather than as a generic abort.
       Done: a deliberately recursive kernel function prints a stack-overflow
         report identifying the task, and nothing below the guard page is written.
-      Note: all exceptions are taken on the current kernel stack, and save_all
-        pushes a 288-byte frame there. On an overflow, each nested abort descends
-        288 bytes until the frame leaves the guard page; the handler then runs on,
-        and overwrites, the physical page below the stack block, and panics as a
-        generic abort with ELR in sync_handler and a broken backtrace. The canary
-        at stack + PAGE_SIZE is checked only in sched_schedule(), far too late to
-        report. Small change, and it makes every later memory bug cheaper to
-        diagnose; pairs naturally with item 8.
+      Note: EL1 synchronous exceptions run on a 16 KB per-core stack
+        (el1_sync_handler in vector.S) with IRQs masked, so their handlers must
+        never sleep; EL0 entry and IRQs stay on the task stack. A nested entry
+        continues below the interrupted SP and halts the core when its slot has
+        less than EXCEPTION_NESTED_HEADROOM left, since the four slots are
+        adjacent with no guard between them. A fault address in the current
+        task's guard page panics as a stack overflow naming the task, and the
+        panic and kdb backtraces walk only frames inside known stacks.
+        `just crash-test` boots a deliberate recursion and checks the report.
 
 
 ================================================================================
@@ -410,6 +411,11 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
         segment at exec time. A 256 MB mmap — the current cap — therefore
         allocates 65,536 physical pages synchronously inside one syscall,
         preemptible between pages.
+        A kernel fault on a user address (a read() into an unpopulated buffer)
+        must sleep while the page is fetched, but EL1 aborts run on the per-core
+        exception stack with IRQs masked (Phase 2 item 12). Switch to that stack
+        only when the interrupted SP is within the guard page plus a margin, and
+        handle every other EL1 fault on the task stack.
 
    4. File-backed mmap
       Effort: M | Unlocks: mmap'd I/O; a prerequisite for dynamic linking

@@ -121,6 +121,19 @@ if [ "$halted" -eq 0 ]; then
     exit 1
 fi
 
+# An overflow must be caught before SP descends past the guard page.
+overflow=$(grep -o 'SP=0x[0-9a-f]*, stack 0x[0-9a-f]*' "$LOG" | head -n 1)
+if [ -n "$overflow" ]; then
+    sp=${overflow#SP=}
+    sp=${sp%%,*}
+    base=${overflow##* }
+    depth=$(( base - sp ))
+    if [ "$depth" -gt 4096 ]; then
+        echo "FAIL: overflow SP $sp is below the guard page under $base"
+        exit 1
+    fi
+fi
+
 missing=0
 for pat in "${PATTERNS[@]}"; do
     if ! grep -qF "$pat" "$LOG"; then
