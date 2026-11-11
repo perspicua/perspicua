@@ -12,12 +12,14 @@ threads, and a network stack sit on top of it.
 North star: the project's long-term direction — the self-healing, flight-
 recorder kernel — is defined in vision.txt and threaded through this file as
 V1 (flight recorder), V2 (cells), V3 (invariant engine + time travel), and
-V4 (EL2 warden). Phases 1-5 are unchanged in substance: the foundation IS the
-prerequisite, and a recorder wired into a kernel with lost-wakeup bugs records
-lies. Items that seed a pillar are tagged (V1 seed) etc. so they get built in
-a shape that grows into the vision instead of beside it. Phase 6 builds the
-vision proper; the former strategic extensions now live in Phase 7, re-read
-through the vision lens.
+V4 (EL2 warden). The foundation IS the prerequisite: a recorder wired into a
+kernel with lost-wakeup bugs records lies, which is why Phase 2 comes first.
+Items that seed a pillar are tagged (V1 seed) etc. so they get built in a
+shape that grows into the vision instead of beside it. The recorder itself
+(V1) is built in Phase 3, straight after the Phase 2 primitives it depends
+on, so that Phases 4 and 5 are developed under it. Phase 6 builds cells, the
+invariant engine and the warden (V2-V4); the strategic extensions live in
+Phase 7, re-read through the vision lens.
 
 The kernel audit (branch `dev`, at 3ea7927) covered mm/{pmm,mmu,slab,heap,asid},
 sched/{sched,process}, arch/{boot,vector,switch,uaccess,exception},
@@ -31,6 +33,21 @@ shape rather than correctness: comment density, duplication, naming, the ABI,
 the build, and a handful of bugs found along the way. Its findings became
 Phase 0, which is complete — everything below is written against the shape it
 left behind.
+
+A third review (November 2026, on dev at 5dced43) read this file against the
+tree and against vision.txt. It corrected two dependencies the hardware does
+not impose (the Pi 4's Ethernet is on the SoC, not behind USB; the board has
+no RTC to write a driver for), moved the recorder from Phase 6 to Phase 3
+because its Depends lines name only Phase 2 items, added the primitives that
+later items assumed and no item built (Phase 2 items 13-17, Phase 3 items
+8-12), and named the mechanisms Phase 6 needs before its claims can hold.
+Three Phase 7 items that fail vision.txt's own test moved to the BACKLOG.
+
+Item numbers are stable, because code comments, commits and vision.txt cite
+them: a moved item leaves a pointer behind, a new item takes a new number at
+the end of its phase, and no number is reused. Where that leaves a phase's
+list out of build order, the phase opens with a WORKING ORDER line, and that
+line is the order.
 
 ================================================================================
 PHASE 0: CLEAN THE SHAPE  [COMPLETE]
@@ -84,6 +101,11 @@ build them ONCE and correctly rather than re-inventing ad-hoc versions.
 Rationale: Phases 3+ (poll, demand paging, threads) all assume these exist. Doing
 them now avoids retrofitting correctness into ten call sites later. This is the
 single highest-leverage phase in the file.
+
+WORKING ORDER for what remains: 5 is in progress. 8 and 9 are small, touch
+other files, and make every item after them cheaper to debug, so they run
+alongside it. Then 13 and 14, which the rest of the file leans on; 17, ahead
+of the lifetime work it helps debug; 10; 11; 6; 16 (on top of 5); 15; 7.
 ================================================================================
 
    1. Generic wait-queue / condition-variable primitive [DONE]  (IMP-007, part 1)
@@ -147,7 +169,8 @@ single highest-leverage phase in the file.
         holds a sleeping mutex, not a spinlock. fb_console_lock, the one plain
         spin_lock held with IRQs on at runtime, cannot be switched out while
         held, because preempt_count holds. There is no cross-core reschedule
-        IPI: a task woken onto another core waits for that core's next tick.
+        IPI: a task woken onto another core waits for that core's next tick
+        (item 14).
 
    4. Graceful out-of-memory handling [DONE]
       Effort: M | Unlocks: a kernel that degrades instead of dying
@@ -180,19 +203,31 @@ single highest-leverage phase in the file.
         Once this lands, split fat32_lock into an rwsem, with prerequisites
         (a) to (c) from item 2's note. This item handles (c) itself.
 
-   6. VFS inode / dentry cache with refcounted vnodes
+   6. VFS inode / dentry cache with refcounted vnodes, and a mount object
       Effort: M-L | Unlocks: hardlinks, safe rename, stable inode identity, perf
       Scope: cache vnodes by stable identity (they are already refcounted
-        through vfs_vnode_put) and add a name cache.
+        through vfs_vnode_put) and add a name cache. Give each mount an
+        allocated object holding the filesystem's operations, its private
+        state, its root and the vnode it covers, so that crossing a mount is a
+        property of the covered vnode and not of the path string.
       Done: opening the same file twice yields the same vnode; a directory scan
-        isn't re-read from disk on every lookup.
+        isn't re-read from disk on every lookup; a filesystem mounted below a
+        subdirectory is reached by a relative path as well as an absolute one.
       Note: fat32_vfs_lookup() and the per-pid procfs lookups slab_alloc a BRAND
         NEW vnode on every path resolution. This is also why the page cache keys
         on the start cluster. A real inode identity fixes that class of problem
         at the root.
+        A mount today is a path string and a root vnode (vfs_mount_table in
+        fs/vfs.c). An absolute path finds its mount by longest string prefix;
+        a relative walk crosses one only where root->parent is the very vnode
+        object in hand, so with a fresh vnode per FAT32 lookup a mount below a
+        subdirectory would be found by absolute path only (untested: nothing
+        mounts there today). The mount object is the "superblock" Phase 4
+        item 9 hangs per-volume state on, and the handle a filesystem cell is
+        named by (vision.txt, V2).
 
    7. Robust and fast user-memory access                              (IMP-005)
-      Effort: S-M | Unlocks: safety once threads share an address space; every
+      Effort: M | Unlocks: safety once threads share an address space; every
         syscall gets cheaper
       Scope: treat syscall_validate_user_buffer() as advisory; make the
         fault-fixup copy_to/from_user path the source of truth; uniform access_ok
@@ -200,9 +235,14 @@ single highest-leverage phase in the file.
         move 16 bytes per iteration with ldtr x/sttr x pairs, with a byte-wise
         head and tail, each carrying its own __ex_table entry that reports the
         correct residual count. Mask user pointers against the address-space
-        bound before use.
+        bound before use. Have copy_to/from_user assert, beside
+        lockdep_might_sleep, that no spinlock is held. Stop bouncing where the
+        callee can take the user buffer itself, starting with cached file
+        data, the bulk path.
       Done: no syscall depends on a pre-check that a concurrent unmap can
-        invalidate, and a bulk read is not bounded by a per-byte loop.
+        invalidate, a bulk read is not bounded by a per-byte loop, a file read
+        copies once (cache page to user memory), and the suites run clean with
+        the no-spinlock assertion armed.
       Note: syscall_validate_user_buffer walks the page tables then drops the
         lock before the copy — a TOCTOU that only bites once two tasks share a
         pgd. It is also largely redundant: the fixup path already catches the
@@ -213,6 +253,13 @@ single highest-leverage phase in the file.
         bounds check and the ldtr/sttr fixups are the only guard against a stray
         kernel access to user memory; the pointer masking blunts speculative
         out-of-bounds reads. Phase 5 item 5 covers the rest of that hardening.
+        read() and write() heap_malloc a kernel buffer for the whole request,
+        up to SYSCALL_MAX_RW_SIZE (4 MB), copy into it and copy out again.
+        That bounce is also what lets the tty and the pipe move bytes under
+        their spinlocks, so those two keep it until they are restructured;
+        the effort rose from S-M with this scope. The assertion is cheap now
+        and load-bearing later: once Phase 4 item 3 lands, a user copy can
+        sleep for a page.
 
    8. dmesg ring buffer                                               (V1 seed)
       Effort: S-M | Unlocks: the boot log after the fact; the recorder's format
@@ -225,31 +272,55 @@ single highest-leverage phase in the file.
         embryo of the flight recorder (vision.txt, V1): design
         it as clock-stamped records from day one — a fixed header (timestamp,
         cpu, event type, length) plus payload — not a bare char stream, so
-        upgrading it into the binary event ring of Phase 6 item 1 is a format
+        upgrading it into the binary event ring of Phase 3 item 13 is a format
         extension rather than a rewrite. Same rule for readers: kdb and
-        /proc/kmsg consume records, not newline scans.
+        /proc/kmsg consume records, not newline scans. Keep pointers out of
+        the records and the ring header, offsets only: Phase 3 item 14 moves
+        the backing store into RAM that the next boot reads back.
 
    9. Hung-task / watchdog detector                                   (V1 seed)
-      Effort: S | Unlocks: deadlocks surface instead of hanging silently
+      Effort: S-M | Unlocks: deadlocks surface instead of hanging silently; the
+        measurement the black box rests on
       Scope: periodic check for tasks blocked beyond a threshold or a core that
         stopped taking timer ticks; the BCM2711 hardware watchdog as the last-
         resort backstop, writing a reboot-reason code to the PM block's reset-
         surviving bits before any deliberate reset; with CONFIG_KDB_ON_PANIC
-        off, a panic resets through it.
+        off, a panic resets through it. With the driver in hand, measure what
+        survives a watchdog reset on hardware: write a pattern to several
+        candidate RAM regions, reset, and read them back on the next boot.
       Done: an artificial deadlock prints a warning naming the stuck task, and
         after a forced watchdog reset the next boot reports WHY it rebooted.
+        docs/hardware.txt gains a table of which RAM regions and which PM
+        bits came through the reset intact.
       Note: the reboot-reason plumbing is the first brick of the black-box
         property (vision.txt, V1), and the supervisor core's hang detection
-        (Phase 6 item 3) later grows out of this checker.
+        (Phase 3 item 15) later grows out of this checker. The sweep runs
+        from the tick until item 13 gives it a timer.
+        vision.txt CLAIM 1 assumes RAM outlives a watchdog reset and the
+        firmware's second run. Nothing in the tree has measured that, and the
+        answer decides where Phase 3 item 14 puts the rings, so it is
+        measured here, first. Check the PM bits the same way: the firmware
+        reads part of PM_RSTS as a boot-partition number (Linux's bcm2835
+        watchdog driver documents the convention and writes 0x555 there to
+        mean halt), so a reason code cannot take whichever bits look free.
+        `just crash-test` (item 12) already boots a deliberate crash and
+        checks the console. A kind that ends in a reset and checks the second
+        boot's report is this item's regression test, in QEMU if its raspi4b
+        models the PM block and on hardware either way.
 
   10. Per-CPU data API
       Effort: S-M | Unlocks: cleaner SMP code; prerequisite for scalable counters
-      Scope: a small this_cpu()/per_cpu() abstraction.
+      Scope: a small this_cpu()/per_cpu() abstraction whose accessors assert,
+        under lockdep, that preemption is off.
       Note: the kernel indexes bare arrays by cpu_id(): sched_rq_lock[] and the
         other run-queue arrays in sched.c, irq_depth[], irq_table[].count[],
         cpu_asid_gen[], lockdep's held_locks[]. Fine at 4 cores, but it hides the
         intent and invites off-by-one bugs. TPIDR_EL1 already holds the current
         task, so a per-CPU base needs another register or a table.
+        cpu_id() read by a preemptible task names the core it WAS on by the
+        time the value is used. The arrays above are safe only where the
+        caller holds a spinlock or has IRQs masked, which today is a
+        convention and not a check.
 
   11. Reference-counted task and process objects                       (IMP-004)
       Effort: M-L | Unlocks: closes a whole bug class instead of one site at a time
@@ -257,9 +328,13 @@ single highest-leverage phase in the file.
         every stored pointer, the final put doing the stack free and heap_free.
         Establish the rule that a task is unlinked from every list before its last
         reference drops, and add a debug-build task_on_any_list() assertion in the
-        destructor. Do the same for struct process.
+        destructor. Do the same for struct process. Allocate pids from a
+        counter and look processes up by id, so that a pid stops being a
+        process-table index.
       Done: a task freed while any queue still holds a pointer to it trips an
-        assertion in debug builds rather than corrupting memory in release ones.
+        assertion in debug builds rather than corrupting memory in release ones,
+        and a pid is not handed out again while anything still holds the
+        process it named.
       Note: three of the six critical audit findings were the same bug — an object
         freed while another subsystem still held a pointer. struct task is
         reachable from run queues, the sleep queue, sched_prev_task[],
@@ -269,6 +344,11 @@ single highest-leverage phase in the file.
         appear. Refcounting struct process is also what makes waitpid's teardown
         of a live PCB impossible rather than merely unlikely. Item 1's wait queue
         is what makes "unlinked from every list" checkable.
+        A pid IS its process_table index, and process_claim_slot hands out the
+        lowest free one, so a pid can be reused the moment its slot is reaped:
+        process_exit zeroes the dying task's pid for that reason, and
+        start_ticks exists to tell two holders of one pid apart. Thread ids
+        (Phase 5 item 1) need the same allocator.
 
   12. Per-CPU exception stacks [DONE]                                  (IMP-010)
       Effort: S-M | Unlocks: stack overflow becomes a diagnosable fault
@@ -289,10 +369,117 @@ single highest-leverage phase in the file.
         panic and kdb backtraces walk only frames inside known stacks.
         `just crash-test` boots a deliberate recursion and checks the report.
 
+  13. Kernel threads and kernel timers
+      Effort: M | Unlocks: writeback, periodic sweeps, protocol timeouts; the
+        tickless half of Phase 7 item 10
+      Scope: kthread_create(fn, arg) returning a handle, with stop and join and
+        an optional core to stay on. A timer queue of (deadline, callback)
+        entries per core, with deadlines as absolute counter values; task
+        sleeps and wait-queue timeouts become its users. The 100 Hz tick
+        stays (tickless is Phase 7 item 10), but the timer is programmed for
+        the earlier of the next tick and the next deadline.
+      Done: a test starts a kernel thread with an argument, stops it and joins
+        it; a callback armed for 1 ms runs within a millisecond of its
+        deadline instead of at the next tick.
+      Note: sched_create_task takes a void (*)(void), passes no argument and
+        returns no handle, and only the tests and the crash-test trigger call
+        it: the kernel has no long-lived thread of its own. The one timed
+        facility is the task sleep queue, a single list sorted by wake_time
+        under sched_sleep_lock that every core drains on every pass through
+        sched_schedule; nothing can ask for a callback. timer_interrupt_reset
+        re-arms with a relative cntp_tval write, so each tick is late by the
+        time its handler took to start. Deferred writeback (item 5), item 9's
+        sweeps, the supervisor (Phase 3 item 15) and a network stack's
+        retransmit timers each need one or both halves.
+
+  14. IPI layer and the reschedule IPI
+      Effort: S | Unlocks: prompt cross-core wakeups; tickless idle; supervisor
+        pings; stopping the other cores for kdb
+      Scope: name the SGIs (panic, reschedule, call-function, ping) and
+        dispatch them through one table; sched_unblock kicks an idle core when
+        it queues work; smp_call(core, fn, arg) runs a function on another
+        core and can wait for it.
+      Done: a task woken while another core idles starts running there without
+        waiting for that core's tick; a test measures wake-to-run latency
+        across cores and the tick no longer bounds it.
+      Note: SGI 0, the panic IPI, is the only one, special-cased by number in
+        exception_irq_handler. sched_unblock queues a woken task on the
+        waker's core, and an idle core sits in WFE until its own tick. Item 3
+        and Phase 5 item 3 both note the missing IPI; neither builds it.
+        An IPI is an ordinary IRQ and cannot reach a core that has interrupts
+        masked: the panic IPI does not stop a core spinning on an irqsave
+        lock. Phase 6 item 9 is where that limit is lifted.
+
+  15. A device model with teardown and managed resources              (V2 seed)
+      Effort: M | Unlocks: drivers that can be stopped and restarted; several
+        instances of one driver; the cell ledger
+      Scope: allocate struct device and keep it for the device's life; probe
+        every matching devicetree node; give struct device_driver a remove()
+        that is probe()'s inverse; acquire a device's MMIO mapping, IRQ line,
+        memory and timers through devm_* calls that record each one on the
+        device and release them, in reverse, on remove or on a failed probe.
+      Done: a test unbinds and rebinds a driver, and /proc/interrupts and
+        /proc/meminfo read the same before and after.
+      Note: struct device_driver holds a name, a compatible string and probe.
+        probe_driver_list builds a struct device on its own stack and probes
+        only the first matching node; devm_get_io_base and devm_get_irq look a
+        value up and record nothing. vision.txt DESIGN RULE 2 asks for init
+        and teardown as clean inverses, and until this item there is no
+        teardown hook for them to be inverses through. The per-device record
+        of what was acquired IS the resource ledger of vision.txt V2 (b),
+        built once here instead of inside the first cell. Phase 7 item 1
+        needs the device lifetime regardless.
+
+  16. Block requests as objects                                       (V2 seed)
+      Effort: S-M | Unlocks: requests that can be counted, timed out, failed
+        and replayed; read-ahead and asynchronous writeback later
+      Scope: a struct block_request (device, operation, first block, count,
+        buffer, status, completion) submitted through one entry point per
+        device and kept on a per-device in-flight list until it completes;
+        today's synchronous callers submit and wait.
+      Done: /proc shows each device's requests in flight; a fault-injected
+        failure of one request returns -EIO to its caller and leaves the list
+        empty.
+      Depends: item 5 (the cache is the main submitter).
+      Note: block I/O is a direct call, dev->read_blocks(dev, buffer, start,
+        count), serialized inside the SD driver by sd_op_mutex. No object
+        stands for a request, so nothing can list what is in flight. Phase 6
+        item 4 needs exactly that list twice: to drain a cell on quiesce, and
+        as the intent journal it replays after a restart.
+
+  17. Sampled guard-page allocator                                    (V3 seed)
+      Effort: M | Unlocks: overflows and use-after-free caught at the access,
+        in release builds
+      Scope: a small pool of pages whose neighbours are unmapped; one
+        allocation in N from the slab and the heap is served from it, placed
+        against the edge of its page; freeing unmaps the page and holds it
+        back for a while. A fault on a pool address is reported with the
+        faulting PC and the call sites of the allocation and of the free.
+      Done: a deliberate one-byte overflow and a deliberate use-after-free in
+        a test each fault at the offending instruction, and the report names
+        who allocated and who freed; `bench` stays within its run-to-run
+        noise with sampling on.
+      Note: the mechanism is in the tree: the linear map covers RAM with 4 KB
+        pages (map_linear_gb in mm/mmu.c), and kstack_alloc already unmaps a
+        guard page from it. The heap's redzone is checked in heap_free and the
+        slab's free canary when the object is next handed out, so both report
+        after the damage and neither names the writer. The A72 has no MTE,
+        which leaves page permissions as the only detector that fires AT the
+        access. That is the detection half of "corruption caught at the
+        moment it happens" (Phase 6 item 5): arenas say who OWNS a page, and
+        only a fault says who touched it.
+
 
 ================================================================================
-PHASE 3: DEVELOPER EXPERIENCE & BASIC I/O
-Goal: Make Perspicua a place you can actually work in and observe.
+PHASE 3: DEVELOPER EXPERIENCE, BASIC I/O & THE RECORDER
+Goal: Make Perspicua a place you can actually work in and observe, and build
+the first pillar here: the flight recorder (V1) depends on nothing later than
+Phase 2, and Phases 4 and 5 are where it pays most.
+
+WORKING ORDER: 5 first, since four later items stand on the ramdisk. 10
+before any item that adds syscalls (1, 7, 8). The recorder is the spine of
+the phase: 6, 13, 14, 15, in that order. 11 and 12 once 5 exists. 9 any time
+before Phase 5 item 1. The rest (1, 2, 3, 4, 7, 8) is independent of these.
 ================================================================================
 
    1. I/O multiplexing: select / poll                            (IMP-007, part 2)
@@ -314,13 +501,23 @@ Goal: Make Perspicua a place you can actually work in and observe.
         entropy source: the DTB describes the BCM2711's RNG200
         (brcm,bcm2711-rng200), and the generic timer's low bits are the fallback.
 
-   3. RTC / wall-clock driver
+   3. Wall-clock time
       Effort: S-M | Unlocks: real timestamps; makes gettimeofday meaningful
-      Done: file mtimes and `date` survive a reboot.
-      Note: timer_get_wall_time() returns the build day plus uptime and stamps
-        FAT32 mtimes and /proc/stat's btime, but gettimeofday and CLOCK_REALTIME
-        return uptime (core/syscall.c). The work is a real clock base and routing
-        both syscalls through it.
+      Scope: one settable clock base behind gettimeofday and CLOCK_REALTIME,
+        with clock_settime to set it; the last known time written to the root
+        filesystem periodically and read back at boot, so the clock never runs
+        backwards across a reboot; SNTP once Phase 7 item 2 exists. A
+        battery-backed clock is an add-on board (a DS3231 on I2C, say), for a
+        deployment that needs true time with no network.
+      Done: `date` can set the clock, and a file written after a reboot has a
+        later mtime than one written before it.
+      Note: the Pi 4B has no real-time clock, so no driver can make `date`
+        survive a power cycle on the bare board; this item was "RTC /
+        wall-clock driver" with that as its Done. timer_get_wall_time()
+        returns the build day plus uptime and stamps FAT32 mtimes and
+        /proc/stat's btime, but gettimeofday and CLOCK_REALTIME return uptime
+        (core/syscall.c). The work is a real clock base and routing both
+        syscalls through it.
 
    4. Shell quality of life: globbing, history, tab completion, then scripting
       Effort: M | Unlocks: an interactive environment you don't fight
@@ -333,10 +530,22 @@ Goal: Make Perspicua a place you can actually work in and observe.
         no script file argument.
 
    5. Ramdisk block backend + tmpfs
-      Effort: S-M | Unlocks: fast scratch space; deterministic FS test fixtures
-      Done: /tmp is writable and FS tests run without touching the SD card.
+      Effort: M | Unlocks: fast scratch space; deterministic FS test fixtures;
+        items 11 and 12; a second filesystem's first home (Phase 4 item 7);
+        the first cell (Phase 6 item 4)
+      Scope: a RAM-backed block device; tmpfs on /tmp; and a ramdisk filled
+        from an image the firmware loads beside the kernel (config.txt's
+        initramfs line, found through /chosen in the devicetree), which can be
+        mounted as the root.
+      Done: /tmp is writable, FS tests run without touching the SD card, and
+        the system boots to a shell with its root on a firmware-loaded image.
       Note: ramfs.c and initrd.c were deleted as dead code (Phase 0 item 4), so
         this starts from nothing rather than from an existing in-memory FS.
+        A RAM-backed device has no IRQ and no hardware to misbehave, which
+        makes it the place to test whatever is about the block layer rather
+        than about the SD card. The firmware-loaded image is what raised the
+        effort from S-M; confirm the initramfs behaviour against the firmware
+        in pi4-boot/ before building on it.
 
    6. Syscall tracing (strace-lite) + kernel log levels               (V1 seed)
       Effort: S-M | Unlocks: debugging userspace without a debugger
@@ -354,10 +563,179 @@ Goal: Make Perspicua a place you can actually work in and observe.
       Effort: S-M | Unlocks: clean event loops
       Depends: Phase 3 item 1 (poll).
 
+   8. termios, ioctl and pseudo-terminals
+      Effort: M | Unlocks: ported interactive programs; a remote shell; more
+        than one terminal
+      Scope: an ioctl syscall; a line discipline in the tty with canonical
+        mode, echo and erase, switched by tcgetattr/tcsetattr; TIOCGWINSZ and
+        SIGWINCH; struct tty instances beyond the console; pty master/slave
+        pairs.
+      Done: `cat > file` typed at the console echoes, erases and ends on ^D
+        with no help from the shell; a program run on a pty sees a terminal.
+      Note: the tty is raw only: tty.c hands bytes to the reader as they
+        arrive and leaves echo to it, so line editing lives in the shell
+        (user/apps/sh/edit.c) and any other reader of the console gets its
+        bytes unechoed. There is no ioctl syscall; tcsetpgrp and tcgetpgrp
+        are syscalls of their own, and full-screen programs learn the screen
+        size by asking the terminal with an escape sequence
+        (libc/user/term.c). One global console_tty serves the UART. A login
+        over the network (Phase 7 item 2) needs a pty, and a keyboard beside
+        the framebuffer (Phase 7 item 3) needs a second tty.
+
+   9. FP/SIMD for userspace
+      Effort: S-M | Unlocks: float in printf, a libm, and any port that uses
+        a double
+      Scope: a lazy FPEN trap and per-task q0-q31/FPCR/FPSR saved on switch;
+        the same state carried in signal frames; userspace built without
+        -mgeneral-regs-only. The kernel itself stays integer-only.
+      Done: a program does floating-point work across preemption, a fork and
+        a signal handler, and gets the right answer.
+      Note: promoted from the BACKLOG, where Phase 7 items 6 and 7 already
+        depended on it. Every target is built -mgeneral-regs-only and boot.S
+        leaves FP trapping (it zeroes CPACR_EL1). This changes what a context
+        switch saves and what a signal frame holds, and both are cheaper to
+        settle before Phase 5 item 1 multiplies the tasks.
+
+  10. Syscall numbers and struct layouts as Linux/AArch64 has them
+      Effort: M | Unlocks: new syscalls designed once; static Linux binaries
+        as a test corpus later
+      Scope: renumber uapi/syscalls.h to the Linux/AArch64 table; lay out
+        struct stat and struct dirent, and number the open flags, as Linux
+        does. Semantics and coverage stay with Phase 7 item 6.
+      Done: uapi/ agrees with Linux/AArch64 for every call and structure that
+        exists on both sides, and the suites pass after one rebuild of
+        userspace.
+      Note: split from Phase 7 item 6 and moved ahead, because the cost only
+        grows. Every program is built in-tree against one libc today, so a
+        renumbering is a rebuild; and every syscall added between here and
+        Phase 7 (poll, ioctl, munmap, mprotect, clone, futex) would otherwise
+        get a private number first and a Linux one later. Signal numbers and
+        errno values already follow Linux (SIGCHLD 17, EAGAIN 11, ENOSYS 38),
+        as do the mmap flags. The private ones are the syscall numbers
+        (1-50), the open flags (O_CREAT is 0x100 here, 0x40 there), struct
+        dirent, and struct stat, whose times are 32-bit beside a 64-bit
+        time_t and whose st_ino is 32-bit beside a 64-bit ino_t.
+
+  11. A hardware-in-the-loop test target
+      Effort: M | Unlocks: the hardware gate as a command; "on hardware" Done
+        lines that can regress
+      Scope: `just test-hw`: put a freshly built kernel and its userspace on a
+        real board without touching the SD card, reset the board, and run
+        scripts/run_tests.sh against its console. The kernel arrives by
+        network boot, userspace as the firmware-loaded ramdisk image of item
+        5, the console and the reset through tcpuart.
+      Done: one command takes a clean tree to a pass or a fail on a real Pi 4
+        with nobody at the board.
+      Depends: item 5.
+      Note: testing.txt makes hardware validation the gate for main, and it is
+        a manual step: build, copy to the card, carry the card. hardware.txt
+        already documents a remote console and a remote reset (tcpuart and
+        the J2 RUN pin); what is missing is a way to change what the board
+        boots. The Pi 4's bootloader can fetch its boot files over the
+        network (confirm on the test board's bootloader); a chainloader that
+        takes the kernel over the UART is the fallback. Most of the vision's
+        Done lines end in "on hardware", and those cannot regress-test
+        without this.
+
+  12. Undefined-behaviour checks and seeded fuzzing of on-disk parsers
+      Effort: S-M | Unlocks: a class of bugs caught by the build instead of by
+        a crash
+      Scope: a CI matrix entry built with -fsanitize=undefined and a handler
+        that panics with the source location; a seeded in-kernel fuzzer that
+        mutates FAT32 images and ELF files on a ramdisk and runs mount,
+        lookup, read and exec over them.
+      Done: the UBSan build passes the suites; the fuzzer runs a fixed seed
+        list in `just test` with no panic, and any image that ever produced
+        one is kept as a fixture.
+      Depends: item 5 for the fuzzer.
+      Note: vision.txt DESIGN RULE 5 calls on-disk data untrusted input.
+        fat32.c is 2,800 lines that parse it, guarded today by the
+        hand-written cases of test_fat32_corrupt.c, and the toolchain file
+        turns on warnings but no sanitizer. Everything stays on the target,
+        as testing.txt has it: no host-side harness.
+
+  13. The unified trace ring ("the flight recorder")                        (V1)
+      Effort: L | Unlocks: every later pillar; every future debugging session
+      Scope: one clock-stamped binary event stream fed by every producer the
+        kernel has: lockdep transitions, scheduler decisions, IRQ entry/exit,
+        syscall entry/exit (item 6), signal delivery, and the existing
+        schedstat counters. One timebase: the generic timer counter. One ring
+        per core, written only by that core and readable from any other;
+        readers merge the rings by timestamp, so there is no flush step and
+        no shared write lock. Rings are split by event rate, so that a storm
+        of lock transitions cannot push the slow events (task and cell
+        lifecycle, errors) out of history. Readout via kdb and /proc, plus a
+        host-side formatter.
+      Done: a full test-suite run can be replayed event-by-event afterwards,
+        and a deliberately introduced deadlock is diagnosed from the ring
+        alone — no added printfs. The retention each ring gives under the
+        benchmark suite is measured and published beside the overhead.
+      Depends: Phase 2 item 8 (the record format), Phase 2 item 10 (per-CPU).
+      Note: absorb, don't duplicate — the dmesg ring becomes one producer
+        among many, lockdep starts emitting events, and any private ring
+        buffer alive by then is deleted. Budget: under 2% CPU with all
+        producers on (vision.txt, MEASURES OF SUCCESS), which means binary
+        fixed-size records and no formatting at the producer, ever.
+        Was Phase 6 item 1. Two things changed with the move. Per-core
+        buffers are no longer flushed into a global ring: a wedged core's
+        last events are the ones it had not flushed yet, and those are the
+        ones a post-mortem wants, so each core's ring IS the store. And
+        vision.txt budgets overhead but not retention; how many seconds of
+        history survive is the other half of "no failure is ever
+        unexplained", so it gets a number too.
+
+  14. Crash-persistent recorder backing + reboot forensics                  (V1)
+      Effort: M | Unlocks: the black box — pre-crash history, post-crash
+      Scope: carve a physical region outside the PMM as the rings' backing
+        store, placed where Phase 2 item 9's measurement found RAM intact
+        across a reset, with a magic + CRC header validated at boot. Wire the
+        Phase 2 item 9 reboot-reason codes to it: on any panic or watchdog
+        reset, the next boot detects the surviving rings, preserves them, and
+        exposes them as /proc/lastcrash alongside the reboot reason.
+      Done: pulled-power vs. watchdog-reset are distinguishable at the next
+        boot, and a crash's final events are readable AFTER the reboot, on
+        real hardware.
+      Depends: item 13; Phase 2 item 9.
+      Note: the firmware and the reloaded kernel image touch their own ranges
+        on the way back up, and whether the rest of RAM comes through a
+        watchdog reset is what Phase 2 item 9 measures — placement and the
+        CRC are what make this trustworthy. Until the V4 warden exists, a
+        wild kernel write can still corrupt the region; that known gap is the
+        warden's justification, not a reason to wait for it.
+        Was Phase 6 item 2.
+
+  15. The supervisor core                                                   (V1)
+      Effort: M | Unlocks: hang detection that doesn't depend on the hung part
+      Scope: dedicate one core (stolen from the scheduler at boot) to the
+        health monitor: its own timer, the Phase 2 item 9 hung-task sweeps,
+        SGI pings (Phase 2 item 14) that declare a peer core hung on missed
+        replies, PMU sampling, VideoCore telemetry (temperature, voltage,
+        throttling) via the mailbox into the ring — /proc/clock already makes
+        those queries through mbox_query — and sole ownership of the hardware
+        watchdog — stroked only while the system passes its checks, so a
+        wedged supervisor also reboots.
+      Done: a spinloop-with-IRQs-masked on one core is detected, attributed,
+        and reported by the supervisor within one sweep period, on hardware.
+      Depends: items 13 and 14; Phase 2 items 9, 13 and 14.
+      Note: the monitor must not depend on the schedulability of the thing it
+        monitors — that is the point of dedicating the core. Losing a core
+        hurts throughput; the vision trades it gladly. Phase 7 item 10's
+        tickless work later makes the supervisor cheap when idle.
+        Was Phase 6 item 3. What "attributed" can mean here: a ping is an
+        IRQ, so a core with interrupts masked can be neither stopped nor have
+        its registers read. The supervisor names the silent core and reads
+        that core's ring from outside (item 13), where the last record is the
+        irqsave or lock transition it went quiet after. A register snapshot
+        of a wedged core waits for Phase 6 item 9.
+
 
 ================================================================================
 PHASE 4: ADVANCED MEMORY & STORAGE  (the heavy lifting)
 Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
+
+WORKING ORDER: 1; 3; 6, since demand paging needs its OOM policy close
+behind; 4; 5; then the partition and per-mount half of 9, without which 7 has
+nowhere to mount; 7; 8; the rest of 9. Item 2 is folded into item 1.
 ================================================================================
 
    1. munmap / mprotect / mremap + a real VMA list                     (IMP-002)
@@ -369,7 +747,8 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
         vma_split, vma_merge. Port the process_va_alloc callers over, then
         implement munmap/mprotect on top. fork copies the VMA list; exec tears
         it down.
-      Done: a program can map, protect, and unmap; nothing leaks across the cycle.
+      Done: a program can map, protect, and unmap; nothing leaks across the cycle;
+        the libc malloc gives whole free chunks back with munmap.
       Note: SYS_MMAP exists but there is NO munmap or mprotect — mapped regions
         can never be released — and it ignores its addr and offset arguments.
         The va_allocator (sched/process.h) is a first-fit, address-sorted array
@@ -385,12 +764,14 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
         /proc/<pid>/maps (fs/procfs.c) lists the va_allocator regions today and
         moves onto the VMA list.
 
-   2. brk / sbrk (or an anonymous-VMA heap)
-      Effort: S-M | Unlocks: a normal libc malloc
-      Note: userspace malloc mmaps chunks rounded up to 1 MB and never returns
-        them (no munmap), so every process's footprint only grows; each chunk
-        takes one of the 64 va_allocator slots, so the 64th mapping fails with
-        -ENOMEM even with RAM free.
+   2. brk / sbrk  [FOLDED INTO ITEM 1]
+      Note: what this item was for is now part of item 1's Done. Userspace
+        malloc mmaps chunks rounded up to 1 MB and never returns them (no
+        munmap), so every process's footprint only grows; each chunk takes one
+        of the 64 va_allocator slots, so the 64th mapping fails with -ENOMEM
+        even with RAM free. munmap and a VMA list remove both limits, and
+        malloc needs no brk for that. brk and sbrk themselves matter only to
+        software written against them, which is Phase 7 item 6.
 
    3. Demand paging and lazy stack growth                              (IMP-001)
       Effort: L | Unlocks: fast process start, big binaries, low RAM use
@@ -416,6 +797,12 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
         exception stack with IRQs masked (Phase 2 item 12). Switch to that stack
         only when the interrupted SP is within the guard page plus a margin, and
         handle every other EL1 fault on the task stack.
+        A fault that cannot get a page has no -ENOMEM to return. Until item 6
+        chooses a victim it kills the faulting process, as the CoW path does.
+        The shared zero page has to sit outside page refcounting: pmm_page's
+        count is 16 bits and pmm_hold_page panics when it would overflow,
+        which 65,535 untouched anonymous pages — 256 MB, one mapping at
+        today's cap — would make it do.
 
    4. File-backed mmap
       Effort: M | Unlocks: mmap'd I/O; a prerequisite for dynamic linking
@@ -430,22 +817,44 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
       Note: today MAP_SHARED with MAP_ANONYMOUS gives a private mapping that fork
         makes copy-on-write.
 
-   6. COW and reclaim refinements
-      Effort: M | Unlocks: lower memory pressure
-      Scope: demand-zero pages; an LRU reclaim path under pressure; guard pages +
-        auto-grow for user stacks.
+   6. Reclaim and an OOM-victim policy
+      Effort: M | Unlocks: lower memory pressure; a defined answer when memory
+        runs out at fault time
+      Scope: a shrinker interface the PMM calls under pressure, with the
+        buffer cache as its first user, so that the cache is sized by what is
+        free rather than by a constant; a policy for which process dies when a
+        fault cannot be served.
+      Done: a file-heavy workload fills free memory with cache and gives it
+        back when an allocation needs it; with memory exhausted, the process
+        the policy names is killed and the rest keep running.
       Note: mmu_handle_cow (mm/mmu.c) already promotes a sole-owner page in place
-        without copying. The guard-page and stack-growth half arrives with Phase 4
-        item 3; this item is demand-zero and reclaim. user/apps/stress.c `cow`
-        exercises the isolation invariant in both directions and is the
-        regression check for changes here.
+        without copying, and user/apps/stress.c `cow` exercises the isolation
+        invariant in both directions and is the regression check for changes
+        here. This item was "COW and reclaim refinements"; its demand-zero
+        pages and stack growth are item 3's, which leaves reclaim, and the
+        victim policy item 3 makes necessary. The page cache is capped at
+        PAGECACHE_MAX_PAGES, 1024 pages (4 MB), whatever the board's RAM.
+        This file plans no swap, so reclaim means dropping clean cache pages,
+        and past that the only thing left to free is a process.
 
-   7. A second, inode-based filesystem (ext2, or a small journaling FS)
-      Effort: L | Unlocks: proof the VFS is generic; crash consistency
-      Done: both FAT32 and the new FS mount and pass the same FS test suite.
+   7. A second, inode-based filesystem, chosen for power-loss safety
+      Effort: L | Unlocks: proof the VFS is generic; a root that survives a
+        pulled plug
+      Scope: a log-structured or copy-on-write design in which every metadata
+        update is atomic on the medium, on its own partition beside the FAT32
+        one the firmware boots from.
+      Done: both FAT32 and the new FS mount and pass the same FS test suite,
+        and the new one mounts clean after power is cut mid-write.
+      Depends: the partition half of item 9; Phase 3 item 5 to develop on.
       Note: this is the real test of the VFS abstraction — FAT32 currently stores
         its start cluster in vnode->internal_info, and the VFS has quietly shaped
         itself around that. Expect to find leaks in the abstraction.
+        Was "ext2, or a small journaling FS". ext2 without a journal needs a
+        full check after power loss, and power loss is the ordinary failure
+        of the unattended boards vision.txt names as the niche, so crash
+        safety is the selection criterion here rather than a later item's
+        concern. The firmware needs FAT for its boot files, hence two
+        partitions.
 
    8. Filesystem crash consistency
       Effort: L | Unlocks: surviving power loss
@@ -453,13 +862,17 @@ Goal: The core mechanisms that define a modern OS. Each depends on Phase 2.
       Note: FAT32 today can cross-link clusters or corrupt a directory if it panics
         mid-write. The per-FS lock makes operations atomic against each other
         within one vnode op (open with O_CREAT and an O_APPEND write span two),
-        and not against a crash.
+        and not against a crash. With item 7 chosen for atomic updates, this
+        item is FAT32's half: the boot partition stays FAT32.
 
    9. Storage breadth: GPT, multiple partitions/mounts, RAM above 4 GB
                                                               (IMP-009, part 2)
       Effort: M | Unlocks: real hardware configurations
-      Scope: make current_fs an allocated per-mount structure hanging off the
-        superblock so more than one volume can be mounted at a time.
+      Scope: in two halves. First, ahead of item 7: make current_fs an
+        allocated per-mount structure hanging off the mount object (Phase 2
+        item 6), so more than one volume can be mounted at a time, and
+        register every MBR partition as a block device. Then: GPT, and RAM
+        above 4 GB.
       Note: fat32.c reads through a single global current_fs, so exactly ONE FAT32
         volume can ever be mounted — the mount table can hold several entries but
         the driver cannot back them — and only the first FAT32 MBR partition is
@@ -478,6 +891,8 @@ Goal: Use the hardware fully and safely.
       Scope: multiple tasks sharing one address space and fd table; TID; TLS via
         tpidr_el0; per-thread signal mask.
       Done: a multi-threaded program measurably uses more than one core.
+      Depends: Phase 2 item 11 (ids that are not table indexes); Phase 3 item 9
+        (per-task FP state settled before tasks multiply).
       Note: several structures assume ONE task per process and must be revisited:
         process_current() reads process_table[t->pid] lock-free (safe only
         because a task's own process cannot exit under it), signal delivery
@@ -503,16 +918,25 @@ Goal: Use the hardware fully and safely.
         core's queue in turn, taking each one's rq_lock — pure contention as core
         count grows. Per-task CPU time is banked at every switch and feeds
         /proc/<pid>/status, /proc/stat and ptop; vruntime can build on it.
-        sched_unblock queues a woken task on the waker's core, and an idle core
-        picks it up only at its next tick, because there is no reschedule IPI to
-        kick it. Tickless idle is the remaining piece of this and lives in
-        Phase 7 item 10.
+        sched_unblock queues a woken task on the waker's core; Phase 2 item 14
+        adds the IPI that kicks an idle core, and choosing WHICH core a wakeup
+        lands on is this item's. Tickless idle is the remaining piece of this
+        and lives in Phase 7 item 10.
 
-   4. RCU / seqlocks for read-mostly state
-      Effort: L | Unlocks: SMP scalability
+   4. Lock-contention counters, then seqlocks where they show contention
+      Effort: M | Unlocks: SMP scalability decided by measurement
+      Scope: per-lock acquisition, contention and wait-time counters kept by
+        lockdep and shown in /proc; seqlocks for the read-mostly structures
+        the counters single out.
+      Done: /proc names the most contended locks under the stress and
+        benchmark suites, and each seqlock conversion cites the number that
+        justified it.
       Note: the process table and mount table are read on every schedule, signal,
-        and path resolution but written rarely — they will become the contention
-        point once the coarse locks above are in place.
+        and path resolution but written rarely — the likely candidates. This
+        item was "RCU / seqlocks for read-mostly state". With four cores and
+        at most CONFIG_MAX_PROCESSES processes nothing has yet shown that
+        they contend, so the counters come first, and RCU moved to the
+        BACKLOG.
 
    5. Security hardening
       Effort: M-L | Unlocks: resilience against memory-corruption bugs
@@ -530,83 +954,54 @@ Goal: Use the hardware fully and safely.
 
 
 ================================================================================
-PHASE 6: THE FLIGHT RECORDER & SELF-HEALING CORE  (the vision made concrete)
-Goal: Build the four pillars of vision.txt — recorder, cells, invariant engine,
-warden — in dependency order. Each item's "Done" names a demonstrable
-capability, not an internal refactor.
+PHASE 6: THE SELF-HEALING CORE  (cells, the invariant engine, the warden)
+Goal: Build the remaining pillars of vision.txt — cells, invariant engine,
+warden — in dependency order, on the recorder Phase 3 built. Each item's
+"Done" names a demonstrable capability, not an internal refactor.
+
+Items 1-3 (the trace ring, its crash-persistent backing, the supervisor core)
+moved to Phase 3 as items 13-15. Their numbers are not reused.
 ================================================================================
 
-   1. The unified trace ring ("the flight recorder")                        (V1)
-      Effort: L | Unlocks: every later pillar; every future debugging session
-      Scope: one clock-stamped binary event stream fed by every producer the
-        kernel has: lockdep transitions, scheduler decisions, IRQ entry/exit,
-        syscall entry/exit (Phase 3 item 6), signal delivery, and the existing
-        schedstat counters. One timebase: the generic timer counter. Per-CPU
-        write buffers flushed into the global ring so producers never contend
-        on a lock. Readout via kdb and /proc, plus a host-side formatter.
-      Done: a full test-suite run can be replayed event-by-event afterwards,
-        and a deliberately introduced deadlock is diagnosed from the ring
-        alone — no added printfs.
-      Depends: Phase 2 item 8 (the record format), Phase 2 item 10 (per-CPU).
-      Note: absorb, don't duplicate — the dmesg ring becomes one producer
-        among many, lockdep starts emitting events, and any private ring
-        buffer alive by then is deleted. Budget: under 2% CPU with all
-        producers on (vision.txt, MEASURES OF SUCCESS), which means binary
-        fixed-size records and no formatting at the producer, ever.
-
-   2. Crash-persistent recorder backing + reboot forensics                  (V1)
-      Effort: M | Unlocks: the black box — pre-crash history, post-crash
-      Scope: carve a physical region outside the PMM (high in RAM, away from
-        the firmware and kernel-image ranges) as the ring's backing store,
-        with a magic + CRC header validated at boot. Wire the Phase 2 item 9
-        reboot-reason codes to it: on any panic or watchdog reset, the next
-        boot detects the surviving ring, preserves it, and exposes it as
-        /proc/lastcrash alongside the reboot reason.
-      Done: pulled-power vs. watchdog-reset are distinguishable at the next
-        boot, and a crash's final events are readable AFTER the reboot, on
-        real hardware.
-      Note: a watchdog reset does not clear RAM on the Pi 4, but the firmware
-        and the reloaded kernel image do touch their own ranges — placement
-        and the CRC are what make this trustworthy. Until the V4 warden
-        exists, a wild kernel write can still corrupt the region; that known
-        gap is the warden's justification, not a reason to wait for it.
-
-   3. The supervisor core                                                   (V1)
-      Effort: M | Unlocks: hang detection that doesn't depend on the hung part
-      Scope: dedicate one core (stolen from the scheduler at boot) to the
-        health monitor: its own timer, the Phase 2 item 9 hung-task sweeps,
-        SGI pings that declare a peer core hung on missed replies, PMU
-        sampling, VideoCore telemetry (temperature, voltage, throttling) via
-        the mailbox into the ring — /proc/clock already makes those queries
-        through mbox_query — and sole ownership of the hardware
-        watchdog — stroked only while the system passes its checks, so a
-        wedged supervisor also reboots.
-      Done: a spinloop-with-IRQs-masked on one core is detected, attributed,
-        and reported by the supervisor within one sweep period, on hardware.
-      Note: the monitor must not depend on the schedulability of the thing it
-        monitors — that is the point of dedicating the core. Losing a core
-        hurts throughput; the vision trades it gladly. Phase 7 item 10's
-        tickless work later makes the supervisor cheap when idle.
-
-   4. The cell abstraction, proven on the block/SD driver                   (V2)
+   4. The cell abstraction, proven on the ramdisk, then on SD               (V2)
       Effort: L-XL | Unlocks: driver faults stop being system faults
       Scope: define the cell: private slab arenas (allocations attributable
         and bulk-revocable), a resource ledger (IRQs, pages, locks, devices,
         timers — acquired through the ledger or not at all), and enumerable
         message-mediated entry points with a quiesce protocol (stop new
-        entries, drain in-flight ones). Convert the block/SD stack into the
-        first cell. Restart path: quiesce, revoke the ledger, reinitialize,
-        replay a small intent journal of in-flight requests.
+        entries, drain in-flight ones). Three mechanisms carry a task OUT of
+        a cell that has failed under it: a per-task current-cell marker, set
+        and cleared at the entry points; a saved context at each entry point
+        that a fault inside the cell unwinds to, returning an error to the
+        caller; and waits inside a cell that a revoke can end with an error.
+        Restart path: quiesce, revoke the ledger, reinitialize, replay a
+        small intent journal of in-flight requests. Make the ramdisk the
+        first cell, to debug the protocol with injected faults and no
+        hardware; then convert the block/SD stack.
       Done: yanking SD power mid-I/O (and the fault-injection harness doing
         the software equivalent) produces attribution in the ring, a cell
         restart, and replayed requests completing — with the shell alive
-        throughout. The harness reports the recovery rate.
-      Depends: item 1 (attribution needs the ring); Phase 2 items 1 and 11
-        (wait queues and refcounts are what make quiesce/revoke checkable).
+        throughout. An injected NULL dereference inside the ramdisk cell
+        costs its caller one -EIO and the system nothing else. The harness
+        reports the recovery rate.
+      Depends: Phase 3 item 13 (attribution needs the ring); Phase 2 items 1
+        and 11 (wait queues and refcounts are what make quiesce/revoke
+        checkable), 15 (the ledger) and 16 (the journal); Phase 3 item 5.
       Note: crash-only rule — the recovery path IS the init path, so it is
         exercised on every boot, not only on faults. Design the cell API
         against a SECOND user on paper (the USB stack, Phase 7 item 1) so it
         does not fossilize around SD quirks.
+        Without the unwind, a cell recovers from errors its hardware reports
+        and from timeouts, and from nothing else: a kernel fault with no
+        __ex_table entry ends in PANIC_TF (handle_abort, arch/exception.c).
+        The pieces exist in small. __ex_table already redirects a faulting PC
+        by rewriting the trap frame, which is all an unwind is, and it has to
+        stay that: EL1 faults are handled on the per-core exception stack
+        with IRQs masked (Phase 2 item 12), so the handler redirects and
+        returns, and the cleanup runs back on the task. sd.c already bounds
+        its waits with a timeout. Locks held when the fault hit are the hard
+        part: the ledger knows them, but whether the data they guarded can be
+        trusted is a per-cell answer the API has to ask for.
 
    5. The invariant engine + intent journaling                              (V3)
       Effort: L | Unlocks: corruption caught at the moment it happens, attributed
@@ -624,7 +1019,8 @@ capability, not an internal refactor.
         crash site, and the cell restarts.
       Note: vision.txt DESIGN RULE 1 asks each new subsystem to declare its
         invariants at the top of the file; none does yet, so this item starts by
-        writing them down.
+        writing them down. Phase 2 item 17's guard-page faults cover what no
+        declared invariant does, and report through the same path.
 
    6. kdb time travel                                                       (V3)
       Effort: M | Unlocks: "what happened" answered by replay, not archaeology
@@ -637,26 +1033,28 @@ capability, not an internal refactor.
         replay in kdb, and the transcript goes into docs/ as the demo.
       Note: this is where the magnifying glass stops being just a logo.
 
-   7. The EL2 warden                                                        (V4)
-      Effort: XL | Unlocks: a recorder EL1 cannot corrupt; kernel micro-reboot
-      Scope: a thin non-VHE EL2 monitor (target 2-3 KLoC; no scheduler, no
-        devices beyond the watchdog) established at boot before EL1 comes up.
-        Job 1: Stage-2-protect the item 2 recorder region — EL1 appends only
-        through an HVC interface, so no wild kernel write can destroy the
-        evidence. Job 2: snapshot and micro-reboot the EL1 kernel (preserving
-        user memory and the recorder) when the supervisor attributes a fault
-        to the resilient core itself.
-      Done: a deliberate wild-pointer spray from EL1 cannot corrupt the
-        recorder (verified by test), and an injected core fault micro-reboots
-        EL1 with the ring intact across the event, on hardware.
-      Depends: items 1-3. Keep it LAST — every earlier pillar works without
-        it, and the design will be better for the delay.
+   7. The EL2 warden, stage one: a recorder EL1 cannot corrupt             (V4)
+      Effort: L | Unlocks: evidence that survives a wild kernel write
+      Scope: a thin non-VHE EL2 monitor (no scheduler, no devices beyond the
+        watchdog) established at boot before EL1 comes up, with Stage-2
+        translation over EL1. EL1 writes the page each ring is currently
+        filling directly; when the page is full, one HVC seals it read-only
+        at Stage 2 and opens the next.
+      Done: a deliberate wild-pointer spray from EL1 cannot corrupt a sealed
+        page of the recorder (verified by test), and the benchmark suite
+        stays inside the recorder's 2% budget with Stage 2 on.
+      Depends: Phase 3 items 13-15.
       Note: the firmware's built-in armstub8 enters the kernel at EL2 (pi4-boot
         ships no stub of its own), and boot.S drops to EL1 there; that drop is
         the warden's hook point. Cortex-A72 is ARMv8.0 —
-        no VHE — so the split-EL2 design is mandatory, not chosen. The warden
-        is also the first step of Phase 7 item 9: guests later become tenants
-        beside the EL1 kernel under the same monitor.
+        no VHE — so the split-EL2 design is mandatory, not chosen.
+        Was "The EL2 warden", with micro-reboot as its second job; that job
+        is item 9. Sealing replaces "EL1 appends only through an HVC
+        interface": a trap to EL2 per event does not fit under 2% once lock
+        transitions are producers. Sealing leaves one unprotected page per
+        ring, which is the price of writing at memory speed. Stage 2 also
+        turns every EL1 TLB miss into a two-stage walk: map it with the
+        largest blocks that fit, and count the cost against the same budget.
 
    8. The fault-injection campaign + health dashboard                    (V1-V3)
       Effort: M | Unlocks: the published numbers that keep the claims honest
@@ -673,73 +1071,138 @@ capability, not an internal refactor.
         OF SUCCESS). Publish the recovery rate even when it embarrasses us —
         ESPECIALLY then; that number rising is the project's progress bar.
 
+   9. The EL2 warden, stage two: interrupt ownership and micro-reboot      (V4)
+      Effort: XL | Unlocks: a wedged core can be stopped and examined; kernel
+        micro-reboot
+      Scope: route physical interrupts to EL2 (HCR_EL2.IMO) and hand them on
+        to EL1 through the GIC-400's virtual CPU interface, so that EL2 can
+        take a core back whatever EL1 has masked. On top of that: snapshot a
+        core the supervisor has declared hung, and snapshot and micro-reboot
+        the EL1 kernel (preserving user memory and the recorder) when the
+        supervisor attributes a fault to the resilient core itself.
+      Done: a core spinning with IRQs masked is stopped and its registers
+        land in the ring; an injected core fault micro-reboots EL1 with the
+        ring intact across the event, on hardware.
+      Depends: item 7. Keep it LAST — every earlier pillar works without it,
+        and the design will be better for the delay.
+      Note: as first written, the warden had "no devices beyond the watchdog"
+        and a 2-3 KLoC target, and that warden cannot do this job. Every
+        interrupt reaches EL1 as an IRQ that PSTATE.I masks (vector.S
+        discards FIQs, and the panic IPI is an ordinary SGI). EL2 is entered
+        only by an HVC from EL1 or by an interrupt routed to it, so with
+        interrupts left to EL1 a core spinning masked never enters EL2 again,
+        and an HVC from the supervisor's core reaches EL2 on that core only.
+        Owning the interrupts means a minimal virtual GIC — the devicetree
+        already lists the GIC's hypervisor and virtual-CPU regions — which is
+        more code and more trust than vision.txt's sketch of V4 allows for:
+        settle that there before starting. It is also the first step of
+        Phase 7 item 9, where the same virtual interface serves guests.
+
 
 ================================================================================
 PHASE 7: STRATEGIC EXTENSIONS  (long-term, re-read through the vision)
-Goal: Broaden into networking, graphics, and beyond — with every new subsystem
+Goal: Broaden into networking, input, and beyond — with every new subsystem
 arriving cell-shaped and recorder-fed from birth, per vision.txt DESIGN RULES.
+
+WORKING ORDER: 2 does not wait for 1 — the Pi 4's Ethernet is on the SoC —
+and 12 follows 2 directly. Items 4, 5 and 8 (graphics server, dynamic
+linking, namespaces) moved to the BACKLOG: none makes the kernel easier to
+see through, which is the test vision.txt sets. Their numbers are not reused.
 ================================================================================
 
    1. A real device stack: PCIe + USB host
-      Effort: XL | Unlocks: networking, input, mass storage — most of this phase
-      Note: this is the hidden prerequisite behind "add networking" on the Pi 4;
-        budget for it explicitly rather than discovering it later. The current
-        driver model also probes only the FIRST matching FDT node and builds a
-        stack-local struct device — it needs a real device lifetime first.
+      Effort: XL | Unlocks: input and mass storage over USB
+      Depends: Phase 2 item 15 (device lifetime); Phase 6 item 4 (cells).
+      Note: the Pi 4's USB-A ports hang off a VL805 xHCI controller behind
+        PCIe, so USB means both. It is NOT a prerequisite for networking
+        (item 2). The device lifetime this needs — every matching node
+        probed, a struct device that outlives probe — is Phase 2 item 15.
         Vision rule: this stack is built AS cells (Phase 6 item 4) from the
         first commit — it is the second user the cell API was designed
         against, and USB's genuinely flaky hardware is the best fault-
         injection source we will ever have. Retrofitting cell discipline
         later is exactly the debt the vision exists to prevent.
 
-   2. Network stack (NIC driver, then LWIP or a minimal UDP/IP)
+   2. Network stack (GENET driver, then LWIP or a minimal UDP/IP)
       Effort: XL | Unlocks: remote access, servers
-      Depends: item 1 above, Phase 3 item 1 (poll).
-      Note: cell-shaped from birth, like item 1. Also the vision's payoff
-        moment for the fleet niche: a remote Pi that reports its own
-        /proc/lastcrash is the product story (vision.txt, WHY THIS DIRECTION).
+      Depends: Phase 3 item 1 (poll); Phase 2 items 13 (kernel threads and
+        timers) and 15 (device model). No other item of this phase.
+      Note: the Pi 4's Ethernet MAC is GENET, a memory-mapped device on the
+        SoC with its PHY on an MDIO bus beside it: the devicetree in
+        pi4-boot/ carries brcm,bcm2711-genet-v5 and brcm,genet-mdio-v5, and
+        the network branch holds the first lines of a driver (genet.c). This
+        file used to put networking behind item 1; that is true of the Pi 3,
+        whose Ethernet is a USB device, and not of this board.
+        Cell-shaped from birth. Also the vision's payoff moment for the fleet
+        niche: a remote Pi that reports its own /proc/lastcrash is the
+        product story (vision.txt, WHY THIS DIRECTION), and item 12 is that
+        report.
 
    3. Input stack (USB HID keyboard/mouse)
-      Effort: L | Depends: item 1 above.
-
-   4. Graphics server (Wayland-lite compositor)
-      Effort: XL | Depends: Phase 4 item 5 (shm) + item 3 above (input).
-
-   5. Dynamic linking (ld.so + shared objects)
-      Effort: L | Unlocks: smaller binaries
-      Depends: Phase 4 item 4 (file-backed mmap). Mostly a user-space loader
-        problem; do it once there are many large binaries to justify it.
+      Effort: L | Depends: item 1 above; Phase 3 item 8 (a second tty).
 
    6. POSIX ABI compatibility
       Effort: M-L | Unlocks: porting prebuilt software
-      Scope: align syscall numbers and struct layouts with Linux/AArch64.
-      Depends: FP/SIMD for userspace (BACKLOG): prebuilt AArch64 binaries use it,
-        and the kernel traps it and saves none of its state.
+      Scope: with numbers and layouts already Linux's (Phase 3 item 10), the
+        semantics and the coverage that let a statically linked Linux/AArch64
+        binary run, brk and sbrk among them (Phase 4 item 2).
+      Depends: Phase 3 item 9 (prebuilt AArch64 binaries use FP/SIMD) and
+        item 10.
 
    7. Self-hosting toolchain
       Effort: XL | Unlocks: the classic milestone — build Perspicua on Perspicua.
-      Depends: FP/SIMD for userspace (BACKLOG).
+      Depends: Phase 3 item 9 (FP/SIMD).
       Note: a good forcing function; it will surface every libc and FS gap at once.
-
-   8. Namespaces / containers, cgroup-style limits
-      Effort: XL | Depends: Phase 5 item 6.
 
    9. Virtualization via EL2
       Effort: XL | Unlocks: running guest OSes on top of Perspicua.
-      Depends: Phase 6 item 7 — the warden IS the first EL2 layer. Guests
-        become tenants beside the EL1 kernel under the same monitor, so this
-        item starts from a small, tested hypervisor instead of from zero.
+      Depends: Phase 6 items 7 and 9 — the warden IS the first EL2 layer, and
+        stage two's virtual GIC is what a guest's interrupts go through.
+        Guests become tenants beside the EL1 kernel under the same monitor,
+        so this item starts from a small, tested hypervisor instead of from
+        zero.
 
   10. Power management: CPU idle states, DVFS, suspend
       Effort: L
       Scope: tickless idle first — suppress the timer on a core whose run queue is
         empty until an IPI or the next sleep deadline; then real idle states and
         frequency scaling.
+      Depends: Phase 2 items 13 (deadline-programmed timers) and 14 (the IPI
+        that wakes a tickless core).
       Note: the scheduler already parks idle cores on WFE — real idle states and
         frequency scaling build from there. Tickless is the cheap half and the
-        remaining piece of Phase 5 item 3: the sleep queue is already sorted by
-        wake_time, so the next deadline is O(1) to find. An idle core still takes
-        the full timer tick rate today.
+        remaining piece of Phase 5 item 3: Phase 2 item 13's timer queue makes
+        the next deadline one read. An idle core still takes the full timer
+        tick rate today.
+
+  11. A/B kernel update with boot confirmation and rollback
+      Effort: M | Unlocks: a fleet that can be updated without a visit
+      Scope: two kernel slots; an update writes the inactive one and marks it
+        to be tried once; a kernel that boots and passes the supervisor's
+        checks confirms itself; a watchdog reset before confirmation falls
+        back to the other slot.
+      Done: a deliberately broken kernel installed remotely is replaced by
+        the previous one after one failed boot, on hardware, with nobody at
+        the board, and /proc/lastcrash explains the failed attempt.
+      Depends: Phase 2 item 9; Phase 3 items 14 and 15.
+      Note: vision.txt names "walk over and reflash it" as the failure that
+        kills unattended deployments. A kernel that explains its crash still
+        needs a way to be replaced, and a way back when the replacement is
+        the crash. The slot is chosen by whatever loads the kernel, so the
+        first step is finding out what the Pi 4 bootloader offers for a
+        one-shot trial boot.
+
+  12. Remote crash reports
+      Effort: S-M | Unlocks: /proc/lastcrash read without a serial cable
+      Scope: after a boot that finds surviving rings, send the reboot reason
+        and the rings' tail to a configured collector over UDP; a host-side
+        receiver that formats them.
+      Done: a board that panics in the field has its report on the collector
+        within a minute of rebooting.
+      Depends: item 2; Phase 3 item 14.
+      Note: the smallest end-to-end form of the product story in item 2's
+        note, and deliberately one-way: no remote shell is needed to learn
+        why a board went down.
 
 
 ================================================================================
@@ -755,21 +1218,29 @@ Promote an item into a phase when something depends on it.
   - Buffered stdio beyond stdout (per-FILE buffers, buffered input) and the
       scanf family. Only stdout buffers today, when it is not a terminal.
 
-  - FP/SIMD for userspace: a lazy FPEN trap and per-task q0-q31/FPCR/FPSR
-      saved on switch. Every target is built -mgeneral-regs-only and boot.S
-      leaves FP trapping, so printf float support, a minimal libm and
-      Phase 7 items 6 and 7 all wait on it.
-
-  - Framebuffer double-buffering and vsync. There is no ioctl syscall:
-      programs read the geometry from /proc/fb and take the screen by
-      mmapping /dev/fb0.
+  - Framebuffer double-buffering and vsync. Programs read the geometry from
+      /proc/fb and take the screen by mmapping /dev/fb0; an ioctl to ask the
+      driver instead arrives with Phase 3 item 8.
 
   - ftrace-lite: function and latency tracing, per-subsystem counters.
-      Overlaps the Phase 6 recorder; worth doing separately only if that
-      slips.
+      Overlaps the recorder (Phase 3 item 13); worth doing separately only
+      if that slips.
 
   - seccomp-style syscall filtering. Long-term, and it wants the
       privilege model from Phase 5 first.
+
+  - RCU for read-mostly state. Was half of Phase 5 item 4; wants a
+      contention number from that item's counters that a seqlock cannot fix.
+
+  - Graphics server (Wayland-lite compositor). Was Phase 7 item 4. Wants
+      shared memory (Phase 4 item 5) and input (Phase 7 item 3).
+
+  - Dynamic linking (ld.so + shared objects). Was Phase 7 item 5. Wants
+      file-backed mmap (Phase 4 item 4). Mostly a user-space loader problem;
+      worth doing once there are many large binaries to justify it.
+
+  - Namespaces / containers, cgroup-style limits. Was Phase 7 item 8. Wants
+      the privilege model (Phase 5 item 6).
 
 ================================================================================
 When in doubt: correctness of the foundation beats breadth of features. Finish and
