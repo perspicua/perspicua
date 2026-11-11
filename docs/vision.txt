@@ -241,11 +241,14 @@ HOW THE ROADMAP SERVES THIS
   Phases 1-5 (order.txt): unchanged in substance — the foundation IS the
     prerequisite. The dmesg ring, the watchdog and strace-lite are tagged
     (V1 seed) inline; per-CPU exception stacks and refcounted objects (Phase 2
-    items 12 and 11) also grow into vision machinery.
-  Phase 6 (order.txt): the vision made concrete — recorder, cells, invariant
-    engine, time travel, warden, and the fault-injection campaign with its
-    health dashboard, in dependency order, each with a "Done" that names a
-    demonstrable capability.
+    items 12 and 11) also grow into vision machinery. The recorder itself —
+    ring, crash-persistent backing, supervisor core — is built in Phase 3
+    (items 13-15), straight after the Phase 2 primitives it depends on, so
+    that Phases 4 and 5 are developed under it.
+  Phase 6 (order.txt): the rest of the vision made concrete — cells,
+    invariant engine, time travel, warden, and the fault-injection campaign
+    with its health dashboard, in dependency order, each with a "Done" that
+    names a demonstrable capability.
   Phase 7 (order.txt): the old strategic extensions, re-read through the
     vision: USB/networking arrive as cells, and EL2 virtualization grows out
     of the warden.
