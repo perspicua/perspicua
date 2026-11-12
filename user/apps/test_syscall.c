@@ -91,27 +91,42 @@ static void test_time_syscalls(void)
     CHECK(clock_gettime(9999, NULL) < 0);
 
     // 2. Valid gettimeofday
-    struct timeval tv;
-    memset(&tv, 0, sizeof(tv));
+    struct timeval tv = {.tv_sec = -1, .tv_usec = -1};
     int res = gettimeofday(&tv, NULL);
     CHECK(res == 0);
     CHECK(tv.tv_sec >= 0);
     CHECK(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
 
     // 3. Valid clock_gettime
-    struct timespec ts;
-    memset(&ts, 0, sizeof(ts));
+    struct timespec ts = {.tv_sec = -1, .tv_nsec = -1};
     res = clock_gettime(CLOCK_MONOTONIC, &ts);
     CHECK(res == 0);
     CHECK(ts.tv_sec >= 0);
     CHECK(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000);
 
-    struct timespec ts_real;
-    memset(&ts_real, 0, sizeof(ts_real));
+    struct timespec ts_real = {.tv_sec = -1, .tv_nsec = -1};
     res = clock_gettime(CLOCK_REALTIME, &ts_real);
     CHECK(res == 0);
     CHECK(ts_real.tv_sec >= 0);
     CHECK(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
+
+    // 4. Time moves
+    struct timeval tv2 = {.tv_sec = -1, .tv_usec = -1};
+    struct timespec ts2 = {.tv_sec = -1, .tv_nsec = -1};
+    struct timespec ts_real2 = {.tv_sec = -1, .tv_nsec = -1};
+    usleep(20 * 1000);
+    res = gettimeofday(&tv2, NULL);
+    CHECK(res == 0
+          && (long long)tv2.tv_sec * 1000000 + tv2.tv_usec
+                 > (long long)tv.tv_sec * 1000000 + tv.tv_usec);
+    res = clock_gettime(CLOCK_MONOTONIC, &ts2);
+    CHECK(res == 0
+          && (long long)ts2.tv_sec * 1000000000 + ts2.tv_nsec
+                 > (long long)ts.tv_sec * 1000000000 + ts.tv_nsec);
+    res = clock_gettime(CLOCK_REALTIME, &ts_real2);
+    CHECK(res == 0
+          && (long long)ts_real2.tv_sec * 1000000000 + ts_real2.tv_nsec
+                 > (long long)ts_real.tv_sec * 1000000000 + ts_real.tv_nsec);
 }
 
 static void test_nanosleep(void)
