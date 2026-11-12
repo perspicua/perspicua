@@ -83,10 +83,10 @@ static void panic_dump_tf_registers(struct exception_trap_frame *tf)
 {
     panic_printf("\n--- Registers (from exception trap frame) ---\n");
 
-    for (int i = 0; i < 28; i += 2) {
+    for (int i = 0; i < 30; i += 2) {
         panic_printf("  x%-2d: 0x%016lx   x%-2d: 0x%016lx\n", i, tf->x[i], i + 1, tf->x[i + 1]);
     }
-    panic_printf("  x29: 0x%016lx   x30: 0x%016lx\n", tf->x[29], tf->x30);
+    panic_printf("  x30: 0x%016lx\n", tf->x30);
 
     panic_printf("\n--- System Registers (from trap frame) ---\n");
     panic_printf("  ELR_EL1  : 0x%016lx  (faulting PC)\n", tf->elr_el1);
