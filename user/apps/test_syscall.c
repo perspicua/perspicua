@@ -854,8 +854,13 @@ static void test_bad_arguments(void)
     CHECK(waitpid(-999, &status, 0) < 0);
     CHECK(waitpid(999999, NULL, 0) < 0);
 
-    CHECK(mmap(NULL, 0, 0, 0, -1, 0) == MAP_FAILED);
-    CHECK(mmap((void *)0x1000, 0xffffffff, 0, 0, -1, 0) == MAP_FAILED);
+    errno = 0;
+    CHECK(mmap(NULL, 0, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED
+          && errno == EINVAL);
+    errno = 0;
+    CHECK(mmap(NULL, (size_t)1 << 40, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0)
+              == MAP_FAILED
+          && errno == EINVAL);
 
     CHECK(signal(-1, SIG_DFL) == SIG_ERR);
     CHECK(signal(999, SIG_DFL) == SIG_ERR);
