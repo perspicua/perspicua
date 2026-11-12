@@ -311,19 +311,17 @@ static void test_malloc_multiple(void)
 
 static void test_malloc_coalesce(void)
 {
-    // Adjacent freed blocks coalesce, so a larger request reuses them instead of growing the heap.
-    void *a = malloc(256);
-    void *b = malloc(256);
-    void *c = malloc(256);
-    CHECK(a != NULL && b != NULL && c != NULL);
+    // Adjacent freed blocks merge, so a request no single hole fits lands below the guard.
+    char *a = malloc(256), *b = malloc(256), *c = malloc(256);
+    char *guard = malloc(256);
+    CHECK(a && b && c && guard);
     free(a);
     free(b);
     free(c);
-    // Allocate something that fits in the coalesced region.
-    void *big = malloc(512);
-    CHECK(big != NULL);
-    memset(big, 0, 512);
+    char *big = malloc(700);
+    CHECK(big != NULL && big < guard);
     free(big);
+    free(guard);
 }
 
 static void test_calloc(void)
