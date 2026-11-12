@@ -19,6 +19,10 @@ void test_sd(void)
     // device registration
     struct block_device *dev = block_device_lookup("sd0");
     TEST_ASSERT("sd0 registered", dev != NULL);
+    if (!dev) {
+        TEST_SUITE_END("SD Driver");
+        return;
+    }
     TEST_ASSERT("sd0 present", dev->present != 0);
     TEST_ASSERT("sd0 name", strcmp(dev->name, "sd0") == 0);
     TEST_ASSERT_EQ("block size", dev->block_size, 512);
@@ -39,6 +43,8 @@ void test_sd(void)
     static uint8_t buf[512];
     memset(buf, 0xA5, sizeof(buf));
 
+    // Mount cached block 0, so each read below drops the cache to reach the card.
+    block_cache_invalidate();
     int res = dev->read_blocks(dev, buf, 0, 1);
     TEST_ASSERT_EQ("read block 0", res, 0);
     TEST_ASSERT_EQ("boot sig low", buf[BOOT_SIG_OFFSET], 0x55);
@@ -47,6 +53,7 @@ void test_sd(void)
     // a second read of the same block must return identical bytes
     static uint8_t buf2[512];
     memset(buf2, 0x5A, sizeof(buf2));
+    block_cache_invalidate();
     TEST_ASSERT_EQ("reread block 0", dev->read_blocks(dev, buf2, 0, 1), 0);
     TEST_ASSERT("reads are consistent", memcmp(buf, buf2, 512) == 0);
 
@@ -54,21 +61,24 @@ void test_sd(void)
     static uint8_t untouched[512];
     memset(untouched, 0x3C, sizeof(untouched));
     TEST_ASSERT_EQ("zero-block read", dev->read_blocks(dev, untouched, 0, 0), 0);
+    int untouched_ok = 1;
     for (int i = 0; i < 512; i++) {
-        TEST_ASSERT("zero-block read wrote nothing", untouched[i] == 0x3C);
+        if (untouched[i] != 0x3C) {
+            untouched_ok = 0;
+        }
     }
+    TEST_ASSERT("zero-block read wrote nothing", untouched_ok);
 
     // multi-block read must place block 0 at the front, unchanged
     static uint8_t multi[1024];
     memset(multi, 0, sizeof(multi));
+    block_cache_invalidate();
     TEST_ASSERT_EQ("two-block read", dev->read_blocks(dev, multi, 0, 2), 0);
     TEST_ASSERT("multi-block block 0 matches", memcmp(multi, buf, 512) == 0);
 
     /*
      * Write path, exercised on the last sector so no filesystem structure is
-     * at risk. The original content is saved and restored before any assert
-     * runs, because a failing TEST_ASSERT returns from the suite immediately
-     * and would otherwise leave the scratch pattern on the image.
+     * at risk. The original content is restored before any assert runs.
      */
     size_t scratch = dev->block_count - 1;
     static uint8_t orig[512];
