@@ -380,7 +380,7 @@ for entry in "${USER_SUITES[@]}"; do
     check_count "userspace suite '$name'" "$n" "${entry##*:}"
 done
 
-for failure in "${job_control_failures[@]}"; do
+for failure in ${job_control_failures[@]+"${job_control_failures[@]}"}; do
     echo "FAIL: job control: $failure"
     status=1
 done
