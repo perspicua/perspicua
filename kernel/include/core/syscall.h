@@ -8,8 +8,8 @@
 #include <stddef.h>
 
 #include "arch/exception.h"
+#include "uapi/syscalls.h"
 
-#define SYSCALL_MAX_RW_SIZE   (4UL * 1024 * 1024)
 #define SYSCALL_MAX_MMAP_SIZE (256UL * 1024 * 1024)
 
 int syscall_validate_user_buffer(const void *ptr, size_t len, int writable);

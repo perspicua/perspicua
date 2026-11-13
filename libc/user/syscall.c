@@ -219,24 +219,31 @@ int close(int fd)
     return __syscall_ret(__syscall1(SYS_CLOSE, fd));
 }
 
+static size_t clamp_rw(size_t len)
+{
+    return len > SYSCALL_MAX_RW_SIZE ? SYSCALL_MAX_RW_SIZE : len;
+}
+
 ssize_t read(int fd, void *buf, size_t len)
 {
-    return __syscall_size_ret(__syscall3(SYS_READ, fd, (long)buf, (long)len));
+    return __syscall_size_ret(__syscall3(SYS_READ, fd, (long)buf, (long)clamp_rw(len)));
 }
 
 ssize_t write(int fd, const void *buf, size_t len)
 {
-    return __syscall_size_ret(__syscall3(SYS_WRITE, fd, (long)buf, (long)len));
+    return __syscall_size_ret(__syscall3(SYS_WRITE, fd, (long)buf, (long)clamp_rw(len)));
 }
 
 ssize_t pread(int fd, void *buf, size_t count, off_t offset)
 {
-    return __syscall_size_ret(__syscall4(SYS_PREAD, fd, (long)buf, (long)count, (long)offset));
+    return __syscall_size_ret(
+        __syscall4(SYS_PREAD, fd, (long)buf, (long)clamp_rw(count), (long)offset));
 }
 
 ssize_t pwrite(int fd, const void *buf, size_t len, off_t offset)
 {
-    return __syscall_size_ret(__syscall4(SYS_PWRITE, fd, (long)buf, (long)len, (long)offset));
+    return __syscall_size_ret(
+        __syscall4(SYS_PWRITE, fd, (long)buf, (long)clamp_rw(len), (long)offset));
 }
 
 int getdents(int fd, void *buf, size_t count)

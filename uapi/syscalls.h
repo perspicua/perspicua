@@ -5,6 +5,9 @@
 #ifndef PERSPICUA_UAPI_SYSCALLS_H
 #define PERSPICUA_UAPI_SYSCALLS_H
 
+// Longest read, write, pread or pwrite the kernel accepts; libc clamps to it.
+#define SYSCALL_MAX_RW_SIZE (1UL * 1024 * 1024)
+
 // System Call Identifiers
 
 #define SYS_WRITE         1

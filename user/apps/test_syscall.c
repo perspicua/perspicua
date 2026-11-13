@@ -56,6 +56,36 @@ static void test_pread_pwrite(void)
     unlink("test_pw.txt");
 }
 
+static int short_transfer(ssize_t n)
+{
+    return n > 0 && (size_t)n <= SYSCALL_MAX_RW_SIZE;
+}
+
+static void test_oversized_rw(void)
+{
+    printf("[ TEST ] Running oversized read/write tests...\n");
+
+    size_t len = SYSCALL_MAX_RW_SIZE + 1024 * 1024;
+    char *big = malloc(len);
+    CHECK(big != NULL);
+    if (!big) {
+        return;
+    }
+    memset(big, 'x', len);
+
+    int fd = open("test_big.bin", O_CREAT | O_RDWR);
+    CHECK(fd >= 0);
+    CHECK(short_transfer(write(fd, big, len)));
+    CHECK(short_transfer(pwrite(fd, big, len, 0)));
+    lseek(fd, 0, SEEK_SET);
+    CHECK(short_transfer(read(fd, big, len)));
+    CHECK(short_transfer(pread(fd, big, len, 0)));
+
+    close(fd);
+    unlink("test_big.bin");
+    free(big);
+}
+
 static void test_getppid(void)
 {
     printf("[ TEST ] Running getppid/fork tests...\n");
@@ -938,6 +968,7 @@ int main(void)
     printf("--- Starting Syscall Functional Tests ---\n");
 
     test_pread_pwrite();
+    test_oversized_rw();
     test_getppid();
     test_time_syscalls();
     test_nanosleep();
