@@ -477,6 +477,8 @@ static void test_snprintf_hash(void)
     CHECK(formats(b, "0"));
     snprintf(b, sizeof(b), "%#08x", 255);
     CHECK(formats(b, "0x0000ff"));
+    snprintf(b, sizeof(b), "%#05o|%#5o|%#.2o", 15, 15, 15);
+    CHECK(formats(b, "00017|  017|017"));
 }
 
 static void test_snprintf_lengths(void)

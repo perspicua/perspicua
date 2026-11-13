@@ -362,7 +362,11 @@ unsigned_common: {
     if (flag_hash && base == 16 && uval != 0) {
         prefix = uppercase ? "0X" : "0x";
     } else if (flag_hash && base == 8 && (num_len == 0 || num_buf[0] != '0') && prec <= num_len) {
-        prec = num_len + 1;
+        for (int i = num_len; i > 0; i--) {
+            num_buf[i] = num_buf[i - 1];
+        }
+        num_buf[0] = '0';
+        num_len++;
     }
     goto emit_number;
 }
