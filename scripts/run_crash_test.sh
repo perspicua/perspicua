@@ -132,6 +132,13 @@ if [ -n "$overflow" ]; then
         echo "FAIL: overflow SP $sp is below the guard page under $base"
         exit 1
     fi
+else
+    for pat in "${PATTERNS[@]}"; do
+        if [ "$pat" = "Kernel stack overflow" ]; then
+            echo "FAIL: no 'SP=..., stack ...' line to check the overflow depth against"
+            exit 1
+        fi
+    done
 fi
 
 missing=0

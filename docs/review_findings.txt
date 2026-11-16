@@ -381,7 +381,7 @@ F21  [DONE] kernel/tests/test_fat32.c:264-309, :588   weak test   [READ]
          "long name is 40 chars"; the name is 39 characters and the assert
          compares with 39. Delete the assert or fix the label.
 
-F22  scripts/run_crash_test.sh:125-135   weak gate   [READ]
+F22  [DONE] scripts/run_crash_test.sh:125-135   weak gate   [READ]
      The check that SP stopped inside the guard page runs only if the log
      contains a line matching 'SP=0x..., stack 0x...'. If the kernel's wording
      changes, the check disappears without a word.
