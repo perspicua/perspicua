@@ -182,17 +182,17 @@ size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
         return 0;
     }
 
+    if (nmemb > (size_t)-1 / size) {
+        stream->error = 1;
+        return 0;
+    }
+
     if (stream == stdout) {
         if (stdout_put(ptr, size * nmemb) != 0) {
             stream->error = 1;
             return 0;
         }
         return nmemb;
-    }
-
-    if (nmemb > (size_t)-1 / size) {
-        stream->error = 1;
-        return 0;
     }
 
     size_t want = size * nmemb;
@@ -207,6 +207,9 @@ int fseek(FILE *stream, off_t offset, int whence)
 {
     if (!stream) {
         return -1;
+    }
+    if (stream == stdout) {
+        fflush(stream);
     }
 
     int vfs_whence = SEEK_SET;
@@ -231,6 +234,9 @@ off_t ftell(FILE *stream)
 {
     if (!stream) {
         return -1;
+    }
+    if (stream == stdout) {
+        fflush(stream);
     }
 
     // A byte ungetc pushed back has not been read yet.

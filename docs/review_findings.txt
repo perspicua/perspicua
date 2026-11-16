@@ -242,7 +242,7 @@ F10  [DONE] kernel/tests/test_vfs.c:272, :59, :146 and test_fat32.c:254   bug   
      Check: full run still PASS. For the fd leak, vfs_test_live_files() before
      and after the block must match once fixed.
 
-F11  libc/user/file.c:185-191, :206, :230   bug   [READ]
+F11  [DONE] libc/user/file.c:185-191, :206, :230   bug   [READ]
        - fwrite to stdout computes size * nmemb at line 186 before the
          overflow check at line 193. Move the check above the stdout branch.
        - ftell(stdout) ignores bytes still held in stdout's buffer, and fseek
@@ -309,7 +309,7 @@ F14  scripts/run_tests.sh:50-86 with several suites   weak gate   [READ]
      or count a "skipped" assert so the total does not change.
      Count: several minimums drop.  NEEDS OWNER DECISION.
 
-F15  libc/user/file.c:80   gap   [RUN: grep]
+F15  [DONE] libc/user/file.c:80   gap   [RUN: grep]
      fopen, fseek, ftell, and fclose/fread/fwrite/feof on a real file are
      called by no test and by no program in user/apps.
      Fix: add a "file streams" group to user/apps/test_libc.c covering:

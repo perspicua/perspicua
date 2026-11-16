@@ -1067,6 +1067,17 @@ static int stdout_child(const char *name)
         printf("x");
         fclose(stdout);
         _exit(0);
+    } else if (strcmp(name, "ftell") == 0) {
+        printf("abc");
+        _exit(ftell(stdout) == 3 ? 0 : 1);
+    } else if (strcmp(name, "fseek") == 0) {
+        printf("abc");
+        fseek(stdout, 0, SEEK_SET);
+        printf("X");
+        exit(0);
+    } else if (strcmp(name, "overflow") == 0) {
+        size_t r = fwrite("x", (size_t)1 << 63, 2, stdout);
+        printf(r == 0 ? "0" : "n");
     } else if (strcmp(name, "eintr") == 0) {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
@@ -1096,6 +1107,39 @@ static int prints(const char *name, char *out, int size)
     return capture(exec_stdout_case, out, size);
 }
 
+// The same, with stdout on a file; -1 when the child exits non-zero.
+static int prints_to_file(const char *name, char *out, int size)
+{
+    const char *path = "test_stdout_file.txt";
+    int pid = fork();
+    if (pid == 0) {
+        int fd = open(path, O_CREAT | O_RDWR | O_TRUNC);
+        if (fd < 0) {
+            _exit(126);
+        }
+        dup2(fd, 1);
+        close(fd);
+        stdout_case = name;
+        exec_stdout_case();
+        _exit(127);
+    }
+    int status = -1;
+    waitpid(pid, &status, 0);
+
+    int n = 0;
+    int fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        int r;
+        while (n < size - 1 && (r = read(fd, out + n, (size_t)(size - 1 - n))) > 0) {
+            n += r;
+        }
+        close(fd);
+    }
+    out[n] = '\0';
+    unlink(path);
+    return status == 0 ? n : -1;
+}
+
 static void test_stdout_buffering(void)
 {
     char out[1024];
@@ -1117,6 +1161,63 @@ static void test_fclose_flushes_stdout(void)
 {
     char out[16];
     CHECK(prints("fclose", out, sizeof(out)) == 1 && strcmp(out, "x") == 0);
+}
+
+static void test_stdout_position(void)
+{
+    char out[16];
+    CHECK(prints_to_file("ftell", out, sizeof(out)) == 3 && strcmp(out, "abc") == 0);
+    CHECK(prints_to_file("fseek", out, sizeof(out)) == 3 && strcmp(out, "Xbc") == 0);
+    CHECK(prints("overflow", out, sizeof(out)) == 1 && strcmp(out, "0") == 0);
+}
+
+static void test_file_streams(void)
+{
+    const char *path = "test_streams.txt";
+    char buf[32];
+
+    FILE *f = fopen(path, "w");
+    CHECK(f != NULL);
+    CHECK(f && fwrite("hello world", 1, 11, f) == 11);
+    CHECK(f && fclose(f) == 0);
+
+    f = fopen(path, "r");
+    CHECK(f != NULL);
+    if (!f) {
+        return;
+    }
+    memset(buf, 0, sizeof(buf));
+    CHECK(fread(buf, 1, 5, f) == 5 && memcmp(buf, "hello", 5) == 0);
+    CHECK(ftell(f) == 5);
+    CHECK(fseek(f, 1, SEEK_CUR) == 0 && ftell(f) == 6);
+    CHECK(fread(buf, 1, 5, f) == 5 && memcmp(buf, "world", 5) == 0);
+    CHECK(fseek(f, -5, SEEK_END) == 0 && ftell(f) == 6);
+    CHECK(fseek(f, 2, SEEK_SET) == 0 && ftell(f) == 2);
+
+    CHECK(fgetc(f) == 'l');
+    CHECK(ungetc('l', f) == 'l' && ftell(f) == 2);
+    CHECK(fgetc(f) == 'l' && ftell(f) == 3);
+
+    CHECK(fseek(f, 0, SEEK_SET) == 0);
+    CHECK(fread(buf, 1, 20, f) == 11 && feof(f) && !ferror(f));
+    CHECK(fseek(f, 0, SEEK_SET) == 0 && !feof(f));
+    CHECK(fclose(f) == 0);
+
+    f = fopen(path, "a");
+    CHECK(f != NULL);
+    CHECK(f && fwrite("!!", 1, 2, f) == 2);
+    CHECK(f && fclose(f) == 0);
+
+    f = fopen(path, "r");
+    CHECK(f != NULL);
+    if (f) {
+        memset(buf, 0, sizeof(buf));
+        CHECK(fread(buf, 1, 20, f) == 13 && memcmp(buf, "hello world!!", 13) == 0);
+        fclose(f);
+    }
+
+    CHECK(fopen("test_streams_missing.txt", "r") == NULL);
+    unlink(path);
 }
 
 // A signal interrupting a flush to a full pipe (EINTR, no SA_RESTART) costs no output.
@@ -1575,6 +1676,8 @@ int main(int argc, char **argv)
     run_group("stdout survives EINTR", test_stdout_survives_eintr);
     run_group("fread waits for a pipe", test_fread_waits_for_pipe);
     run_group("fclose flushes stdout", test_fclose_flushes_stdout);
+    run_group("stdout position", test_stdout_position);
+    run_group("file streams", test_file_streams);
     run_group("setjmp direct", test_setjmp_direct);
     run_group("longjmp value", test_longjmp_value);
     run_group("longjmp zero", test_longjmp_zero);
