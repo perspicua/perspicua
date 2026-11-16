@@ -432,6 +432,41 @@ void test_vfs(void)
         vfs_unlink(f);
     }
 
+    // a create that finds the name already there refuses rather than adding a second entry
+    {
+        const char *name = "tdup_long_name.tmp";
+        int err = 0;
+        struct vfs_vnode *root = vfs_resolve_path("/", NULL, &err);
+        TEST_ASSERT("resolve root for the duplicate create", root != NULL);
+        if (root) {
+            TEST_ASSERT_EQ("first create", root->ops->create(root, name), 0);
+            TEST_ASSERT_EQ("second create of the same name", root->ops->create(root, name),
+                           -EEXIST);
+            vfs_vnode_put(root);
+        }
+
+        int entries = 0;
+        int fd = vfs_open("/", O_RDONLY);
+        static struct dirent batch[8];
+        int n;
+        while (fd >= 0 && (n = vfs_readdir(fd, batch, sizeof(batch))) > 0) {
+            for (int i = 0; i < n; i++) {
+                entries += strcmp(batch[i].d_name, name) == 0;
+            }
+        }
+        if (fd >= 0) {
+            vfs_close(fd);
+        }
+        TEST_ASSERT_EQ("the name has one directory entry", entries, 1);
+
+        int ofd = vfs_open("/tdup_long_name.tmp", O_RDWR | O_CREAT);
+        TEST_ASSERT("O_CREAT on the existing name opens it", ofd >= 0);
+        if (ofd >= 0) {
+            vfs_close(ofd);
+        }
+        while (vfs_unlink("/tdup_long_name.tmp") == 0) {}
+    }
+
     // SEEK_END sees what another descriptor appended, and whence is checked
     {
         const char *f = "/tseek.tmp";

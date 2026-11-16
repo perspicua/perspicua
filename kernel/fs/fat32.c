@@ -2236,6 +2236,13 @@ static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
 
 static int fat32_create(struct vfs_vnode *parent, const char *name)
 {
+    // Checked under fat32_lock, so a create racing another on one name loses instead of doubling it.
+    struct vfs_vnode *existing = fat32_vfs_lookup(parent, name);
+    if (existing) {
+        vfs_vnode_put(existing);
+        return -EEXIST;
+    }
+
     /*
      * Allocate the first cluster up front so the file has a unique, stable
      * start cluster from creation. internal_info (the start cluster) is the

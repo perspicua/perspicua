@@ -20,7 +20,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | ID | Severity | Area | Finding |
 |----|----------|------|---------|
 | H1 [DONE] | High | VFS / FAT32 | `rename` into another filesystem writes a FAT32 directory entry into an unrelated cluster |
-| H2 | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
+| H2 [DONE] | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
 | H3 | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
 | M1 | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
 | M2 | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
@@ -75,7 +75,7 @@ calls `rename`). Needs no privilege and no race.
 need) when `old_parent_node->ops != new_parent_node->ops`. Add the same check
 at the top of `fat32_rename` so the driver does not depend on its caller.
 
-### H2. Racing `open(O_CREAT)` calls create duplicate directory entries
+### H2. [DONE] Racing `open(O_CREAT)` calls create duplicate directory entries
 
 **Where:** `vfs_open_pid` in `kernel/fs/vfs.c`; `fat32_create` in `kernel/fs/fat32.c`.
 

@@ -592,9 +592,10 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
             return -ENOTSUP;
         }
 
+        // EEXIST: another open created it since the lookup, so open that one.
         int cres = parent->ops->create(parent, name);
         vfs_vnode_put(parent);
-        if (cres != 0) {
+        if (cres != 0 && cres != -EEXIST) {
             return cres;
         }
 
