@@ -59,7 +59,7 @@ KERNEL_SUITES=(
     "SD Driver:34"
     "MMU Dynamic Mapping:46"
     "MMU Per-Process Page Tables:86"
-    "VFS:89"
+    "VFS:93"
     "FAT32:185"
     "FAT32 Corrupt Media:15"
     "Pipe:45"

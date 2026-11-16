@@ -412,6 +412,26 @@ void test_vfs(void)
         vfs_unlink(f);
     }
 
+    // a rename stays inside one filesystem: procfs's internal_info is a pid, not a cluster
+    {
+        const char *f = "/txdev.tmp";
+        int fd = vfs_open(f, O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("create cross-device probe", fd >= 0);
+        if (fd >= 0) {
+            vfs_write(fd, "keep", 4);
+            vfs_close(fd);
+        }
+
+        TEST_ASSERT_EQ("rename into a procfs directory is refused",
+                       vfs_rename(f, "/proc/0/txdev.tmp"), -EXDEV);
+        TEST_ASSERT_EQ("rename into the procfs root is refused", vfs_rename(f, "/proc/txdev.tmp"),
+                       -EXDEV);
+
+        struct stat st;
+        TEST_ASSERT("the source survives the refusals", vfs_stat(f, &st) == 0 && st.st_size == 4);
+        vfs_unlink(f);
+    }
+
     // SEEK_END sees what another descriptor appended, and whence is checked
     {
         const char *f = "/tseek.tmp";

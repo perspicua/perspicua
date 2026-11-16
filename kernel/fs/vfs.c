@@ -1322,6 +1322,13 @@ int vfs_rename(const char *oldpath, const char *newpath)
         return -ENOTDIR;
     }
 
+    // A filesystem reads only its own directories' internal_info.
+    if (new_parent_node->ops != old_parent_node->ops) {
+        vfs_vnode_put(new_parent_node);
+        vfs_vnode_put(old_parent_node);
+        return -EXDEV;
+    }
+
     // A trailing slash asserts a directory, and a directory cannot move beneath itself.
     struct vfs_vnode *old_node = vfs_resolve_path(oldpath, p->cwd, &error);
     if (!old_node) {

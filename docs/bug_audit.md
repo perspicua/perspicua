@@ -19,7 +19,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 
 | ID | Severity | Area | Finding |
 |----|----------|------|---------|
-| H1 | High | VFS / FAT32 | `rename` into another filesystem writes a FAT32 directory entry into an unrelated cluster |
+| H1 [DONE] | High | VFS / FAT32 | `rename` into another filesystem writes a FAT32 directory entry into an unrelated cluster |
 | H2 | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
 | H3 | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
 | M1 | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
@@ -43,7 +43,7 @@ are not inversions are in their own section below.
 
 ## High
 
-### H1. `rename` across filesystems corrupts the FAT32 volume
+### H1. [DONE] `rename` across filesystems corrupts the FAT32 volume
 
 **Where:** `vfs_rename` in `kernel/fs/vfs.c`; `fat32_rename` in `kernel/fs/fat32.c`.
 

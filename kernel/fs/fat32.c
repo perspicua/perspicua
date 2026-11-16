@@ -2125,6 +2125,10 @@ static int fat32_set_dotdot(uint32_t dir_cluster, uint32_t parent_cluster)
 static int fat32_rename(struct vfs_vnode *old_parent, const char *old_name,
                         struct vfs_vnode *new_parent, const char *new_name)
 {
+    if (old_parent->ops != &fat32_vnode_ops || new_parent->ops != &fat32_vnode_ops) {
+        return -EXDEV;
+    }
+
     uint32_t old_cluster = (uint32_t)(uintptr_t)old_parent->internal_info;
     struct rename_find_ctx ctx = {.name = old_name};
     int found = fat32_dir_walk(old_cluster, 0, rename_find_cb, &ctx);
