@@ -63,7 +63,7 @@ KERNEL_SUITES=(
     "FAT32:185"
     "FAT32 Corrupt Media:15"
     "Pipe:45"
-    "Procfs:25"
+    "Procfs:27"
     "Mutex:27"
     "Semaphore:34"
     "Completion:39"

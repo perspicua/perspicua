@@ -9,8 +9,10 @@
 #include "string.h"
 
 #include "uapi/errno.h"
+#include "uapi/fcntl.h"
 
 #include "fs/procfs.h"
+#include "fs/vfs.h"
 #include "mm/heap.h"
 
 // What procfs_generated_read renders into.
@@ -52,6 +54,23 @@ void test_procfs(void)
         char small[SHORT];
         TEST_ASSERT_EQ("an overlong file is cut at the buffer",
                        procfs_test_generate(0, small, SHORT), SHORT - 1);
+    }
+
+    // A process with no regions has an empty maps file, whatever the heap held before.
+    {
+        char *dirty = heap_malloc(CONTENT_MAX);
+        if (dirty) {
+            memset(dirty, 'Z', CONTENT_MAX);
+            heap_free(dirty);
+        }
+        static char out[64];
+        int fd = vfs_open("/proc/0/maps", O_RDONLY);
+        TEST_ASSERT("open /proc/0/maps", fd >= 0);
+        int n = fd >= 0 ? vfs_read(fd, out, sizeof(out)) : -1;
+        if (fd >= 0) {
+            vfs_close(fd);
+        }
+        TEST_ASSERT_EQ("a process with no regions has an empty maps file", n, 0);
     }
 
     heap_free(full);

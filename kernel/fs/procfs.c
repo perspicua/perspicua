@@ -344,7 +344,7 @@ static int procfs_pid_maps_read(struct vfs_file *file, void *buffer, size_t size
     }
     spin_unlock_irqrestore(&process_table_lock, flags);
 
-    int ret = procfs_copy_out(offset, buffer, size, buf, strlen(buf));
+    int ret = procfs_copy_out(offset, buffer, size, buf, (size_t)pos);
 
     heap_free(buf);
     return ret;

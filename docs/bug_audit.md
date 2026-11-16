@@ -22,7 +22,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | H1 [DONE] | High | VFS / FAT32 | `rename` into another filesystem writes a FAT32 directory entry into an unrelated cluster |
 | H2 [DONE] | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
 | H3 [DONE] | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
-| M1 | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
+| M1 [DONE] | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
 | M2 | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
 | M4 | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
@@ -140,7 +140,7 @@ existing entry, so the stale insert then cannot win in either order.
 
 ## Medium
 
-### M1. `/proc/<pid>/maps` leaks memory and can return uninitialised heap
+### M1. [DONE] `/proc/<pid>/maps` leaks memory and can return uninitialised heap
 
 **Where:** `procfs_pid_maps_read` in `kernel/fs/procfs.c`.
 
@@ -161,6 +161,8 @@ Two defects in one function:
 **Confidence:** high.
 
 **Fix:** use `pos` as the length, and free the buffer after `procfs_copy_out`.
+
+**Done:** the length is now `pos`. The leak was already gone at the time of the fix: the buffer is freed after `procfs_copy_out`.
 
 ### M2. Writing past end of file exposes old disk contents
 
