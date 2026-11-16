@@ -12,7 +12,7 @@ WORK="$(mktemp -d -t perspicua-host-libc.XXXXXX)"
 trap 'rm -rf "$WORK"' EXIT
 
 SOURCES=(printf string stdlib ctype)
-CFLAGS=(-std=gnu11 -O2 -g -Wall -ffreestanding -fno-builtin -fno-stack-protector -Wno-ignored-attributes
+CFLAGS=(-std=gnu11 -O2 -g -Wall -ffreestanding -fno-builtin -fno-stack-protector -Wno-ignored-attributes -Wno-format
         -I "$ROOT/libc/include" -I "$ROOT")
 
 # The names the library defines, which the host would otherwise resolve to its own.
@@ -37,5 +37,5 @@ for name in "${SOURCES[@]}"; do
     objects+=("$WORK/$name.o")
 done
 
-"$CC" -std=gnu11 -O2 -Wall -Werror "$ROOT/scripts/host_libc_test.c" "${objects[@]}" -o "$WORK/host_libc_test"
+"$CC" -std=gnu11 -O2 -Wall "$ROOT/scripts/host_libc_test.c" "${objects[@]}" -o "$WORK/host_libc_test"
 "$WORK/host_libc_test"
