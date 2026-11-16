@@ -95,6 +95,10 @@ cmake_args := ""
         {{boot_timeout}} \
         "Type help to see available commands"
 
+# Compare libc/src with the host's libc over generated inputs; needs a host C compiler
+@host-libc-test:
+    ./scripts/host_libc_test.sh
+
 # Show the configuration a tree was last built with
 # Usage: just config [dir]  (default: the normal build; the test tree is build-test)
 @config dir=build_dir:

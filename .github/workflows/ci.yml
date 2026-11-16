@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git python3
+          apt-get install -y cmake gcc gcc-aarch64-linux-gnu qemu-system-arm mtools pipx git python3
           pipx install clang-format==22.1.8
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
@@ -61,6 +61,11 @@ jobs:
       - name: Crash Test
         if: matrix.name == 'default'
         run: just crash_timeout=120 crash-test
+
+      # The library's own sources, built for the host and compared with the host's libc.
+      - name: Host libc comparison
+        if: matrix.name == 'default'
+        run: just host-libc-test
 
   # The kernel that ships has no test code compiled in, so it is built on its own.
   build:

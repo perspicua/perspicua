@@ -453,7 +453,7 @@ R3   [DONE] libc/src/string.c:271-326   memcpy and memmove load and store throug
          typedef uint64_t __attribute__((may_alias, aligned(1))) word_t;
      Risk: none functionally; check the generated code is unchanged in size.
 
-R4   A host-side comparison test for libc/src.
+R4   [DONE] A host-side comparison test for libc/src.
      printf.c, string.c, stdlib.c and ctype.c have no kernel or syscall
      dependencies, so they compile on the build host. Compiling them with every
      public name prefixed (-Dsnprintf=p_snprintf and so on, through a
