@@ -361,7 +361,7 @@ F19  [DONE] kernel/tests/test_sched.c:594-916   timing   [UNSURE]
      WAIT_UNTIL(<the condition asserted next>). Keep fixed sleeps only for the
      "not yet" checks (lines 791, 871), which need time to pass.
 
-F20  user/apps/test_restart.c:60-90 and test_libc.c:1123-1152   timing   [UNSURE]
+F20  [DONE] user/apps/test_restart.c:60-90 and test_libc.c:1123-1152   timing   [UNSURE]
      run_case sleeps 200 ms and assumes the child is blocked in read() by then.
      If the child is slower, the signal lands before the read: the SA_RESTART
      case then passes without the read ever being interrupted, and the

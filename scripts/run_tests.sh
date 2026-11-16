@@ -98,7 +98,7 @@ LOCKDEP_MARKER="lockdep: initialized kernel lock dependency validator"
 USER_SUITES=(
     "test_restart:20"
     "test_tools:122"
-    "test_libc:457"
+    "test_libc:458"
     "test_syscall:196"
     "test_fcntl:8"
     "test_stop_cont:39"

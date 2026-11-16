@@ -1102,6 +1102,7 @@ static int stdout_child(const char *name)
         sigaction(SIGUSR1, &sa, NULL);
         static char block[1024];
         memset(block, 'x', sizeof(block));
+        write(3, "r", 1);
         for (int i = 0; i < 16; i++) {
             fwrite(block, 1, sizeof(block), stdout);
         }
@@ -1240,20 +1241,30 @@ static void test_file_streams(void)
 // A signal interrupting a flush to a full pipe (EINTR, no SA_RESTART) costs no output.
 static void test_stdout_survives_eintr(void)
 {
-    int fds[2];
+    int fds[2], ready[2];
     CHECK(pipe(fds) == 0);
+    CHECK(pipe(ready) == 0);
     stdout_case = "eintr";
     int writer = fork();
     if (writer == 0) {
         dup2(fds[1], 1);
         close(fds[0]);
         close(fds[1]);
+        close(ready[0]);
+        dup2(ready[1], 3);
+        if (ready[1] != 3) {
+            close(ready[1]);
+        }
         exec_stdout_case();
         _exit(127);
     }
     close(fds[1]);
+    close(ready[1]);
 
-    usleep(300 * 1000);
+    char byte;
+    read(ready[0], &byte, 1);
+    close(ready[0]);
+    usleep(50 * 1000);
     kill(writer, SIGUSR1);
     usleep(300 * 1000);
 

@@ -33,7 +33,22 @@ static void on_usr1(int sig)
     handler_runs++;
 }
 
-static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
+// The parent waits for this byte, so the signal is not sent before the child is about to block.
+static void announce(int ready_fd)
+{
+    write(ready_fd, "r", 1);
+    close(ready_fd);
+}
+
+static void await_child(int ready_fd)
+{
+    char c;
+    read(ready_fd, &c, 1);
+    close(ready_fd);
+    usleep(50000);
+}
+
+static __attribute__((noreturn)) void child_body(int rfd, int wfd, int ready_fd, int flags)
 {
     close(wfd);
 
@@ -45,6 +60,7 @@ static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
 
     char c = 0;
     errno = 0;
+    announce(ready_fd);
     int n = read(rfd, &c, 1);
 
     if (n == 1 && c == 'x') {
@@ -56,11 +72,11 @@ static __attribute__((noreturn)) void child_body(int rfd, int wfd, int flags)
     _exit(CHILD_OTHER);
 }
 
-// The sleeps keep the read blocked from before the signal lands until the byte arrives.
+// The read is blocked from before the signal lands until the byte arrives.
 static int run_case(int flags)
 {
-    int fds[2];
-    if (pipe(fds) < 0) {
+    int fds[2], ready[2];
+    if (pipe(fds) < 0 || pipe(ready) < 0) {
         printf("test_restart: pipe failed\n");
         return -1;
     }
@@ -71,11 +87,13 @@ static int run_case(int flags)
         return -1;
     }
     if (pid == 0) {
-        child_body(fds[0], fds[1], flags);
+        close(ready[0]);
+        child_body(fds[0], fds[1], ready[1], flags);
     }
 
     close(fds[0]);
-    usleep(200000);
+    close(ready[1]);
+    await_child(ready[0]);
     kill(pid, SIGUSR1);
     usleep(200000);
     write(fds[1], "x", 1);
@@ -91,6 +109,12 @@ static int run_case(int flags)
 
 static int run_sleep_case(void)
 {
+    int ready[2];
+    if (pipe(ready) < 0) {
+        printf("test_restart: pipe failed\n");
+        return -1;
+    }
+
     int pid = fork();
     if (pid < 0) {
         printf("test_restart: fork failed\n");
@@ -98,6 +122,7 @@ static int run_sleep_case(void)
     }
 
     if (pid == 0) {
+        close(ready[0]);
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));
         sa.sa_handler = on_usr1;
@@ -107,6 +132,7 @@ static int run_sleep_case(void)
         struct timespec req = {.tv_sec = 10, .tv_nsec = 0};
         struct timespec rem = {0, 0};
         errno = 0;
+        announce(ready[1]);
         int n = nanosleep(&req, &rem);
 
         if (n == 0) {
@@ -118,7 +144,8 @@ static int run_sleep_case(void)
         _exit(rem.tv_sec >= 8 ? CHILD_EINTR : CHILD_OTHER);
     }
 
-    usleep(200000);
+    close(ready[1]);
+    await_child(ready[0]);
     kill(pid, SIGUSR1);
 
     int status = 0;
