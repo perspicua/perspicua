@@ -495,6 +495,12 @@ static int is_dir(const char *path)
     return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static int size_of(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 ? (int)st.st_size : -1;
+}
+
 static void test_cp_mv(void)
 {
     mkdir(FS, 0755);
@@ -514,7 +520,57 @@ static void test_cp_mv(void)
     check("mv b b", status_of((char *[]){"mv", FS "/b", FS "/b", NULL}) == 0);
     check("mv b b keeps b", holds(FS "/b", "hello\n"));
 
-    unlink(FS "/b");
+    check("mv b c", status_of((char *[]){"mv", FS "/b", FS "/c", NULL}) == 0);
+    check("mv b c moves it", holds(FS "/c", "hello\n") && size_of(FS "/b") < 0);
+
+    mkdir(FS "/d", 0755);
+    check("mv c into d", status_of((char *[]){"mv", FS "/c", FS "/d", NULL}) == 0);
+    check("mv c into d keeps its name", holds(FS "/d/c", "hello\n") && size_of(FS "/c") < 0);
+
+    write_file(FS "/big", 9000);
+    check("cp past one buffer", status_of((char *[]){"cp", FS "/big", FS "/big2", NULL}) == 0);
+    check("cp past one buffer copies every byte", size_of(FS "/big2") == 9000);
+
+    unlink(FS "/d/c");
+    rmdir(FS "/d");
+    unlink(FS "/big");
+    unlink(FS "/big2");
+}
+
+static void test_small_tools(void)
+{
+    mkdir(FS, 0755);
+
+    const char *text = "one two three\nfour five\n";
+    check("wc -w", outputs(text, "       5\n", (char *[]){"wc", "-w", NULL}));
+    check("wc -c", outputs(text, "      24\n", (char *[]){"wc", "-c", NULL}));
+
+    write_text(FS "/h", "ABC\n");
+    check("hd",
+          outputs(NULL,
+                  "00000000  41 42 43 0a                                       |ABC.|\n00000004\n",
+                  (char *[]){"hd", FS "/h", NULL}));
+    write_file(FS "/rep", 48);
+    check("hd collapses repeated lines", outputs(NULL,
+                                                 "00000000  78 78 78 78 78 78 78 78  78 78 78 78 "
+                                                 "78 78 78 78  |xxxxxxxxxxxxxxxx|\n*\n00000030\n",
+                                                 (char *[]){"hd", FS "/rep", NULL}));
+
+    check("touch creates",
+          status_of((char *[]){"touch", FS "/t", NULL}) == 0 && size_of(FS "/t") == 0);
+    write_text(FS "/t", "keep");
+    check("touch keeps an existing file",
+          status_of((char *[]){"touch", FS "/t", NULL}) == 0 && holds(FS "/t", "keep"));
+
+    setenv("TT_PROBE", "42", 1);
+    char out[OUT_MAX];
+    check("env prints the environment",
+          run(NULL, out, (char *[]){"env", NULL}) == 0 && strstr(out, "TT_PROBE=42\n") != NULL);
+    unsetenv("TT_PROBE");
+
+    unlink(FS "/h");
+    unlink(FS "/rep");
+    unlink(FS "/t");
 }
 
 static void test_failure_status(void)
@@ -762,6 +818,7 @@ int main(void)
     test_find_du();
     test_game_selftests();
     test_cp_mv();
+    test_small_tools();
     test_failure_status();
     test_grep();
     test_kill();

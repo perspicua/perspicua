@@ -55,8 +55,6 @@ static void test_assert(void)
     assert(0 == 0);
     assert((void *)0 == NULL);
     CHECK(1); // Reached only if the asserts above did not abort.
-
-    // assert(0) would call __assert_fail and exit — not tested here.
 }
 
 // string.h
@@ -975,6 +973,8 @@ static void mark_b(void)
     write(1, "b", 1);
 }
 
+static int capture_status;
+
 // Runs child() with stdout on a pipe and returns what it printed.
 static int capture(void (*child)(void), char *out, int size)
 {
@@ -1000,7 +1000,24 @@ static int capture(void (*child)(void), char *out, int size)
     close(fds[0]);
     int status;
     waitpid(pid, &status, 0);
+    capture_status = status;
     return n;
+}
+
+static void assert_fails(void)
+{
+    dup2(1, 2);
+    assert(1 == 2);
+    _exit(127);
+}
+
+// A failed assert says what failed on stderr and exits 1.
+static void test_assert_failure(void)
+{
+    char out[160];
+    CHECK(capture(assert_fails, out, sizeof(out)) > 0);
+    CHECK(strstr(out, "Assertion `1 == 2' failed.") != NULL);
+    CHECK(capture_status == 1);
 }
 
 static void atexit_then_exit(void)
@@ -1700,6 +1717,7 @@ int main(int argc, char **argv)
     run_group("fread waits for a pipe", test_fread_waits_for_pipe);
     run_group("fclose flushes stdout", test_fclose_flushes_stdout);
     run_group("term_key closed stdin", test_term_key_closed_stdin);
+    run_group("assert failure", test_assert_failure);
     run_group("stdout position", test_stdout_position);
     run_group("file streams", test_file_streams);
     run_group("setjmp direct", test_setjmp_direct);

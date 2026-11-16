@@ -414,7 +414,7 @@ F24  scripts/run_tests.sh:295   gap   [RUN]
      maintain FSInfo (kernel/fs/fat32.c:319). Do not enable the gate until K1
      is fixed, or every run fails. Add dosfstools to the CI package list.
 
-F25  user/apps/test_tools.c   gap   [READ]
+F25  [DONE] user/apps/test_tools.c   gap   [READ]
      No test for: a real `mv a b` (only `mv b b` at line 514), `mv` into a
      directory, `wc -w` and `wc -c`, `hd`, `touch`, `env`, `cp` of a file
      larger than one 4096-byte buffer, and the assert() failure path
