@@ -284,6 +284,13 @@ void test_fat32(void)
         int fd = vfs_open(BIG_FILE, O_RDONLY);
         TEST_ASSERT("reopen multi-cluster file", fd >= 0);
 
+        struct vfs_file *f = vfs_test_file_at(fd);
+        TEST_ASSERT("multi-cluster file has an open-file object", f != NULL);
+        if (f) {
+            pagecache_invalidate(f->node);
+        }
+        block_cache_invalidate();
+
         memset(big_readback, 0, BIG_SIZE);
         int got = vfs_read(fd, big_readback, BIG_SIZE);
         TEST_ASSERT_EQ("read spans clusters", got, BIG_SIZE);
@@ -296,6 +303,13 @@ void test_fat32(void)
     {
         int fd = vfs_open(BIG_FILE, O_RDONLY);
         TEST_ASSERT("open for seek", fd >= 0);
+
+        struct vfs_file *f = vfs_test_file_at(fd);
+        TEST_ASSERT("seek file has an open-file object", f != NULL);
+        if (f) {
+            pagecache_invalidate(f->node);
+        }
+        block_cache_invalidate();
 
         const int offset = 8192;
         vfs_off_t pos = vfs_lseek(fd, offset, SEEK_SET);
@@ -586,7 +600,7 @@ void test_fat32(void)
         const char *lname = "/a_name_of_exactly_forty_characters_here";
         const char *lname2 = "/renamed_to_a_different_long_name.txt";
 
-        TEST_ASSERT_EQ("long name is 40 chars", (int)strlen(lname) - 1, 39);
+        TEST_ASSERT_EQ("long name is 39 chars", (int)strlen(lname) - 1, 39);
 
         int fd = vfs_open(lname, O_RDWR | O_CREAT | O_TRUNC);
         TEST_ASSERT("create long name", fd >= 0);

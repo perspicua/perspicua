@@ -370,7 +370,7 @@ F20  user/apps/test_restart.c:60-90 and test_libc.c:1123-1152   timing   [UNSURE
      Fix: have the child write one byte down a second pipe just before the
      blocking call and have the parent wait for it, then sleep briefly.
 
-F21  kernel/tests/test_fat32.c:264-309, :588   weak test   [READ]
+F21  [DONE] kernel/tests/test_fat32.c:264-309, :588   weak test   [READ]
        - The multi-cluster write is read back, and seeked into, through the
          page cache, not the cluster-chain walk the comments describe. The
          path IS covered later by the run-file test (line 317), which drops
