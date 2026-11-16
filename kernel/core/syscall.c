@@ -1501,7 +1501,7 @@ mmap_fail:
     return fail_err;
 }
 
-static const syscall_fn syscall_table[SYS_SIGALTSTACK + 1] = {
+static const syscall_fn syscall_table[SYS_MAX + 1] = {
     [SYS_OPEN] = open_handler,
     [SYS_WRITE] = write_handler,
     [SYS_EXIT] = exit_handler,

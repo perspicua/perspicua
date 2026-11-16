@@ -27,9 +27,6 @@
 
 #define USER_UNMAPPED_VA 0x0000000040000000UL
 
-// Highest number the dispatcher has a slot for.
-#define SYSCALL_MAX_NR SYS_SIGALTSTACK
-
 #define SCRATCH_PATH "/sbounds.tmp"
 
 // A kernel address a syscall must never accept as a user buffer.
@@ -77,6 +74,9 @@ struct skipped_syscall {
     const char *reason;
 };
 
+// Numbers below SYS_MAX that name no syscall.
+static const uint64_t unassigned[] = {5, 14, 17};
+
 static const struct skipped_syscall skipped[] = {
     {SYS_EXIT, "terminates the caller"},
     {SYS_FORK, "would fork the boot task"},
@@ -93,6 +93,28 @@ static const struct skipped_syscall skipped[] = {
     {SYS_SETSID, "takes no argument to fail on and would resession slot 0"},
     {SYS_SETPGID, "would move slot 0 into another process group"},
     {SYS_TCSETPGRP, "would hand the terminal to whatever group the argument names"},
+};
+
+// Output buffers, behind a valid fd or path so only the pointer can be refused.
+struct out_probe {
+    const char *name;
+    uint64_t nr;
+    int ptr_arg;
+    int null_ok;
+    int fd_arg;  // >= 0: this arg gets the scratch file's fd
+    int dir_arg; // >= 0: this arg gets a directory fd
+    uint64_t args[6];
+};
+
+static const struct out_probe out_probes[] = {
+    {"read buf", SYS_READ, 1, 0, 0, -1, {0, 0, 16, 0, 0, 0}},
+    {"pread buf", SYS_PREAD, 1, 0, 0, -1, {0, 0, 16, 0, 0, 0}},
+    {"getdents buf", SYS_GETDENTS, 1, 0, -1, 0, {0, 0, sizeof(struct dirent), 0, 0, 0}},
+    {"fstat buf", SYS_FSTAT, 1, 0, 0, -1, {0, 0, 0, 0, 0, 0}},
+    {"stat buf", SYS_STAT, 1, 0, -1, -1, {USER_RW_VA, 0, 0, 0, 0, 0}},
+    {"sigaction old", SYS_SIGACTION, 2, 1, -1, -1, {SIGUSR1, 0, 0, 0, 0, 0}},
+    {"sigprocmask old", SYS_SIGPROCMASK, 2, 1, -1, -1, {0, 0, 0, 0, 0, 0}},
+    {"sigaltstack old", SYS_SIGALTSTACK, 1, 1, -1, -1, {0, 0, 0, 0, 0, 0}},
 };
 
 struct fd_probe {
@@ -189,8 +211,7 @@ void test_syscall_bounds(void)
 
         TEST_ASSERT_EQ("syscall 0 refused", test_syscall(0, args), -ENOSYS);
         TEST_ASSERT_EQ("gap in the table refused", test_syscall(5, args), -ENOSYS);
-        TEST_ASSERT_EQ("one past the table refused", test_syscall(SYSCALL_MAX_NR + 1, args),
-                       -ENOSYS);
+        TEST_ASSERT_EQ("one past the table refused", test_syscall(SYS_MAX + 1, args), -ENOSYS);
         TEST_ASSERT_EQ("far out of range refused", test_syscall(4096, args), -ENOSYS);
         TEST_ASSERT_EQ("a number that indexes nothing refused", test_syscall((uint64_t)-1, args),
                        -ENOSYS);
@@ -265,6 +286,44 @@ void test_syscall_bounds(void)
         }
 
         TEST_ASSERT("every bad pointer is refused", ptr_ok);
+    }
+
+    // a bad pointer in an output parameter is refused, with every other argument valid
+    {
+        int out_dir = vfs_open("/", O_RDONLY);
+        int out_ok = 1;
+
+        TEST_ASSERT("directory opened for output probes", out_dir >= 0);
+
+        for (size_t p = 0; out_dir >= 0 && p < sizeof(out_probes) / sizeof(out_probes[0]); p++) {
+            const struct out_probe *probe = &out_probes[p];
+
+            for (size_t b = 0; b < sizeof(bad_ptrs) / sizeof(bad_ptrs[0]); b++) {
+                if (bad_ptrs[b] == 0 && probe->null_ok) {
+                    continue;
+                }
+
+                uint64_t args[6];
+                memcpy(args, probe->args, sizeof(args));
+                if (probe->fd_arg >= 0) {
+                    args[probe->fd_arg] = (uint64_t)scratch_fd;
+                }
+                if (probe->dir_arg >= 0) {
+                    args[probe->dir_arg] = (uint64_t)out_dir;
+                }
+                args[probe->ptr_arg] = bad_ptrs[b];
+
+                if (test_syscall(probe->nr, args) >= 0) {
+                    pr_err("test: %s accepted pointer %lx [FAILED]\n", probe->name, bad_ptrs[b]);
+                    out_ok = 0;
+                }
+            }
+        }
+
+        if (out_dir >= 0) {
+            vfs_close(out_dir);
+        }
+        TEST_ASSERT("every bad output pointer is refused", out_ok);
     }
 
     // a read-only mapping is not somewhere the kernel may write a result
@@ -444,17 +503,20 @@ void test_syscall_bounds(void)
     {
         int swept = 0;
 
-        for (uint64_t nr = 1; nr <= SYSCALL_MAX_NR; nr++) {
+        for (uint64_t nr = 1; nr <= SYS_MAX; nr++) {
             if (is_skipped(nr)) {
                 continue;
             }
 
             uint64_t args[6] = {0};
-            test_syscall(nr, args);
-            swept++;
+            if (test_syscall(nr, args) != -ENOSYS) {
+                swept++;
+            }
         }
 
-        TEST_ASSERT("every unskipped syscall survives zeroed arguments", swept > 0);
+        int expected = SYS_MAX - (int)(sizeof(unassigned) / sizeof(unassigned[0]))
+                       - (int)(sizeof(skipped) / sizeof(skipped[0]));
+        TEST_ASSERT_EQ("every unskipped syscall survives zeroed arguments", swept, expected);
     }
 
     drop_cwd();

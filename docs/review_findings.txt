@@ -329,7 +329,7 @@ F16  [DONE] user/apps/test_syscall.c:836   weak test   [RUN: probe]
      The neighbouring checks at lines 824-833 also assert only "< 0". Pin the
      errno on each where the kernel's answer is unambiguous.
 
-F17  kernel/tests/test_syscall_bounds.c:31, :457, :47-64   weak test   [READ]
+F17  [DONE] kernel/tests/test_syscall_bounds.c:31, :457, :47-64   weak test   [READ]
        - SYSCALL_MAX_NR is hard-coded to SYS_SIGALTSTACK. A syscall added with
          a higher number is silently left out of the sweep, and "one past the
          table" stops being one past.

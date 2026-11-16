@@ -73,7 +73,7 @@ KERNEL_SUITES=(
     "User Access:29"
     "Process:36"
     "ELF Loader:46"
-    "Syscall Bounds:20"
+    "Syscall Bounds:22"
     "Fault Injection:58"
     "Scheduler:118"
     "WaitQueue-MultiTask:119"

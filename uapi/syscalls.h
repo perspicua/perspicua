@@ -58,4 +58,7 @@
 #define SYS_FTRUNCATE     49
 #define SYS_SIGALTSTACK   50
 
+// The highest number above; move it when a syscall is added.
+#define SYS_MAX SYS_SIGALTSTACK
+
 #endif // PERSPICUA_UAPI_SYSCALLS_H
