@@ -15,11 +15,12 @@
 #define TEST_FOOTER_SIZE 16   // sizeof(struct heap_block_footer)
 #define LARGE            2048 // Above HEAP_SLAB_MAX (1024), so first fit serves it
 
-// Free blocks a LARGE request fits, taken so the next placement check starts from fresh heap.
+// Takes every hole a LARGE request fits, then frees one 64 KB block, so the next placement check
+// carves its blocks side by side from one region. Returns whether every hole was taken.
 static void *layout_fill[512];
 static int layout_nfill;
 
-static void fill_holes(void)
+static int fresh_heap(void)
 {
     while (layout_nfill < 512 && heap_test_largest_free() >= LARGE + TEST_FOOTER_SIZE) {
         void *f = heap_malloc(LARGE);
@@ -28,6 +29,9 @@ static void fill_holes(void)
         }
         layout_fill[layout_nfill++] = f;
     }
+    int filled = heap_test_largest_free() < LARGE + TEST_FOOTER_SIZE;
+    heap_free(heap_malloc(64 * 1024));
+    return filled;
 }
 
 void test_heap(void)
@@ -154,13 +158,11 @@ void test_heap(void)
     // memory reuse
 
     // Placement asserts from here need no earlier hole a LARGE request could land in.
-    fill_holes();
-    TEST_ASSERT("no earlier hole is left that a LARGE request fits",
-                heap_test_largest_free() < LARGE + TEST_FOOTER_SIZE);
+    TEST_ASSERT("no earlier hole is left that a LARGE request fits", fresh_heap());
 
     // freed block reused for smaller alloc
     {
-        fill_holes();
+        fresh_heap();
         void *p1 = heap_malloc(4096);
         heap_free(p1);
         void *p2 = heap_malloc(LARGE);
@@ -170,7 +172,7 @@ void test_heap(void)
 
     // first fit: the earlier free block wins over a later one
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *c = heap_malloc(LARGE);
@@ -186,7 +188,7 @@ void test_heap(void)
 
     // a split needs 48 bytes past the request and its footer: a header and 16 usable
     {
-        fill_holes();
+        fresh_heap();
         void *big = heap_malloc(8192);
         heap_free(big);
         void *small = heap_malloc(LARGE);
@@ -201,7 +203,7 @@ void test_heap(void)
 
     // no split when the remainder is under 48 bytes
     {
-        fill_holes();
+        fresh_heap();
         void *p = heap_malloc(LARGE);
         heap_free(p);
         void *q = heap_malloc(LARGE);
@@ -211,7 +213,7 @@ void test_heap(void)
 
     // both halves of a split are usable to their last byte
     {
-        fill_holes();
+        fresh_heap();
         void *big = heap_malloc(8192);
         heap_free(big);
         unsigned char *a = (unsigned char *)heap_malloc(LARGE);
@@ -235,7 +237,7 @@ void test_heap(void)
 
     // repeated splitting carves several blocks out of one
     {
-        fill_holes();
+        fresh_heap();
         void *big = heap_malloc(8192);
         heap_free(big);
         // Each LARGE takes LARGE + 48 with its header and footer, so 8192 holds three.
@@ -257,7 +259,7 @@ void test_heap(void)
 
     // two adjacent free blocks coalesce
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *guard = heap_malloc(LARGE); // keeps the merge from reaching past b
@@ -273,7 +275,7 @@ void test_heap(void)
 
     // three adjacent free blocks coalesce (chain)
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *c = heap_malloc(LARGE);
@@ -291,7 +293,7 @@ void test_heap(void)
 
     // non-adjacent free blocks do not coalesce
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *c = heap_malloc(LARGE);
@@ -306,7 +308,7 @@ void test_heap(void)
 
     // coalesce then split: free two adjacent, alloc smaller
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *guard = heap_malloc(LARGE);
@@ -323,7 +325,7 @@ void test_heap(void)
 
     // free in reverse order still coalesces
     {
-        fill_holes();
+        fresh_heap();
         void *a = heap_malloc(LARGE);
         void *b = heap_malloc(LARGE);
         void *guard = heap_malloc(LARGE);
