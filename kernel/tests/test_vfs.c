@@ -59,6 +59,7 @@ void test_vfs(void)
         struct vfs_vnode *root = vfs_resolve_path("/", NULL, &err);
         TEST_ASSERT("resolve root", root != NULL);
         TEST_ASSERT_EQ("root is a directory", root->type, VFS_VNODE_TYPE_DIR);
+        vfs_vnode_put(root);
 
         err = 0;
         struct vfs_vnode *missing = vfs_resolve_path("/definitely_not_here", NULL, &err);
@@ -146,6 +147,7 @@ void test_vfs(void)
         struct vfs_vnode *dir = vfs_resolve_path(SCRATCH_DIR, NULL, &err);
         TEST_ASSERT("resolve new directory", dir != NULL);
         TEST_ASSERT_EQ("new directory is a dir", dir->type, VFS_VNODE_TYPE_DIR);
+        vfs_vnode_put(dir);
 
         TEST_ASSERT_EQ("rmdir", vfs_rmdir(SCRATCH_DIR), 0);
         TEST_ASSERT("removed directory is gone", vfs_stat(SCRATCH_DIR, &st) != 0);
@@ -269,7 +271,11 @@ void test_vfs(void)
 
         TEST_ASSERT_EQ("unlink file with trailing slash fails", vfs_unlink("/tslashf.txt/"),
                        -ENOTDIR);
-        TEST_ASSERT("file survived", vfs_open(f, O_RDONLY) >= 0);
+        int survivor = vfs_open(f, O_RDONLY);
+        TEST_ASSERT("file survived", survivor >= 0);
+        if (survivor >= 0) {
+            vfs_close(survivor);
+        }
         TEST_ASSERT_EQ("cleanup slash file", vfs_unlink(f), 0);
     }
 

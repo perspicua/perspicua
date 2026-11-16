@@ -224,7 +224,7 @@ F09  [DONE] scripts/gdb_helpers.py   bug   [READ]
      Check: by hand. `just debug` in one terminal, `just gdb` in another, then
      run `ps` and `tasks`. No automated test covers this file.
 
-F10  kernel/tests/test_vfs.c:272, :59, :146 and test_fat32.c:254   bug   [READ]
+F10  [DONE] kernel/tests/test_vfs.c:272, :59, :146 and test_fat32.c:254   bug   [READ]
      Four leaks inside the tests themselves:
        - test_vfs.c:272  `vfs_open(f, O_RDONLY) >= 0` is asserted and the fd is
          never closed. Pid 0 keeps it for the rest of boot, and the file is

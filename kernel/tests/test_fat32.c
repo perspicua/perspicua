@@ -255,6 +255,7 @@ void test_fat32(void)
         TEST_ASSERT("root node exists", root != NULL);
         TEST_ASSERT_EQ("root node is a directory", root->type, VFS_VNODE_TYPE_DIR);
         TEST_ASSERT("root node has ops", root->ops != NULL);
+        slab_free(root);
     }
 
     /*
