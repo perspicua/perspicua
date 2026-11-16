@@ -156,13 +156,12 @@ void panic_full(const char *msg, const char *file, int line, unsigned long fp,
     disable_interrupts();
 
     // Re-entrant guard: spin if diagnostic helpers fault.
-    if (kernel_panicked) {
+    if (__atomic_exchange_n(&kernel_panicked, 1, __ATOMIC_ACQ_REL)) {
         for (;;) {
             asm volatile("wfe");
         }
     }
 
-    kernel_panicked = 1;
     asm volatile("dsb ish" ::: "memory");
 
     gic_send_panic_ipi();

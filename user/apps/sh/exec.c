@@ -51,8 +51,10 @@ static void remember_stopped(int pgid, const int *pids, int count)
 void handle_sigchld(int sig)
 {
     (void)sig;
+    int saved_errno = errno;
     while (waitpid(-1, NULL, WNOHANG) > 0)
         ;
+    errno = saved_errno;
 }
 
 static int is_parent_builtin(const char *name)

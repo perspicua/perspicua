@@ -20,7 +20,13 @@ DIR *opendir(const char *name)
     }
 
     struct stat st;
-    if (fstat(fd, &st) < 0 || !S_ISDIR(st.st_mode)) {
+    if (fstat(fd, &st) < 0) {
+        int err = errno;
+        close(fd);
+        errno = err;
+        return NULL;
+    }
+    if (!S_ISDIR(st.st_mode)) {
         close(fd);
         errno = ENOTDIR;
         return NULL;

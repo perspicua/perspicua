@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "errno.h"
 #include "fcntl.h"
 #include "signal.h"
 #include "stdlib.h"
@@ -528,6 +529,9 @@ int term_key(int timeout_ms)
                 esc_since = 0;
                 return TERM_KEY_ESC;
             }
+            return TERM_KEY_EOF;
+        }
+        if (n < 0 && errno != EAGAIN && errno != EINTR) {
             return TERM_KEY_EOF;
         }
 

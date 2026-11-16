@@ -252,7 +252,7 @@ F11  [DONE] libc/user/file.c:185-191, :206, :230   bug   [READ]
          is stdout.
      Add tests with F15 (file streams), which is where these become reachable.
 
-F12  small bugs, each a one-line change   [READ]
+F12  [DONE] small bugs, each a one-line change   [READ]
        a. user/apps/sh/exec.c:51  handle_sigchld calls waitpid, which sets
           errno, and can interrupt code that is about to read errno.
           Fix: save errno on entry and restore it before returning.

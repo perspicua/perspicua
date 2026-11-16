@@ -11,6 +11,9 @@
 // Create every missing parent of path; the final mkdir reports any that could not be made.
 static void make_parents(char *path)
 {
+    if (path[0] == '\0') {
+        return;
+    }
     for (char *p = path + 1; *p; p++) {
         if (*p == '/') {
             *p = '\0';

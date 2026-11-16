@@ -1403,6 +1403,29 @@ static int size_reports_child(void)
     return ok ? 0 : 1;
 }
 
+// A closed stdin is the end of input, not "nothing yet"; a child that spins is killed.
+static void test_term_key_closed_stdin(void)
+{
+    int pid = fork();
+    if (pid == 0) {
+        close(0);
+        _exit(term_key(-1) == TERM_KEY_EOF ? 0 : 1);
+    }
+    int status = -1;
+    int done = 0;
+    for (int i = 0; i < 300 && !done; i++) {
+        done = waitpid(pid, &status, WNOHANG) == pid;
+        if (!done) {
+            usleep(10 * 1000);
+        }
+    }
+    if (!done) {
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+    }
+    CHECK(done && status == 0);
+}
+
 static void test_term_size_report(void)
 {
     int r = 0, c = 0;
@@ -1676,6 +1699,7 @@ int main(int argc, char **argv)
     run_group("stdout survives EINTR", test_stdout_survives_eintr);
     run_group("fread waits for a pipe", test_fread_waits_for_pipe);
     run_group("fclose flushes stdout", test_fclose_flushes_stdout);
+    run_group("term_key closed stdin", test_term_key_closed_stdin);
     run_group("stdout position", test_stdout_position);
     run_group("file streams", test_file_streams);
     run_group("setjmp direct", test_setjmp_direct);
