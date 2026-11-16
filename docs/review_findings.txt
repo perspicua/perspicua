@@ -475,6 +475,15 @@ R5   [DONE] user/apps/ps.c:63   field(blob, "Pid:") finds its value only because
 PART 6 - KERNEL BUGS SEEN ALONG THE WAY  (for the owner; not part of this work)
 ================================================================================
 
+STATUS: all four are resolved.
+  K1  was the directory vnode test_vfs.c never released (F10); the card is
+      clean after a run and run_tests.sh now gates on fsck.fat.
+  K2  bad user pointers now return EFAULT (syscall.c, uaccess.S, process.c).
+  K3  getdents checks the fd before a zero count.
+  K4  gettimeofday and CLOCK_REALTIME return the wall clock; CLOCK_MONOTONIC
+      stays boot-relative.
+  K2-K4 are pinned in user/apps/test_syscall.c.
+
 K1   After a full test run the card image has ONE ORPHANED CLUSTER, allocated
      in the FAT and referenced by no directory entry. A fresh image is clean.
      Seen with `fsck_msdos -n` and `fsck.fat -n`. The run was the mutated tree

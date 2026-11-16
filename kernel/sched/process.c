@@ -440,7 +440,7 @@ static int copy_user_vector(char *const user_vec[], char **out, int *out_count)
     for (;;) {
         char *uentry;
         if (copy_from_user(&uentry, &user_vec[count], sizeof(char *)) != 0) {
-            return -EINVAL;
+            return -EFAULT;
         }
         if (!uentry) {
             break;

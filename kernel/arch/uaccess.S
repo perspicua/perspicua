@@ -72,7 +72,7 @@ strncpy_from_user:
 
 .Lfault_str:
     strb wzr, [x4]      // Leave an empty string rather than a partial one
-    mov x0, #-EINVAL
+    mov x0, #-EFAULT
     ret
 
 .Lstr_toolong:

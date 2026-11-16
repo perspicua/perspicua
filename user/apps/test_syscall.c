@@ -112,19 +112,23 @@ static void test_getppid(void)
     }
 }
 
+// 2026-01-01 UTC: the wall clock starts at the build day, the monotonic one at boot.
+#define WALL_2026 1767225600L
+
 static void test_time_syscalls(void)
 {
     printf("[ TEST ] Running gettimeofday & clock_gettime tests...\n");
 
     // 1. Invalid arguments
-    CHECK(gettimeofday(NULL, NULL) < 0);
+    errno = 0;
+    CHECK(gettimeofday(NULL, NULL) < 0 && errno == EFAULT);
     CHECK(clock_gettime(9999, NULL) < 0);
 
     // 2. Valid gettimeofday
     struct timeval tv = {.tv_sec = -1, .tv_usec = -1};
     int res = gettimeofday(&tv, NULL);
     CHECK(res == 0);
-    CHECK(tv.tv_sec >= 0);
+    CHECK(tv.tv_sec > WALL_2026);
     CHECK(tv.tv_usec >= 0 && tv.tv_usec < 1000000);
 
     // 3. Valid clock_gettime
@@ -137,7 +141,7 @@ static void test_time_syscalls(void)
     struct timespec ts_real = {.tv_sec = -1, .tv_nsec = -1};
     res = clock_gettime(CLOCK_REALTIME, &ts_real);
     CHECK(res == 0);
-    CHECK(ts_real.tv_sec >= 0);
+    CHECK(ts_real.tv_sec > WALL_2026 && ts_real.tv_sec > ts.tv_sec);
     CHECK(ts_real.tv_nsec >= 0 && ts_real.tv_nsec < 1000000000);
 
     // 4. Time moves
@@ -868,19 +872,22 @@ static void test_bad_arguments(void)
     CHECK(FAILS_WITH(close(9999), EBADF));
     CHECK(FAILS_WITH(getdents(-1, buf, sizeof(buf)), EBADF));
 
-    CHECK(write(1, NULL, 10) < 0);
-    CHECK(write(1, (void *)0xdeadbeef, 10) < 0);
-    CHECK(pwrite(1, NULL, 10, 0) < 0);
-    CHECK(open(NULL, 0) < 0);
-    CHECK(open((void *)0xffffffffffffffff, 0) < 0);
-    CHECK(chdir(NULL) < 0);
-    CHECK(stat(NULL, NULL) < 0);
+    CHECK(FAILS_WITH(write(1, NULL, 10), EFAULT));
+    CHECK(FAILS_WITH(write(1, (void *)0xdeadbeef, 10), EFAULT));
+    CHECK(FAILS_WITH(pwrite(1, NULL, 10, 0), EFAULT));
+    CHECK(FAILS_WITH(open(NULL, 0), EFAULT));
+    CHECK(FAILS_WITH(open((void *)0xffffffffffffffff, 0), EFAULT));
+    CHECK(FAILS_WITH(chdir(NULL), EFAULT));
+    CHECK(FAILS_WITH(stat(NULL, NULL), EFAULT));
+    CHECK(FAILS_WITH(read(0, (void *)0xdeadbeef, 10), EFAULT));
+    CHECK(FAILS_WITH(getcwd(NULL, 16) == NULL ? -1 : 0, EFAULT));
+    CHECK(FAILS_WITH(getdents(9999, buf, 0), EBADF));
     CHECK(FAILS_WITH(pread(0, buf, 10, -1), EINVAL));
     CHECK(FAILS_WITH(pwrite(1, "test", 4, -1), EINVAL));
 
     CHECK(execve(NULL, NULL, NULL) < 0);
     char *bad_argv[] = {(char *)0xdeadbeef, NULL};
-    CHECK(FAILS_WITH(execve("/bin/ls.elf", bad_argv, NULL), EINVAL));
+    CHECK(FAILS_WITH(execve("/bin/ls.elf", bad_argv, NULL), EFAULT));
 
     int status;
     CHECK(FAILS_WITH(waitpid(-999, &status, 0), ECHILD));

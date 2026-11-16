@@ -157,7 +157,12 @@ time_t timer_civil_to_epoch(int year, int month, int day, int hour, int min, int
     return (time_t)(days_from_civil(year, month, day) * 86400 + hour * 3600 + min * 60 + sec);
 }
 
+time_t timer_boot_epoch(void)
+{
+    return (time_t)PERSPICUA_BUILD_EPOCH;
+}
+
 time_t timer_get_wall_time(void)
 {
-    return (time_t)(PERSPICUA_BUILD_EPOCH + (int64_t)(timer_get_system_time() / 1000));
+    return timer_boot_epoch() + (time_t)(timer_get_system_time() / 1000);
 }

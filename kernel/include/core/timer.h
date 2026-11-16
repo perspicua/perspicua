@@ -18,6 +18,9 @@ uint64_t timer_ticks_to_ms(uint64_t ticks);
 // No RTC: midnight UTC of the build day plus uptime. Good for file stamps, not real time.
 time_t timer_get_wall_time(void);
 
+// The wall time at which uptime was zero.
+time_t timer_boot_epoch(void);
+
 // Seconds since the Unix epoch for a local date and time, proleptic Gregorian.
 time_t timer_civil_to_epoch(int year, int month, int day, int hour, int min, int sec);
 

@@ -85,7 +85,7 @@ static int copy_path_from_user(const char *upath, char **out)
     *out = NULL;
 
     if (!upath || (uintptr_t)upath >= USER_VA_LIMIT) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char *kpath = heap_malloc(VFS_MAX_PATH_LEN);
@@ -113,7 +113,7 @@ static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     void *kbuf = heap_malloc(len);
@@ -123,7 +123,7 @@ static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
 
     if (copy_from_user(kbuf, ubuf, len) != 0) {
         heap_free(kbuf);
-        return -EINVAL;
+        return -EFAULT;
     }
 
     *out = kbuf;
@@ -140,7 +140,7 @@ static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     void *kbuf = heap_malloc(len);
@@ -160,11 +160,11 @@ static int copy_buf_to_user(void *ubuf, const void *kbuf, size_t len)
     }
 
     if (!syscall_validate_user_buffer(ubuf, len, 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     if (copy_to_user(ubuf, kbuf, len) != 0) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     return 0;
@@ -446,16 +446,16 @@ static int64_t gettimeofday_handler(struct exception_trap_frame *tf)
     struct timeval *tv = (struct timeval *)tf->x[0];
 
     if (!tv || !syscall_validate_user_buffer(tv, sizeof(struct timeval), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     unsigned long ms = timer_get_system_time();
     struct timeval ktv;
-    ktv.tv_sec = (time_t)(ms / 1000);
+    ktv.tv_sec = timer_boot_epoch() + (time_t)(ms / 1000);
     ktv.tv_usec = (long)((ms % 1000) * 1000);
 
     if (copy_to_user(tv, &ktv, sizeof(struct timeval)) != 0) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     return 0;
@@ -471,17 +471,16 @@ static int64_t clock_gettime_handler(struct exception_trap_frame *tf)
     }
 
     if (!tp || !syscall_validate_user_buffer(tp, sizeof(struct timespec), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
-    // Boot-relative like MONOTONIC until there is a real clock (order.txt Phase 3 item 3).
     unsigned long ms = timer_get_system_time();
     struct timespec ktp;
-    ktp.tv_sec = (time_t)(ms / 1000);
+    ktp.tv_sec = (time_t)(ms / 1000) + (clk_id == CLOCK_REALTIME ? timer_boot_epoch() : 0);
     ktp.tv_nsec = (long)((ms % 1000) * 1000000);
 
     if (copy_to_user(tp, &ktp, sizeof(struct timespec)) != 0) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     return 0;
@@ -504,16 +503,16 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
     curr->sleep_resume_at = 0;
 
     if (!req || !syscall_validate_user_buffer(req, sizeof(struct timespec), 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     if (rem && !syscall_validate_user_buffer(rem, sizeof(struct timespec), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     struct timespec kreq;
     if (copy_from_user(&kreq, req, sizeof(struct timespec)) != 0) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     if (kreq.tv_sec < 0 || kreq.tv_nsec < 0 || kreq.tv_nsec > 999999999) {
@@ -539,7 +538,7 @@ static int64_t nanosleep_handler(struct exception_trap_frame *tf)
     if (rem) {
         struct timespec krem = {(time_t)(left / 1000), (long)(left % 1000) * 1000000};
         if (copy_to_user(rem, &krem, sizeof(struct timespec)) != 0) {
-            return -EINVAL;
+            return -EFAULT;
         }
     }
 
@@ -572,7 +571,7 @@ static int64_t waitpid_handler(struct exception_trap_frame *tf)
     int kstatus = 0;
 
     if (ustatus != NULL && !syscall_validate_user_buffer(ustatus, sizeof(int), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     int res = process_waitpid(wait_pid, &kstatus, options);
@@ -591,7 +590,7 @@ static int64_t exec_handler(struct exception_trap_frame *tf)
     char *const *envp = (char *const *)(tf->x[2]);
 
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char *kpath;
@@ -702,7 +701,7 @@ static int64_t sigaction_handler(struct exception_trap_frame *tf)
 
     if (uoact) {
         if (!syscall_validate_user_buffer(uoact, sizeof(struct sigaction), 1)) {
-            return -EINVAL;
+            return -EFAULT;
         }
         if (copy_to_user(uoact, &proc->signal_handlers[sig - 1], sizeof(struct sigaction)) != 0) {
             return -ENOMEM;
@@ -711,7 +710,7 @@ static int64_t sigaction_handler(struct exception_trap_frame *tf)
 
     if (uact) {
         if (!syscall_validate_user_buffer(uact, sizeof(struct sigaction), 0)) {
-            return -EINVAL;
+            return -EFAULT;
         }
         struct sigaction kact;
         if (copy_from_user(&kact, uact, sizeof(struct sigaction)) != 0) {
@@ -811,7 +810,7 @@ static int64_t sigprocmask_handler(struct exception_trap_frame *tf)
 
     if (uoset) {
         if (!syscall_validate_user_buffer(uoset, sizeof(sigset_t), 1)) {
-            return -EINVAL;
+            return -EFAULT;
         }
         if (copy_to_user(uoset, &proc->blocked_signals, sizeof(sigset_t)) != 0) {
             return -ENOMEM;
@@ -820,7 +819,7 @@ static int64_t sigprocmask_handler(struct exception_trap_frame *tf)
 
     if (uset) {
         if (!syscall_validate_user_buffer(uset, sizeof(sigset_t), 0)) {
-            return -EINVAL;
+            return -EFAULT;
         }
         sigset_t kset;
         if (copy_from_user(&kset, uset, sizeof(sigset_t)) != 0) {
@@ -847,7 +846,7 @@ static int64_t sigpending_handler(struct exception_trap_frame *tf)
 {
     sigset_t *uset = (sigset_t *)tf->x[0];
     if (!syscall_validate_user_buffer(uset, sizeof(sigset_t), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     struct task *curr = sched_current_task();
@@ -868,7 +867,7 @@ static int64_t sigsuspend_handler(struct exception_trap_frame *tf)
 {
     const sigset_t *umask = (const sigset_t *)tf->x[0];
     if (!syscall_validate_user_buffer(umask, sizeof(sigset_t), 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
     sigset_t kmask;
     if (copy_from_user(&kmask, umask, sizeof(sigset_t)) != 0) {
@@ -984,13 +983,13 @@ static int64_t pipe_handler(struct exception_trap_frame *tf)
     int kpipefd[2];
 
     if (!syscall_validate_user_buffer(upipefd, sizeof(int) * 2, 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     int res = pipe_create(kpipefd);
     if (res == 0) {
         if (copy_to_user(upipefd, kpipefd, sizeof(int) * 2) != 0) {
-            return -EINVAL;
+            return -EFAULT;
         }
     }
     return res;
@@ -1009,6 +1008,19 @@ static int fd_is_pipe(int fd)
     int pipe = file && pipe_is_pipe(file->node);
     spin_unlock_irqrestore(&p->fd_lock, flags);
     return pipe;
+}
+
+static int fd_is_open(int fd)
+{
+    struct process *p = process_current();
+    if (!p || fd < 0 || fd >= VFS_MAX_FDS) {
+        return 0;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&p->fd_lock);
+    int open = p->fd_table[fd] != NULL;
+    spin_unlock_irqrestore(&p->fd_lock, flags);
+    return open;
 }
 
 static int64_t lseek_handler(struct exception_trap_frame *tf)
@@ -1072,7 +1084,7 @@ static int64_t chdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)(tf->x[0]);
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char *kpath;
@@ -1093,7 +1105,7 @@ static int64_t stat_handler(struct exception_trap_frame *tf)
 
     if (!syscall_validate_user_buffer(upath, 1, 0)
         || !syscall_validate_user_buffer(ubuf, sizeof(struct stat), 1)) {
-        return -EINVAL;
+        return -EFAULT;
     }
 
     char *kpath;
@@ -1126,7 +1138,7 @@ static int64_t mkdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
@@ -1142,7 +1154,7 @@ static int64_t rmdir_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
@@ -1158,7 +1170,7 @@ static int64_t unlink_handler(struct exception_trap_frame *tf)
 {
     const char *path = (const char *)tf->x[0];
     if (!syscall_validate_user_buffer(path, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
     char *kpath;
     int err = copy_path_from_user(path, &kpath);
@@ -1176,7 +1188,7 @@ static int64_t rename_handler(struct exception_trap_frame *tf)
     const char *newpath = (const char *)tf->x[1];
     if (!syscall_validate_user_buffer(oldpath, 1, 0)
         || !syscall_validate_user_buffer(newpath, 1, 0)) {
-        return -EINVAL;
+        return -EFAULT;
     }
     char *koldpath;
     int err = copy_path_from_user(oldpath, &koldpath);
@@ -1208,7 +1220,7 @@ static int64_t fstat_handler(struct exception_trap_frame *tf)
     struct stat *ubuf = (struct stat *)tf->x[1];
 
     if (!syscall_validate_user_buffer(ubuf, sizeof(struct stat), 1)) { // writable
-        return -EINVAL;
+        return -EFAULT;
     }
 
     struct stat kbuf;
@@ -1311,7 +1323,7 @@ static int64_t read_handler(struct exception_trap_frame *tf)
     int bytes = vfs_read(fd, kbuf, len);
     if (bytes > 0) {
         if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-            bytes = -EINVAL;
+            bytes = -EFAULT;
         }
     }
     heap_free(kbuf);
@@ -1342,7 +1354,7 @@ static int64_t pread_handler(struct exception_trap_frame *tf)
     int bytes = vfs_pread(fd, kbuf, len, offset);
     if (bytes > 0) {
         if (copy_to_user(buf, kbuf, (size_t)bytes) != 0) {
-            bytes = -EINVAL;
+            bytes = -EFAULT;
         }
     }
     heap_free(kbuf);
@@ -1356,7 +1368,7 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
     size_t count = (size_t)(tf->x[2]);
 
     if (count == 0) {
-        return 0;
+        return fd_is_open(fd) ? 0 : -EBADF;
     }
 
     void *kbuf;
@@ -1372,7 +1384,7 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
     if (res > 0) {
         size_t copy_size = (size_t)res * sizeof(struct dirent);
         if (copy_to_user(buf, kbuf, copy_size) != 0) {
-            res = -EINVAL;
+            res = -EFAULT;
         }
     }
     heap_free(kbuf);
@@ -1384,7 +1396,10 @@ static int64_t getcwd_handler(struct exception_trap_frame *tf)
     char *buf = (char *)tf->x[0];
     size_t size = (size_t)tf->x[1];
 
-    if (!buf || size == 0) {
+    if (!buf) {
+        return -EFAULT;
+    }
+    if (size == 0) {
         return -EINVAL;
     }
 
