@@ -1,0 +1,524 @@
+Perspicua Review Findings (non-kernel code)
+===========================================
+
+Findings from the November 2026 review of everything that is NOT the core
+kernel: kernel/tests/, libc/, user/, uapi/, scripts/, the CMake files, the
+justfile and CI. Reviewed at commit 499d800 (dev). Line numbers are from that
+commit; if a file has moved on, search for the quoted text instead.
+
+This file is a work list. Each item says what is wrong, exactly what to change,
+and how to prove the change works. Take ONE item at a time.
+
+--------------------------------------------------------------------------------
+RULES FOR WHOEVER FIXES THESE
+--------------------------------------------------------------------------------
+  - One item per change. Stop after each so it can be committed on its own.
+  - Do not commit, push, stage, or open PRs. The owner handles git.
+  - Builds and boots go only in your own tree, never build/ or build-test/:
+        just test_build_dir=build-test/fix test
+        just test_build_dir=build-test/fix cmake_args="-DCONFIG_SMP=OFF" test
+    Never run `just build`: it publishes to pi4-boot/.
+  - Run `just check-format` before handing a change back.
+  - Comments: almost none, one line at most, stating the rule the code keeps.
+    Never describe the bug or its history in a comment.
+  - -Werror is on. No floating point or SIMD anywhere. AArch64 only.
+  - A change to a test must be shown to FAIL when the thing it tests is broken.
+    Each item below gives the mutation to try. Apply it in a scratch git
+    worktree, run the suite, confirm the failure, then discard the worktree.
+    Never apply a mutation in the main tree.
+  - Items marked NEEDS OWNER DECISION must not be started without an answer.
+  - Do not touch kernel/{arch,core,mm,sched,fs,driver,devicetree,init} unless
+    the item says so. Kernel bugs are listed at the end for the owner.
+
+SUITE COUNTS. scripts/run_tests.sh holds a minimum test count per suite
+(KERNEL_SUITES, USER_SUITES). When you add asserts, read the new count from the
+suite's "N tests [OK]" or "all N tests passed" line and raise the minimum to
+it. The script's own rule is "never lower one to pass". Three items below
+remove redundant asserts and so lower a count on purpose; they are marked and
+need the owner's go-ahead.
+
+How each finding was confirmed:
+  [RUN]    confirmed by running something (a mutation, a probe, or a command)
+  [READ]   confirmed by reading the code; not run
+  [UNSURE] plausible from reading; not confirmed
+
+--------------------------------------------------------------------------------
+BASELINE
+--------------------------------------------------------------------------------
+Both of these passed on the unmodified tree, with identical suite counts:
+    just test_build_dir=build-test/review test
+    just test_build_dir=build-test/review cmake_args="-DCONFIG_SMP=OFF" test
+`just check-format` passed.
+
+================================================================================
+PART 1 - TESTS THAT CANNOT FAIL  (confirmed by mutation)
+================================================================================
+
+F01  [DONE] kernel/tests/test_sd.c:42-65   fake test   [RUN]
+     The first half of the SD suite (read block 0, reread, zero-block read,
+     two-block read) is answered by the block cache, not the SD driver. Mount
+     already read the boot sector, so block 0 is cached before the suite runs.
+     dev->read_blocks is the cached wrapper (kernel/driver/block.c:197).
+     Evidence: a counter in sd_read_blocks showed ONE driver read across the
+     four calls in that section (block 1 of the two-block read).
+     Fix:
+       - Call block_cache_invalidate() immediately before each of the three
+         reads at lines 42, 50 and 64, so each one reaches the card.
+       - The zero-block read (line 56) never reaches the driver through the
+         wrapper and cannot. Keep it as a wrapper check, but replace the loop
+         of 512 TEST_ASSERTs (lines 57-59) with one flag and one assert.
+       - Fix the stale comment at lines 67-72: a failing TEST_ASSERT does not
+         return from the suite. Say only that the block is restored first.
+       - Line 22 dereferences dev after the NULL assert on line 21. Wrap the
+         rest of the suite in `if (dev) { ... }` or return after
+         TEST_SUITE_END when dev is NULL.
+     Count: "SD Driver" drops from 545 to 34.  NEEDS OWNER DECISION (lowers a
+     minimum on purpose).
+     Prove it: in a worktree make sd_read_blocks XOR the first byte of the
+     buffer when start_block == 0 and a test-only flag is set by test_sd just
+     before line 42. "boot sig" or "reads are consistent" must now fail.
+
+F02  [DONE] user/apps/test_syscall.c:94-114   fake test   [RUN]
+     The gettimeofday and CLOCK_REALTIME checks pass when the kernel writes
+     nothing at all: the struct is memset to 0 and the asserts are ">= 0".
+     Evidence: with both handlers returning 0 without copying out, test_syscall
+     still passed 187 of 187.
+     Fix, for gettimeofday, CLOCK_MONOTONIC and CLOCK_REALTIME alike:
+       - Start each struct at a sentinel the kernel can never return, e.g.
+             struct timeval tv = {.tv_sec = -1, .tv_usec = -1};
+         then keep the existing range checks. A call that writes nothing now
+         fails them.
+       - Add one check per clock that time moves: read, usleep(20 * 1000),
+         read again, CHECK the second is later than the first.
+     Count: test_syscall grows by 3; raise its minimum.
+     Prove it: in a worktree delete the copy_to_user in gettimeofday_handler
+     (kernel/core/syscall.c:457). The suite must fail.
+
+F03  [DONE] user/apps/test_syscall.c:842-843   fake test   [RUN]
+     Both mmap length checks pass flags 0 and fd -1, so the call fails with
+     EBADF ("neither file nor anonymous") before the length matters.
+     Evidence: with the kernel's length check removed the suite passed, and a
+     probe printed errno 9 (EBADF) for both lines.
+     Fix: make the length the only thing wrong and pin the errno:
+             errno = 0;
+             CHECK(mmap(NULL, 0, PROT_READ | PROT_WRITE,
+                        MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED
+                   && errno == EINVAL);
+             errno = 0;
+             CHECK(mmap(NULL, (size_t)1 << 40, PROT_READ | PROT_WRITE,
+                        MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED
+                   && errno == EINVAL);
+       The kernel's cap is 256 MiB (SYSCALL_MAX_MMAP_SIZE), so 1 << 40 is past
+       it.
+     Count: unchanged.
+     Prove it: in a worktree remove the `length == 0 || length > ...` check at
+     the top of mmap_handler (kernel/core/syscall.c:1420). The suite must fail.
+
+F04  [DONE] user/apps/test_libc.c:312-327   fake test   [RUN]
+     test_malloc_coalesce only asserts `big != NULL`, which is true whether or
+     not free() coalesces.
+     Evidence: with coalesce() never called, test_libc passed 426 of 426 and
+     stress passed 1290 of 1290.
+     Fix: replace the body with a check that only a merged block can satisfy.
+     This exact shape was validated on the host against libc/user/malloc.c: it
+     passes with coalescing and fails without.
+             char *a = malloc(256), *b = malloc(256), *c = malloc(256);
+             char *guard = malloc(256);
+             CHECK(a && b && c && guard);
+             free(a);
+             free(b);
+             free(c);
+             char *big = malloc(700);
+             CHECK(big != NULL && big < guard);
+             free(big);
+             free(guard);
+       Why it works: no single 256-byte hole fits 700, so without merging the
+       request is served from the free tail above guard.
+     Count: unchanged (still two checks).
+     Prove it: in a worktree change `coalesce();` in free()
+     (libc/user/malloc.c:122) to `(void)coalesce;`. test_libc must fail.
+
+================================================================================
+PART 2 - BUGS
+================================================================================
+
+F05  [DONE] libc/kernel/panic.c:86-89   bug   [READ]
+     The trap-frame register dump prints x0-x27, then x29 and x30. x28 is never
+     printed: the loop stops at `i < 28`.
+     Fix: run the loop to 30 so the last pair is x28/x29, and print x30 alone:
+             for (int i = 0; i < 30; i += 2) { ...unchanged body... }
+             panic_printf("  x30: 0x%016lx\n", tf->x30);
+     Check: `just crash_build_dir=build-test/fix-crash crash-test` must still
+     PASS. Its expected patterns do not include register lines.
+
+F06  [DONE] libc/src/printf.c:364-365   bug   [RUN]
+     "%#05o" (the '#' and '0' flags together on octal, no precision) loses its
+     zero padding: 15 prints as "  017" where C requires "00017". The code
+     implements '#' by raising the precision, and a precision turns the '0'
+     flag off.
+     Evidence: libc/src built on the host and compared with the host libc over
+     479,663 cases. 133 differed, every one of the form %#0<width><len>o.
+     strtol, strtoul, the mem* and str* functions, qsort and ctype all matched.
+     Fix: put the leading zero in as a digit instead. Replace the body of that
+     `else if` (the line `prec = num_len + 1;`) with:
+             for (int i = num_len; i > 0; i--) {
+                 num_buf[i] = num_buf[i - 1];
+             }
+             num_buf[0] = '0';
+             num_len++;
+       Leave the condition as it is. This exact change was run through the
+       same comparison: all 133 differences disappear and nothing else moves.
+     Add to test_snprintf_hash in user/apps/test_libc.c:
+             snprintf(b, sizeof(b), "%#05o|%#5o|%#.2o", 15, 15, 15);
+             CHECK(formats(b, "00017|  017|017"));
+     Count: test_libc grows by 1; raise its minimum.
+
+F07  [DONE] libc/user/syscall.c:222-240   bug   [READ]   NEEDS OWNER DECISION
+     read, write, pread and pwrite with a length over 4 MiB fail outright with
+     EINVAL. POSIX expects a short transfer. The kernel refuses the length
+     rather than clamping it (kernel/core/syscall.c:111 and :138,
+     SYSCALL_MAX_RW_SIZE in kernel/include/core/syscall.h:12). fread and fwrite
+     inherit the failure for large buffers.
+     Options:
+       (a) libc clamps the length in those four wrappers. The cap then has to
+           be visible to libc: move SYSCALL_MAX_RW_SIZE into a uapi/ header
+           and include it from kernel/include/core/syscall.h.
+       (b) the kernel clamps instead of refusing. test_syscall_bounds.c:150
+           ("illegal_lens") expects a refusal for cap + 1 and would have to
+           change.
+     Either way add a userspace test: write a 5 MiB buffer to a scratch file
+     and check the call returns a positive count no larger than the cap.
+
+F08  [DONE] scripts/run_tests.sh:383   bug   [RUN]
+     Under bash 3.2 (the /bin/bash on macOS, used when no newer bash is first
+     on PATH) expanding an empty array with `set -u` is an error. A run where
+     every check passed then aborts at this line before printing PASS.
+     Evidence:  /bin/bash -c 'set -u; a=(); for x in "${a[@]}"; do :; done'
+                -> "a[@]: unbound variable", exit 127.
+     Fix: change the loop header to
+             for failure in ${job_control_failures[@]+"${job_control_failures[@]}"}; do
+       Checked under /bin/bash 3.2: no iterations when empty, and elements
+       with spaces stay whole.
+     Check: run the full `just ... test` once; it must still end in PASS.
+
+F09  [DONE] scripts/gdb_helpers.py   bug   [READ]
+     The script has drifted from the kernel's data structures:
+       - line 13: PROCESS_TABLE_SIZE = 1024. The kernel's is
+         CONFIG_MAX_PROCESSES, default 128, so `ps` reads past the table.
+       - process_table holds POINTERS and a free slot is NULL
+         (kernel/include/sched/process.h:102). The script treats entries as
+         structs with state 0 meaning empty.
+       - PROCESS_STATE_NAMES: the kernel's states start at RUNNING = 1; there
+         is no EMPTY.
+       - TASK_STATE_NAMES: the kernel has RUNNING, READY, BLOCKED, STOPPED,
+         DEAD (kernel/include/sched/sched.h:42). STOPPED is missing and DEAD
+         is off by one.
+       - line 65 reads `sched_core_pid`, which no longer exists.
+       - the queue walks follow t["next"]; struct task links its run queue
+         through rq_next. Check the sleep-queue link name the same way.
+     Fix: derive the table size from the symbol
+     (sizeof(process_table) / sizeof(process_table[0]) via gdb.parse_and_eval),
+     skip NULL slots and dereference the rest, correct both name tables, and
+     update the symbol and field names to what kernel/sched/sched.c and the two
+     headers define today.
+     Check: by hand. `just debug` in one terminal, `just gdb` in another, then
+     run `ps` and `tasks`. No automated test covers this file.
+
+F10  kernel/tests/test_vfs.c:272, :59, :146 and test_fat32.c:254   bug   [READ]
+     Four leaks inside the tests themselves:
+       - test_vfs.c:272  `vfs_open(f, O_RDONLY) >= 0` is asserted and the fd is
+         never closed. Pid 0 keeps it for the rest of boot, and the file is
+         then unlinked while still open.
+         Fix: store the fd, assert on it, vfs_close it when >= 0.
+       - test_vfs.c:59 and :146  vfs_resolve_path returns a held reference
+         (kernel/fs/vfs.c takes one before returning). Neither `root` nor
+         `dir` is ever put.
+         Fix: vfs_vnode_put() each when non-NULL. Put `dir` before the
+         vfs_rmdir on line 150.
+       - test_fat32.c:254  fat32_get_root_node() allocates a new vnode on every
+         call (kernel/fs/fat32.c:2575). This one is never freed.
+         Fix: slab_free(root) when non-NULL, as the block at line 554 does.
+     Count: unchanged.
+     Check: full run still PASS. For the fd leak, vfs_test_live_files() before
+     and after the block must match once fixed.
+
+F11  libc/user/file.c:185-191, :206, :230   bug   [READ]
+       - fwrite to stdout computes size * nmemb at line 186 before the
+         overflow check at line 193. Move the check above the stdout branch.
+       - ftell(stdout) ignores bytes still held in stdout's buffer, and fseek
+         does not flush them first, so a position taken or set while stdout is
+         a file is wrong by the buffered amount.
+         Fix: call fflush(stream) at the top of fseek and ftell when stream
+         is stdout.
+     Add tests with F15 (file streams), which is where these become reachable.
+
+F12  small bugs, each a one-line change   [READ]
+       a. user/apps/sh/exec.c:51  handle_sigchld calls waitpid, which sets
+          errno, and can interrupt code that is about to read errno.
+          Fix: save errno on entry and restore it before returning.
+       b. user/apps/mkdir.c:14  make_parents starts at `path + 1`, which is
+          past the terminator for an empty argument (`mkdir -p ""`).
+          Fix: return at once when path[0] == '\0'.
+       c. libc/user/term.c:518-537  term_key treats every failed read as
+          "nothing yet". With timeout_ms < 0 and stdin closed or broken it
+          spins forever.
+          Fix: when read returns < 0 and errno is neither EAGAIN nor EINTR,
+          return TERM_KEY_EOF.
+       d. libc/user/dirent.c:23-26  opendir sets errno to ENOTDIR even when
+          fstat itself failed, and after close() may have changed errno.
+          Fix: set ENOTDIR only when fstat succeeded and the node is not a
+          directory; otherwise keep fstat's errno across the close.
+       e. libc/kernel/panic.c:159-165  kernel_panicked is tested and then set.
+          Two cores panicking together both pass the test and interleave their
+          reports.
+          Fix: one atomic exchange; the loser parks in the wfe loop.
+
+================================================================================
+PART 3 - WEAK TESTS  (not mutation-tested unless marked)
+================================================================================
+
+F13  kernel/tests/test_heap.c:711-730 and others   fake test   [READ]
+     "filling a block to its last byte leaves the next block's header intact"
+     allocates 48 bytes. heap_malloc sends every size up to 1024 to the slab
+     (kernel/mm/heap.c:150, HEAP_SLAB_MAX), and slab objects have no header.
+     The test never touches the first-fit heap it names.
+     The same applies to most of the file's small-size blocks, which repeat
+     test_slab.c nearly line for line: lines 83-137 (overlap, distinct,
+     isolation), 141-148, 513-572 (fragmentation), 645-707 (rapid, fill,
+     sawtooth, wave), 733-750. Lines 481-509 (fifo/lifo/middle free) contain
+     no assert at all.
+     Fix: change the header-integrity block to LARGE (2048) sizes and check
+     heap_test_redzone_ok() on both blocks. Delete the blocks that only repeat
+     test_slab.c, or move them to sizes above 1024.
+     Count: "Heap Allocator" (1230) drops.  NEEDS OWNER DECISION.
+
+F14  scripts/run_tests.sh:50-86 with several suites   weak gate   [READ]
+     Every minimum equals the exact assert count, and most of each count is one
+     check repeated in a loop:
+         SD Driver    512 of 545    test_sd.c:57
+         FAT32       1344 of 1524   test_fat32.c:128-133 and :166-168
+         Spinlock     200 of 233    test_spinlock.c:259 (val = i; val == i)
+         Slab        ~1190 of 1253  test_slab.c:46, :190-192, :202
+     So the number says little about how many behaviours are covered.
+     Separately, three asserts are conditional and will trip the exact minimum
+     when legitimately skipped: test_slab.c:122 (only if the same block comes
+     back), test_tty.c:160 (no framebuffer), test_faultinject.c:238 (no
+     unsplit block).
+     Fix: one flag and one assert per loop. For the conditional ones, either
+     make the skip a visible failure where it should never happen under QEMU,
+     or count a "skipped" assert so the total does not change.
+     Count: several minimums drop.  NEEDS OWNER DECISION.
+
+F15  libc/user/file.c:80   gap   [RUN: grep]
+     fopen, fseek, ftell, and fclose/fread/fwrite/feof on a real file are
+     called by no test and by no program in user/apps.
+     Fix: add a "file streams" group to user/apps/test_libc.c covering:
+     fopen "w" then fwrite then fclose; fopen "r" then fread back the bytes;
+     fseek SEEK_SET / SEEK_CUR / SEEK_END with ftell after each; feof after a
+     short read; fopen "a" appends; fopen on a missing path with "r" is NULL;
+     ungetc then ftell is one less. Use a scratch file and unlink it.
+     Count: test_libc grows; raise its minimum.
+
+F16  user/apps/test_syscall.c:836   weak test   [RUN: probe]
+     The bad-argv execve check passes "/bin/ls", which does not exist (programs
+     are /bin/<name>.elf), so the call would fail even if argv were never
+     checked. A probe showed errno 22 for both "/bin/ls" and "/bin/ls.elf", so
+     today argv is rejected first, but the test cannot tell.
+     Fix: use "/bin/ls.elf", set errno = 0 first, and assert the errno the
+     kernel returns for a bad argv pointer (EINVAL today; see K2).
+     The neighbouring checks at lines 824-833 also assert only "< 0". Pin the
+     errno on each where the kernel's answer is unambiguous.
+
+F17  kernel/tests/test_syscall_bounds.c:31, :457, :47-64   weak test   [READ]
+       - SYSCALL_MAX_NR is hard-coded to SYS_SIGALTSTACK. A syscall added with
+         a higher number is silently left out of the sweep, and "one past the
+         table" stops being one past.
+         Fix: add `#define SYS_MAX SYS_SIGALTSTACK` to uapi/syscalls.h with a
+         one-line note to move it when a syscall is added, and use it here and
+         for the size of syscall_table in kernel/core/syscall.c:1504.
+       - line 457 asserts `swept > 0`, which cannot be false. The real check
+         is that the sweep returns. Assert that the count equals SYS_MAX minus
+         the gaps and the skip list instead, so a dropped syscall shows.
+       - ptr_probes never hands a bad pointer to an OUTPUT parameter: read and
+         pread buffers, the stat and fstat buffers, getdents, sigaction's old
+         action, sigprocmask's old set, sigaltstack's old stack.
+         Fix: add a probe row for each (arguments otherwise valid, scratch fd
+         open). Low risk today because the copies use ldtr/sttr.
+
+F18  kernel/tests/test_types.c:18-52   fake test   [READ]
+     All 24 asserts are compile-time constants (sizeof, limits, `NULL == NULL`,
+     `u8 + 1 == 256`). Nothing can fail at run time.
+     Fix: turn them into _Static_assert at file scope and drop the suite, or
+     keep one runtime assert so the suite still reports.
+     Count: "Types" (24) drops or goes.  NEEDS OWNER DECISION.
+
+F19  kernel/tests/test_sched.c:594-916   timing   [UNSURE]
+     About 25 checks create tasks, sleep a fixed 50-300 ms, then assert the
+     work finished. Under a loaded host the sleep can end first. They pass on
+     an idle machine; CI runs with a longer overall timeout but the same
+     fixed sleeps.
+     Fix: for every "it finished" check, replace the fixed sleep with
+     WAIT_UNTIL(<the condition asserted next>). Keep fixed sleeps only for the
+     "not yet" checks (lines 791, 871), which need time to pass.
+
+F20  user/apps/test_restart.c:60-90 and test_libc.c:1123-1152   timing   [UNSURE]
+     run_case sleeps 200 ms and assumes the child is blocked in read() by then.
+     If the child is slower, the signal lands before the read: the SA_RESTART
+     case then passes without the read ever being interrupted, and the
+     no-restart case fails falsely. test_stdout_survives_eintr has the same
+     shape with 300 ms.
+     Fix: have the child write one byte down a second pipe just before the
+     blocking call and have the parent wait for it, then sleep briefly.
+
+F21  kernel/tests/test_fat32.c:264-309, :588   weak test   [READ]
+       - The multi-cluster write is read back, and seeked into, through the
+         page cache, not the cluster-chain walk the comments describe. The
+         path IS covered later by the run-file test (line 317), which drops
+         both caches.
+         Fix: call pagecache_invalidate(f->node) and block_cache_invalidate()
+         before the read-back at line 283, as line 333-334 does.
+       - line 588 asserts the length of a string literal under the label
+         "long name is 40 chars"; the name is 39 characters and the assert
+         compares with 39. Delete the assert or fix the label.
+
+F22  scripts/run_crash_test.sh:125-135   weak gate   [READ]
+     The check that SP stopped inside the guard page runs only if the log
+     contains a line matching 'SP=0x..., stack 0x...'. If the kernel's wording
+     changes, the check disappears without a word.
+     Fix: when the patterns include 'Kernel stack overflow', fail if that line
+     is missing.
+
+================================================================================
+PART 4 - GAPS
+================================================================================
+
+F23  .github/workflows/ci.yml   gap   [READ]
+       - `just crash-test` is never run in CI.
+         Fix: add a step to the default matrix entry:
+             just crash_timeout=120 crash-test
+       - The CONFIG_TESTS=OFF kernel, which is what ships, is built but never
+         booted. Test-only code could be hiding a boot failure.
+         Fix: add a job that builds it and boots it headless until the shell
+         banner "Type help to see available commands" appears. It needs
+         qemu-system-arm installed in the `build` job, and must build into its
+         own tree, not through `just build`.
+
+F24  scripts/run_tests.sh:295   gap   [RUN]
+     Nothing checks the card image after a run. An fsck of the card left by a
+     full run found one orphaned cluster (see K1); a freshly built image is
+     clean.
+     Fix: after QEMU is killed, if fsck.fat is on PATH, run
+             fsck.fat -n "$CARD"
+     and fail the run on "Reclaimed" or any orphan/cross-link report. The
+     "Free cluster summary wrong" line must be tolerated: the kernel does not
+     maintain FSInfo (kernel/fs/fat32.c:319). Do not enable the gate until K1
+     is fixed, or every run fails. Add dosfstools to the CI package list.
+
+F25  user/apps/test_tools.c   gap   [READ]
+     No test for: a real `mv a b` (only `mv b b` at line 514), `mv` into a
+     directory, `wc -w` and `wc -c`, `hd`, `touch`, `env`, `cp` of a file
+     larger than one 4096-byte buffer, and the assert() failure path
+     (__assert_fail prints and exits 1; test_libc.c:59 says "not tested").
+     Fix: add them with the existing run()/outputs() helpers, exact output
+     compared as the other tool tests do.
+
+================================================================================
+PART 5 - IMPROVEMENTS AND REFACTORS
+================================================================================
+
+R1   One userspace test header.
+     user/apps/utest.h is reimplemented in test_libc.c:24-47, test_tools.c:37-47,
+     test_restart.c:617-628 and stress.c:55-78. The fork-with-pipes runner is
+     written four times: test_tools.c:50, test_sh.c:18, test_libc.c:979 and
+     :1266.
+     Removes: about 150 duplicated lines and four ways of reporting a failure.
+     Risks: the "all N tests passed" counts shift, so every USER_SUITES minimum
+     has to be re-read; test_restart prints "[FAILED]", which the harness greps
+     for, so its failure text must keep working.
+
+R2   Kernel test helpers in kernel/tests/test.h.
+     waiters_all_blocked / all_done / count_done / count_blocked are duplicated
+     in test_semaphore.c:128-168 and test_completion.c:154-194. The sequence
+     "set SIGUSR1 pending on process 0, sched_unblock the task, wait, clear the
+     bit" is written out about nine times across test_wait.c, test_tty.c,
+     test_semaphore.c and test_completion.c.
+     Removes: about 120 lines. Risk: low; the helpers are small and static.
+
+R3   libc/src/string.c:271-326   memcpy and memmove load and store through
+     `uint64_t *` at whatever alignment the caller passed, and the build has
+     no -fno-strict-aliasing. It behaves correctly today (20,000 random cases
+     matched the host). It is undefined behaviour that a compiler upgrade or
+     LTO could act on.
+     Fix: a word type declared
+         typedef uint64_t __attribute__((may_alias, aligned(1))) word_t;
+     Risk: none functionally; check the generated code is unchanged in size.
+
+R4   A host-side comparison test for libc/src.
+     printf.c, string.c, stdlib.c and ctype.c have no kernel or syscall
+     dependencies, so they compile on the build host. Compiling them with every
+     public name prefixed (-Dsnprintf=p_snprintf and so on, through a
+     force-included header), stubbing __libc_write, and comparing against the
+     host libc over generated inputs takes under a second and found F06.
+     Would add: a script under scripts/ and a CI step.
+     Risk: host libcs differ on undefined cases ("%5%"); the generator must
+     stay inside defined behaviour.
+
+R5   user/apps/ps.c:63   field(blob, "Pid:") finds its value only because
+     /proc/<pid>/status prints "Pid:" before "PPid:"; "Pid:" is also a
+     substring of "PPid:". Match at the start of a line instead.
+
+================================================================================
+PART 6 - KERNEL BUGS SEEN ALONG THE WAY  (for the owner; not part of this work)
+================================================================================
+
+K1   After a full test run the card image has ONE ORPHANED CLUSTER, allocated
+     in the FAT and referenced by no directory entry. A fresh image is clean.
+     Seen with `fsck_msdos -n` and `fsck.fat -n`. The run was the mutated tree
+     of Part 1, whose changes do not touch the filesystem; not repeated on the
+     unmodified tree and the cause was not traced. QEMU is killed without a
+     sync, which may or may not matter. Candidates: an unlink-while-open path
+     (test_vfs.c:272 leaks exactly such an fd, though that file is empty), or
+     a failed write in the fault-injection loop at test_fat32.c:745.
+
+K2   Bad user pointers return EINVAL where POSIX says EFAULT:
+     kernel/core/syscall.c:112-116 (copy_buf_from_user), :138-143,
+     :449 (gettimeofday), :471 (clock_gettime), and exec's argv copy (errno 22
+     observed). Only sigaltstack uses EFAULT. No test pins either value.
+
+K3   kernel/core/syscall.c:1358   getdents with count 0 returns 0 before the
+     fd is looked at, so a bad fd is not reported.
+
+K4   kernel/core/syscall.c:453 and :476   gettimeofday and CLOCK_REALTIME
+     return time since boot, while st_mtime is wall-clock (build date plus
+     uptime). The comment marks this as planned work.
+
+K5   kernel/mm/heap.c:18 HEAP_MAX_ALLOC is 8 MiB, but pmm.h:10 PMM_MAX_ORDER 10
+     caps a contiguous block at 4 MiB, and heap_expand adds a header and footer
+     then rounds up to a power of two. heap_malloc of 4 MiB therefore returns
+     NULL (seen as ENOMEM from write at exactly 4 MiB), and so does anything
+     above about 4 MiB minus the overhead. F07 worked around it by lowering
+     SYSCALL_MAX_RW_SIZE to 1 MiB; HEAP_MAX_ALLOC still overstates what can be
+     served.
+
+--------------------------------------------------------------------------------
+CHECKED AND FOUND FINE
+--------------------------------------------------------------------------------
+  - test_syscall.c:831-832 (pread/pwrite with offset -1 on the terminal) looked
+    weak but is not: vfs_pread rejects the offset before the file type
+    (kernel/fs/vfs.c:769), and without that check the calls would block or
+    succeed, which the test would notice.
+  - strtol, strtoul, atoi, memcpy, memmove, memset, memcmp, strncmp, strstr,
+    strspn, strcspn, strncat, strncpy, qsort and the ctype functions matched
+    the host libc on every generated case.
+  - memcpy, memset and memmove do not compile into calls to themselves.
+  - The FAT32 BPB validator tests (test_fat32.c:176-250) do isolate their
+    checks, except "oversized cluster" (255), which is refused by the
+    power-of-two test rather than the size bound.
+
+--------------------------------------------------------------------------------
+NOT REVIEWED IN DEPTH
+--------------------------------------------------------------------------------
+Only outlined or searched for risky patterns, not read line by line:
+user/apps/stress.c, user/apps/sh/edit.c, 2048.c, snake.c, tetris.c, mines.c,
+ptop.c, kfetch.c, mandel.c, less.c, edit.c, bench.c, gfx_demo.c, free.c,
+uptime.c, pinf.c. A finding-free pass over these has not been done.

@@ -9,22 +9,23 @@ import gdb
 
 # --- Constants matching kernel headers ---
 
-SCHED_NUM_CORES = 4
-PROCESS_TABLE_SIZE = 1024
-
 TASK_STATE_NAMES = {
     0: "RUNNING",
     1: "READY",
     2: "BLOCKED",
-    3: "DEAD",
+    3: "STOPPED",
+    4: "DEAD",
 }
 
+# A free process slot is a NULL entry, not a state.
 PROCESS_STATE_NAMES = {
-    0: "EMPTY",
     1: "RUNNING",
     2: "ZOMBIE",
     3: "DEAD",
 }
+
+# Physical to kernel virtual: P2V in kernel/include/mm/addr.h.
+KERNEL_VMA = 0xFFFFFF8000000000
 
 # MMU PTE bits
 PTE_VALID    = 1 << 0
@@ -44,6 +45,30 @@ def read_ulong(addr):
     return int(gdb.parse_and_eval(f"*(unsigned long *){addr:#x}"))
 
 
+def array_len(name):
+    """Element count of a kernel array, from its symbol."""
+    return int(gdb.parse_and_eval(f"sizeof({name}) / sizeof({name}[0])"))
+
+
+def pte_flags(entry):
+    """Permission flags of a leaf entry, as one string."""
+    flags = []
+    if entry & AP_USER:
+        flags.append("USER")
+    flags.append("RO" if entry & AP_RO else "RW")
+    if not (entry & PTE_UXN):
+        flags.append("X")
+    if entry & PTE_COW:
+        flags.append("COW")
+    return " ".join(flags)
+
+
+def process_at(index):
+    """The struct process in a table slot, or None for a free slot."""
+    p = gdb.parse_and_eval(f"process_table[{index}]")
+    return p.dereference() if int(p) != 0 else None
+
+
 class TasksCommand(gdb.Command):
     """Dump all scheduler tasks across all CPU cores.
 
@@ -54,60 +79,68 @@ class TasksCommand(gdb.Command):
         super().__init__("tasks", gdb.COMMAND_USER)
 
     def invoke(self, arg, from_tty):
-        # Print per-core current task
+        cores = array_len("core_sched_stats")
+
+        # Each core is a gdb thread; TPIDR_EL1 holds its current task.
         gdb.write("=== Per-Core Current Tasks ===\n")
         gdb.write(f"{'Core':<6} {'TaskID':<8} {'PID':<6} {'State':<10} {'SP':<18}\n")
         gdb.write("-" * 52 + "\n")
 
-        for core in range(SCHED_NUM_CORES):
+        saved = gdb.selected_thread()
+        for thread in sorted(gdb.selected_inferior().threads(), key=lambda t: t.num):
+            core = thread.num - 1
             try:
-                pid = int(gdb.parse_and_eval(f"sched_core_pid[{core}]"))
-                gdb.write(f"{core:<6} {'--':<8} {pid:<6}\n")
+                thread.switch()
+                t = gdb.parse_and_eval("(struct task *)$TPIDR_EL1")
+                if int(t) == 0:
+                    gdb.write(f"{core:<6} (no task yet)\n")
+                    continue
+                tid = int(t["id"])
+                pid = int(t["pid"])
+                state = TASK_STATE_NAMES.get(int(t["state"]), "?")
+                sp = int(t["context"]["sp"])
+                gdb.write(f"{core:<6} {tid:<8} {pid:<6} {state:<10} {sp:#018x}\n")
             except gdb.error:
                 gdb.write(f"{core:<6} (unavailable)\n")
+        if saved is not None and saved.is_valid():
+            saved.switch()
 
-        # Print all tasks in ready queues
         gdb.write("\n=== Ready Queues ===\n")
-        for core in range(SCHED_NUM_CORES):
+        for core in range(cores):
             try:
-                head = gdb.parse_and_eval(f"sched_rq_head[{core}]")
-                if int(head) == 0:
+                t = gdb.parse_and_eval(f"sched_rq_head[{core}]")
+                if int(t) == 0:
                     continue
                 gdb.write(f"  CPU{core}: ")
-                t = head
                 tasks = []
                 while int(t) != 0:
                     tid = int(t["id"])
                     pid = int(t["pid"])
                     state = TASK_STATE_NAMES.get(int(t["state"]), "?")
                     tasks.append(f"T{tid}(pid={pid},{state})")
-                    t = t["next"]
+                    t = t["rq_next"]
                 gdb.write(" -> ".join(tasks) + "\n")
             except gdb.error:
                 pass
 
-        # Print sleep queue
         gdb.write("\n=== Sleep Queue ===\n")
         try:
-            head = gdb.parse_and_eval("sched_sleep_head")
-            if int(head) == 0:
+            t = gdb.parse_and_eval("sched_sleep_head")
+            if int(t) == 0:
                 gdb.write("  (empty)\n")
-            else:
-                t = head
-                while int(t) != 0:
-                    tid = int(t["id"])
-                    pid = int(t["pid"])
-                    wake = int(t["wake_time"])
-                    gdb.write(f"  T{tid}(pid={pid}) wake_at={wake}\n")
-                    t = t["next"]
+            while int(t) != 0:
+                tid = int(t["id"])
+                pid = int(t["pid"])
+                wake = int(t["wake_time"])
+                gdb.write(f"  T{tid}(pid={pid}) wake_at={wake}\n")
+                t = t["sleep_next"]
         except gdb.error:
             gdb.write("  (unavailable)\n")
 
-        # Print scheduler stats
         gdb.write("\n=== Scheduler Stats ===\n")
         gdb.write(f"{'Core':<6} {'Switches':<12} {'Idle':<12}\n")
         gdb.write("-" * 30 + "\n")
-        for core in range(SCHED_NUM_CORES):
+        for core in range(cores):
             try:
                 stats = gdb.parse_and_eval(f"core_sched_stats[{core}]")
                 switches = int(stats["context_switches"])
@@ -135,16 +168,15 @@ class ProcessesCommand(gdb.Command):
         gdb.write("\n")
         gdb.write("-" * (48 + (54 if verbose else 0)) + "\n")
 
-        for i in range(PROCESS_TABLE_SIZE):
+        for i in range(array_len("process_table")):
             try:
-                p = gdb.parse_and_eval(f"process_table[{i}]")
-                state = int(p["state"])
-                if state == 0:  # EMPTY
+                p = process_at(i)
+                if p is None:
                     continue
 
                 pid = int(p["pid"])
                 name = p["name"].string()
-                state_str = PROCESS_STATE_NAMES.get(state, "?")
+                state_str = PROCESS_STATE_NAMES.get(int(p["state"]), "?")
                 ppid = int(p["parent_pid"])
                 asid = int(p["asid"])
 
@@ -178,8 +210,11 @@ class PageTableCommand(gdb.Command):
         pid = int(arg.strip())
 
         try:
-            p = gdb.parse_and_eval(f"process_table[{pid}]")
-            if int(p["state"]) == 0:
+            if not 0 <= pid < array_len("process_table"):
+                gdb.write(f"PID {pid}: out of range\n")
+                return
+            p = process_at(pid)
+            if p is None:
                 gdb.write(f"PID {pid}: not active\n")
                 return
 
@@ -197,83 +232,43 @@ class PageTableCommand(gdb.Command):
 
         count = 0
         try:
-            # Walk L0 (512 entries)
-            for l0i in range(512):
-                l0e = read_ulong(pgd_ptr + l0i * 8)
-                if not (l0e & PTE_VALID):
+            # 39-bit VA: user_pgd is the L1 table, an L2 entry may be a 2 MB block.
+            for l1i in range(512):
+                l1e = read_ulong(pgd_ptr + l1i * 8)
+                if not (l1e & PTE_VALID):
                     continue
 
-                l1_base = l0e & PTE_ADDR_MASK
-                # Walk L1
-                for l1i in range(512):
-                    l1e = read_ulong(l1_base + l1i * 8)
-                    if not (l1e & PTE_VALID):
+                l2_base = (l1e & PTE_ADDR_MASK) + KERNEL_VMA
+                for l2i in range(512):
+                    l2e = read_ulong(l2_base + l2i * 8)
+                    if not (l2e & PTE_VALID):
                         continue
 
-                    l2_base = l1e & PTE_ADDR_MASK
-                    # Walk L2
-                    for l2i in range(512):
-                        l2e = read_ulong(l2_base + l2i * 8)
-                        if not (l2e & PTE_VALID):
+                    va = (l1i << 30) | (l2i << 21)
+                    if not (l2e & PTE_TABLE):
+                        pa = l2e & PTE_ADDR_MASK
+                        gdb.write(f"{va:#018x}   {pa:#018x}   {pte_flags(l2e)} (2MB)\n")
+                        count += 512
+                        continue
+
+                    l3_base = (l2e & PTE_ADDR_MASK) + KERNEL_VMA
+                    for l3i in range(512):
+                        l3e = read_ulong(l3_base + l3i * 8)
+                        if not (l3e & PTE_VALID):
                             continue
 
-                        l3_base = l2e & PTE_ADDR_MASK
-                        # Walk L3 (4KB pages)
-                        for l3i in range(512):
-                            l3e = read_ulong(l3_base + l3i * 8)
-                            if not (l3e & PTE_VALID):
-                                continue
-
-                            va = (l0i << 39) | (l1i << 30) | (l2i << 21) | (l3i << 12)
-                            pa = l3e & PTE_ADDR_MASK
-
-                            flags = []
-                            if l3e & AP_USER:
-                                flags.append("USER")
-                            if l3e & AP_RO:
-                                flags.append("RO")
-                            else:
-                                flags.append("RW")
-                            if not (l3e & PTE_UXN):
-                                flags.append("X")
-                            if l3e & PTE_COW:
-                                flags.append("COW")
-
-                            gdb.write(f"{va:#018x}   {pa:#018x}   {' '.join(flags)}\n")
-                            count += 1
+                        pa = l3e & PTE_ADDR_MASK
+                        gdb.write(f"{va | (l3i << 12):#018x}   {pa:#018x}   {pte_flags(l3e)}\n")
+                        count += 1
         except gdb.error as e:
             gdb.write(f"\n(walk aborted: {e})\n")
 
         gdb.write(f"\nTotal: {count} mapped pages ({count * 4} KB)\n")
 
 
-class IRQStatsCommand(gdb.Command):
-    """Dump per-core IRQ statistics.
-
-    Usage: irqstats
-    """
-
-    def __init__(self):
-        super().__init__("irqstats", gdb.COMMAND_USER)
-
-    def invoke(self, arg, from_tty):
-        gdb.write(f"{'Core':<6} {'Timer IRQs':<14} {'UART IRQs':<14}\n")
-        gdb.write("-" * 34 + "\n")
-
-        for core in range(SCHED_NUM_CORES):
-            try:
-                stats = gdb.parse_and_eval(f"core_irq_stats[{core}]")
-                timer = int(stats["timer_count"])
-                uart = int(stats["uart_count"])
-                gdb.write(f"{core:<6} {timer:<14} {uart:<14}\n")
-            except gdb.error:
-                gdb.write(f"{core:<6} (unavailable)\n")
-
-
 # Register all commands
 TasksCommand()
 ProcessesCommand()
 PageTableCommand()
-IRQStatsCommand()
 
-gdb.write("perspicua GDB helpers loaded: tasks, ps, pagetable, irqstats\n")
+gdb.write("perspicua GDB helpers loaded: tasks, ps, pagetable\n")
