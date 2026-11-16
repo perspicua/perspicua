@@ -292,7 +292,7 @@ F13  [DONE] kernel/tests/test_heap.c:711-730 and others   fake test   [READ]
      test_slab.c, or move them to sizes above 1024.
      Count: "Heap Allocator" (1230) drops.  NEEDS OWNER DECISION.
 
-F14  scripts/run_tests.sh:50-86 with several suites   weak gate   [READ]
+F14  [DONE] scripts/run_tests.sh:50-86 with several suites   weak gate   [READ]
      Every minimum equals the exact assert count, and most of each count is one
      check repeated in a loop:
          SD Driver    512 of 545    test_sd.c:57

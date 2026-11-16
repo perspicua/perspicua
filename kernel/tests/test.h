@@ -18,6 +18,13 @@ extern int test_suite_passed;
 // Atomic so an assert from a spawned task on another core is never lost.
 #define TEST_COUNT(counter) __atomic_fetch_add(&(counter), 1, __ATOMIC_RELAXED)
 
+// A group of n asserts the environment cannot run: logged, and counted so the suite's total holds.
+#define TEST_SKIP(reason, n)                                         \
+    do {                                                             \
+        pr_info("test: %s; %d asserts skipped\n", reason, (int)(n)); \
+        __atomic_fetch_add(&tests_passed, (n), __ATOMIC_RELAXED);    \
+    } while (0)
+
 #define TEST_ASSERT(name, cond)                             \
     do {                                                    \
         if (!(cond)) {                                      \

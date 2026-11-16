@@ -125,12 +125,15 @@ void test_fat32(void)
         TEST_ASSERT("LFN sequence past the 20-entry maximum refused",
                     fat32_test_extract_lfn_part(&lfn, name, LFN_NAME_SIZE) != 0);
 
+        int below_ok = 1, above_ok = 1;
         for (size_t i = 0; i < LFN_FENCE_LOW; i++) {
-            TEST_ASSERT("no write below the name buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
+            below_ok &= lfn_guarded[i] == LFN_GUARD_BYTE;
         }
         for (size_t i = LFN_FENCE_LOW + LFN_NAME_SIZE; i < sizeof(lfn_guarded); i++) {
-            TEST_ASSERT("no write past the name buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
+            above_ok &= lfn_guarded[i] == LFN_GUARD_BYTE;
         }
+        TEST_ASSERT("no write below the name buffer", below_ok);
+        TEST_ASSERT("no write past the name buffer", above_ok);
     }
 
     // a well-formed fragment still lands where the chain expects it
@@ -163,9 +166,11 @@ void test_fat32(void)
                        fat32_test_extract_lfn_part(&lfn, name, LFN_NAME_SIZE), 0);
         TEST_ASSERT("clipped fragment stops at the terminator", name[LFN_NAME_SIZE - 1] == '\0');
 
+        int clipped_ok = 1;
         for (size_t i = LFN_FENCE_LOW + LFN_NAME_SIZE; i < sizeof(lfn_guarded); i++) {
-            TEST_ASSERT("clipped fragment stays in the buffer", lfn_guarded[i] == LFN_GUARD_BYTE);
+            clipped_ok &= lfn_guarded[i] == LFN_GUARD_BYTE;
         }
+        TEST_ASSERT("clipped fragment stays in the buffer", clipped_ok);
     }
 
     /*

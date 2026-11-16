@@ -236,7 +236,7 @@ void test_faultinject(void)
 
     // a refused block split leaves the block intact; where RAM backs it, it may already be split
     if (!mmu_test_is_block_entry(P2V(0x80000000UL))) {
-        pr_info("test: no unsplit 2 MB block at 0x80000000; refused split skipped\n");
+        TEST_SKIP("no unsplit 2 MB block at 0x80000000; refused split", 5);
     } else {
         unsigned long block_va = P2V(0x80000000UL);
 

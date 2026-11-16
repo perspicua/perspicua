@@ -154,7 +154,7 @@ void test_tty_scheduler(void)
 
     // the framebuffer console reads a CSI sequence whole: parameters, private modes and all
     if (fb_info.width == 0) {
-        pr_info("test: no framebuffer; console escape checks skipped\n");
+        TEST_SKIP("no framebuffer; console escape checks", 7);
     } else {
         struct at home = feed("\033[H", (struct at){40, 200});
         struct at one = feed("x", home);

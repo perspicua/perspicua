@@ -41,10 +41,12 @@ void test_slab(void)
     // all slots distinct within a size class
     {
         void *ptrs[64];
+        int alloc_ok = 1;
         for (int i = 0; i < 64; i++) {
             ptrs[i] = heap_malloc(32);
-            TEST_ASSERT("slab 64x alloc", ptrs[i] != NULL);
+            alloc_ok &= ptrs[i] != NULL;
         }
+        TEST_ASSERT("slab 64x alloc", alloc_ok);
         int distinct = 1;
         for (int i = 0; i < 64 && distinct; i++) {
             for (int j = i + 1; j < 64 && distinct; j++) {
@@ -119,10 +121,10 @@ void test_slab(void)
             unsigned char *again = (unsigned char *)pmm_alloc_pages(pages);
             TEST_ASSERT("block re-allocated", again != NULL);
 
-            if (again == block) { // only the same block proves anything
-                TEST_ASSERT("a recycled tail page does not inherit the flag",
-                            !slab_owns(again + PAGE_SIZE));
-            }
+            TEST_ASSERT("the freed block is handed back, which the flag check needs",
+                        again == block);
+            TEST_ASSERT("a recycled tail page does not inherit the flag",
+                        again && !slab_owns(again + PAGE_SIZE));
             if (again) {
                 pmm_free_pages(again);
             }
@@ -185,22 +187,27 @@ void test_slab(void)
 
     // rapid alloc/free cycle (stress)
     {
+        int alloc_ok = 1, canary_ok = 1;
         for (int i = 0; i < 500; i++) {
             void *p = heap_malloc(128);
-            TEST_ASSERT("slab rapid alloc", p != NULL);
+            alloc_ok &= p != NULL;
             *(volatile unsigned long *)p = 0xCAFEBABEUL;
-            TEST_ASSERT("slab rapid canary", *(volatile unsigned long *)p == 0xCAFEBABEUL);
+            canary_ok &= *(volatile unsigned long *)p == 0xCAFEBABEUL;
             heap_free(p);
         }
+        TEST_ASSERT("slab rapid alloc", alloc_ok);
+        TEST_ASSERT("slab rapid canary", canary_ok);
     }
 
     // fill-and-drain: alloc many, free all, alloc again
     {
         void *ptrs[128];
+        int fill_ok = 1;
         for (int i = 0; i < 128; i++) {
             ptrs[i] = heap_malloc(64);
-            TEST_ASSERT("slab fill alloc", ptrs[i] != NULL);
+            fill_ok &= ptrs[i] != NULL;
         }
+        TEST_ASSERT("slab fill alloc", fill_ok);
         for (int i = 127; i >= 0; i--) {
             heap_free(ptrs[i]);
         }

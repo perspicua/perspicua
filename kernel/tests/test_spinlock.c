@@ -253,12 +253,14 @@ void test_spinlock(void)
         spinlock_t lock = SPINLOCK_INIT;
         volatile unsigned long val = 0;
 
+        int alt_ok = 1;
         for (int i = 0; i < 200; i++) {
             spin_lock(&lock);
             val = (unsigned long)i;
-            TEST_ASSERT("alt value correct", val == (unsigned long)i);
+            alt_ok &= val == (unsigned long)i;
             spin_unlock(&lock);
         }
+        TEST_ASSERT("alt value correct", alt_ok);
         TEST_ASSERT_EQ("alt final value", val, 199);
     }
 
