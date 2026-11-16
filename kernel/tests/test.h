@@ -127,7 +127,6 @@ void test_release_user_pgd(unsigned long *pgd);
 void *test_map_user_page(unsigned long *pgd, unsigned long va, unsigned long flags);
 
 // lib tests
-void test_types(void);
 void test_string(void);
 void test_ksym(void);
 

@@ -48,7 +48,6 @@ FAIL_MARKERS=(
 # Kernel suites as "<name>:<fewest tests>". Each must print "test: <name>: N tests [OK]"
 # with N at least that; raise a minimum when a suite grows, never lower one to pass.
 KERNEL_SUITES=(
-    "Types:24"
     "String:104"
     "Symbols:8"
     "Spinlock:233"

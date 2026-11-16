@@ -345,7 +345,7 @@ F17  [DONE] kernel/tests/test_syscall_bounds.c:31, :457, :47-64   weak test   [R
          Fix: add a probe row for each (arguments otherwise valid, scratch fd
          open). Low risk today because the copies use ldtr/sttr.
 
-F18  kernel/tests/test_types.c:18-52   fake test   [READ]
+F18  [DONE] kernel/tests/test_types.c:18-52   fake test   [READ]
      All 24 asserts are compile-time constants (sizeof, limits, `NULL == NULL`,
      `u8 + 1 == 256`). Nothing can fail at run time.
      Fix: turn them into _Static_assert at file scope and drop the suite, or

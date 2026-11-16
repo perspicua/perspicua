@@ -18,7 +18,6 @@ void run_all_tests(void)
     pr_info("test: perspicua kernel test suite\n");
     printk("\n");
 
-    test_types();
     test_string();
     test_ksym();
     test_spinlock();

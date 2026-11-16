@@ -1,8 +1,7 @@
 /*
- * test_types.c - Integer and pointer widths, limits and signedness under LP64.
+ * test_types.c - Integer and pointer widths, limits and signedness under LP64, checked at build
+ * time.
  */
-
-#include "test.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -10,46 +9,28 @@
 
 #include "uapi/types.h"
 
-void test_types(void)
-{
-    TEST_SUITE_BEGIN("Types");
+_Static_assert(sizeof(uint8_t) == 1, "uint8_t");
+_Static_assert(sizeof(uint16_t) == 2, "uint16_t");
+_Static_assert(sizeof(uint32_t) == 4, "uint32_t");
+_Static_assert(sizeof(uint64_t) == 8, "uint64_t");
+_Static_assert(sizeof(int8_t) == 1, "int8_t");
+_Static_assert(sizeof(int16_t) == 2, "int16_t");
+_Static_assert(sizeof(int32_t) == 4, "int32_t");
+_Static_assert(sizeof(int64_t) == 8, "int64_t");
 
-    // size of integer types
-    TEST_ASSERT_EQ("sizeof uint8_t", sizeof(uint8_t), 1);
-    TEST_ASSERT_EQ("sizeof uint16_t", sizeof(uint16_t), 2);
-    TEST_ASSERT_EQ("sizeof uint32_t", sizeof(uint32_t), 4);
-    TEST_ASSERT_EQ("sizeof uint64_t", sizeof(uint64_t), 8);
-    TEST_ASSERT_EQ("sizeof int8_t", sizeof(int8_t), 1);
-    TEST_ASSERT_EQ("sizeof int16_t", sizeof(int16_t), 2);
-    TEST_ASSERT_EQ("sizeof int32_t", sizeof(int32_t), 4);
-    TEST_ASSERT_EQ("sizeof int64_t", sizeof(int64_t), 8);
+_Static_assert(sizeof(size_t) == 8, "size_t");
+_Static_assert(sizeof(ssize_t) == 8, "ssize_t");
+_Static_assert(sizeof(uintptr_t) == 8, "uintptr_t");
+_Static_assert(sizeof(ptrdiff_t) == 8, "ptrdiff_t");
+_Static_assert(sizeof(void *) == 8, "pointers are 64-bit");
 
-    // pointer and size types (aarch64 lp64)
-    TEST_ASSERT_EQ("sizeof size_t", sizeof(size_t), 8);
-    TEST_ASSERT_EQ("sizeof ssize_t", sizeof(ssize_t), 8);
-    TEST_ASSERT_EQ("sizeof uintptr_t", sizeof(uintptr_t), 8);
-    TEST_ASSERT_EQ("sizeof ptrdiff_t", sizeof(ptrdiff_t), 8);
-    TEST_ASSERT_EQ("sizeof void*", sizeof(void *), 8);
+_Static_assert((uintptr_t)NULL == 0, "NULL is zero");
 
-    // null
-    TEST_ASSERT("NULL is zero", NULL == NULL);
-    void *p = NULL;
-    TEST_ASSERT("NULL ptr is false", !p);
+_Static_assert(UINT8_MAX == 255, "UINT8_MAX");
+_Static_assert(UINT16_MAX == 65535, "UINT16_MAX");
+_Static_assert(UINT32_MAX == 4294967295UL, "UINT32_MAX");
+_Static_assert(INT8_MIN == -128 && INT8_MAX == 127, "int8_t range");
+_Static_assert(INT16_MIN == -32768 && INT16_MAX == 32767, "int16_t range");
 
-    // limits
-    TEST_ASSERT_EQ("UINT8_MAX", UINT8_MAX, 255);
-    TEST_ASSERT_EQ("UINT16_MAX", UINT16_MAX, 65535);
-    TEST_ASSERT_EQ("UINT32_MAX", (long)UINT32_MAX, (long)4294967295UL);
-    TEST_ASSERT_EQ("INT8_MIN", INT8_MIN, -128);
-    TEST_ASSERT_EQ("INT8_MAX", INT8_MAX, 127);
-    TEST_ASSERT_EQ("INT16_MIN", INT16_MIN, -32768);
-    TEST_ASSERT_EQ("INT16_MAX", INT16_MAX, 32767);
-
-    // signedness
-    uint8_t u8 = 255;
-    int8_t s8 = -1;
-    TEST_ASSERT("uint8 wrap", u8 + 1 == 256);
-    TEST_ASSERT("int8 neg", s8 < 0);
-
-    TEST_SUITE_END("Types");
-}
+_Static_assert((uint8_t)255 + 1 == 256, "uint8_t promotes before it can wrap");
+_Static_assert((int8_t)-1 < 0, "int8_t is signed");
