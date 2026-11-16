@@ -260,6 +260,19 @@ unsigned long heap_get_total(void)
 }
 
 #ifdef CONFIG_TESTS
+unsigned long heap_test_largest_free(void)
+{
+    unsigned long flags = spin_lock_irqsave(&heap_lock);
+    unsigned long largest = 0;
+    for (struct heap_block_header *b = heap_free_list; b; b = b->next) {
+        if (b->size > largest) {
+            largest = b->size;
+        }
+    }
+    spin_unlock_irqrestore(&heap_lock, flags);
+    return largest;
+}
+
 int heap_test_is_tagged_allocated(const void *ptr)
 {
     if (!ptr || slab_owns((void *)ptr)) {

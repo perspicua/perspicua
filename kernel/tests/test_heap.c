@@ -138,19 +138,18 @@ void test_heap(void)
 
     // memory reuse
 
-    // Placement asserts from here need every earlier hole filled: fill until the heap grows.
-    void *layout_fill[64];
+    // Placement asserts from here need no earlier hole a LARGE request could land in.
+    static void *layout_fill[512];
     int layout_nfill = 0;
-    {
-        unsigned long total_before = heap_get_total();
-        while (layout_nfill < 64 && heap_get_total() == total_before) {
-            void *f = heap_malloc(LARGE);
-            if (!f) {
-                break;
-            }
-            layout_fill[layout_nfill++] = f;
+    while (layout_nfill < 512 && heap_test_largest_free() >= LARGE + TEST_FOOTER_SIZE) {
+        void *f = heap_malloc(LARGE);
+        if (!f) {
+            break;
         }
+        layout_fill[layout_nfill++] = f;
     }
+    TEST_ASSERT("no earlier hole is left that a LARGE request fits",
+                heap_test_largest_free() < LARGE + TEST_FOOTER_SIZE);
 
     // freed block reused for smaller alloc
     {

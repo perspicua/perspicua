@@ -23,6 +23,10 @@ int heap_test_is_tagged_allocated(const void *ptr);
 // Whether the redzone behind an allocation is intact, without heap_free's panic.
 int heap_test_redzone_ok(const void *ptr);
 
+// Size of the largest free first-fit block, so a test can tell whether a request needs the heap to
+// grow.
+unsigned long heap_test_largest_free(void);
+
 // Fails the caller's nth allocation from now (0 disarms); returns what was left, 0 if it fired.
 unsigned long heap_test_fail_nth(unsigned long n);
 #endif

@@ -53,7 +53,7 @@ KERNEL_SUITES=(
     "Spinlock:34"
     "Physical Memory Manager:790"
     "Slab Allocator:66"
-    "Heap Allocator:1236"
+    "Heap Allocator:1237"
     "Heap Properties:16"
     "Timer:21"
     "SD Driver:34"
