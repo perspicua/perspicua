@@ -319,7 +319,7 @@ F15  [DONE] libc/user/file.c:80   gap   [RUN: grep]
      ungetc then ftell is one less. Use a scratch file and unlink it.
      Count: test_libc grows; raise its minimum.
 
-F16  user/apps/test_syscall.c:836   weak test   [RUN: probe]
+F16  [DONE] user/apps/test_syscall.c:836   weak test   [RUN: probe]
      The bad-argv execve check passes "/bin/ls", which does not exist (programs
      are /bin/<name>.elf), so the call would fail even if argv were never
      checked. A probe showed errno 22 for both "/bin/ls" and "/bin/ls.elf", so

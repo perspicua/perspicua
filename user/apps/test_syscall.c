@@ -855,16 +855,18 @@ static void test_bad_arguments(void)
 {
     printf("[ TEST ] Running bad-argument checks...\n");
 
+#define FAILS_WITH(call, err) ((errno = 0), (call) < 0 && errno == (err))
+
     char buf[16];
-    CHECK(read(-1, buf, sizeof(buf)) < 0);
-    CHECK(read(9999, buf, sizeof(buf)) < 0);
-    CHECK(write(-1, "test", 4) < 0);
-    CHECK(write(9999, "test", 4) < 0);
-    CHECK(pread(-1, buf, sizeof(buf), 0) < 0);
-    CHECK(pwrite(9999, "test", 4, 0) < 0);
-    CHECK(close(-1) < 0);
-    CHECK(close(9999) < 0);
-    CHECK(getdents(-1, buf, sizeof(buf)) < 0);
+    CHECK(FAILS_WITH(read(-1, buf, sizeof(buf)), EBADF));
+    CHECK(FAILS_WITH(read(9999, buf, sizeof(buf)), EBADF));
+    CHECK(FAILS_WITH(write(-1, "test", 4), EBADF));
+    CHECK(FAILS_WITH(write(9999, "test", 4), EBADF));
+    CHECK(FAILS_WITH(pread(-1, buf, sizeof(buf), 0), EBADF));
+    CHECK(FAILS_WITH(pwrite(9999, "test", 4, 0), EBADF));
+    CHECK(FAILS_WITH(close(-1), EBADF));
+    CHECK(FAILS_WITH(close(9999), EBADF));
+    CHECK(FAILS_WITH(getdents(-1, buf, sizeof(buf)), EBADF));
 
     CHECK(write(1, NULL, 10) < 0);
     CHECK(write(1, (void *)0xdeadbeef, 10) < 0);
@@ -873,16 +875,16 @@ static void test_bad_arguments(void)
     CHECK(open((void *)0xffffffffffffffff, 0) < 0);
     CHECK(chdir(NULL) < 0);
     CHECK(stat(NULL, NULL) < 0);
-    CHECK(pread(0, buf, 10, -1) < 0);
-    CHECK(pwrite(1, "test", 4, -1) < 0);
+    CHECK(FAILS_WITH(pread(0, buf, 10, -1), EINVAL));
+    CHECK(FAILS_WITH(pwrite(1, "test", 4, -1), EINVAL));
 
     CHECK(execve(NULL, NULL, NULL) < 0);
     char *bad_argv[] = {(char *)0xdeadbeef, NULL};
-    CHECK(execve("/bin/ls", bad_argv, NULL) < 0);
+    CHECK(FAILS_WITH(execve("/bin/ls.elf", bad_argv, NULL), EINVAL));
 
     int status;
-    CHECK(waitpid(-999, &status, 0) < 0);
-    CHECK(waitpid(999999, NULL, 0) < 0);
+    CHECK(FAILS_WITH(waitpid(-999, &status, 0), ECHILD));
+    CHECK(FAILS_WITH(waitpid(999999, NULL, 0), ECHILD));
 
     errno = 0;
     CHECK(mmap(NULL, 0, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0) == MAP_FAILED
