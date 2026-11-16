@@ -295,6 +295,12 @@ kill "$qemu_pid" 2>/dev/null
 wait "$qemu_pid" 2>/dev/null
 qemu_pid=""
 
+# The kernel keeps no FSInfo, so a wrong free-cluster summary is expected and anything else is not.
+card_report=""
+if command -v fsck.fat >/dev/null; then
+    card_report="$(fsck.fat -n "$CARD" 2>&1)"
+fi
+
 cat "$LOG"
 tr -d '\r' <"$LOG" >"$CLEAN"
 
@@ -332,6 +338,12 @@ fi
 
 if grep -q "$PANIC_MARKER" "$LOG"; then
     echo "FAIL: kernel panicked during the run"
+    status=1
+fi
+
+if printf '%s\n' "$card_report" | grep -qE 'Reclaimed|[Oo]rphan|[Cc]ross-linked|[Ll]ost'; then
+    echo "FAIL: the card image is inconsistent after the run"
+    printf '%s\n' "$card_report" | sed 's/^/  /'
     status=1
 fi
 

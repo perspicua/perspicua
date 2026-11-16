@@ -403,7 +403,7 @@ F23  [DONE] .github/workflows/ci.yml   gap   [READ]
          qemu-system-arm installed in the `build` job, and must build into its
          own tree, not through `just build`.
 
-F24  scripts/run_tests.sh:295   gap   [RUN]
+F24  [DONE] scripts/run_tests.sh:295   gap   [RUN]
      Nothing checks the card image after a run. An fsck of the card left by a
      full run found one orphaned cluster (see K1); a freshly built image is
      clean.
@@ -483,6 +483,12 @@ K1   After a full test run the card image has ONE ORPHANED CLUSTER, allocated
      sync, which may or may not matter. Candidates: an unlink-while-open path
      (test_vfs.c:272 leaks exactly such an fd, though that file is empty), or
      a failed write in the fault-injection loop at test_fat32.c:745.
+     RESOLVED, not a kernel bug. The orphan was a directory cluster ("." and ".."
+     entries): test_vfs.c resolved SCRATCH_DIR, never released the vnode, then
+     removed the directory. The kernel frees a removed directory's chain at its
+     last release, so the leaked reference kept it past the end of the run. F10
+     released it. Confirmed by running the commit before F10 (one orphan) and
+     F10 itself (none), and 499d800 (one orphan).
 
 K2   Bad user pointers return EINVAL where POSIX says EFAULT:
      kernel/core/syscall.c:112-116 (copy_buf_from_user), :138-143,
