@@ -26,7 +26,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | M2 [DONE] | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
 | M4 [DONE] | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
-| M5 | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
+| M5 [DONE] | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
 | L1 | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
 | L2 | Low | VFS | Releasing a deep directory chain recurses once per level |
 | L3 | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
@@ -241,7 +241,7 @@ stalls is a hardware question.
 
 **Fix:** bound both wait loops with the generic timer and return an error.
 
-### M5. `fork` holds `mmu_lock` for the whole address-space copy
+### M5. [DONE] `fork` holds `mmu_lock` for the whole address-space copy
 
 **Where:** `mmu_copy_user_pgd` in `kernel/mm/mmu.c`.
 
@@ -259,6 +259,11 @@ a latency problem, not a deadlock.
 **Fix:** drop and retake the lock between page tables. The parent is
 single-threaded and is the caller, so its tables cannot change underneath the
 copy; only the child's tables need the lock while they are built.
+
+**Done:** `mmu_lock` is released and retaken after each last-level table in
+both passes, so one hold covers at most 512 pages. Each page's reference is
+still taken under the lock. There is no test for the latency itself; the fork,
+copy-on-write and stress suites cover the behaviour.
 
 ---
 

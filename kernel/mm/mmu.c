@@ -515,6 +515,10 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
                     pmm_hold_page(v_pa);
                 }
             }
+
+            // One table per hold: only the caller's own tables are read, and the child's are private.
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            irq = spin_lock_irqsave(&mmu_lock);
         }
     }
 
@@ -546,6 +550,9 @@ unsigned long *mmu_copy_user_pgd(unsigned long *parent_pgd)
                     parent_pte[k] = (pte & ~MMU_AP_RO) | MMU_AP_RO | MMU_PTE_COW;
                 }
             }
+
+            spin_unlock_irqrestore(&mmu_lock, irq);
+            irq = spin_lock_irqsave(&mmu_lock);
         }
     }
 
