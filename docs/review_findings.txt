@@ -277,7 +277,7 @@ F12  [DONE] small bugs, each a one-line change   [READ]
 PART 3 - WEAK TESTS  (not mutation-tested unless marked)
 ================================================================================
 
-F13  kernel/tests/test_heap.c:711-730 and others   fake test   [READ]
+F13  [DONE] kernel/tests/test_heap.c:711-730 and others   fake test   [READ]
      "filling a block to its last byte leaves the next block's header intact"
      allocates 48 bytes. heap_malloc sends every size up to 1024 to the slab
      (kernel/mm/heap.c:150, HEAP_SLAB_MAX), and slab objects have no header.
