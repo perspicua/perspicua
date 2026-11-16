@@ -60,7 +60,7 @@ KERNEL_SUITES=(
     "MMU Dynamic Mapping:46"
     "MMU Per-Process Page Tables:86"
     "VFS:98"
-    "FAT32:185"
+    "FAT32:190"
     "FAT32 Corrupt Media:15"
     "Pipe:45"
     "Procfs:27"

@@ -130,6 +130,9 @@ struct vfs_vnode *fat32_get_root_node(void);
  */
 int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len);
 
+// Where the next free-cluster search starts, so a test can make a freed chain the next one used.
+void fat32_test_set_alloc_hint(uint32_t cluster);
+
 /*
  * Test hook for BPB validation, so crafted geometries can be checked without
  * a device backing them.

@@ -411,18 +411,27 @@ static int set_fat_entries(uint32_t a, uint32_t a_value, uint32_t b, uint32_t b_
  * whatever the cluster last held, so a directory that grows would otherwise
  * find file data where it expects entries, and read it as one.
  */
-static int zero_cluster(uint32_t cluster)
+// Zeroes a cluster from byte offset from on; a partial first sector keeps what lies before it.
+static int zero_cluster_from(uint32_t cluster, uint32_t from)
 {
-    uint8_t zero_sector[512];
-    memset(zero_sector, 0, sizeof(zero_sector));
-
+    uint8_t sector[512];
     uint32_t base = cluster_to_lba(cluster);
-    for (uint32_t s = 0; s < current_fs.sectors_per_cluster; s++) {
-        if (current_fs.dev->write_blocks(current_fs.dev, zero_sector, base + s, 1) != 0) {
+    for (uint32_t s = from / 512; s < current_fs.sectors_per_cluster; s++) {
+        uint32_t keep = s == from / 512 ? from % 512 : 0;
+        if (keep && current_fs.dev->read_blocks(current_fs.dev, sector, base + s, 1) != 0) {
+            return -EIO;
+        }
+        memset(sector + keep, 0, sizeof(sector) - keep);
+        if (current_fs.dev->write_blocks(current_fs.dev, sector, base + s, 1) != 0) {
             return -EIO;
         }
     }
     return 0;
+}
+
+static int zero_cluster(uint32_t cluster)
+{
+    return zero_cluster_from(cluster, 0);
 }
 
 // The spec writes the root as cluster 0 in a "..", whatever its real number.
@@ -433,12 +442,18 @@ static uint32_t dotdot_cluster(uint32_t parent_cluster)
 
 static uint32_t extend_cluster_chain(uint32_t last_cluster)
 {
+    // A file's bytes past its size are zero on disk, so a cluster joins a file zeroed.
     if (last_cluster == 0) {
-        return allocate_cluster();
+        uint32_t first = allocate_cluster();
+        if (first != 0 && zero_cluster(first) != 0) {
+            set_fat_entry(first, 0);
+            return 0;
+        }
+        return first;
     }
 
     uint32_t new_cluster = find_free_cluster();
-    if (new_cluster == 0) {
+    if (new_cluster == 0 || zero_cluster(new_cluster) != 0) {
         return 0;
     }
 
@@ -556,6 +571,11 @@ static int extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, s
 }
 
 #ifdef CONFIG_TESTS
+void fat32_test_set_alloc_hint(uint32_t cluster)
+{
+    next_free_hint = cluster;
+}
+
 int fat32_test_extract_lfn_part(const struct fat32_lfn_entry *lfn, char *name_buf, size_t buf_len)
 {
     return extract_lfn_part(lfn, name_buf, buf_len);
@@ -791,6 +811,10 @@ static int fat32_write_page(struct vfs_vnode *node, size_t page_index, void *pag
         cluster = allocate_cluster();
         if (cluster == 0) {
             return -ENOSPC;
+        }
+        if (zero_cluster(cluster) != 0) {
+            set_fat_entry(cluster, 0);
+            return -EIO;
         }
         if (node_take_cluster(node, cluster) != 0) {
             set_fat_entry(cluster, 0);
@@ -2533,6 +2557,12 @@ static int fat32_truncate(struct vfs_vnode *node, vfs_off_t length)
 
     if (new_tail) {
         set_fat_entry(new_tail, FAT32_CLUSTER_EOC);
+        // What the cut left in the last kept cluster would read back once the file grows.
+        uint32_t bytes_per_cluster = current_fs.sectors_per_cluster * 512;
+        uint32_t from = length == 0 ? 0 : (uint32_t)((length - 1) % bytes_per_cluster) + 1;
+        if (from < bytes_per_cluster) {
+            zero_cluster_from(new_tail, from);
+        }
     }
     if (doomed) {
         fat32_free_cluster_chain(doomed);

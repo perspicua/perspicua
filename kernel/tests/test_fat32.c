@@ -882,5 +882,58 @@ void test_fat32(void)
         vfs_unlink(filler);
     }
 
+    // What a file never wrote reads as zeros off the card, however its clusters were used before.
+    {
+        static uint8_t junk[32768], back[32768];
+        memset(junk, 0xAA, sizeof(junk));
+        int dfd = vfs_open("/tm2junk.tmp", O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("gap: write junk to reuse",
+                    dfd >= 0 && vfs_write(dfd, junk, sizeof(junk)) == (int)sizeof(junk));
+        struct vfs_file *jf = dfd >= 0 ? vfs_test_file_at(dfd) : NULL;
+        uint32_t junk_start = jf ? (uint32_t)(uintptr_t)jf->node->internal_info : 0;
+        if (dfd >= 0) {
+            vfs_close(dfd);
+        }
+        vfs_unlink("/tm2junk.tmp");
+        fat32_test_set_alloc_hint(junk_start);
+
+        int fd = vfs_open("/tm2gap.tmp", O_RDWR | O_CREAT | O_TRUNC);
+        TEST_ASSERT("gap: a write past the end",
+                    fd >= 0 && vfs_lseek(fd, sizeof(back), SEEK_SET) == (vfs_off_t)sizeof(back)
+                        && vfs_write(fd, "x", 1) == 1);
+        int zeros = 0;
+        struct vfs_file *f = fd >= 0 ? vfs_test_file_at(fd) : NULL;
+        if (f) {
+            pagecache_invalidate(f->node);
+            block_cache_invalidate();
+            vfs_lseek(fd, 0, SEEK_SET);
+            zeros = vfs_read(fd, back, sizeof(back)) == (int)sizeof(back);
+            for (size_t i = 0; zeros && i < sizeof(back); i++) {
+                zeros = back[i] == 0;
+            }
+        }
+        TEST_ASSERT("gap: the bytes skipped read as zeros", zeros);
+
+        memset(junk, 0xCC, 1000);
+        int tails = fd >= 0 && vfs_lseek(fd, 0, SEEK_SET) == 0 && vfs_ftruncate(fd, 0) == 0
+                    && vfs_write(fd, junk, 1000) == 1000 && vfs_ftruncate(fd, 10) == 0
+                    && vfs_lseek(fd, 5000, SEEK_SET) == 5000 && vfs_write(fd, "y", 1) == 1;
+        TEST_ASSERT("tail: write, shrink and extend", tails);
+        if (f) {
+            pagecache_invalidate(f->node);
+            block_cache_invalidate();
+            vfs_lseek(fd, 0, SEEK_SET);
+            tails = vfs_read(fd, back, 5001) == 5001 && back[5000] == 'y';
+            for (size_t i = 10; tails && i < 5000; i++) {
+                tails = back[i] == 0;
+            }
+        }
+        TEST_ASSERT("tail: what truncate cut reads as zeros once the file grows past it", tails);
+        if (fd >= 0) {
+            vfs_close(fd);
+        }
+        vfs_unlink("/tm2gap.tmp");
+    }
+
     TEST_SUITE_END("FAT32");
 }

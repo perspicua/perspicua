@@ -23,7 +23,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | H2 [DONE] | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
 | H3 [DONE] | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
 | M1 [DONE] | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
-| M2 | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
+| M2 [DONE] | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
 | M4 | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
 | M5 | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
@@ -164,7 +164,7 @@ Two defects in one function:
 
 **Done:** the length is now `pos`. The leak was already gone at the time of the fix: the buffer is freed after `procfs_copy_out`.
 
-### M2. Writing past end of file exposes old disk contents
+### M2. [DONE] Writing past end of file exposes old disk contents
 
 **Where:** `fat32_write_page` and `extend_cluster_chain` in `kernel/fs/fat32.c`.
 
@@ -188,6 +188,11 @@ first megabyte back.
 write position, and zero the tail of the old last cluster. Growing through
 `truncate` is already refused with `ENOTSUP`, so it needs the same care when
 it is implemented.
+
+**Done:** a file's bytes past its size are now kept zero on disk. Every cluster
+is zeroed as it joins a file (`extend_cluster_chain` and a file's first
+cluster in `fat32_write_page`), and a shrinking `truncate` zeroes the rest of
+the last cluster it keeps. Appending costs one extra write per new cluster.
 
 ### M3. The instruction cache is flushed through the kernel alias
 
