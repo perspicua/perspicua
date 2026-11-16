@@ -27,7 +27,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
 | M4 [DONE] | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
 | M5 [DONE] | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
-| L1 | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
+| L1 [DONE] | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
 | L2 | Low | VFS | Releasing a deep directory chain recurses once per level |
 | L3 | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
 | L4 | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
@@ -269,7 +269,7 @@ copy-on-write and stress suites cover the behaviour.
 
 ## Low
 
-### L1. `exec` needs a free descriptor
+### L1. [DONE] `exec` needs a free descriptor
 
 `elf_load` opens the image with `vfs_open`, which takes a slot in the calling
 process's descriptor table. A process with all `CONFIG_MAX_FDS` slots in use

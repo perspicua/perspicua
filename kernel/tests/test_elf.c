@@ -277,6 +277,31 @@ void test_elf(void)
         TEST_ASSERT_EQ(leak, pmm_get_free_pages(), before);
     }
 
+    // loading takes no descriptor, so a full table does not stop an exec
+    {
+        image_reset();
+        TEST_ASSERT_EQ("setup: image rewritten", image_write(), 0);
+
+        static int held[VFS_MAX_FDS];
+        int nheld = 0;
+        int fd;
+        while (nheld < VFS_MAX_FDS && (fd = vfs_open("/", O_RDONLY)) >= 0) {
+            held[nheld++] = fd;
+        }
+        TEST_ASSERT("setup: the descriptor table is full", vfs_open("/", O_RDONLY) == -ENFILE);
+
+        unsigned long *pgd = mmu_create_user_pgd();
+        uint64_t entry = 0;
+        int rc = pgd ? elf_load(ELF_FILE, pgd, &entry) : -ENOMEM;
+        if (pgd) {
+            mmu_destroy_user_pgd(pgd);
+        }
+        while (nheld > 0) {
+            vfs_close(held[--nheld]);
+        }
+        TEST_ASSERT_EQ("an image loads with every descriptor in use", rc, 0);
+    }
+
     vfs_unlink(ELF_FILE);
 
     TEST_SUITE_END("ELF Loader");

@@ -56,44 +56,50 @@ static int elf_check_header(struct elf64_header *hdr)
 int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 {
     // A missing file is the caller's to report; execve returns the error to it.
-    int fd = vfs_open(path, O_RDONLY);
-    if (fd < 0) {
-        return fd;
+    int pid = process_current_pid();
+    if (pid < 0) {
+        return pid;
+    }
+    // Held without a descriptor, so a process with a full table can still exec.
+    int open_err = 0;
+    struct vfs_file *file = vfs_open_file(path, O_RDONLY, (uint32_t)pid, &open_err);
+    if (!file) {
+        return open_err;
     }
 
     struct elf64_header ehdr;
     // A failed read is the read's error; only a file too short is not an image.
-    int rc = vfs_read(fd, &ehdr, sizeof(struct elf64_header));
+    int rc = vfs_file_pread(file, &ehdr, sizeof(struct elf64_header), 0);
     if (rc != sizeof(struct elf64_header)) {
         pr_err("elf: could not read ELF header\n");
-        vfs_close(fd);
+        vfs_file_put(file);
         return rc < 0 ? rc : -ENOEXEC;
     }
 
     rc = elf_check_header(&ehdr);
     if (rc != 0) {
         pr_err("elf: invalid ELF header\n");
-        vfs_close(fd);
+        vfs_file_put(file);
         return rc;
     }
 
     if (ehdr.ph_num == 0 || ehdr.ph_num > ELF_MAX_PHDRS) {
         pr_err("elf: bad program header count (%u)\n", ehdr.ph_num);
-        vfs_close(fd);
+        vfs_file_put(file);
         return -ENOEXEC;
     }
 
     // Parsed with this struct's stride, so a file claiming another size describes other headers.
     if (ehdr.ph_entry_size != sizeof(struct elf64_program_header)) {
         pr_err("elf: unexpected program header size (%u)\n", ehdr.ph_entry_size);
-        vfs_close(fd);
+        vfs_file_put(file);
         return -ENOEXEC;
     }
 
     // Segments bypass the VA allocator: the image stays below its range, or the stack lands on it.
     if (ehdr.entry == 0 || ehdr.entry >= USER_VA_BASE) {
         pr_err("elf: entry point 0x%lx outside the image region\n", (unsigned long)ehdr.entry);
-        vfs_close(fd);
+        vfs_file_put(file);
         return -ENOEXEC;
     }
 
@@ -103,18 +109,18 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
     // An offset no off_t can hold is a malformed image, not a read error.
     if (ehdr.ph_offset > (uint64_t)INT64_MAX - phdr_table_size) {
         pr_err("elf: program header offset 0x%lx out of range\n", (unsigned long)ehdr.ph_offset);
-        vfs_close(fd);
+        vfs_file_put(file);
         return -ENOEXEC;
     }
 
     struct elf64_program_header *phdrs = heap_malloc(phdr_table_size);
     if (!phdrs) {
         pr_err("elf: could not allocate memory for program headers\n");
-        vfs_close(fd);
+        vfs_file_put(file);
         return -ENOMEM;
     }
 
-    rc = vfs_pread(fd, phdrs, phdr_table_size, (vfs_off_t)ehdr.ph_offset);
+    rc = vfs_file_pread(file, phdrs, phdr_table_size, (vfs_off_t)ehdr.ph_offset);
     if (rc != (int)phdr_table_size) {
         pr_err("elf: could not read program headers\n");
         rc = rc < 0 ? rc : -ENOEXEC;
@@ -206,8 +212,8 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
                 uint64_t bytes_to_read = copy_end_in_page - copy_start_in_page;
                 uint64_t file_offset = offset + (page + copy_start_in_page - vaddr);
 
-                rc = vfs_pread(fd, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
-                               bytes_to_read, (vfs_off_t)file_offset);
+                rc = vfs_file_pread(file, (void *)((uintptr_t)kernel_vaddr + copy_start_in_page),
+                                    bytes_to_read, (vfs_off_t)file_offset);
                 if (rc != (int)bytes_to_read) {
                     pr_err("elf: failed to read segment data\n");
                     rc = rc < 0 ? rc : -ENOEXEC;
@@ -224,6 +230,6 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
 
 out:
     heap_free(phdrs);
-    vfs_close(fd);
+    vfs_file_put(file);
     return rc;
 }

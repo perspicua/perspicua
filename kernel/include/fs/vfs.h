@@ -133,6 +133,12 @@ struct vfs_file *vfs_test_file_at(int fd);
 #endif
 
 int vfs_open(const char *path, int flags);
+
+// Opens path for pid without taking a descriptor; NULL with *err set on failure.
+struct vfs_file *vfs_open_file(const char *path, int flags, uint32_t pid, int *err);
+
+// pread through a file the caller holds rather than through a descriptor.
+int vfs_file_pread(struct vfs_file *f, void *buffer, size_t count, vfs_off_t offset);
 int vfs_open_pid(const char *path, int flags, uint32_t pid);
 int vfs_close(int fd);
 vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence);

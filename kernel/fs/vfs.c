@@ -551,22 +551,26 @@ struct vfs_vnode *vfs_resolve_path(const char *path, struct vfs_vnode *cwd, int 
 
 static int vfs_vnode_truncate(struct vfs_vnode *node, vfs_off_t length);
 
-int vfs_open_pid(const char *path, int flags, uint32_t pid)
+// Opens path for pid without a descriptor: the caller holds the only reference.
+struct vfs_file *vfs_open_file(const char *path, int flags, uint32_t pid, int *err)
 {
     int error = 0;
     struct process *p = process_slot(pid);
     if (!p) {
-        return -ESRCH;
+        *err = -ESRCH;
+        return NULL;
     }
 
     struct vfs_vnode *node = vfs_resolve_path(path, p->cwd, &error);
     if (!node) {
         // Only a name that is not there is created; any other failure stands.
         if (!(flags & O_CREAT) || error != -ENOENT) {
-            return error;
+            *err = error;
+            return NULL;
         }
         if (has_trailing_slash(path)) {
-            return -EISDIR;
+            *err = -EISDIR;
+            return NULL;
         }
 
         // Split path into parent + name, resolve parent, call create
@@ -579,29 +583,34 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
 
         struct vfs_vnode *parent = vfs_resolve_path(parent_path, p->cwd, &error);
         if (!parent) {
-            return error;
+            *err = error;
+            return NULL;
         }
 
         if (parent->type != VFS_VNODE_TYPE_DIR) {
             vfs_vnode_put(parent);
-            return -ENOTDIR;
+            *err = -ENOTDIR;
+            return NULL;
         }
 
         if (!parent->ops || !parent->ops->create) {
             vfs_vnode_put(parent);
-            return -ENOTSUP;
+            *err = -ENOTSUP;
+            return NULL;
         }
 
         // EEXIST: another open created it since the lookup, so open that one.
         int cres = parent->ops->create(parent, name);
         vfs_vnode_put(parent);
         if (cres != 0 && cres != -EEXIST) {
-            return cres;
+            *err = cres;
+            return NULL;
         }
 
         node = vfs_resolve_path(path, p->cwd, &error);
         if (!node) {
-            return error;
+            *err = error;
+            return NULL;
         }
     }
 
@@ -610,18 +619,35 @@ int vfs_open_pid(const char *path, int flags, uint32_t pid)
         int tres = vfs_vnode_truncate(node, 0);
         if (tres != 0 && tres != -ENOTSUP) {
             vfs_vnode_put(node);
-            return tres;
+            *err = tres;
+            return NULL;
         }
     }
 
     struct vfs_file *new_file = vfs_file_alloc();
     if (!new_file) {
         vfs_vnode_put(node);
-        return -ENOMEM;
+        *err = -ENOMEM;
+        return NULL;
     }
 
     new_file->node = node;
     new_file->flags = flags;
+    return new_file;
+}
+
+int vfs_open_pid(const char *path, int flags, uint32_t pid)
+{
+    int error = 0;
+    struct vfs_file *new_file = vfs_open_file(path, flags, pid, &error);
+    if (!new_file) {
+        return error;
+    }
+    struct process *p = process_slot(pid);
+    if (!p) {
+        vfs_file_put(new_file);
+        return -ESRCH;
+    }
 
     int slot = -1;
     unsigned long fdflags = spin_lock_irqsave(&p->fd_lock);
@@ -759,6 +785,26 @@ int vfs_read(int fd, void *buffer, size_t count)
     return bytes;
 }
 
+int vfs_file_pread(struct vfs_file *f, void *buffer, size_t count, vfs_off_t offset)
+{
+    if (offset < 0) {
+        return -EINVAL;
+    }
+
+    int mode = f->flags & O_ACCMODE;
+    if (mode != O_RDONLY && mode != O_RDWR) {
+        return -EBADF;
+    }
+    if (!f->node->ops->read) {
+        return -EINVAL;
+    }
+
+    vnode_revalidate(f->node);
+
+    vfs_off_t pos = offset;
+    return f->node->ops->read(f, buffer, count, &pos);
+}
+
 int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
 {
     int err;
@@ -766,26 +812,7 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     if (!f) {
         return err;
     }
-
-    if (offset < 0) {
-        vfs_file_put(f);
-        return -EINVAL;
-    }
-
-    int mode = f->flags & O_ACCMODE;
-    if (mode != O_RDONLY && mode != O_RDWR) {
-        vfs_file_put(f);
-        return -EBADF;
-    }
-    if (!f->node->ops->read) {
-        vfs_file_put(f);
-        return -EINVAL;
-    }
-
-    vnode_revalidate(f->node);
-
-    vfs_off_t pos = offset;
-    int bytes = f->node->ops->read(f, buffer, count, &pos);
+    int bytes = vfs_file_pread(f, buffer, count, offset);
     vfs_file_put(f);
     return bytes;
 }
