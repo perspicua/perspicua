@@ -541,6 +541,11 @@ static void test_small_tools(void)
 {
     mkdir(FS, 0755);
 
+    char line[32], listing[OUT_MAX];
+    snprintf(line, sizeof(line), "\n%5d %5d ", getpid(), getppid());
+    check("ps shows this process under its own pid and parent",
+          run(NULL, listing, (char *[]){"ps", NULL}) == 0 && strstr(listing, line) != NULL);
+
     const char *text = "one two three\nfour five\n";
     check("wc -w", outputs(text, "       5\n", (char *[]){"wc", "-w", NULL}));
     check("wc -c", outputs(text, "      24\n", (char *[]){"wc", "-c", NULL}));

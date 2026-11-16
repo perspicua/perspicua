@@ -14,6 +14,9 @@ static void field(const char *blob, const char *key, char *out, int max)
 {
     out[0] = '\0';
     const char *p = strstr(blob, key);
+    while (p && p != blob && p[-1] != '\n') {
+        p = strstr(p + 1, key);
+    }
     if (!p) {
         return;
     }

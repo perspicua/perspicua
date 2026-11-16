@@ -463,7 +463,7 @@ R4   A host-side comparison test for libc/src.
      Risk: host libcs differ on undefined cases ("%5%"); the generator must
      stay inside defined behaviour.
 
-R5   user/apps/ps.c:63   field(blob, "Pid:") finds its value only because
+R5   [DONE] user/apps/ps.c:63   field(blob, "Pid:") finds its value only because
      /proc/<pid>/status prints "Pid:" before "PPid:"; "Pid:" is also a
      substring of "PPid:". Match at the start of a line instead.
 
