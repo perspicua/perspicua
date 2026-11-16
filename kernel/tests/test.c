@@ -27,6 +27,7 @@ void run_all_tests(void)
     test_heap_props();
     test_timer();
     test_sd();
+    test_mailbox();
     test_mmu();
     test_mmu_user();
     test_vfs();

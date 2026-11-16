@@ -145,6 +145,7 @@ void test_heap(void);
 void test_heap_props(void);
 void test_timer(void);
 void test_sd(void);
+void test_mailbox(void);
 void test_mmu(void);
 void test_mmu_user(void);
 void test_vfs(void);

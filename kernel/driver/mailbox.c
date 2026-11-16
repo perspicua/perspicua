@@ -11,10 +11,13 @@
 #include "stdio.h"
 
 #include "core/lock.h"
+#include "core/timer.h"
 #include "devicetree/fdt.h"
 #include "driver/device.h"
 #include "mm/addr.h"
 #include "panic.h"
+
+#include "uapi/errno.h"
 
 #define MBOX_STATUS_FULL  0x80000000
 #define MBOX_STATUS_EMPTY 0x40000000
@@ -61,7 +64,17 @@ static void mbox_dcache(unsigned long addr, unsigned long size, int invalidate)
     asm volatile("dsb sy");
 }
 
-static void mbox_exchange(unsigned int *buffer)
+#ifdef CONFIG_TESTS
+volatile int mbox_test_drop_next;
+#endif
+
+// The counter, not the tick, measures the wait: interrupts are off for all of it.
+static int mbox_expired(unsigned long deadline)
+{
+    return (long)(timer_get_system_time() - deadline) >= 0;
+}
+
+static int mbox_exchange(unsigned int *buffer)
 {
     unsigned long size = (unsigned long)buffer[0];
     unsigned long addr = (unsigned long)buffer;
@@ -75,16 +88,35 @@ static void mbox_exchange(unsigned int *buffer)
 
     // Channel 8 is the standard property channel
     unsigned int request = (unsigned int)((V2P(buffer) | 0xC0000000) & ~0xF) | 8;
+    unsigned long deadline = timer_get_system_time() + MBOX_TIMEOUT_MS;
 
-    while (mmio_read_relaxed(mbox_status) & MBOX_STATUS_FULL) {
-        asm volatile("nop");
+    // A late answer to a call that gave up would otherwise be taken for this one's.
+    while (!(mmio_read_relaxed(mbox_status) & MBOX_STATUS_EMPTY)) {
+        (void)mmio_read(mbox_read);
     }
 
-    mmio_write(mbox_write, request);
+    while (mmio_read_relaxed(mbox_status) & MBOX_STATUS_FULL) {
+        if (mbox_expired(deadline)) {
+            return -ETIMEDOUT;
+        }
+    }
+
+    int send = 1;
+#ifdef CONFIG_TESTS
+    if (mbox_test_drop_next) {
+        mbox_test_drop_next = 0;
+        send = 0;
+    }
+#endif
+    if (send) {
+        mmio_write(mbox_write, request);
+    }
 
     while (1) {
         while (mmio_read_relaxed(mbox_status) & MBOX_STATUS_EMPTY) {
-            asm volatile("nop");
+            if (mbox_expired(deadline)) {
+                return -ETIMEDOUT;
+            }
         }
 
         unsigned int response = mmio_read(mbox_read);
@@ -93,16 +125,17 @@ static void mbox_exchange(unsigned int *buffer)
             // Clean as well, as a stack buffer's lines may also hold its caller's dirty locals.
             mbox_dcache(addr, size, 1);
             asm volatile("isb");
-            return;
+            return 0;
         }
     }
 }
 
-void mbox_call(unsigned int *buffer)
+int mbox_call(unsigned int *buffer)
 {
     unsigned long flags = spin_lock_irqsave(&mbox_lock);
-    mbox_exchange(buffer);
+    int rc = mbox_exchange(buffer);
     spin_unlock_irqrestore(&mbox_lock, flags);
+    return rc;
 }
 
 int mbox_property(uint32_t tag, uint32_t *value, size_t words)
@@ -125,9 +158,9 @@ int mbox_property(uint32_t tag, uint32_t *value, size_t words)
         msg[5 + i] = value[i];
     }
     msg[5 + words] = 0;
-    mbox_exchange(msg);
+    int rc = mbox_exchange(msg);
     // The firmware sets bit 31 of a tag's length word once it has answered that tag.
-    int answered = msg[1] == 0x80000000 && (msg[4] & 0x80000000);
+    int answered = rc == 0 && msg[1] == 0x80000000 && (msg[4] & 0x80000000);
     for (size_t i = 0; i < words; i++) {
         value[i] = msg[5 + i];
     }

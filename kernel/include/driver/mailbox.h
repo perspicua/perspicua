@@ -17,7 +17,16 @@
 #define MBOX_TAG_MEASURED_RATE  0x00030047
 #define MBOX_CLOCK_ARM          3
 
-void mbox_call(unsigned int *buffer);
+// How long a call waits for the firmware, with interrupts off, before it fails.
+#define MBOX_TIMEOUT_MS 500
+
+// 0, or -ETIMEDOUT when the firmware did not answer in time.
+int mbox_call(unsigned int *buffer);
+
+#ifdef CONFIG_TESTS
+// Set to make the next call send nothing, as a firmware that never answers would look.
+extern volatile int mbox_test_drop_next;
+#endif
 
 // One property tag carrying words values in and out; 0 if answered, -1 if not.
 int mbox_property(uint32_t tag, uint32_t *value, size_t words);

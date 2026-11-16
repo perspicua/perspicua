@@ -25,7 +25,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | M1 [DONE] | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
 | M2 [DONE] | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
-| M4 | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
+| M4 [DONE] | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
 | M5 | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
 | L1 | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
 | L2 | Low | VFS | Releasing a deep directory chain recurses once per level |
@@ -223,7 +223,7 @@ I have not seen the failure, and how often old lines survive is unknown.
 **Fix:** issue `IC IALLUIS` once at the end of `elf_load`, or flush through
 the user address with the new page table installed.
 
-### M4. Mailbox calls can hang a core with interrupts off
+### M4. [DONE] Mailbox calls can hang a core with interrupts off
 
 **Where:** `mbox_exchange` in `kernel/driver/mailbox.c`.
 
