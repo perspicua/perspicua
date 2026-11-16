@@ -980,7 +980,7 @@ static void assert_fails(void)
 // A failed assert says what failed on stderr and exits 1.
 static void test_assert_failure(void)
 {
-    char out[160];
+    char out[512];
     CHECK(capture(assert_fails, out, sizeof(out)) > 0);
     CHECK(strstr(out, "Assertion `1 == 2' failed.") != NULL);
     CHECK(capture_status == 1);
