@@ -108,6 +108,14 @@ static void task_publish_then_long_sleep(void)
     spin_unlock_irqrestore(&test_lock, flags);
 }
 
+static int early_sleeper_queued(void)
+{
+    unsigned long flags = spin_lock_irqsave(&test_lock);
+    struct task *sleeper = early_wake_task;
+    spin_unlock_irqrestore(&test_lock, flags);
+    return sleeper != NULL && sched_test_in_sleep_queue(sleeper);
+}
+
 // task that writes a sequence to record execution order
 static volatile int order_log[16];
 static volatile int order_idx = 0;
@@ -591,7 +599,7 @@ void test_scheduler(void)
         race_wait_queue = NULL;
         sched_create_task(task_race_waiter);
         sched_create_task(task_race_unblocker);
-        sched_sleep_ms(100);
+        WAIT_UNTIL(race_task_ran == 1);
         TEST_ASSERT("race task resumed correctly", race_task_ran == 1);
     }
 
@@ -601,7 +609,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_inc_a);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 1);
         TEST_ASSERT("single task ran", counter_a == 1);
     }
 
@@ -625,7 +633,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_inc_a_10x);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 10);
         TEST_ASSERT("loop task complete", counter_a == 10);
     }
 
@@ -639,7 +647,7 @@ void test_scheduler(void)
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_b);
         sched_create_task(task_inc_c);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 1 && counter_b == 1 && counter_c == 1);
         TEST_ASSERT("multi a ran", counter_a == 1);
         TEST_ASSERT("multi b ran", counter_b == 1);
         TEST_ASSERT("multi c ran", counter_c == 1);
@@ -653,7 +661,7 @@ void test_scheduler(void)
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_a);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 5);
         TEST_ASSERT("5x same fn", counter_a == 5);
     }
 
@@ -668,7 +676,7 @@ void test_scheduler(void)
         sched_create_task(task_order_1);
         sched_create_task(task_order_2);
         sched_create_task(task_order_3);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(order_idx == 3);
         TEST_ASSERT("order count", order_idx == 3);
         int seen[4] = {0, 0, 0, 0};
         for (int i = 0; i < 3; i++) {
@@ -719,7 +727,7 @@ void test_scheduler(void)
         ts_long_done = 0;
         sched_create_task(task_long_sleep_ts);  // sleeps 200ms
         sched_create_task(task_short_sleep_ts); // sleeps 20ms
-        sched_sleep_ms(300);
+        WAIT_UNTIL(ts_short_done != 0 && ts_long_done != 0);
         TEST_ASSERT("short done", ts_short_done != 0);
         TEST_ASSERT("long done", ts_long_done != 0);
         TEST_ASSERT("short before long", ts_short_done < ts_long_done);
@@ -730,7 +738,7 @@ void test_scheduler(void)
         early_wake_ran = 0;
         early_wake_task = NULL;
         sched_create_task(task_publish_then_long_sleep);
-        sched_sleep_ms(30);
+        WAIT_UNTIL(early_sleeper_queued());
 
         unsigned long flags = spin_lock_irqsave(&test_lock);
         struct task *sleeper = early_wake_task;
@@ -747,7 +755,7 @@ void test_scheduler(void)
 
         TEST_ASSERT("early wake unlinks from the sleep queue", !still_queued);
 
-        sched_sleep_ms(30);
+        WAIT_UNTIL(early_wake_ran == 1);
         TEST_ASSERT("woken sleeper ran to completion", early_wake_ran == 1);
     }
 
@@ -758,7 +766,7 @@ void test_scheduler(void)
         // A sleeper wakes on the first tick at or past its deadline: n + 10 ms, more under load.
         counter_a = 0;
         sched_create_task(task_sleep_then_inc);
-        sched_sleep_ms(150);
+        WAIT_UNTIL(counter_a == 1);
         TEST_ASSERT("sleep-then-inc", counter_a == 1);
     }
 
@@ -766,7 +774,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_multi_sleep);
-        sched_sleep_ms(250);
+        WAIT_UNTIL(counter_a == 3);
         TEST_ASSERT("multi-sleep task", counter_a == 3);
     }
 
@@ -774,7 +782,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_inc_a_with_delay);
-        sched_sleep_ms(300);
+        WAIT_UNTIL(counter_a == 5);
         TEST_ASSERT("work+sleep task", counter_a == 5);
     }
 
@@ -787,9 +795,10 @@ void test_scheduler(void)
         sched_create_task(task_sleep_then_inc);      // sleeps 20ms, inc a
         sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
         sched_sleep_ms(150);
+        WAIT_UNTIL(counter_a == 1);
         TEST_ASSERT("short sleeper done", counter_a == 1);
         TEST_ASSERT("long sleeper not yet", counter_b == 0);
-        sched_sleep_ms(700);
+        WAIT_UNTIL(counter_b == 1);
         TEST_ASSERT("long sleeper done", counter_b == 1);
     }
 
@@ -799,7 +808,7 @@ void test_scheduler(void)
     {
         counter_a = 0;
         sched_create_task(task_spawner); // creates 2 task_inc_a's
-        sched_sleep_ms(100);
+        WAIT_UNTIL(counter_a == 2);
         TEST_ASSERT("spawned children ran", counter_a == 2);
     }
 
@@ -809,7 +818,7 @@ void test_scheduler(void)
     {
         compute_result = 0;
         sched_create_task(task_compute);
-        sched_sleep_ms(100);
+        WAIT_UNTIL(compute_result == 49995000UL);
         TEST_ASSERT("compute result", compute_result == 49995000UL);
     }
 
@@ -819,7 +828,7 @@ void test_scheduler(void)
     {
         stack_test_ok = 0;
         sched_create_task(task_stack_depth);
-        sched_sleep_ms(100);
+        WAIT_UNTIL(stack_test_ok == 1);
         TEST_ASSERT("stack integrity", stack_test_ok == 1);
     }
 
@@ -831,7 +840,7 @@ void test_scheduler(void)
         for (int i = 0; i < 8; i++) {
             sched_create_task(task_inc_a);
         }
-        sched_sleep_ms(100);
+        WAIT_UNTIL(counter_a == 8);
         TEST_ASSERT("8 rapid tasks", counter_a == 8);
     }
 
@@ -842,7 +851,7 @@ void test_scheduler(void)
             for (int i = 0; i < 3; i++) {
                 sched_create_task(task_inc_a);
             }
-            sched_sleep_ms(50);
+            WAIT_UNTIL(counter_a == (round + 1) * 3);
         }
         TEST_ASSERT("3 rounds of 3", counter_a == 9);
     }
@@ -854,7 +863,7 @@ void test_scheduler(void)
         counter_a = 0;
         sched_create_task(task_inc_a_10x);
         sched_create_task(task_inc_a_10x);
-        sched_sleep_ms(100);
+        WAIT_UNTIL(counter_a == 20);
         TEST_ASSERT("2x10 = 20", counter_a == 20);
     }
 
@@ -867,9 +876,10 @@ void test_scheduler(void)
         sched_create_task(task_inc_a);               // instant
         sched_create_task(task_long_sleep_then_inc); // sleeps 600ms, inc b
         sched_sleep_ms(150);
+        WAIT_UNTIL(counter_a == 1);
         TEST_ASSERT("fast done", counter_a == 1);
         TEST_ASSERT("slow not yet", counter_b == 0);
-        sched_sleep_ms(700);
+        WAIT_UNTIL(counter_b == 1);
         TEST_ASSERT("slow done", counter_b == 1);
     }
 
@@ -878,7 +888,7 @@ void test_scheduler(void)
         yield_count = 0;
         sched_create_task(task_yield_loop);
         sched_create_task(task_yield_loop);
-        sched_sleep_ms(150);
+        WAIT_UNTIL(yield_count == 100);
         TEST_ASSERT("2x50 yields completed", yield_count == 100);
     }
 
@@ -906,14 +916,14 @@ void test_scheduler(void)
         counter_b = 0;
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_b);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 1 && counter_b == 1);
         TEST_ASSERT("phase1 a", counter_a == 1);
         TEST_ASSERT("phase1 b", counter_b == 1);
 
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_a);
         sched_create_task(task_inc_b);
-        sched_sleep_ms(50);
+        WAIT_UNTIL(counter_a == 3 && counter_b == 2);
         TEST_ASSERT("phase2 a", counter_a == 3);
         TEST_ASSERT("phase2 b", counter_b == 2);
     }

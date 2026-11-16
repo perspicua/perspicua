@@ -352,7 +352,7 @@ F18  kernel/tests/test_types.c:18-52   fake test   [READ]
      keep one runtime assert so the suite still reports.
      Count: "Types" (24) drops or goes.  NEEDS OWNER DECISION.
 
-F19  kernel/tests/test_sched.c:594-916   timing   [UNSURE]
+F19  [DONE] kernel/tests/test_sched.c:594-916   timing   [UNSURE]
      About 25 checks create tasks, sleep a fixed 50-300 ms, then assert the
      work finished. Under a loaded host the sleep can end first. They pass on
      an idle machine; CI runs with a longer overall timeout but the same
