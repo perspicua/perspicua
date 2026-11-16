@@ -58,6 +58,10 @@ jobs:
       - name: Run Tests
         run: just cmake_args="${{ matrix.args }}" test_timeout=600 test ${{ matrix.type }}
 
+      - name: Crash Test
+        if: matrix.name == 'default'
+        run: just crash_timeout=120 crash-test
+
   # The kernel that ships has no test code compiled in, so it is built on its own.
   build:
     name: build (${{ matrix.type }}, CONFIG_TESTS=OFF)
@@ -74,7 +78,7 @@ jobs:
       - name: Install dependencies
         run: |
           apt-get update
-          apt-get install -y cmake gcc-aarch64-linux-gnu mtools git python3
+          apt-get install -y cmake gcc-aarch64-linux-gnu qemu-system-arm mtools git python3
 
       - uses: actions/checkout@v5
         with:
@@ -89,3 +93,7 @@ jobs:
 
       - name: Build
         run: just build ${{ matrix.type }}
+
+      # Test-only code could hide a boot failure, so the shipping kernel gets its own tree and a boot.
+      - name: Boot
+        run: just boot_timeout=120 boot-test ${{ matrix.type }}

@@ -10,6 +10,8 @@ test_build_dir := "build-test"
 # Crash-test builds also use a separate tree so toggling CONFIG_CRASH_TEST
 # never touches the normal or test trees.
 crash_build_dir := "build-crash"
+# The shipping kernel is booted from a tree of its own, apart from the one `just build` publishes.
+boot_build_dir := "build-boot"
 # The toolchain file takes the first of aarch64-none-elf-, aarch64-elf- and
 # aarch64-linux-gnu- on PATH; name one with cmake_args="-DCROSS_COMPILE=aarch64-elf-"
 # when a tree is first configured.
@@ -19,6 +21,8 @@ toolchain := "cmake/aarch64-none-elf.cmake"
 test_timeout := "180"
 # Seconds the crash test run may take before it counts as hung.
 crash_timeout := "30"
+# Seconds the shipping kernel may take to reach the shell.
+boot_timeout := "60"
 
 # Number of cores for parallel build
 nproc := `nproc 2>/dev/null || sysctl -n hw.ncpu || echo 1`
@@ -80,6 +84,16 @@ cmake_args := ""
         {{crash_build_dir}}/sdcard.img \
         {{crash_timeout}} \
         "KERNEL PANIC" {{ if kind == "stack" { "'Kernel stack overflow' '<task_wrapper_asm+'" } else { "" } }}
+
+# Build the kernel that ships, with no test code, in its own tree and boot it headless to the shell
+@boot-test type="RelWithDebInfo": (_cmake boot_build_dir type "OFF")
+    cmake --build {{boot_build_dir}} --target sdcard
+    ./scripts/run_boot_test.sh \
+        {{boot_build_dir}}/kernel/kernel8.img \
+        pi4-boot/bcm2711-rpi-4-b.dtb \
+        {{boot_build_dir}}/sdcard.img \
+        {{boot_timeout}} \
+        "Type help to see available commands"
 
 # Show the configuration a tree was last built with
 # Usage: just config [dir]  (default: the normal build; the test tree is build-test)

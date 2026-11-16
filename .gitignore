@@ -2,6 +2,7 @@
 build/
 build-test/
 build-crash/
+build-boot/
 compile_commands.json
 *.o
 *.d

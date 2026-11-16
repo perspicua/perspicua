@@ -392,7 +392,7 @@ F22  [DONE] scripts/run_crash_test.sh:125-135   weak gate   [READ]
 PART 4 - GAPS
 ================================================================================
 
-F23  .github/workflows/ci.yml   gap   [READ]
+F23  [DONE] .github/workflows/ci.yml   gap   [READ]
        - `just crash-test` is never run in CI.
          Fix: add a step to the default matrix entry:
              just crash_timeout=120 crash-test
