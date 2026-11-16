@@ -444,7 +444,7 @@ R2   Kernel test helpers in kernel/tests/test.h.
      test_semaphore.c and test_completion.c.
      Removes: about 120 lines. Risk: low; the helpers are small and static.
 
-R3   libc/src/string.c:271-326   memcpy and memmove load and store through
+R3   [DONE] libc/src/string.c:271-326   memcpy and memmove load and store through
      `uint64_t *` at whatever alignment the caller passed, and the build has
      no -fno-strict-aliasing. It behaves correctly today (20,000 random cases
      matched the host). It is undefined behaviour that a compiler upgrade or

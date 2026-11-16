@@ -241,6 +241,8 @@ int memcmp(const void *ptr1, const void *ptr2, size_t num)
     return 0;
 }
 
+typedef uint64_t __attribute__((may_alias, aligned(1))) word_t;
+
 void *memset(void *dest, int val, size_t num)
 {
     unsigned char *d8 = (unsigned char *)dest;
@@ -254,7 +256,7 @@ void *memset(void *dest, int val, size_t num)
     uint64_t v64 = (uint64_t)v8 | ((uint64_t)v8 << 8) | ((uint64_t)v8 << 16) | ((uint64_t)v8 << 24)
                    | ((uint64_t)v8 << 32) | ((uint64_t)v8 << 40) | ((uint64_t)v8 << 48)
                    | ((uint64_t)v8 << 56);
-    uint64_t *d64 = (uint64_t *)d8;
+    word_t *d64 = (word_t *)d8;
     while (num >= 8) {
         *d64++ = v64;
         num -= 8;
@@ -273,8 +275,8 @@ void *memcpy(void *dest, const void *src, size_t count)
     unsigned char *d8 = (unsigned char *)dest;
     const unsigned char *s8 = (const unsigned char *)src;
 
-    uint64_t *d64 = (uint64_t *)d8;
-    const uint64_t *s64 = (const uint64_t *)s8;
+    word_t *d64 = (word_t *)d8;
+    const word_t *s64 = (const word_t *)s8;
 
     while (count >= 8) {
         *d64++ = *s64++;
@@ -296,8 +298,8 @@ void *memmove(void *dest, const void *src, size_t count)
     const unsigned char *s8 = (const unsigned char *)src;
 
     if (d8 < s8) {
-        uint64_t *d64 = (uint64_t *)d8;
-        const uint64_t *s64 = (const uint64_t *)s8;
+        word_t *d64 = (word_t *)d8;
+        const word_t *s64 = (const word_t *)s8;
         while (count >= 8) {
             *d64++ = *s64++;
             count -= 8;
@@ -310,8 +312,8 @@ void *memmove(void *dest, const void *src, size_t count)
     } else if (d8 > s8) {
         d8 += count;
         s8 += count;
-        uint64_t *d64 = (uint64_t *)d8;
-        const uint64_t *s64 = (const uint64_t *)s8;
+        word_t *d64 = (word_t *)d8;
+        const word_t *s64 = (const word_t *)s8;
         while (count >= 8) {
             *--d64 = *--s64;
             count -= 8;
