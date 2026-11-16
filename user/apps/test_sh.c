@@ -17,31 +17,8 @@
 // Runs sh -c line with stdout and stderr on one pipe; returns its exit status.
 static int sh_c(const char *line, char *out)
 {
-    int outp[2];
-    if (pipe(outp) != 0) {
-        return -1;
-    }
-    int pid = fork();
-    if (pid == 0) {
-        dup2(outp[1], 1);
-        dup2(outp[1], 2);
-        close(outp[0]);
-        close(outp[1]);
-        execvp("sh", (char *[]){"sh", "-c", (char *)line, NULL});
-        _exit(127);
-    }
-    close(outp[1]);
-
-    int n = 0, r;
-    while (n < OUT_MAX - 1 && (r = read(outp[0], out + n, (size_t)(OUT_MAX - 1 - n))) > 0) {
-        n += r;
-    }
-    out[n] = '\0';
-    close(outp[0]);
-
-    int status = -1;
-    waitpid(pid, &status, 0);
-    return status;
+    return utest_run(NULL, out, OUT_MAX, NULL, NULL, (char *[]){"sh", "-c", (char *)line, NULL},
+                     UTEST_MERGE_ERR);
 }
 
 static int runs(const char *line, const char *want, int want_status)

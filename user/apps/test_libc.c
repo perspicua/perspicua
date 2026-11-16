@@ -19,30 +19,17 @@
 #include "term.h"
 #include "wait.h"
 
-// Minimal test framework
-
-static int g_passed = 0;
-static int g_failed = 0;
-
-#define CHECK(cond)                                                           \
-    do {                                                                      \
-        if (cond) {                                                           \
-            g_passed++;                                                       \
-        } else {                                                              \
-            g_failed++;                                                       \
-            fprintf(stderr, "  FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); \
-        }                                                                     \
-    } while (0)
+#include "utest.h"
 
 // Run fn(), report PASS if no new failures occurred.
 static void run_group(const char *name, void (*fn)(void))
 {
-    int before = g_failed;
+    int before = utest_failed;
     fn();
-    if (g_failed == before) {
+    if (utest_failed == before) {
         printf("[PASS] %s\n", name);
     } else {
-        printf("[FAIL] %s (%d check(s) failed)\n", name, g_failed - before);
+        printf("[FAIL] %s (%d check(s) failed)\n", name, utest_failed - before);
     }
 }
 
@@ -978,29 +965,8 @@ static int capture_status;
 // Runs child() with stdout on a pipe and returns what it printed.
 static int capture(void (*child)(void), char *out, int size)
 {
-    int fds[2];
-    if (pipe(fds) != 0) {
-        return -1;
-    }
-    int pid = fork();
-    if (pid == 0) {
-        dup2(fds[1], 1);
-        close(fds[0]);
-        close(fds[1]);
-        child();
-        _exit(127);
-    }
-    close(fds[1]);
-    int n = 0;
-    int r;
-    while (n < size - 1 && (r = read(fds[0], out + n, (size_t)(size - 1 - n))) > 0) {
-        n += r;
-    }
-    out[n] = '\0';
-    close(fds[0]);
-    int status;
-    waitpid(pid, &status, 0);
-    capture_status = status;
+    int n = -1;
+    capture_status = utest_run(NULL, out, size, &n, child, NULL, 0);
     return n;
 }
 
@@ -1392,30 +1358,18 @@ static int size_parse(const char *s, int *rows, int *cols)
 }
 
 // Runs child() with input on its stdin and its screen output in a pipe; 0 if it exited 0.
+static int (*keys_child)(void);
+
+static void run_keys_child(void)
+{
+    _exit(keys_child());
+}
+
 static int with_keys(const char *input, int (*child)(void))
 {
-    int in[2], out[2];
-    if (pipe(in) != 0 || pipe(out) != 0) {
-        return -1;
-    }
-    int pid = fork();
-    if (pid == 0) {
-        dup2(in[0], 0);
-        dup2(out[1], 1);
-        close(in[0]);
-        close(in[1]);
-        close(out[0]);
-        close(out[1]);
-        _exit(child());
-    }
-    close(in[0]);
-    close(out[1]);
-    write(in[1], input, strlen(input));
-    close(in[1]);
-    int status = -1;
-    waitpid(pid, &status, 0);
-    close(out[0]);
-    return status;
+    char sink[64];
+    keys_child = child;
+    return utest_run(input, sink, sizeof(sink), NULL, run_keys_child, NULL, UTEST_STDIN);
 }
 
 static int size_reports_child(void)
@@ -1762,10 +1716,5 @@ int main(int argc, char **argv)
     run_group("abort", test_abort);
     run_group("stdio lines", test_stdio_lines);
 
-    if (g_failed) {
-        printf("test_libc: %d of %d tests failed\n", g_failed, g_passed + g_failed);
-        return 1;
-    }
-    printf("test_libc: all %d tests passed\n", g_passed);
-    return 0;
+    return utest_summary("test_libc");
 }

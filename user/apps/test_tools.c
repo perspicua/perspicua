@@ -13,6 +13,8 @@
 #include "sys/wait.h"
 #include "unistd.h"
 
+#include "utest.h"
+
 #define OUT_MAX 4096
 #define TREE    "/tt_tmp"
 #define EDIT    "/tt_edit"
@@ -34,63 +36,15 @@
 #define FIND  "\006"
 #define GOTO  "\007"
 
-static int passed, failed;
-
 static void check(const char *name, int ok)
 {
-    if (ok) {
-        passed++;
-    } else {
-        failed++;
-        printf("  FAIL %s\n", name);
-    }
+    utest_named(name, ok);
 }
 
 // Runs argv with input on stdin; returns the exit status and fills out with stdout.
 static int run(const char *input, char *out, char *const argv[])
 {
-    int in[2], outp[2];
-    if (pipe(in) != 0 || pipe(outp) != 0) {
-        return -1;
-    }
-    int pid = fork();
-    if (pid == 0) {
-        dup2(in[0], 0);
-        dup2(outp[1], 1);
-        close(in[0]);
-        close(in[1]);
-        close(outp[0]);
-        close(outp[1]);
-        execvp(argv[0], argv);
-        _exit(127);
-    }
-    close(in[0]);
-    close(outp[1]);
-    if (input) {
-        write(in[1], input, strlen(input));
-    }
-    close(in[1]);
-
-    // Output past OUT_MAX is drained and dropped, so a program that draws a lot never blocks.
-    int n = 0;
-    char spill[256];
-    for (;;) {
-        int room = OUT_MAX - 1 - n;
-        int r =
-            room > 0 ? read(outp[0], out + n, (size_t)room) : read(outp[0], spill, sizeof(spill));
-        if (r <= 0) {
-            break;
-        }
-        if (room > 0) {
-            n += r;
-        }
-    }
-    out[n] = '\0';
-    close(outp[0]);
-
-    int status = -1;
-    waitpid(pid, &status, 0);
-    return status;
+    return utest_run(input, out, OUT_MAX, NULL, NULL, argv, UTEST_STDIN);
 }
 
 static int outputs(const char *input, const char *expect, char *const argv[])
@@ -831,10 +785,5 @@ int main(void)
     unlink(FS "/a");
     rmdir(FS);
 
-    if (failed) {
-        printf("test_tools: %d of %d tests failed\n", failed, passed + failed);
-        return 1;
-    }
-    printf("test_tools: all %d tests passed\n", passed);
-    return 0;
+    return utest_summary("test_tools");
 }

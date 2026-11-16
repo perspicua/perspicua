@@ -13,6 +13,8 @@
 #include "time.h"
 #include "unistd.h"
 
+#include "utest.h"
+
 // What the child observed, reported through its exit status.
 #define CHILD_RESTARTED  0 // read() resumed and delivered the byte
 #define CHILD_EINTR      1 // read() failed with EINTR
@@ -641,17 +643,15 @@ static int run_ignore_discards_case(void)
     return bad;
 }
 
-static int checks_run;
-
-static int check(const char *name, int got, int want)
+static void check(const char *name, int got, int want)
 {
-    checks_run++;
     if (got == want) {
+        utest_passed++;
         printf("  [ok]     %s\n", name);
-        return 0;
+        return;
     }
+    utest_failed++;
     printf("  [FAILED] %s: expected %d, got %d\n", name, want, got);
-    return 1;
 }
 
 int main(void)
@@ -661,37 +661,29 @@ int main(void)
     // run_case writes to a pipe whose reader may already have exited.
     signal(SIGPIPE, SIG_IGN);
 
-    int failures = 0;
-    failures += check("SA_RESTART resumes the read", run_case(SA_RESTART), CHILD_RESTARTED);
-    failures += check("without SA_RESTART it fails with EINTR", run_case(0), CHILD_EINTR);
-    failures += check("nanosleep returns EINTR with time owed", run_sleep_case(), CHILD_EINTR);
-    failures += check("SA_ONSTACK runs the handler on the alt stack", run_altstack_case(), 0);
-    failures += check("without SA_ONSTACK it uses the normal stack", run_no_onstack_case(), 1);
-    failures += check("sigaltstack rejects bad stacks", run_altstack_reject_case(), 0);
-    failures += check("SIGSEGV from a bad write is catchable", run_segv_case(0), 0);
-    failures +=
-        check("stack exhaustion is catchable on the alt stack", run_stack_exhaustion_case(), 0);
-    failures += check("an unhandled SIGSEGV still kills", run_unhandled_segv_case(), 128 + SIGSEGV);
-    failures += check("an illegal instruction kills the process, not the kernel",
-                      run_illegal_insn_case(), 128 + SIGILL);
-    failures += check("an ignored SIGSEGV still kills", run_forced_fault_case(0), 128 + SIGSEGV);
-    failures += check("a blocked SIGSEGV still kills", run_forced_fault_case(1), 128 + SIGSEGV);
-    failures += check("a stop and continue do not cut a sleep short", run_sleep_through_case(1), 0);
-    failures +=
-        check("a signal with no handler does not cut a sleep short", run_sleep_through_case(0), 0);
-    failures += check("WSTOPSIG names the stopping signal", run_stop_signal_case(), SIGSTOP);
-    failures += check("signal() handlers restart waitpid", run_signal_restarts_wait_case(), 0);
-    failures += check("sigsuspend waits through a stop and continue",
-                      run_suspend_through_stop_case(), CHILD_EINTR);
-    failures += check("a write with no reader raises SIGPIPE", run_sigpipe_case(0), 128 + SIGPIPE);
-    failures += check("with SIGPIPE ignored the write fails with EPIPE", run_sigpipe_case(1), 0);
-    failures += check("ignoring a signal discards it, and sigpending lists the blocked",
-                      run_ignore_discards_case(), 0);
+    check("SA_RESTART resumes the read", run_case(SA_RESTART), CHILD_RESTARTED);
+    check("without SA_RESTART it fails with EINTR", run_case(0), CHILD_EINTR);
+    check("nanosleep returns EINTR with time owed", run_sleep_case(), CHILD_EINTR);
+    check("SA_ONSTACK runs the handler on the alt stack", run_altstack_case(), 0);
+    check("without SA_ONSTACK it uses the normal stack", run_no_onstack_case(), 1);
+    check("sigaltstack rejects bad stacks", run_altstack_reject_case(), 0);
+    check("SIGSEGV from a bad write is catchable", run_segv_case(0), 0);
+    check("stack exhaustion is catchable on the alt stack", run_stack_exhaustion_case(), 0);
+    check("an unhandled SIGSEGV still kills", run_unhandled_segv_case(), 128 + SIGSEGV);
+    check("an illegal instruction kills the process, not the kernel", run_illegal_insn_case(),
+          128 + SIGILL);
+    check("an ignored SIGSEGV still kills", run_forced_fault_case(0), 128 + SIGSEGV);
+    check("a blocked SIGSEGV still kills", run_forced_fault_case(1), 128 + SIGSEGV);
+    check("a stop and continue do not cut a sleep short", run_sleep_through_case(1), 0);
+    check("a signal with no handler does not cut a sleep short", run_sleep_through_case(0), 0);
+    check("WSTOPSIG names the stopping signal", run_stop_signal_case(), SIGSTOP);
+    check("signal() handlers restart waitpid", run_signal_restarts_wait_case(), 0);
+    check("sigsuspend waits through a stop and continue", run_suspend_through_stop_case(),
+          CHILD_EINTR);
+    check("a write with no reader raises SIGPIPE", run_sigpipe_case(0), 128 + SIGPIPE);
+    check("with SIGPIPE ignored the write fails with EPIPE", run_sigpipe_case(1), 0);
+    check("ignoring a signal discards it, and sigpending lists the blocked",
+          run_ignore_discards_case(), 0);
 
-    if (failures == 0) {
-        printf("test_restart: all %d tests passed\n", checks_run);
-    } else {
-        printf("test_restart: %d of %d tests failed\n", failures, checks_run);
-    }
-    return failures != 0;
+    return utest_summary("test_restart");
 }

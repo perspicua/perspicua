@@ -426,7 +426,7 @@ F25  [DONE] user/apps/test_tools.c   gap   [READ]
 PART 5 - IMPROVEMENTS AND REFACTORS
 ================================================================================
 
-R1   One userspace test header.
+R1   [DONE] One userspace test header.
      user/apps/utest.h is reimplemented in test_libc.c:24-47, test_tools.c:37-47,
      test_restart.c:617-628 and stress.c:55-78. The fork-with-pipes runner is
      written four times: test_tools.c:50, test_sh.c:18, test_libc.c:979 and
@@ -435,6 +435,10 @@ R1   One userspace test header.
      Risks: the "all N tests passed" counts shift, so every USER_SUITES minimum
      has to be re-read; test_restart prints "[FAILED]", which the harness greps
      for, so its failure text must keep working.
+     Done for test_libc, test_tools, test_restart and test_sh: one reporter and
+     one fork-and-capture runner in utest.h, every count unchanged. stress.c is
+     left on its own reporter: its CHECK takes a message and counts attempted
+     checks apart from failures, and its 1290 feeds the gate.
 
 R2   [DONE] Kernel test helpers in kernel/tests/test.h.
      waiters_all_blocked / all_done / count_done / count_blocked are duplicated
