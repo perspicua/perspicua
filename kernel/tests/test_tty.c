@@ -123,7 +123,6 @@ void test_tty_scheduler(void)
 
     // a writer waiting for ring space is let go by a signal and reports what it queued
     {
-        struct process *kproc = process_table[0];
         memset(writer_buf, ' ', sizeof(writer_buf));
         writer_done = 0;
         writer_ret = 0;
@@ -135,12 +134,9 @@ void test_tty_scheduler(void)
         TEST_ASSERT("write: the writer waits for ring space",
                     !writer_done && task_blocked(writer_task));
 
-        __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        if (writer_task) {
-            sched_unblock(writer_task);
-        }
+        test_sigusr1_interrupt(writer_task);
         WAIT_UNTIL(writer_done);
-        __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+        test_sigusr1_clear();
 
         TEST_ASSERT("write: a signal ends the wait", writer_done);
         TEST_ASSERT_EQ("write: what was queued counts as written", writer_ret, TTY_BUFFER_SIZE - 1);

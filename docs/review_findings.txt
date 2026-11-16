@@ -436,7 +436,7 @@ R1   One userspace test header.
      has to be re-read; test_restart prints "[FAILED]", which the harness greps
      for, so its failure text must keep working.
 
-R2   Kernel test helpers in kernel/tests/test.h.
+R2   [DONE] Kernel test helpers in kernel/tests/test.h.
      waiters_all_blocked / all_done / count_done / count_blocked are duplicated
      in test_semaphore.c:128-168 and test_completion.c:154-194. The sequence
      "set SIGUSR1 pending on process 0, sched_unblock the task, wait, clear the

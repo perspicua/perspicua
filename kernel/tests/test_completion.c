@@ -151,48 +151,6 @@ static void task_multi_waiter(void)
     waiters_done[id] = 1;
 }
 
-static int waiters_all_blocked(int n)
-{
-    for (int i = 0; i < n; i++) {
-        if (!task_blocked(waiters_tasks[i])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int waiters_all_done(int n)
-{
-    for (int i = 0; i < n; i++) {
-        if (!waiters_done[i]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int waiters_count_done(int n)
-{
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        if (waiters_done[i]) {
-            count++;
-        }
-    }
-    return count;
-}
-
-static int waiters_count_blocked(int n)
-{
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        if (!waiters_done[i] && task_blocked(waiters_tasks[i])) {
-            count++;
-        }
-    }
-    return count;
-}
-
 static struct task *intr_task = NULL;
 static volatile int intr_done = 0;
 static volatile int intr_ret = 0;
@@ -243,28 +201,31 @@ void test_completion_scheduler(void)
             sched_create_task(task_multi_waiter);
         }
 
-        WAIT_UNTIL(waiters_all_blocked(MAX_WAITERS));
-        TEST_ASSERT("completion: all 3 waiters blocked", waiters_all_blocked(MAX_WAITERS));
+        WAIT_UNTIL(waiters_all_blocked(waiters_tasks, MAX_WAITERS));
+        TEST_ASSERT("completion: all 3 waiters blocked",
+                    waiters_all_blocked(waiters_tasks, MAX_WAITERS));
 
         complete(&compl_test);
 
-        WAIT_UNTIL(waiters_count_done(MAX_WAITERS) == 1);
-        TEST_ASSERT_EQ("completion: exactly one waiter finished", waiters_count_done(MAX_WAITERS),
-                       1);
+        WAIT_UNTIL(waiters_count_done(waiters_done, MAX_WAITERS) == 1);
+        TEST_ASSERT_EQ("completion: exactly one waiter finished",
+                       waiters_count_done(waiters_done, MAX_WAITERS), 1);
 
         sched_sleep_ms(50);
         TEST_ASSERT_EQ("completion: still exactly one waiter finished after sleep",
-                       waiters_count_done(MAX_WAITERS), 1);
+                       waiters_count_done(waiters_done, MAX_WAITERS), 1);
         TEST_ASSERT_EQ("completion: remaining 2 waiters stay blocked",
-                       waiters_count_blocked(MAX_WAITERS), MAX_WAITERS - 1);
+                       waiters_count_blocked(waiters_tasks, waiters_done, MAX_WAITERS),
+                       MAX_WAITERS - 1);
         TEST_ASSERT_EQ("completion: done is 0 with blocked waiters", (long)compl_test.done, 0);
 
         for (int i = 0; i < MAX_WAITERS - 1; i++) {
             complete(&compl_test);
         }
 
-        WAIT_UNTIL(waiters_all_done(MAX_WAITERS));
-        TEST_ASSERT("completion: all waiters finished after drain", waiters_all_done(MAX_WAITERS));
+        WAIT_UNTIL(waiters_all_done(waiters_done, MAX_WAITERS));
+        TEST_ASSERT("completion: all waiters finished after drain",
+                    waiters_all_done(waiters_done, MAX_WAITERS));
         TEST_ASSERT_EQ("completion: done is 0 after drain", (long)compl_test.done, 0);
         TEST_ASSERT("completion: queue empty after drain", compl_test.wq.head == NULL);
     }
@@ -283,15 +244,15 @@ void test_completion_scheduler(void)
             sched_create_task(task_multi_waiter);
         }
 
-        WAIT_UNTIL(waiters_all_blocked(MAX_WAITERS));
+        WAIT_UNTIL(waiters_all_blocked(waiters_tasks, MAX_WAITERS));
         TEST_ASSERT("completion: all 3 waiters blocked before complete_all",
-                    waiters_all_blocked(MAX_WAITERS));
+                    waiters_all_blocked(waiters_tasks, MAX_WAITERS));
 
         complete_all(&compl_test);
 
-        WAIT_UNTIL(waiters_all_done(MAX_WAITERS));
+        WAIT_UNTIL(waiters_all_done(waiters_done, MAX_WAITERS));
         TEST_ASSERT("completion: all 3 waiters finished on complete_all",
-                    waiters_all_done(MAX_WAITERS));
+                    waiters_all_done(waiters_done, MAX_WAITERS));
         TEST_ASSERT_EQ("completion: done stays COMPLETION_ALL", compl_test.done, COMPLETION_ALL);
         TEST_ASSERT("completion: queue empty after complete_all", compl_test.wq.head == NULL);
 
@@ -334,13 +295,7 @@ void test_completion_scheduler(void)
         TEST_ASSERT("completion: signal waiter blocked", task_blocked(intr_task));
         TEST_ASSERT("completion: signal waiter in queue", compl_test.wq.head != NULL);
 
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
-        if (intr_task) {
-            sched_unblock(intr_task);
-        }
+        test_sigusr1_interrupt(intr_task);
 
         WAIT_UNTIL(intr_done);
 
@@ -349,9 +304,7 @@ void test_completion_scheduler(void)
         TEST_ASSERT_EQ("completion: done stays 0 after signal", (long)compl_test.done, 0);
         TEST_ASSERT("completion: queue empty after signal", compl_test.wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     TEST_SUITE_END("Completion-MultiTask");

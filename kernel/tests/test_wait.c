@@ -344,10 +344,7 @@ static int cond_func_a(void)
     if (passon_cond_armed == 1) {
         passon_cond_armed = 2;
         passon_token = 1;
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_pend();
         wq_wake_one(&passon_wq);
     }
     return 0;
@@ -628,9 +625,7 @@ void test_wait_scheduler(void)
         // Mark signal pending on kernel process (pid 0) with atomic OR
         struct process *kproc = process_table[0];
         TEST_ASSERT("kproc exists", kproc != NULL);
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_pend();
 
         // Real signal unblocks the task without popping from wq
         if (sched_test_task_ptr) {
@@ -643,9 +638,7 @@ void test_wait_scheduler(void)
                        (long)-ERESTARTSYS);
         TEST_ASSERT("wq empty after signal interrupt", sched_test_wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 4. An uninterruptible wait that ignores a signal
@@ -661,10 +654,7 @@ void test_wait_scheduler(void)
         TEST_ASSERT("uninterruptible task is waiting", sched_test_done == 0);
 
         // Mark signal pending with atomic OR
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_pend();
 
         // Unblock task while condition is still 0
         if (sched_test_task_ptr) {
@@ -683,9 +673,7 @@ void test_wait_scheduler(void)
         TEST_ASSERT("uninterruptible task completed on condition", sched_test_done == 1);
         TEST_ASSERT("wq is empty", sched_test_wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 5. Regression test: task never overwrites its own READY state
@@ -731,10 +719,7 @@ void test_wait_scheduler(void)
         TEST_ASSERT("task B woke and finished", passon_task_b_done == 1);
         TEST_ASSERT("passon_wq is empty", passon_wq.head == NULL);
 
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 7. Contended kmutex with multiple tasks
@@ -814,10 +799,7 @@ void test_wait_scheduler(void)
         TEST_ASSERT("contender task recorded", sig_contender_task != NULL);
 
         // Mark signal pending with atomic OR
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_pend();
 
         // Unblock contender while holder still owns mutex
         if (sig_contender_task) {
@@ -841,9 +823,7 @@ void test_wait_scheduler(void)
         TEST_ASSERT("mutex unlocked", test_contend_mutex.depth == 0);
         TEST_ASSERT("mutex wq empty", test_contend_mutex.wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 9. Contended SD driver I/O across 4 tasks
@@ -1019,8 +999,6 @@ void test_wait_scheduler(void)
         tty_test_bytes = 0;
         tty_test_reader_task = NULL;
 
-        struct process *kproc = process_table[0];
-
         sched_create_task(task_tty_reader);
         WAIT_UNTIL(task_blocked(tty_test_reader_task) && console_tty.rx_wq.head != NULL);
 
@@ -1028,21 +1006,14 @@ void test_wait_scheduler(void)
         TEST_ASSERT("tty reader is in rx_wq", console_tty.rx_wq.head != NULL);
         TEST_ASSERT("tty reader task ptr set", tty_test_reader_task != NULL);
 
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
-        if (tty_test_reader_task) {
-            sched_unblock(tty_test_reader_task);
-        }
+        test_sigusr1_interrupt(tty_test_reader_task);
 
         WAIT_UNTIL(tty_test_done);
 
         TEST_ASSERT("tty reader woke on signal", tty_test_done == 1);
         TEST_ASSERT_EQ("tty reader returned -ERESTARTSYS", tty_test_bytes, -ERESTARTSYS);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
 
         unsigned long flags = spin_lock_irqsave(&console_tty.lock);
         console_tty.rx_head = 0;

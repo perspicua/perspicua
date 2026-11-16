@@ -20,6 +20,32 @@
 #include "sched/process.h"
 #include "sched/sched.h"
 
+#include "uapi/signals.h"
+
+void test_sigusr1_pend(void)
+{
+    struct process *kproc = process_table[0];
+    if (kproc) {
+        __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
+    }
+}
+
+void test_sigusr1_clear(void)
+{
+    struct process *kproc = process_table[0];
+    if (kproc) {
+        __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
+    }
+}
+
+void test_sigusr1_interrupt(struct task *t)
+{
+    test_sigusr1_pend();
+    if (t) {
+        sched_unblock(t);
+    }
+}
+
 static struct exception_trap_frame test_tf;
 
 int64_t test_syscall(uint64_t nr, const uint64_t *args)

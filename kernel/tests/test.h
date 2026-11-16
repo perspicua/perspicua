@@ -69,6 +69,51 @@ static inline int task_blocked(struct task *t)
     return t && __atomic_load_n(&t->state, __ATOMIC_ACQUIRE) == SCHED_TASK_BLOCKED;
 }
 
+// Bookkeeping for a set of spawned waiters: tasks[i] is the waiter, done[i] set when it finished.
+static inline int waiters_all_blocked(struct task *const *tasks, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (!task_blocked(tasks[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static inline int waiters_count_done(const volatile int *done, int n)
+{
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (done[i]) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static inline int waiters_all_done(const volatile int *done, int n)
+{
+    return waiters_count_done(done, n) == n;
+}
+
+static inline int waiters_count_blocked(struct task *const *tasks, const volatile int *done, int n)
+{
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (!done[i] && task_blocked(tasks[i])) {
+            count++;
+        }
+    }
+    return count;
+}
+
+// SIGUSR1 pending on slot 0, which an interruptible wait of a kernel task reports as -ERESTARTSYS.
+void test_sigusr1_pend(void);
+void test_sigusr1_clear(void);
+
+// What a signal does to a sleeping task: pends SIGUSR1, then wakes it to notice.
+void test_sigusr1_interrupt(struct task *t);
+
 void run_all_tests(void);
 
 // Issues a syscall from the running task, as though trapped from EL0.

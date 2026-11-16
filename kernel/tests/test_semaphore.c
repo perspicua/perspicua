@@ -125,48 +125,6 @@ static void task_multi_waiter(void)
     waiters_done[id] = 1;
 }
 
-static int waiters_all_blocked(int n)
-{
-    for (int i = 0; i < n; i++) {
-        if (!task_blocked(waiters_tasks[i])) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int waiters_all_done(int n)
-{
-    for (int i = 0; i < n; i++) {
-        if (!waiters_done[i]) {
-            return 0;
-        }
-    }
-    return 1;
-}
-
-static int waiters_count_done(int n)
-{
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        if (waiters_done[i]) {
-            count++;
-        }
-    }
-    return count;
-}
-
-static int waiters_count_blocked(int n)
-{
-    int count = 0;
-    for (int i = 0; i < n; i++) {
-        if (!waiters_done[i] && task_blocked(waiters_tasks[i])) {
-            count++;
-        }
-    }
-    return count;
-}
-
 static void run_waiters(int n_waiters, int n_ups, int expect_count)
 {
     TEST_ASSERT("sem: queue empty before re-init", sem_test.wq.head == NULL);
@@ -182,26 +140,28 @@ static void run_waiters(int n_waiters, int n_ups, int expect_count)
         sched_create_task(task_multi_waiter);
     }
 
-    WAIT_UNTIL(waiters_all_blocked(n_waiters));
-    TEST_ASSERT("sem: all waiters blocked", waiters_all_blocked(n_waiters));
+    WAIT_UNTIL(waiters_all_blocked(waiters_tasks, n_waiters));
+    TEST_ASSERT("sem: all waiters blocked", waiters_all_blocked(waiters_tasks, n_waiters));
 
     for (int i = 0; i < n_ups; i++) {
         ksem_up(&sem_test);
     }
 
     if (n_ups >= n_waiters) {
-        WAIT_UNTIL(waiters_all_done(n_waiters));
-        TEST_ASSERT("sem: all waiters finished", waiters_all_done(n_waiters));
+        WAIT_UNTIL(waiters_all_done(waiters_done, n_waiters));
+        TEST_ASSERT("sem: all waiters finished", waiters_all_done(waiters_done, n_waiters));
         TEST_ASSERT_EQ("sem: expected count matches", sem_test.count, expect_count);
         TEST_ASSERT("sem: queue is empty", sem_test.wq.head == NULL);
     } else {
-        WAIT_UNTIL(waiters_count_done(n_waiters) == n_ups);
-        TEST_ASSERT_EQ("sem: expected waiters finished", waiters_count_done(n_waiters), n_ups);
+        WAIT_UNTIL(waiters_count_done(waiters_done, n_waiters) == n_ups);
+        TEST_ASSERT_EQ("sem: expected waiters finished",
+                       waiters_count_done(waiters_done, n_waiters), n_ups);
 
         sched_sleep_ms(50);
         TEST_ASSERT_EQ("sem: expected waiters still finished after sleep",
-                       waiters_count_done(n_waiters), n_ups);
-        TEST_ASSERT_EQ("sem: other waiters stay blocked", waiters_count_blocked(n_waiters),
+                       waiters_count_done(waiters_done, n_waiters), n_ups);
+        TEST_ASSERT_EQ("sem: other waiters stay blocked",
+                       waiters_count_blocked(waiters_tasks, waiters_done, n_waiters),
                        n_waiters - n_ups);
         TEST_ASSERT_EQ("sem: count is 0 with blocked waiters", sem_test.count, 0);
 
@@ -209,8 +169,9 @@ static void run_waiters(int n_waiters, int n_ups, int expect_count)
             ksem_up(&sem_test);
         }
 
-        WAIT_UNTIL(waiters_all_done(n_waiters));
-        TEST_ASSERT("sem: all waiters finished after drain", waiters_all_done(n_waiters));
+        WAIT_UNTIL(waiters_all_done(waiters_done, n_waiters));
+        TEST_ASSERT("sem: all waiters finished after drain",
+                    waiters_all_done(waiters_done, n_waiters));
         TEST_ASSERT_EQ("sem: expected count after drain", sem_test.count, expect_count);
         TEST_ASSERT("sem: queue is empty after drain", sem_test.wq.head == NULL);
     }
@@ -379,13 +340,7 @@ void test_semaphore_scheduler(void)
         TEST_ASSERT("sem: signal waiter blocked", task_blocked(intr_task));
         TEST_ASSERT("sem: signal waiter in queue", sem_test.wq.head != NULL);
 
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
-        if (intr_task) {
-            sched_unblock(intr_task);
-        }
+        test_sigusr1_interrupt(intr_task);
 
         WAIT_UNTIL(intr_done);
 
@@ -394,9 +349,7 @@ void test_semaphore_scheduler(void)
         TEST_ASSERT_EQ("sem: interrupted wait count untouched", sem_test.count, 0);
         TEST_ASSERT("sem: interrupted wait queue empty", sem_test.wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 6. Permit and signal arrive simultaneously (condition checked before signal)
@@ -413,10 +366,7 @@ void test_semaphore_scheduler(void)
         TEST_ASSERT("sem: waiter blocked before wake", task_blocked(intr_task));
         TEST_ASSERT("sem: waiter in queue before wake", sem_test.wq.head != NULL);
 
-        struct process *kproc = process_table[0];
-        if (kproc) {
-            __atomic_fetch_or(&kproc->pending_signals, 1u << (SIGUSR1 - 1), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_pend();
         ksem_up(&sem_test);
 
         WAIT_UNTIL(intr_done);
@@ -426,9 +376,7 @@ void test_semaphore_scheduler(void)
         TEST_ASSERT_EQ("sem: unit taken leaves count 0", sem_test.count, 0);
         TEST_ASSERT("sem: queue empty after simultaneous wake", sem_test.wq.head == NULL);
 
-        if (kproc) {
-            __atomic_fetch_and(&kproc->pending_signals, ~(1u << (SIGUSR1 - 1)), __ATOMIC_SEQ_CST);
-        }
+        test_sigusr1_clear();
     }
 
     // 7. Counting semaphore limits concurrency to K simultaneous holders
