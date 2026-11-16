@@ -21,7 +21,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 |----|----------|------|---------|
 | H1 [DONE] | High | VFS / FAT32 | `rename` into another filesystem writes a FAT32 directory entry into an unrelated cluster |
 | H2 [DONE] | High | VFS / FAT32 | Two `open(O_CREAT)` calls racing on one new name create duplicate directory entries |
-| H3 | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
+| H3 [DONE] | High | Block cache | A raw read of `/dev/sd0` can leave stale blocks in the cache the filesystem then uses |
 | M1 | Medium | procfs | `/proc/<pid>/maps` leaks 4 KB of kernel heap per read and can return uninitialised heap |
 | M2 | Medium | FAT32 | Writing past end of file exposes old disk contents instead of zeros |
 | M3 | Medium | exec / caches | Instruction cache is flushed through the wrong address alias (real hardware only) |
@@ -102,7 +102,7 @@ the directory or run the host `fsck.vfat` that `just test` already runs.
 made it" and continue to the second resolve. There is no `O_EXCL` flag today;
 this is where it would go.
 
-### H3. A raw device read can poison the block cache
+### H3. [DONE] A raw device read can poison the block cache
 
 **Where:** `cached_read_blocks`, `cache_fill` and `cached_write_blocks` in
 `kernel/driver/block.c`.

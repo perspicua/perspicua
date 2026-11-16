@@ -97,7 +97,11 @@ struct block_ops_wrapper {
 };
 
 // Caches a copy of a block just read; a failure only sends the next read of it to the device.
-static void cache_fill(struct block_device *dev, size_t block_nr, const void *src)
+// Bumped by every write under cache_lock; a read fills only if none landed since it looked.
+static unsigned long cache_write_gen;
+
+static void cache_fill(struct block_device *dev, size_t block_nr, const void *src,
+                       unsigned long gen)
 {
     void *temp_buf = pmm_alloc_pages((dev->block_size + PAGE_SIZE - 1) / PAGE_SIZE);
     if (!temp_buf) {
@@ -107,7 +111,7 @@ static void cache_fill(struct block_device *dev, size_t block_nr, const void *sr
 
     unsigned long flags = spin_lock_irqsave(&cache_lock);
     struct block_cache_entry *entry = cache_lookup(dev, block_nr);
-    if (entry) {
+    if (entry || gen != cache_write_gen) {
         spin_unlock_irqrestore(&cache_lock, flags);
         pmm_free_pages(temp_buf);
         return;
@@ -194,6 +198,10 @@ static void cache_fill(struct block_device *dev, size_t block_nr, const void *sr
     spin_unlock_irqrestore(&cache_lock, flags);
 }
 
+#ifdef CONFIG_TESTS
+void (*block_test_before_fill)(struct block_device *dev, size_t start, size_t count);
+#endif
+
 static int cached_read_blocks(struct block_device *dev, void *buffer, size_t start_block,
                               size_t num_blocks)
 {
@@ -216,14 +224,20 @@ static int cached_read_blocks(struct block_device *dev, void *buffer, size_t sta
         while (i + run < num_blocks && !cache_lookup(dev, start_block + i + run)) {
             run++;
         }
+        unsigned long gen = cache_write_gen;
         spin_unlock_irqrestore(&cache_lock, flags);
 
         int res = ops->orig_read_blocks(dev, out + i * bs, start_block + i, run);
         if (res != 0) {
             return res;
         }
+#ifdef CONFIG_TESTS
+        if (block_test_before_fill) {
+            block_test_before_fill(dev, start_block + i, run);
+        }
+#endif
         for (size_t k = 0; k < run; k++) {
-            cache_fill(dev, start_block + i + k, out + (i + k) * bs);
+            cache_fill(dev, start_block + i + k, out + (i + k) * bs, gen);
         }
         i += run;
     }
@@ -242,6 +256,7 @@ static int cached_write_blocks(struct block_device *dev, const void *buffer, siz
     }
 
     unsigned long flags = spin_lock_irqsave(&cache_lock);
+    cache_write_gen++;
     for (size_t i = 0; i < num_blocks; i++) {
         size_t block_nr = start_block + i;
         struct block_cache_entry *entry = cache_lookup(dev, block_nr);

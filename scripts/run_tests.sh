@@ -56,7 +56,7 @@ KERNEL_SUITES=(
     "Heap Allocator:1237"
     "Heap Properties:16"
     "Timer:21"
-    "SD Driver:34"
+    "SD Driver:38"
     "MMU Dynamic Mapping:46"
     "MMU Per-Process Page Tables:86"
     "VFS:98"

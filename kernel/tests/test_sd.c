@@ -12,6 +12,19 @@
 // The multi-block checks use the card's last sectors, saved first and restored after.
 #define SCRATCH_BLOCKS 16
 
+static struct block_device *race_dev;
+static size_t race_block;
+static const uint8_t *race_data;
+static int race_fired;
+
+static void write_during_fill(struct block_device *dev, size_t start, size_t count)
+{
+    if (dev == race_dev && start <= race_block && race_block < start + count) {
+        block_test_before_fill = NULL;
+        race_fired = dev->write_blocks(dev, race_data, race_block, 1) == 0;
+    }
+}
+
 void test_sd(void)
 {
     TEST_SUITE_BEGIN("SD Driver");
@@ -116,6 +129,35 @@ void test_sd(void)
     TEST_ASSERT("written data reads back", memcmp(readback, pattern, 512) == 0);
     TEST_ASSERT_EQ("restore scratch block", restore, 0);
     TEST_ASSERT("scratch block restored", restore_ok != 0);
+
+    /*
+     * A write that lands between a read's device access and its cache fill
+     * must not be undone by the fill: the next read has to see the write.
+     */
+    {
+        static uint8_t before[512], newer[512], second[512];
+        memset(before, 0xA1, sizeof(before));
+        memset(newer, 0xB2, sizeof(newer));
+        int setup = dev->write_blocks(dev, before, scratch, 1);
+        block_cache_invalidate();
+
+        race_dev = dev;
+        race_block = scratch;
+        race_data = newer;
+        block_test_before_fill = write_during_fill;
+        static uint8_t first[512];
+        int first_rc = dev->read_blocks(dev, first, scratch, 1);
+        block_test_before_fill = NULL;
+
+        int second_rc = dev->read_blocks(dev, second, scratch, 1);
+        int put_back = dev->write_blocks(dev, orig, scratch, 1);
+        block_cache_invalidate();
+
+        TEST_ASSERT("race: setup and reads succeed", setup == 0 && first_rc == 0 && second_rc == 0);
+        TEST_ASSERT("race: the write landed inside the read", race_fired);
+        TEST_ASSERT("race: the next read sees the write", memcmp(second, newer, 512) == 0);
+        TEST_ASSERT_EQ("race: scratch block put back", put_back, 0);
+    }
 
     /*
      * Multi-block transfers, in shapes of 1, 13 and 2 blocks across the
