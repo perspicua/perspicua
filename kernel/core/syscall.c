@@ -1611,6 +1611,10 @@ void syscall_handle(struct exception_trap_frame *tf)
         return;
     }
 
-    pr_warn("syscall: unknown syscall: %lu\n", syscall_nr);
+    // Once per boot: a program looping on a bad number would otherwise hold the console.
+    static int warned;
+    if (!__atomic_exchange_n(&warned, 1, __ATOMIC_RELAXED)) {
+        pr_warn("syscall: unknown syscall: %lu (further ones are not logged)\n", syscall_nr);
+    }
     tf->x[0] = (uint64_t)-ENOSYS;
 }

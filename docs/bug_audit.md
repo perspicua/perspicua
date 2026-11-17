@@ -32,7 +32,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | L3 [DONE] | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
 | L4 [DONE] | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
 | L5 [DONE] | Low | ELF | A segment may be mapped at address 0 |
-| L6 | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
+| L6 [DONE] | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
 | L7 | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
 | L8 | Low | VFS | A file offset shared after `fork` is updated without a lock |
 
@@ -315,7 +315,7 @@ to happen before the side effect, which waits on threads.
 address is 0. A program built that way has a mapped null page, so its null
 dereferences do not fault.
 
-### L6. Unknown syscalls log every time
+### L6. [DONE] Unknown syscalls log every time
 
 `syscall_handle` calls `pr_warn` for each unknown number. A program can fill
 the console, and each message is sent at 115200 baud. Fix: rate-limit or drop
