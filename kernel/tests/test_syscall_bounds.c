@@ -18,6 +18,7 @@
 #include "core/syscall.h"
 #include "fs/vfs.h"
 #include "mm/addr.h"
+#include "mm/heap.h"
 #include "mm/mmu.h"
 #include "sched/process.h"
 
@@ -26,6 +27,9 @@
 #define USER_RO_VA 0x0000000050001000UL
 
 #define USER_UNMAPPED_VA 0x0000000040000000UL
+
+// A buffer as large as the read/write cap, mapped page by page for the bounce-buffer check.
+#define USER_BIG_VA 0x0000000060000000UL
 
 #define SCRATCH_PATH "/sbounds.tmp"
 
@@ -566,6 +570,27 @@ void test_syscall_bounds(void)
                 process_test_release_slot((uint32_t)child);
             }
         }
+    }
+
+    // a transfer as large as the cap bounces through the page allocator and leaves the heap alone
+    {
+        int mapped = 1;
+        for (size_t i = 0; mapped && i < SYSCALL_MAX_RW_SIZE / PAGE_SIZE; i++) {
+            mapped =
+                test_map_user_page(pgd, USER_BIG_VA + i * PAGE_SIZE, MMU_PAGE_USER_DATA) != NULL;
+        }
+        TEST_ASSERT("setup: a user buffer as large as the cap", mapped);
+
+        int big_fd = vfs_open(SCRATCH_PATH, O_RDONLY);
+        uint64_t args[6] = {(uint64_t)big_fd, USER_BIG_VA, SYSCALL_MAX_RW_SIZE, 0, 0, 0};
+        heap_test_fail_nth(1);
+        int64_t r = mapped && big_fd >= 0 ? test_syscall(SYS_READ, args) : -1;
+        unsigned long left = heap_test_fail_nth(0);
+        if (big_fd >= 0) {
+            vfs_close(big_fd);
+        }
+        TEST_ASSERT_EQ("a read as large as the cap succeeds", r < 0 ? r : 0, 0);
+        TEST_ASSERT("and takes nothing from the heap", left == 1);
     }
 
     drop_cwd();

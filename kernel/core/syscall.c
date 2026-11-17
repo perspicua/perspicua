@@ -120,6 +120,22 @@ static int copy_path_from_user(const char *upath, char **out)
 }
 
 // Checks the range is readable and in bounds; the caller owns *out on success.
+// A page or more comes from the page allocator and goes straight back: the heap never shrinks.
+static void *bounce_alloc(size_t len)
+{
+    return len >= PAGE_SIZE ? pmm_alloc_pages_nozero((len + PAGE_SIZE - 1) / PAGE_SIZE)
+                            : heap_malloc(len);
+}
+
+static void bounce_free(void *buf, size_t len)
+{
+    if (len >= PAGE_SIZE) {
+        pmm_free_pages(buf);
+    } else {
+        heap_free(buf);
+    }
+}
+
 static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
 {
     *out = NULL;
@@ -132,13 +148,13 @@ static int copy_buf_from_user(const void *ubuf, size_t len, void **out)
         return -EFAULT;
     }
 
-    void *kbuf = heap_malloc(len);
+    void *kbuf = bounce_alloc(len);
     if (!kbuf) {
         return -ENOMEM;
     }
 
     if (copy_from_user(kbuf, ubuf, len) != 0) {
-        heap_free(kbuf);
+        bounce_free(kbuf, len);
         return -EFAULT;
     }
 
@@ -159,7 +175,7 @@ static int alloc_user_out_buf(const void *ubuf, size_t len, void **out)
         return -EFAULT;
     }
 
-    void *kbuf = heap_malloc(len);
+    void *kbuf = bounce_alloc(len);
     if (!kbuf) {
         return -ENOMEM;
     }
@@ -1296,7 +1312,7 @@ static int64_t write_handler(struct exception_trap_frame *tf)
     }
 
     int bytes = vfs_write(fd, kbuf, len);
-    heap_free(kbuf);
+    bounce_free(kbuf, len);
     return bytes;
 }
 
@@ -1321,7 +1337,7 @@ static int64_t pwrite_handler(struct exception_trap_frame *tf)
     }
 
     int bytes = vfs_pwrite(fd, kbuf, len, offset);
-    heap_free(kbuf);
+    bounce_free(kbuf, len);
     return bytes;
 }
 
@@ -1348,7 +1364,7 @@ static int64_t read_handler(struct exception_trap_frame *tf)
             bytes = -EFAULT;
         }
     }
-    heap_free(kbuf);
+    bounce_free(kbuf, len);
     return bytes;
 }
 
@@ -1379,7 +1395,7 @@ static int64_t pread_handler(struct exception_trap_frame *tf)
             bytes = -EFAULT;
         }
     }
-    heap_free(kbuf);
+    bounce_free(kbuf, len);
     return bytes;
 }
 
@@ -1409,7 +1425,7 @@ static int64_t getdents_handler(struct exception_trap_frame *tf)
             res = -EFAULT;
         }
     }
-    heap_free(kbuf);
+    bounce_free(kbuf, count);
     return res;
 }
 
