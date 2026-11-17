@@ -42,6 +42,8 @@ struct slab_class {
     unsigned long object_size;
     struct slab_page *partial_list;
     struct slab_page *full_list;
+    // One emptied page kept on partial_list, so an object freed and allocated in turn costs no page.
+    struct slab_page *spare;
     spinlock_t lock;
 };
 
@@ -205,6 +207,9 @@ void *slab_alloc(unsigned long size)
     if (!obj) {
         PANIC("slab: partial page with an empty free list");
     }
+    if (sp == sc->spare) {
+        sc->spare = NULL;
+    }
 
     // Bounds before the canary read: a corrupt free-list link can point anywhere.
     int slot = slab_slot_of(sp, obj);
@@ -281,14 +286,19 @@ void slab_free(void *ptr)
         }
         *prev = sp->next;
 
-        if (sp->in_use_count == 0) {
+        if (sp->in_use_count == 0 && sc->spare) {
             spin_unlock_irqrestore(&sc->lock, flags);
             slab_release_page(sp);
             return;
         }
+        if (sp->in_use_count == 0) {
+            sc->spare = sp;
+        }
 
         sp->next = sc->partial_list;
         sc->partial_list = sp;
+    } else if (sp->in_use_count == 0 && !sc->spare) {
+        sc->spare = sp;
     } else if (sp->in_use_count == 0) {
         struct slab_page **prev = &sc->partial_list;
         while (*prev && *prev != sp) {
@@ -306,6 +316,32 @@ void slab_free(void *ptr)
 
     spin_unlock_irqrestore(&sc->lock, flags);
 }
+
+#ifdef CONFIG_TESTS
+void slab_test_trim(void)
+{
+    for (int i = 0; i < SLAB_NUM_CLASSES; i++) {
+        struct slab_class *sc = &slab_classes[i];
+        unsigned long flags = spin_lock_irqsave(&sc->lock);
+        struct slab_page *sp = sc->spare;
+        sc->spare = NULL;
+        if (!sp || sp->in_use_count != 0) {
+            spin_unlock_irqrestore(&sc->lock, flags);
+            continue;
+        }
+        struct slab_page **prev = &sc->partial_list;
+        while (*prev && *prev != sp) {
+            prev = &(*prev)->next;
+        }
+        if (!*prev) {
+            PANIC("slab: spare page lost");
+        }
+        *prev = sp->next;
+        spin_unlock_irqrestore(&sc->lock, flags);
+        slab_release_page(sp);
+    }
+}
+#endif
 
 int slab_owns(void *ptr)
 {

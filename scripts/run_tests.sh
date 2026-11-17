@@ -52,7 +52,7 @@ KERNEL_SUITES=(
     "Symbols:8"
     "Spinlock:34"
     "Physical Memory Manager:790"
-    "Slab Allocator:66"
+    "Slab Allocator:70"
     "Heap Allocator:1237"
     "Heap Properties:16"
     "Timer:21"

@@ -315,5 +315,37 @@ void test_slab(void)
         slab_free(again);
     }
 
+    // the page an object leaves empty stays as its class's spare, so the next object needs no page
+    {
+        slab_test_trim();
+        static void *held[64];
+        int n = 0;
+        unsigned long start = slab_get_total();
+        while (n < 64 && slab_get_total() == start) {
+            held[n] = slab_alloc(1024);
+            if (!held[n]) {
+                break;
+            }
+            n++;
+        }
+        TEST_ASSERT("setup: an object alone on a fresh page", n > 0 && slab_get_total() > start);
+
+        unsigned long with_page = slab_get_total();
+        slab_free(held[--n]);
+        TEST_ASSERT_EQ("the emptied page is kept", slab_get_total(), with_page);
+
+        pmm_test_fail_nth(1);
+        void *again = slab_alloc(1024);
+        unsigned long left = pmm_test_fail_nth(0);
+        TEST_ASSERT("the next object takes no new page", again != NULL && left == 1);
+
+        slab_free(again);
+        while (n > 0) {
+            slab_free(held[--n]);
+        }
+        slab_test_trim();
+        TEST_ASSERT("trim releases the spare", slab_get_total() < with_page);
+    }
+
     TEST_SUITE_END("Slab Allocator");
 }

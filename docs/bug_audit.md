@@ -33,7 +33,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | L4 [DONE] | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
 | L5 [DONE] | Low | ELF | A segment may be mapped at address 0 |
 | L6 [DONE] | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
-| L7 | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
+| L7 [DONE] | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
 | L8 [DONE] | Low | VFS | A file offset shared after `fork` is updated without a lock |
 
 No lock-order inversion was found. The deadlock analysis and the hazards that
@@ -322,13 +322,19 @@ dereferences do not fault.
 the console, and each message is sent at 115200 baud. Fix: rate-limit or drop
 the message.
 
-### L7. Allocator behaviour under churn
+### L7. [DONE] Allocator behaviour under churn
 
 - The first-fit heap never returns memory to the page allocator. A single
   4 MB `read` makes the heap 4 MB larger for good.
 - A slab page is released as soon as its last object is freed. A size class
   with one object that is allocated and freed in a loop allocates and zeroes a
   page each time. Keeping one empty page per class would avoid it.
+
+**Done, differently for the heap:** the heap still never shrinks, but its
+largest users no longer go through it: the read, write, pread, pwrite and
+getdents bounce buffers of a page or more come from the page allocator and go
+straight back. Each slab class now keeps one emptied page as a spare;
+`slab_test_trim()` releases them for tests that count pages.
 
 ### L8. [DONE] Shared file offsets are unsynchronised
 

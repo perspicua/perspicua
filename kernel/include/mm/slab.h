@@ -20,6 +20,9 @@ unsigned long slab_get_total(void);
 #ifdef CONFIG_TESTS
 // The size class an object came from: the bytes writable in it.
 unsigned long slab_test_object_size(void *ptr);
+
+// Releases each class's spare empty page, so a test can count pages without them.
+void slab_test_trim(void);
 #endif
 
 #endif // PERSPICUA_MM_SLAB_H
