@@ -167,6 +167,11 @@ static void data_on_code_page(void)
     image.ph[1].vaddr = CODE_VA + PAGE_SIZE / 2;
 }
 
+static void segment_at_null(void)
+{
+    image.ph[1].vaddr = 0;
+}
+
 static void code_on_data_page(void)
 {
     image.ph[0].flags = 6;
@@ -197,6 +202,7 @@ static const struct {
     {"segment offset negative as an off_t", data_negative},
     {"data on a code page", data_on_code_page},
     {"code on a data page", code_on_data_page},
+    {"segment on the null page", segment_at_null},
 };
 
 static int image_write(void)

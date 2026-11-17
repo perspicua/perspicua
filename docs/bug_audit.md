@@ -31,7 +31,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | L2 [DONE] | Low | VFS | Releasing a deep directory chain recurses once per level |
 | L3 [DONE] | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
 | L4 [DONE] | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
-| L5 | Low | ELF | A segment may be mapped at address 0 |
+| L5 [DONE] | Low | ELF | A segment may be mapped at address 0 |
 | L6 | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
 | L7 | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
 | L8 | Low | VFS | A file offset shared after `fork` is updated without a lock |
@@ -309,7 +309,7 @@ change in between; they matter once threads share an address space.
 child, and `read` has still consumed its bytes; undoing either needs the copy
 to happen before the side effect, which waits on threads.
 
-### L5. An ELF segment may map address 0
+### L5. [DONE] An ELF segment may map address 0
 
 `elf_load` rejects an entry point of 0 but accepts a loadable segment whose
 address is 0. A program built that way has a mapped null page, so its null

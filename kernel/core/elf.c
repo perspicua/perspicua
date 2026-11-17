@@ -147,8 +147,8 @@ int elf_load(const char *path, unsigned long *pgd, uint64_t *entry_point)
         if (memsz == 0) {
             continue;
         }
-        // No wrap, and below the VA allocator's range, where the stack would replace a segment.
-        if (vaddr + memsz < vaddr || vaddr + memsz > USER_VA_BASE) {
+        // Off the null page, so a null dereference still faults; no wrap; below the VA range.
+        if (vaddr < PAGE_SIZE || vaddr + memsz < vaddr || vaddr + memsz > USER_VA_BASE) {
             pr_err("elf: segment [0x%lx,0x%lx) outside the image region\n", (unsigned long)vaddr,
                    (unsigned long)(vaddr + memsz));
             rc = -ENOEXEC;
