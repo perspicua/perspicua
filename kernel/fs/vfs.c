@@ -256,6 +256,7 @@ struct vfs_file *vfs_file_alloc(void)
 
     memset(f, 0, sizeof(*f));
     atomic_set(&f->refcount, 1);
+    kmutex_init(&f->pos_lock);
 
 #ifdef CONFIG_TESTS
     atomic_inc(&vfs_live_files);
@@ -699,14 +700,22 @@ int vfs_close(int fd)
     return 0;
 }
 
-vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
+static void pos_lock(struct vfs_file *f)
 {
-    int err;
-    struct vfs_file *f = vfs_file_get(fd, &err);
-    if (!f) {
-        return err;
+    if (!f->node->ops->stream) {
+        kmutex_lock(&f->pos_lock);
     }
+}
 
+static void pos_unlock(struct vfs_file *f)
+{
+    if (!f->node->ops->stream) {
+        kmutex_unlock(&f->pos_lock);
+    }
+}
+
+static vfs_off_t lseek_file(struct vfs_file *f, vfs_off_t offset, int whence)
+{
     vfs_off_t new_offset;
     switch (whence) {
         case SEEK_SET:
@@ -720,26 +729,36 @@ vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
             new_offset = f->node->file_size + offset;
             break;
         default:
-            vfs_file_put(f);
             return -EINVAL;
     }
 
     if (new_offset < 0) {
-        vfs_file_put(f);
         return -EINVAL;
     }
 
     if (f->node->type == VFS_VNODE_TYPE_DIR) {
         if (new_offset != 0) {
-            vfs_file_put(f);
             return -EINVAL;
         }
         f->dir_pos = (struct vfs_dir_pos){0};
     }
 
     f->offset = new_offset;
-    vfs_file_put(f);
     return new_offset;
+}
+
+vfs_off_t vfs_lseek(int fd, vfs_off_t offset, int whence)
+{
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
+    }
+    pos_lock(f);
+    vfs_off_t res = lseek_file(f, offset, whence);
+    pos_unlock(f);
+    vfs_file_put(f);
+    return res;
 }
 
 /*
@@ -775,7 +794,9 @@ int vfs_read(int fd, void *buffer, size_t count)
 
     vnode_revalidate(f->node);
 
+    pos_lock(f);
     int bytes = f->node->ops->read(f, buffer, count, &f->offset);
+    pos_unlock(f);
     vfs_file_put(f);
     return bytes;
 }
@@ -812,23 +833,15 @@ int vfs_pread(int fd, void *buffer, size_t count, vfs_off_t offset)
     return bytes;
 }
 
-int vfs_readdir(int fd, void *buffer, size_t count)
+static int readdir_file(struct vfs_file *f, void *buffer, size_t count)
 {
-    int err;
-    struct vfs_file *f = vfs_file_get(fd, &err);
-    if (!f) {
-        return err;
-    }
-
     /* Entries are written whole; a partial buffer would also underflow the
      * remaining-space arithmetic below. */
     if (count < sizeof(struct dirent)) {
-        vfs_file_put(f);
         return -EINVAL;
     }
 
     if (f->node->type != VFS_VNODE_TYPE_DIR || !f->node->ops->readdir) {
-        vfs_file_put(f);
         return -ENOTDIR;
     }
 
@@ -876,7 +889,6 @@ int vfs_readdir(int fd, void *buffer, size_t count)
             // dir_pos is only written at readdir_done, so the listing position
             // is already intact; just undo what the filesystem moved.
             f->offset = entry_offset;
-            vfs_file_put(f);
             return fs_res;
         }
         res += fs_res;
@@ -919,6 +931,19 @@ readdir_done:
     f->dir_pos.dot_idx = dot_idx;
     f->dir_pos.mount_idx = mount_idx;
 
+    return res;
+}
+
+int vfs_readdir(int fd, void *buffer, size_t count)
+{
+    int err;
+    struct vfs_file *f = vfs_file_get(fd, &err);
+    if (!f) {
+        return err;
+    }
+    pos_lock(f);
+    int res = readdir_file(f, buffer, count);
+    pos_unlock(f);
     vfs_file_put(f);
     return res;
 }
@@ -943,11 +968,13 @@ int vfs_write(int fd, const void *buffer, size_t count)
 
     vnode_revalidate(f->node);
 
+    pos_lock(f);
     if (f->flags & O_APPEND) {
         f->offset = f->node->file_size;
     }
 
     int bytes = f->node->ops->write(f, buffer, count, &f->offset);
+    pos_unlock(f);
     vfs_file_put(f);
     return bytes;
 }

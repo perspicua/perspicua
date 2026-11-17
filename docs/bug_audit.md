@@ -34,7 +34,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | L5 [DONE] | Low | ELF | A segment may be mapped at address 0 |
 | L6 [DONE] | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
 | L7 | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
-| L8 | Low | VFS | A file offset shared after `fork` is updated without a lock |
+| L8 [DONE] | Low | VFS | A file offset shared after `fork` is updated without a lock |
 
 No lock-order inversion was found. The deadlock analysis and the hazards that
 are not inversions are in their own section below.
@@ -329,12 +329,17 @@ the message.
   with one object that is allocated and freed in a loop allocates and zeroes a
   page each time. Keeping one empty page per class would avoid it.
 
-### L8. Shared file offsets are unsynchronised
+### L8. [DONE] Shared file offsets are unsynchronised
 
 After `fork`, parent and child share one `struct vfs_file`. `vfs_read` and
 `vfs_write` pass `&f->offset` to the filesystem with no lock on the file, so
 two processes reading through the shared descriptor can read the same bytes
 twice.
+
+**Done:** each open file has a sleeping position lock taken around read,
+write, `lseek` and `readdir`. Pipes and the tty are marked as streams and skip
+it, since their reads can block indefinitely. FAT32 files were already safe
+under `fat32_lock`; the test reproduces the race on `/dev/sd0`.
 
 ---
 

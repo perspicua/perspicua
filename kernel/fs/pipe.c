@@ -200,7 +200,7 @@ static int pipe_stat(struct vfs_vnode *node, struct stat *buf)
 }
 
 static struct vfs_vnode_ops pipe_ops = {
-    .read = pipe_read, .write = pipe_write, .close = pipe_close, .stat = pipe_stat};
+    .stream = 1, .read = pipe_read, .write = pipe_write, .close = pipe_close, .stat = pipe_stat};
 
 int pipe_is_pipe(const struct vfs_vnode *node)
 {

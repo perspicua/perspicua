@@ -4,6 +4,9 @@
 #include "test.h"
 #include "driver/block.h"
 #include "string.h"
+#include "uapi/fcntl.h"
+#include "sched/sched.h"
+#include "fs/vfs.h"
 #include "uapi/errno.h"
 
 // Offset of the 0x55AA boot signature within a 512-byte sector.
@@ -23,6 +26,28 @@ static void write_during_fill(struct block_device *dev, size_t start, size_t cou
         block_test_before_fill = NULL;
         race_fired = dev->write_blocks(dev, race_data, race_block, 1) == 0;
     }
+}
+
+#define SHARED_BLOCKS 64
+
+static int shared_fd;
+static size_t shared_base;
+static uint8_t shared_seen[SHARED_BLOCKS];
+static volatile int shared_dupes, shared_readers_done;
+
+// Reads blocks through a descriptor the other reader shares, as a parent and child share one.
+static void read_shared_blocks(void)
+{
+    static uint8_t bufs[2][512];
+    static int next;
+    uint8_t *b = bufs[__atomic_fetch_add(&next, 1, __ATOMIC_RELAXED) & 1];
+    while (vfs_read(shared_fd, b, 512) == 512) {
+        size_t idx = (size_t)b[0] | ((size_t)b[1] << 8);
+        if (idx < SHARED_BLOCKS && __atomic_exchange_n(&shared_seen[idx], 1, __ATOMIC_RELAXED)) {
+            __atomic_fetch_add(&shared_dupes, 1, __ATOMIC_RELAXED);
+        }
+    }
+    __atomic_fetch_add(&shared_readers_done, 1, __ATOMIC_RELEASE);
 }
 
 void test_sd(void)
@@ -211,6 +236,49 @@ void test_sd(void)
     TEST_ASSERT("multi-block writes read back block by block", singles_ok);
     TEST_ASSERT_EQ("restore the scratch range", back_rc, 0);
     TEST_ASSERT("scratch range restored", back_ok);
+
+    // two readers of one /dev/sd0 descriptor never get the same block
+    {
+        static uint8_t kept[SHARED_BLOCKS * 512], marks[SHARED_BLOCKS * 512];
+        shared_base = dev->block_count - SHARED_BLOCKS;
+        int kept_rc = dev->read_blocks(dev, kept, shared_base, SHARED_BLOCKS);
+        for (size_t i = 0; i < sizeof(marks); i++) {
+            marks[i] = (uint8_t)(i % 512 == 0   ? (i / 512) & 0xFF
+                                 : i % 512 == 1 ? (i / 512) >> 8
+                                                : 0x5C);
+        }
+        int marked = kept_rc == 0 && dev->write_blocks(dev, marks, shared_base, SHARED_BLOCKS) == 0;
+        block_cache_invalidate(); // each read then sleeps on the card, which is where they overlap
+
+        int fd = vfs_open("/dev/sd0", O_RDONLY);
+        int setup = marked && fd >= 0
+                    && vfs_lseek(fd, (vfs_off_t)shared_base * 512, SEEK_SET)
+                           == (vfs_off_t)shared_base * 512;
+        memset(shared_seen, 0, sizeof(shared_seen));
+        shared_dupes = 0;
+        shared_readers_done = 0;
+        shared_fd = fd;
+        if (setup) {
+            sched_create_task(read_shared_blocks);
+            sched_create_task(read_shared_blocks);
+            WAIT_UNTIL(__atomic_load_n(&shared_readers_done, __ATOMIC_ACQUIRE) == 2);
+        }
+        if (fd >= 0) {
+            vfs_close(fd);
+        }
+        int all = 1;
+        for (int i = 0; i < SHARED_BLOCKS; i++) {
+            all &= shared_seen[i];
+        }
+        int restored =
+            kept_rc == 0 && dev->write_blocks(dev, kept, shared_base, SHARED_BLOCKS) == 0;
+        block_cache_invalidate();
+
+        TEST_ASSERT("shared offset: setup", setup);
+        TEST_ASSERT("shared offset: no block is read twice", setup && shared_dupes == 0);
+        TEST_ASSERT("shared offset: every block is read", setup && all);
+        TEST_ASSERT("shared offset: blocks put back", restored);
+    }
 
     static uint8_t spill[1024];
     TEST_ASSERT_EQ("a read running off the end is refused",

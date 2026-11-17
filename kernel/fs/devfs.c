@@ -102,7 +102,8 @@ static int devfs_tty_write(struct vfs_file *file, const void *buffer, size_t siz
 static struct vfs_vnode_ops devfs_root_ops = {.lookup = devfs_root_lookup,
                                               .readdir = devfs_root_readdir};
 
-struct vfs_vnode_ops devfs_tty_ops = {.read = devfs_tty_read, .write = devfs_tty_write};
+struct vfs_vnode_ops devfs_tty_ops = {
+    .read = devfs_tty_read, .write = devfs_tty_write, .stream = 1};
 
 int devfs_register_device(const char *name, struct vfs_vnode_ops *ops, void *internal_info)
 {

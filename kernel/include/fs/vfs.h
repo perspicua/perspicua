@@ -13,6 +13,7 @@
 #include "uapi/stat.h"
 
 #include "core/lock.h"
+#include "core/mutex.h"
 
 #define VFS_MAX_PATH_LEN 4096
 
@@ -54,6 +55,9 @@ struct vfs_vnode_ops {
      */
     int (*read)(struct vfs_file *file, void *buffer, size_t size, vfs_off_t *offset);
     int (*write)(struct vfs_file *file, const void *buffer, size_t size, vfs_off_t *offset);
+
+    // A stream has no position and its reads may block indefinitely, so no position lock is taken.
+    int stream;
 
     // Refreshes size and location from the filesystem's own record. Optional:
     // needed only where one file can have more than one vnode.
@@ -109,6 +113,8 @@ struct vfs_file {
     struct vfs_dir_pos dir_pos;
     int flags;
     atomic_t refcount;
+    // Serialises offset and dir_pos between the holders a fork leaves sharing this file.
+    struct kmutex pos_lock;
 };
 
 void vfs_init(void);
