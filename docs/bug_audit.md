@@ -28,7 +28,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | M4 [DONE] | Medium | Mailbox | Firmware calls wait forever with interrupts off; reachable from `/proc/clock` |
 | M5 [DONE] | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
 | L1 [DONE] | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
-| L2 | Low | VFS | Releasing a deep directory chain recurses once per level |
+| L2 [DONE] | Low | VFS | Releasing a deep directory chain recurses once per level |
 | L3 | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
 | L4 | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
 | L5 | Low | ELF | A segment may be mapped at address 0 |
@@ -276,7 +276,7 @@ process's descriptor table. A process with all `CONFIG_MAX_FDS` slots in use
 cannot `exec`. Fix: resolve the path to a vnode and read through it without a
 descriptor.
 
-### L2. Releasing a directory chain recurses per level
+### L2. [DONE] Releasing a directory chain recurses per level
 
 `vfs_vnode_put` calls itself for the parent after freeing a node. Each `chdir`
 into a subdirectory adds a level to the current directory's chain, with no

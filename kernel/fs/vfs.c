@@ -286,13 +286,10 @@ void vfs_file_put(struct vfs_file *f)
     slab_free(f);
 }
 
+// A loop, not recursion: a chain as deep as nested chdirs made it costs no stack per level.
 void vfs_vnode_put(struct vfs_vnode *node)
 {
-    if (!node) {
-        return;
-    }
-
-    if (atomic_dec_and_test(&node->refcount)) {
+    while (node && atomic_dec_and_test(&node->refcount)) {
         struct vfs_vnode *parent = node->parent;
 
         if (node->ops && node->ops->write_page) {
@@ -303,9 +300,7 @@ void vfs_vnode_put(struct vfs_vnode *node)
         }
         slab_free(node);
 
-        if (parent) {
-            vfs_vnode_put(parent);
-        }
+        node = parent;
     }
 }
 

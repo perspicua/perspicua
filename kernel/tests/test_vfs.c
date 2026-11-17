@@ -12,6 +12,8 @@
 #include "uapi/errno.h"
 
 #include "fs/vfs.h"
+#include "mm/slab.h"
+#include "sched/sched.h"
 
 // Scratch paths live at the root of the mounted image.
 #define SCRATCH_FILE "/tvfs.tmp"
@@ -47,6 +49,27 @@ static int readdir_arena_intact(size_t count)
         }
     }
     return 1;
+}
+
+#define DEEP_CHAIN 3000
+
+static int deep_released;
+static struct vfs_vnode *deep_leaf;
+static volatile int deep_done;
+
+static void count_release(struct vfs_vnode *node)
+{
+    (void)node;
+    deep_released++;
+}
+
+static struct vfs_vnode_ops deep_ops = {.release = count_release};
+
+// On a task's own kernel stack, which is what a process exiting with a deep cwd uses.
+static void release_deep_chain(void)
+{
+    vfs_vnode_put(deep_leaf);
+    deep_done = 1;
 }
 
 void test_vfs(void)
@@ -507,6 +530,31 @@ void test_vfs(void)
             vfs_close(rfd);
         }
         vfs_unlink(f);
+    }
+
+    // releasing the last reference to a deep chain walks it without a stack frame per level
+    {
+        struct vfs_vnode *leaf = NULL;
+        int built = 0;
+        for (int i = 0; i < DEEP_CHAIN; i++) {
+            struct vfs_vnode *n = slab_alloc(sizeof(struct vfs_vnode));
+            if (!n) {
+                break;
+            }
+            memset(n, 0, sizeof(*n));
+            n->ops = &deep_ops;
+            n->parent = leaf;
+            atomic_set(&n->refcount, 1);
+            leaf = n;
+            built++;
+        }
+        deep_released = 0;
+        deep_done = 0;
+        deep_leaf = leaf;
+        sched_create_task(release_deep_chain);
+        WAIT_UNTIL(deep_done);
+        TEST_ASSERT_EQ("a deep chain is released whole", deep_released, built);
+        TEST_ASSERT_EQ("setup: the chain was built", built, DEEP_CHAIN);
     }
 
     TEST_SUITE_END("VFS");
