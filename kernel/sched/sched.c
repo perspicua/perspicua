@@ -528,25 +528,30 @@ unsigned long sched_deadline(unsigned long ms)
 
 void sched_sleep_ms(unsigned long ms)
 {
-    unsigned long flags = irq_save();
-    int cpu = cpu_id();
-    struct task *curr = sched_current_task();
+    unsigned long deadline = sched_deadline(ms);
 
-    if (!curr || curr == sched_idle[cpu]) {
-        irq_restore(flags);
-        return;
-    }
+    // Any unblock, a signal's included, wakes the task early: only the deadline ends the sleep.
+    do {
+        unsigned long flags = irq_save();
+        int cpu = cpu_id();
+        struct task *curr = sched_current_task();
 
-    while (!sched_task_set_blocked(curr)) {
+        if (!curr || curr == sched_idle[cpu]) {
+            irq_restore(flags);
+            return;
+        }
+
+        while (!sched_task_set_blocked(curr)) {
+            sched_schedule();
+        }
+        sleep_enqueue(curr, deadline);
+
         sched_schedule();
-    }
-    sleep_enqueue(curr, sched_deadline(ms));
+        irq_restore(flags);
 
-    sched_schedule();
-    irq_restore(flags);
-
-    // An unblock that lands before sleep_enqueue leaves the entry linked.
-    sleep_dequeue(curr);
+        // An unblock that lands before sleep_enqueue leaves the entry linked.
+        sleep_dequeue(curr);
+    } while ((long)(timer_get_system_time() - deadline) < 0);
 }
 
 // Returns the milliseconds still owed; 0 if the full time elapsed.

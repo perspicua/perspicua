@@ -101,11 +101,23 @@ static void task_publish_then_long_sleep(void)
     early_wake_task = sched_current_task();
     spin_unlock_irqrestore(&test_lock, flags);
 
-    sched_sleep_ms(10000);
+    // The interruptible sleep, as only that one ends on an early wake.
+    sched_sleep_ms_interruptible(10000);
 
     flags = spin_lock_irqsave(&test_lock);
     early_wake_ran = 1;
     spin_unlock_irqrestore(&test_lock, flags);
+}
+
+static struct task *volatile early_sleeper;
+static volatile unsigned long early_slept;
+
+static void task_sleep_200_timed(void)
+{
+    unsigned long start = timer_get_system_time();
+    early_sleeper = sched_current_task();
+    sched_sleep_ms(200);
+    early_slept = timer_get_system_time() - start;
 }
 
 static int early_sleeper_queued(void)
@@ -719,6 +731,18 @@ void test_scheduler(void)
         unsigned long after = timer_get_system_time();
         unsigned long elapsed = after - before;
         TEST_ASSERT("3x30ms >= 60", elapsed >= 60);
+    }
+
+    // a stray unblock, as a signal sends, does not cut a kernel sleep short
+    {
+        early_sleeper = NULL;
+        early_slept = 0;
+        sched_create_task(task_sleep_200_timed);
+        WAIT_UNTIL(early_sleeper && task_blocked(early_sleeper));
+        sched_sleep_ms(20);
+        sched_unblock(early_sleeper);
+        WAIT_UNTIL(early_slept != 0);
+        TEST_ASSERT("an unblocked sleep still lasts its full time", early_slept >= 200);
     }
 
     // sleep ordering: short sleeper wakes before long sleeper

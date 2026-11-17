@@ -29,7 +29,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | M5 [DONE] | Medium | fork | `mmu_lock` is held with interrupts off for the whole address-space copy |
 | L1 [DONE] | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
 | L2 [DONE] | Low | VFS | Releasing a deep directory chain recurses once per level |
-| L3 | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
+| L3 [DONE] | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
 | L4 | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
 | L5 | Low | ELF | A segment may be mapped at address 0 |
 | L6 | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
@@ -285,7 +285,7 @@ build (`-O0`) it is real recursion, and a chain a little over a thousand
 levels deep overflows the 60 KB kernel stack when the process exits. Fix:
 write the release as a loop.
 
-### L3. `sched_sleep_ms` can return early
+### L3. [DONE] `sched_sleep_ms` can return early
 
 `signal_send_target_locked` unblocks the target's task whenever it is blocked,
 whatever it is blocked on. `sched_sleep_ms` does not re-sleep after such a

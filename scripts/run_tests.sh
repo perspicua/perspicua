@@ -75,7 +75,7 @@ KERNEL_SUITES=(
     "ELF Loader:49"
     "Syscall Bounds:22"
     "Fault Injection:58"
-    "Scheduler:118"
+    "Scheduler:119"
     "WaitQueue-MultiTask:119"
     "Semaphore-MultiTask:60"
     "Completion-MultiTask:36"
