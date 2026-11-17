@@ -30,7 +30,7 @@ Audit of the kernel on `dev` at `fbb3296`, branch `test/bug_audit`, November 202
 | L1 [DONE] | Low | exec | `exec` fails with `ENFILE` when the caller's descriptor table is full |
 | L2 [DONE] | Low | VFS | Releasing a deep directory chain recurses once per level |
 | L3 [DONE] | Low | Scheduler / SD | `sched_sleep_ms` returns early on any signal; the SD driver counts those as elapsed time |
-| L4 | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
+| L4 [DONE] | Low | Syscalls | Side effects are kept when the copy back to user memory fails |
 | L5 | Low | ELF | A segment may be mapped at address 0 |
 | L6 | Low | Syscalls | Unknown syscall numbers print a kernel warning each time |
 | L7 | Low | Allocators | The kernel heap never shrinks; slab pages are released and re-allocated on every use |
@@ -293,7 +293,7 @@ wake-up. Its only caller is `sd_wait_status`, which treats each return as one
 millisecond elapsed, so a burst of signals to a process doing SD I/O shortens
 the driver's timeouts. Fix: loop in `sched_sleep_ms` until the deadline.
 
-### L4. Side effects survive a failed copy to user memory
+### L4. [DONE] Side effects survive a failed copy to user memory
 
 Each of these validates the user buffer first, so it needs the mapping to
 change in between; they matter once threads share an address space.
@@ -303,6 +303,11 @@ change in between; they matter once threads share an address space.
   returned is `ENOMEM` where it should be `EFAULT` (`stat_handler` has the same
   wrong code).
 - `read_handler`: bytes already taken from a pipe or the tty are dropped.
+
+**Done:** `pipe` closes both descriptors when it cannot return them, and
+`waitpid` and `stat` report `EFAULT`. Not fixed: `waitpid` has still reaped the
+child, and `read` has still consumed its bytes; undoing either needs the copy
+to happen before the side effect, which waits on threads.
 
 ### L5. An ELF segment may map address 0
 

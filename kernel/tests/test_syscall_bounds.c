@@ -186,6 +186,18 @@ static int is_skipped(uint64_t nr)
     return 0;
 }
 
+static int open_fds(void)
+{
+    struct process *kernel = process_table[0];
+    int n = 0;
+    unsigned long flags = spin_lock_irqsave(&kernel->fd_lock);
+    for (int i = 0; i < VFS_MAX_FDS; i++) {
+        n += kernel->fd_table[i] != NULL;
+    }
+    spin_unlock_irqrestore(&kernel->fd_lock, flags);
+    return n;
+}
+
 // Slot 0 starts with no cwd, and getcwd fails on that before its pointer.
 static void drop_cwd(void)
 {
@@ -517,6 +529,23 @@ void test_syscall_bounds(void)
         int expected = SYS_MAX - (int)(sizeof(unassigned) / sizeof(unassigned[0]))
                        - (int)(sizeof(skipped) / sizeof(skipped[0]));
         TEST_ASSERT_EQ("every unskipped syscall survives zeroed arguments", swept, expected);
+    }
+
+    // a result that cannot be copied out is EFAULT, and pipe takes back the descriptors it made
+    {
+        int fds_before = open_fds();
+        syscall_test_fail_copy_out = 1;
+        uint64_t pargs[6] = {USER_RW_VA, 0, 0, 0, 0, 0};
+        int64_t pipe_rc = test_syscall(SYS_PIPE, pargs);
+        TEST_ASSERT_EQ("a pipe whose fds cannot be returned fails with EFAULT", pipe_rc, -EFAULT);
+        TEST_ASSERT_EQ("and leaves no descriptor open", open_fds(), fds_before);
+
+        strcpy(rw, SCRATCH_PATH);
+        syscall_test_fail_copy_out = 1;
+        uint64_t sargs[6] = {USER_RW_VA, USER_RW_VA + 256, 0, 0, 0, 0};
+        TEST_ASSERT_EQ("a stat whose buffer cannot be filled fails with EFAULT",
+                       test_syscall(SYS_STAT, sargs), -EFAULT);
+        syscall_test_fail_copy_out = 0;
     }
 
     drop_cwd();

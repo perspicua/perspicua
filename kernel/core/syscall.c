@@ -36,6 +36,22 @@
 #include "sched/process.h"
 #include "sched/sched.h"
 
+#ifdef CONFIG_TESTS
+volatile int syscall_test_fail_copy_out;
+#endif
+
+// Copies a result out once its side effects are done; a failure is EFAULT.
+static int copy_result_out(void *udest, const void *ksrc, size_t n)
+{
+#ifdef CONFIG_TESTS
+    if (syscall_test_fail_copy_out) {
+        syscall_test_fail_copy_out = 0;
+        return -EFAULT;
+    }
+#endif
+    return copy_to_user(udest, ksrc, n) != 0 ? -EFAULT : 0;
+}
+
 int syscall_validate_user_buffer(const void *ptr, size_t len, int writable)
 {
     if (!ptr || len == 0) {
@@ -576,8 +592,8 @@ static int64_t waitpid_handler(struct exception_trap_frame *tf)
 
     int res = process_waitpid(wait_pid, &kstatus, options);
     if (res >= 0 && ustatus != NULL) {
-        if (copy_to_user(ustatus, &kstatus, sizeof(int)) != 0) {
-            return -ENOMEM;
+        if (copy_result_out(ustatus, &kstatus, sizeof(int)) != 0) {
+            return -EFAULT;
         }
     }
     return res;
@@ -988,7 +1004,10 @@ static int64_t pipe_handler(struct exception_trap_frame *tf)
 
     int res = pipe_create(kpipefd);
     if (res == 0) {
-        if (copy_to_user(upipefd, kpipefd, sizeof(int) * 2) != 0) {
+        if (copy_result_out(upipefd, kpipefd, sizeof(int) * 2) != 0) {
+            // The caller never learns the numbers, so they would stay open for good.
+            vfs_close(kpipefd[0]);
+            vfs_close(kpipefd[1]);
             return -EFAULT;
         }
     }
@@ -1119,8 +1138,8 @@ static int64_t stat_handler(struct exception_trap_frame *tf)
     heap_free(kpath);
 
     if (res == 0) {
-        if (copy_to_user(ubuf, &kbuf, sizeof(struct stat)) != 0) {
-            return -ENOMEM;
+        if (copy_result_out(ubuf, &kbuf, sizeof(struct stat)) != 0) {
+            return -EFAULT;
         }
     }
     return res;

@@ -16,4 +16,9 @@ int syscall_validate_user_buffer(const void *ptr, size_t len, int writable);
 
 void syscall_handle(struct exception_trap_frame *tf);
 
+#ifdef CONFIG_TESTS
+// Set to make the next result copied out to user memory fail, as a mapping changed under it would.
+extern volatile int syscall_test_fail_copy_out;
+#endif
+
 #endif // PERSPICUA_CORE_SYSCALL_H
