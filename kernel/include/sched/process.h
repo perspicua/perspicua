@@ -122,6 +122,12 @@ int process_fork(struct exception_trap_frame *parent_tf);
 __attribute__((noreturn)) void process_exit(uint32_t pid, int status);
 int process_waitpid(int pid, int *status, int options);
 
+// With this option waitpid reports a child without reaping it; process_wait_commit then does.
+#define PROCESS_WAIT_PEEK 0x40000000
+
+// Reaps a zombie child, or marks a stopped one reported, that a peeking waitpid returned.
+void process_wait_commit(int pid);
+
 // Context and identity
 int process_current_pid(void);
 

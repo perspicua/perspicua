@@ -947,6 +947,29 @@ int process_fork(struct exception_trap_frame *parent_tf)
     return child_pid;
 }
 
+void process_wait_commit(int pid)
+{
+    int parent_pid = process_current_pid();
+    if (pid <= 0 || pid >= PROCESS_TABLE_SIZE || parent_pid < 0) {
+        return;
+    }
+
+    unsigned long flags = spin_lock_irqsave(&process_table_lock);
+    struct process *child = process_table[pid];
+    if (!child || child->parent_pid != (uint32_t)parent_pid) {
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return;
+    }
+    if (child->state != PROCESS_STATE_ZOMBIE) {
+        child->stop_reported = 1;
+        spin_unlock_irqrestore(&process_table_lock, flags);
+        return;
+    }
+    process_table[pid] = NULL;
+    spin_unlock_irqrestore(&process_table_lock, flags);
+    heap_free(child);
+}
+
 int process_waitpid(int pid, int *status, int options)
 {
     int parent_pid = process_current_pid();
@@ -988,6 +1011,11 @@ int process_waitpid(int pid, int *status, int options)
                 if (status) {
                     *status = candidate->exit_status;
                 }
+                if (options & PROCESS_WAIT_PEEK) {
+                    spin_unlock(&process_table_lock);
+                    irq_restore(irqf);
+                    return found_pid;
+                }
                 process_table[i] = NULL;
                 spin_unlock(&process_table_lock);
                 irq_restore(irqf);
@@ -999,7 +1027,9 @@ int process_waitpid(int pid, int *status, int options)
             if ((options & WUNTRACED) && !candidate->stop_reported && candidate->main_task
                 && candidate->main_task->state == SCHED_TASK_STOPPED) {
                 int found_pid = (int)candidate->pid;
-                candidate->stop_reported = 1;
+                if (!(options & PROCESS_WAIT_PEEK)) {
+                    candidate->stop_reported = 1;
+                }
                 if (status) {
                     *status = __W_STOPPED | candidate->stop_sig;
                 }

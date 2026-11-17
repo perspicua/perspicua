@@ -590,11 +590,14 @@ static int64_t waitpid_handler(struct exception_trap_frame *tf)
         return -EFAULT;
     }
 
-    int res = process_waitpid(wait_pid, &kstatus, options);
-    if (res >= 0 && ustatus != NULL) {
+    // Reported first and reaped only once the status is out, so a failed copy loses nothing.
+    int peek = ustatus != NULL ? PROCESS_WAIT_PEEK : 0;
+    int res = process_waitpid(wait_pid, &kstatus, (options & ~PROCESS_WAIT_PEEK) | peek);
+    if (res > 0 && peek) {
         if (copy_result_out(ustatus, &kstatus, sizeof(int)) != 0) {
             return -EFAULT;
         }
+        process_wait_commit(res);
     }
     return res;
 }

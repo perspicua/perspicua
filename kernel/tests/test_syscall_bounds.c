@@ -546,6 +546,26 @@ void test_syscall_bounds(void)
         TEST_ASSERT_EQ("a stat whose buffer cannot be filled fails with EFAULT",
                        test_syscall(SYS_STAT, sargs), -EFAULT);
         syscall_test_fail_copy_out = 0;
+
+        // a waitpid whose status cannot be returned leaves the child to be waited for again
+        int child = process_test_claim_slot();
+        TEST_ASSERT("setup: a zombie child of slot 0", child > 0);
+        if (child > 0) {
+            process_table[child]->exit_status = 7 << 8;
+            process_table[child]->state = PROCESS_STATE_ZOMBIE;
+            uint64_t wargs[6] = {(uint64_t)child, USER_RW_VA + 512, 0, 0, 0, 0};
+
+            syscall_test_fail_copy_out = 1;
+            TEST_ASSERT_EQ("a waitpid whose status cannot be returned fails with EFAULT",
+                           test_syscall(SYS_WAITPID, wargs), -EFAULT);
+            syscall_test_fail_copy_out = 0;
+            TEST_ASSERT("and the child is still there to wait for", process_table[child] != NULL);
+            TEST_ASSERT_EQ("the next waitpid reaps it", test_syscall(SYS_WAITPID, wargs), child);
+            TEST_ASSERT_EQ("and returns its status", *(int *)(rw + 512), 7 << 8);
+            if (process_table[child]) {
+                process_test_release_slot((uint32_t)child);
+            }
+        }
     }
 
     drop_cwd();

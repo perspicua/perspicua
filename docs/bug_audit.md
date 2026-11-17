@@ -305,9 +305,10 @@ change in between; they matter once threads share an address space.
 - `read_handler`: bytes already taken from a pipe or the tty are dropped.
 
 **Done:** `pipe` closes both descriptors when it cannot return them, and
-`waitpid` and `stat` report `EFAULT`. Not fixed: `waitpid` has still reaped the
-child, and `read` has still consumed its bytes; undoing either needs the copy
-to happen before the side effect, which waits on threads.
+`waitpid` and `stat` report `EFAULT`. `waitpid` now reports the child
+without reaping it, copies the status out, and reaps only then, so a failed
+copy leaves the child waitable. Not fixed: `read` has still consumed its
+bytes; that needs copying straight into user memory (Phase 2 item 7).
 
 ### L5. [DONE] An ELF segment may map address 0
 
